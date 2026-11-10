@@ -21,6 +21,7 @@ import (
 	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -41,6 +42,7 @@ type env struct {
 	link   *link.Link
 	eng    *plan.Engine
 	iss    *issue.Service
+	sec    *secret.Store
 	srv    *Server
 	h      http.Handler
 	agents map[string]*linktest.Agent
@@ -81,7 +83,10 @@ func newEnv(t *testing.T, dev bool) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.srv = New(Config{Store: st, Events: e.events, Plans: eng, Issues: iss, Dev: dev, PasswordParams: fastPasswords,
+	if e.sec, err = secret.Open(ctx, st, secret.NewKey()); err != nil {
+		t.Fatal(err)
+	}
+	e.srv = New(Config{Store: st, Events: e.events, Plans: eng, Issues: iss, Secrets: e.sec, Dev: dev, PasswordParams: fastPasswords,
 		KeepAlive: 50 * time.Millisecond, Logger: quiet})
 	e.h = e.srv.Handler()
 	t.Cleanup(func() {
