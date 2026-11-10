@@ -2359,6 +2359,25 @@ components:
             binding (D-156). Nobody observed it, so `changes` is empty, except one
             `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
             verified at the first apply (D-066, D-075).
+        after:
+          type: array
+          description: |
+            Apply order (D-167, D-171): the resource ids that this resource comes after. Missing
+            means none. The Block of the resource names them in `spec.after`. The resource and the
+            rest of its Block use start only when each named resource ended `unchanged` or
+            `applied`; else they are `skipped`. A named resource can be absent from this Plan: then
+            it has no change, and the order still holds.
+          items: { type: string }
+          examples: [["package:nginx"]]
+        restart_by:
+          type: array
+          description: |
+            Only for a service with a planned `restart` change (D-171): the resource ids from its
+            `restart_on` list that cause the restart, in list order. They change in this Plan, or
+            nobody observed them (D-156). Missing means the Plan does not name a cause. It is for
+            display only; the apply does not use it.
+          items: { type: string }
+          examples: [["file:/etc/nginx/sites-available/a", "symlink:/etc/nginx/sites-enabled/a"]]
 
     RunStatus:
       type: string
@@ -2366,7 +2385,12 @@ components:
     StepStatus:
       type: string
       enum: [pending, running, unchanged, applied, failed, refused, skipped]
-      description: "`refused`: a change was above the approved risk."
+      description: |
+        `refused`: the difference is not in the approved Plan, or a change was above the approved
+        risk; nothing of the resource was applied. `skipped`: not applied, because an earlier
+        resource of the same Block use, or a resource that it comes after (`ResourcePlan.after`),
+        did not end `unchanged` or `applied`, or because the apply ended first. `output` names the
+        cause (D-170).
     Run:
       type: object
       additionalProperties: false

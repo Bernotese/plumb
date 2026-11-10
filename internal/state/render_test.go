@@ -193,6 +193,22 @@ func TestValidateReferences(t *testing.T) {
 	})
 }
 
+// The schema has spec.after and spec.restarts (T-046), render does not use
+// them yet. Until T-047 a Block with one of them cannot be saved, so no
+// state says "after" and then applies in parallel.
+func TestAfterAndRestartsNotAvailableYet(t *testing.T) {
+	site := func(extra string) Doc {
+		return doc(KindBlock, "site", `{`+extra+`"resources":[{"file":{"path":"/site","content":"x"}}]}`)
+	}
+	wantErr(t, fixture(site(`"after":["file:/etc/motd"],`)), "/spec/after", "not available yet")
+	wantErr(t, fixture(site(`"restarts":["service:nginx"],`)), "/spec/restarts", "not available yet")
+	for _, extra := range []string{``, `"after":[],"restarts":[],`} {
+		if _, err := Validate(fixture(site(extra))); err != nil {
+			t.Errorf("Block with %q: %v", extra, err)
+		}
+	}
+}
+
 func TestParamDefaults(t *testing.T) {
 	set, err := Validate(fixture(target(`"blocks":[{"use":"motd"},{"use":"motd","id":"m2","params":{"path":"/etc/issue","text":"yo"}}]`)))
 	if err != nil {
