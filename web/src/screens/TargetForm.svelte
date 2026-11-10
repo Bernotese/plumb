@@ -11,7 +11,7 @@
     type Values,
   } from "../lib/schemaForm";
   import type { BlockView, ImageView, TargetSpec, TargetView } from "../lib/types";
-  import { CREATE_ONLY } from "../lib/view";
+  import { CREATE_ONLY, formatTime } from "../lib/view";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
@@ -181,6 +181,25 @@
 
 <h1 id="page-title" tabindex="-1">{editing ? `Edit target ${name}` : "New target"}</h1>
 <ProblemBox error={loadError} />
+{#if existing?.status.ignored_drift?.length}
+  {@const drift = existing.status.ignored_drift}
+  <section class="card" aria-labelledby="ignored-title">
+    <h2 id="ignored-title">Ignored drift</h2>
+    <p>
+      {drift.length} difference{drift.length === 1 ? "" : "s"} on this guest
+      {drift.length === 1 ? "is" : "are"} ignored by a rule. The next apply still writes the desired state.
+    </p>
+    <ul class="drift">
+      {#each drift as d (d.resource)}
+        <li>
+          <span class="mono">{d.resource}</span>: {d.attrs.join(", ") || "all attributes"} · rule
+          <span class="mono">{d.rule}</span> · last seen {formatTime(d.last_seen)}
+        </li>
+      {/each}
+    </ul>
+    <a href={href({ name: "rules" })}>See the rules</a>
+  </section>
+{/if}
 {#if loaded}
   <form onsubmit={submit} novalidate>
     <fieldset>
@@ -268,6 +287,7 @@
             bind:values={u.values}
             errors={u.errors}
             prefix="use-{u.key}"
+            {api}
           />
         {:else}
           <p class="muted">This Block has no parameters.</p>
@@ -313,6 +333,10 @@
 {/if}
 
 <style>
+  .drift {
+    margin: 0 0 var(--space-2);
+    padding-left: var(--space-6);
+  }
   .add {
     margin-bottom: var(--space-4);
   }

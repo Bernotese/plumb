@@ -1,5 +1,5 @@
 // Display rules shared by the screens. Pure functions, tested in view.test.ts.
-import type { Change, Risk, TargetView } from "./types";
+import type { Change, Plan, Risk, TargetView } from "./types";
 
 export type Tone = "ok" | "warn" | "danger" | "info" | "muted";
 
@@ -104,4 +104,34 @@ export function applyStepEvent(
   if (!step || !d.status) return false;
   step.status = d.status;
   return true;
+}
+
+/**
+ * Why only a person can approve a Plan (D-099), as short sentences:
+ * "gives secret app-db to web1", "changes an ignore rule".
+ */
+export function humanOnlyReasons(plan: Plan): string[] {
+  const out: string[] = [];
+  for (const reason of plan.human_only ?? []) {
+    if (reason === "rule-change") {
+      out.push("It adds, changes or removes an ignore rule.");
+      continue;
+    }
+    // The targets that get a secret in a changed resource of this Plan.
+    const given = plan.targets.filter(
+      (t) =>
+        (t.secrets?.length ?? 0) > 0 &&
+        t.resources.some((r) => r.changes.some((c) => isSensitive(c))),
+    );
+    if (given.length === 0) {
+      out.push("It gives a secret to a target that did not get it before.");
+    }
+    for (const t of given) {
+      const names = (t.secrets ?? []).map((s) => s.name);
+      out.push(
+        `It gives secret${names.length === 1 ? "" : "s"} ${names.join(", ")} to ${t.target}.`,
+      );
+    }
+  }
+  return out;
 }

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { TargetView } from "./types";
-import { applyStepEvent, changeView, maxRisk, targetState, valueText } from "./view";
+import type { Plan, TargetView } from "./types";
+import {
+  applyStepEvent,
+  changeView,
+  humanOnlyReasons,
+  maxRisk,
+  targetState,
+  valueText,
+} from "./view";
 
 function target(
   phase: TargetView["status"]["phase"],
@@ -105,5 +112,57 @@ describe("applyStepEvent", () => {
       }),
     ).toBe(false);
     expect(r.targets[0]?.steps[0]?.status).toBe("applied");
+  });
+});
+
+describe("humanOnlyReasons (D-099)", () => {
+  const base: Omit<Plan, "targets"> = {
+    id: 1,
+    origin: "proposal",
+    issue_id: null,
+    status: "pending",
+    risk: "reversible",
+    reason: "r",
+    author: "user:admin",
+    created_at: "2026-11-10T09:00:00Z",
+    base_revision: 7,
+    approved_by: null,
+    approved_at: null,
+    revision: null,
+    run_id: null,
+    warnings: [],
+  };
+  it("is empty for a normal plan", () => {
+    expect(humanOnlyReasons({ ...base, targets: [] })).toEqual([]);
+  });
+  it("names the secrets and the target", () => {
+    const plan = {
+      ...base,
+      human_only: ["secret-binding", "rule-change"],
+      targets: [
+        {
+          target: "web1",
+          secrets: [{ name: "app-db", version: 4 }],
+          resources: [
+            {
+              resource: "file:/etc/app/db.conf",
+              action: "create",
+              risk: "reversible",
+              changes: [{ attr: "content", sensitive: true, risk: "reversible" }],
+            },
+          ],
+        },
+        { target: "db1", secrets: [{ name: "x", version: 1 }], resources: [] },
+      ],
+    } satisfies Plan;
+    expect(humanOnlyReasons(plan)).toEqual([
+      "It gives secret app-db to web1.",
+      "It adds, changes or removes an ignore rule.",
+    ]);
+  });
+  it("has a general text when no target lists the secret", () => {
+    expect(humanOnlyReasons({ ...base, human_only: ["secret-binding"], targets: [] })).toEqual([
+      "It gives a secret to a target that did not get it before.",
+    ]);
   });
 });

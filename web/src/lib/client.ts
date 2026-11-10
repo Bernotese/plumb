@@ -11,6 +11,8 @@ import type {
   Proposal,
   RevisionDiff,
   RevisionInfo,
+  RuleScope,
+  RuleView,
   Run,
   SecretInfo,
   Session,
@@ -36,7 +38,17 @@ export interface PlumbApi {
   getRun(id: number): Promise<Run>;
   listIssues(): Promise<Issue[]>;
   getIssue(id: number): Promise<Issue>;
-  resolveIssue(id: number, action: IssueAction, reason?: string): Promise<Plan>;
+  /** `accept`, `revert` and `ignore_rule` make a Plan; `rule` is the scope of an ignore rule. */
+  resolveIssue(
+    id: number,
+    action: Exclude<IssueAction, "ignore_once">,
+    reason?: string,
+    rule?: RuleScope,
+  ): Promise<Plan>;
+  /** `ignore_once`: resolves the Issue without a Plan (D-091). */
+  ignoreOnce(id: number, reason?: string): Promise<Issue>;
+  /** Rules of the head revision (D-092). */
+  listRules(): Promise<RuleView[]>;
   /** One page of revisions, newest first (T-034). */
   listRevisions(cursor?: string, limit?: number): Promise<PageOf<RevisionInfo>>;
   /** The documents that differ between `from` (default n-1) and revision `n`. */

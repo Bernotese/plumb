@@ -1,11 +1,21 @@
 // Forms from JSON Schema (ARCHITECTURE §3: "The UI builds forms from it").
 // Supported: string, multi-line text (contentMediaType text/plain, D-056),
 // number, integer, boolean, enum, list of strings; default, required,
-// minimum/maximum, minLength/maxLength, pattern, minItems.
+// minimum/maximum, minLength/maxLength, pattern, minItems. A string with
+// `writeOnly: true` is a secret parameter (D-088): the form holds a secret
+// name and saves `{secret: name}`, never a literal.
 // Everything is a pure function, so the screens stay thin.
 
 export type FieldKind =
-  "text" | "textarea" | "number" | "integer" | "boolean" | "enum" | "list" | "unsupported";
+  | "text"
+  | "textarea"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "enum"
+  | "list"
+  | "secret"
+  | "unsupported";
 
 export interface Field {
   name: string;
@@ -42,6 +52,7 @@ interface Prop {
   minItems?: number;
   items?: { type?: string };
   contentMediaType?: string;
+  writeOnly?: boolean;
 }
 
 interface ObjectSchema {
@@ -54,6 +65,7 @@ function kindOf(p: Prop): FieldKind {
   const type = Array.isArray(p.type) ? p.type.find((t) => t !== "null") : p.type;
   switch (type) {
     case "string":
+      if (p.writeOnly === true) return "secret";
       return p.contentMediaType === "text/plain" ? "textarea" : "text";
     case "integer":
       return "integer";
@@ -124,6 +136,10 @@ export function initialValues(fields: Field[], given: Record<string, unknown> = 
       case "list":
         out[f.name] = Array.isArray(v) ? v.map(String) : [];
         break;
+      case "secret":
+        // Only a reference is a valid value; a default or a literal is not shown.
+        out[f.name] = secretName(f.name in given ? given[f.name] : undefined) ?? "";
+        break;
       default:
         out[f.name] = v === undefined || v === null ? "" : String(v);
     }
@@ -144,6 +160,11 @@ export function validate(fields: Field[], values: Values): Record<string, string
 
 function fieldError(f: Field, v: FieldValue | undefined): string | undefined {
   if (f.kind === "unsupported" || f.kind === "boolean") return undefined;
+  if (f.kind === "secret") {
+    const s = typeof v === "string" ? v : "";
+    if (s === "") return f.required ? "Choose a secret." : undefined;
+    return SECRET_NAME.test(s) ? undefined : "Choose a secret.";
+  }
   if (f.kind === "list") {
     const items = ((v as string[] | undefined) ?? []).map((s) => s.trim()).filter(Boolean);
     const min = f.minItems ?? (f.required ? 1 : 0);
@@ -194,6 +215,11 @@ export function toParams(fields: Field[], values: Values): Record<string, unknow
         if (items.length || f.required) out[f.name] = items;
         break;
       }
+      case "secret": {
+        const s = typeof v === "string" ? v : "";
+        if (s !== "") out[f.name] = { secret: s };
+        break;
+      }
       case "number":
       case "integer": {
         const s = typeof v === "string" ? v.trim() : "";
@@ -223,4 +249,14 @@ export function mergeParams(
   const owned = new Set(fields.filter((f) => f.kind !== "unsupported").map((f) => f.name));
   const kept = Object.fromEntries(Object.entries(stored).filter(([k]) => !owned.has(k)));
   return { ...kept, ...toParams(fields, values) };
+}
+
+const SECRET_NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
+
+/** The secret name of a stored `{secret: name}` reference, else undefined. */
+export function secretName(v: unknown): string | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const keys = Object.keys(v);
+  const name = (v as { secret?: unknown }).secret;
+  return keys.length === 1 && typeof name === "string" ? name : undefined;
 }
