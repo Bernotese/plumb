@@ -54,7 +54,7 @@ type Driver interface {              // internal/driver – runs in the controll
 ```
 
 ## 3. Data model (D-021, D-026, D-027)
-- The State is a set of **documents**: `kind`, `name`, `spec`. Kinds: `Image`, `Block`, `Target`, `Rule` (later).
+- The State is a set of **documents**: `kind`, `name`, `spec`. Kinds: `Image`, `Block`, `Target`, `Rule` (slice 2, D-092).
 - Documents are YAML in the export and JSON in the database. JSON Schema 2020-12 is the only schema language. It validates documents and defines Block parameters. The UI builds forms from it. The schema files in `internal/` are the only source; the OpenAPI file refers to them (D-043).
 - A **Revision** is an immutable, numbered set of documents. Documents are stored once by content hash, so unchanged documents are shared. The newest revision is the desired state.
 ```yaml
@@ -99,9 +99,10 @@ spec:
 | `POST /plans`, `GET /plans/{id}`, `POST /plans/{id}/approve` | Propose, read, approve |
 | `GET /runs/{id}` | Result per target and resource |
 | `GET /revisions`, `GET /revisions/{n}/diff`, `POST /revisions/{n}/rollback` | History. Rollback returns a Plan |
-| `GET /issues`, `POST /issues/{id}/resolve`, `POST /issues/{id}/comments` | Actions: `accept`, `revert`. Later: `ignore_once`, `ignore_rule` (D-044) |
+| `GET /issues`, `POST /issues/{id}/resolve`, `POST /issues/{id}/comments` | Actions: `accept`, `revert`, `ignore_once`, `ignore_rule` (D-068, D-091, D-092) |
 | `GET /events?since=<seq>` | Server-sent events, resumable |
-| `GET/POST/DELETE /tokens`, `PUT /secrets/{name}`, `GET /export`, `POST /import` | Admin |
+| `GET/POST/DELETE /tokens`, `GET /secrets`, `PUT/DELETE /secrets/{name}`, `GET/POST /export`, `POST /import` | Admin. Token tiers per operation: `api/openapi.yaml` (§12) |
+| `GET /rules`, `GET /rules/{name}` | Read the rules (D-092) |
 
 Contract: `api/openapi.yaml` (OpenAPI 3.1, written first). Errors are `application/problem+json`. Times are UTC RFC 3339. JSON fields are `snake_case`.
 

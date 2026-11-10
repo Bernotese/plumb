@@ -14,6 +14,7 @@ A user browses revisions, sees what changed and starts a rollback that opens the
 `web/src/screens/History.svelte`, `RevisionView.svelte` · `web/src/ui/DocDiff.svelte` · `web/src/lib/textDiff.ts` (+ test) · router, nav, client · `web/e2e/*`
 
 ## Acceptance criteria
+- [ ] The card adds its operations to `PlumbApi` (`web/src/lib/client.ts`), the HTTP client and the mock. The mock data comes from the contract examples (`example(op, code)`).
 - [ ] Nav entry "History". List: number, time, author, reason, link to the Plan. Paged.
 - [ ] Revision view: per document `added`, `changed`, `removed`; a changed document shows a line diff of its YAML text. The diff function is own code with unit tests (no new dependency, D-035).
 - [ ] "Roll back to this revision" asks for a reason, calls the API and opens the Plan view. 409 `nothing-to-do` shows a clear message.

@@ -34,16 +34,21 @@ Schema changes: `Proposal.targets`; `TargetPlan.secrets` (`[{name, version}]`, D
 `api/openapi.yaml` · `internal/state/schema/rule.json` · generated: `web/src/lib/api.gen.ts`, `web/src/lib/mock/examples.ts` · `web/src/lib/mock/mock.ts` only if the mock needs a route entry
 
 ## Acceptance criteria
-- [ ] All rows and schema changes above are in `api/openapi.yaml`, with tags, security, examples and problem responses in the existing style.
-- [ ] No example holds a secret value or a marker character. `PUT /secrets` and `POST /export` mark `value` and `passphrase` as `writeOnly`, `format: password`.
-- [ ] `rule.json` is closed (`additionalProperties: false`) and the contract refers to it (D-043). `state` does not load it yet (T-032).
-- [ ] The texts that say "ignore actions come later" (D-044) are updated.
-- [ ] Generated files are regenerated (`npm run gen`). The mock answers the new operations from the examples, so UI cards can start.
-- [ ] `make lint test` passes. No Go behaviour changes; a handler for a new route is not part of this card.
-- [ ] Needs no new architecture decision. A shape that must differ from the table gets one line in `docs/DECISIONS.md` (from D-100).
+- [x] All rows and schema changes above are in `api/openapi.yaml`, with tags, security, examples and problem responses in the existing style.
+- [x] No example holds a secret value or a marker character. `PUT /secrets` and `POST /export` mark `value` and `passphrase` as `writeOnly`, `format: password`.
+- [x] `rule.json` is closed (`additionalProperties: false`) and the contract refers to it (D-043). `state` does not load it yet (T-032).
+- [x] The texts that say "ignore actions come later" (D-044) are updated.
+- [x] Generated files are regenerated (`npm run gen`; they are not in git). The examples of the new operations are ready for the mock (`example(op, code)`). The mock is a typed `PlumbApi` object, not a route table, so each UI card adds its own methods (noted in T-034 … T-036).
+- [x] `make lint test` passes. No Go behaviour changes; a handler for a new route is not part of this card.
+- [x] Operations without a handler carry `x-plumb-planned: <card>`; the tier matrix test knows the mark (D-100).
+- [x] Needs no new architecture decision. A shape that must differ from the table gets one line in `docs/DECISIONS.md` (from D-100).
 
 ## Out of scope
 - Handlers, store code, UI screens. Part B operations (image versions, builds).
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+pl-architect/T-027-slice-2-contract · draft PR #33 (waits for the user's approval of T-025) · tests: `make lint test` → ok (Go all packages, web 88 tests).
+- 14 new operations, 5 new tags, `rule.json`. All new operations carry `x-plumb-planned` (D-100), because a QA test wants a tier row for every operation.
+- New fields on existing schemas are optional ("missing = none"), so the slice 1 server still matches the contract.
+- Test-only Go change: 8 lines in `internal/api/access_qa_test.go`. Web: 2 lines in the mock (it refuses the two new issue actions until T-036).
+- Open questions of T-025 are marked in the YAML with `T-025 question 1` (`IgnoredFlag`) and `T-025 question 3` (`resolveIssue`).

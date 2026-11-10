@@ -15,6 +15,7 @@ Plumb stores secrets encrypted under the master key. A human can set, list and d
 `internal/secret/*` · `internal/store/secret.go` · `internal/store/migrations/0003_secret.sql` · `internal/api/handlers.go` (+ a `secrets.go`) · `cmd/plumb/serve.go`, `cmd/plumb/key.go` · tests next to the code
 
 ## Acceptance criteria
+- [ ] The operations of this card lose `x-plumb-planned` in `api/openapi.yaml` and get their rows in the tier matrix of `internal/api` (D-100).
 - [ ] `plumb key init` per D-086 is the only code that makes a production key: mode 0600, flag `--key-file`. It shows the recovery key once on the terminal. It writes it to no log and no file. It refuses when stdout is not a terminal, when a key file exists, and when the key directory is on the same file system as the database.
 - [ ] `plumb serve` without `--dev` never makes a key. A missing key file **always** stops the start, also with zero stored secrets; the message names `plumb key init` and `plumb key restore`. A key file that group or others can read stops the start (as D-064).
 - [ ] `plumb key restore` reads the recovery key from the terminal (no echo) or stdin, checks the checksum and writes the key file. It refuses to overwrite a file.

@@ -14,6 +14,7 @@ A client can read the revision history, compare two revisions and roll back to o
 `internal/api/*` (handlers, views) · `internal/plan/*` (rollback proposal, origin) · `internal/store/migrations/0004_plan_origin.sql` · tests
 
 ## Acceptance criteria
+- [ ] The operations of this card lose `x-plumb-planned` in `api/openapi.yaml` and get their rows in the tier matrix of `internal/api` (D-100).
 - [ ] `GET /revisions` and `GET /revisions/{n}/diff` per the contract. The diff holds both document versions; unknown `n` or `from` is 404.
 - [ ] `POST /revisions/{n}/rollback` builds a proposal that puts and deletes documents until the set equals revision `n`, and returns a Plan with origin `rollback`. The Plan follows every normal rule (stale, tiers, risk, create-only fields).
 - [ ] Rollback to a set that equals the head is 409 `nothing-to-do`.
