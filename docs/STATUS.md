@@ -65,5 +65,4 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Nothing for the test host now. Note: the Ceph enterprise repository on the host answers 401 at `apt update` (no subscription); Plumb does not need it.
-- Optional: delete old temp dirs `/tmp/plumb-e2e-*` on the dev VM.
+- Nothing now. (2026-11-11: the user gave the static address of the Plumb LXC, see `~/.config/plump/testhost.env`; disabled the Ceph enterprise repository on the test host; deleted the old `/tmp/plumb-e2e-*` dirs.)
