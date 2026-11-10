@@ -3,7 +3,6 @@ package issue_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -238,5 +237,3 @@ func (e *env) seed(targets ...string) {
 		e.online(t)
 	}
 }
-
-var errAny = errors.New("any")
