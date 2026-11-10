@@ -620,7 +620,7 @@ func (s *Set) checkTarget(name string) Errors {
 			}
 		}
 		refErrs := len(errs)
-		for _, p := range sortedParams(use.Params) {
+		for _, p := range sortedKeys(use.Params) {
 			name, isRef := refName(use.Params[p])
 			ppath := ptr(path+"/params", p)
 			switch {

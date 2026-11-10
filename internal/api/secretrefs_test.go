@@ -365,3 +365,38 @@ func TestSecretVersions(t *testing.T) {
 		t.Fatalf("the guest got a value that nobody approved: %v", got)
 	}
 }
+
+// Review must 2: an agent error that holds only the secret, on another
+// resource of the target, is masked before it is stored. Also a value
+// shorter than 4 bytes. The first canary test missed this: its agent never
+// printed a secret in an Output or an Error.
+func TestSecretMaskedInAgentErrors(t *testing.T) {
+	// The second value is one 3-byte character.
+	for _, value := range []string{"pw-canary-9x1", "ⓩ"} {
+		t.Run(value, func(t *testing.T) {
+			e := newEnv(t, true)
+			adm := e.admin()
+			adm.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": value})
+			a := e.agent("web1")
+			a.FailApply("file:/etc/other.env", "write failed: "+value)
+			a.FailApply("file:/etc/app.env", value)
+			_, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "app",
+				"put": []state.Doc{doc(state.KindImage, "ubuntu", imageSpec), appBlock("/etc/app.env"), appTarget("web1", "app-db")}})
+			adm.do("POST", "/api/v1/plans/"+e.planID(body)+"/approve", nil)
+			e.eng.Wait()
+			run, _ := e.st.LastRunOfTarget(e.ctx, "web1")
+			steps, _ := e.st.Steps(e.ctx, run.ID)
+			masked := 0
+			for _, s := range steps {
+				if strings.Contains(s.Output, "[redacted]") {
+					masked++
+				}
+			}
+			if masked != 2 {
+				t.Errorf("masked steps %d: %+v", masked, steps)
+			}
+			adm.do("GET", "/api/v1/runs/"+itoa(run.ID), nil)
+			e.noValue(nil, value)
+		})
+	}
+}

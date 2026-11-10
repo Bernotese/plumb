@@ -147,7 +147,7 @@ func TestSecretReferenceRules(t *testing.T) {
 	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a"), "user": "x" + string(MarkStart) + "a" + string(MarkEnd)}))
 	errAt(t, err, KindTarget, "/spec/blocks/0/params/user", "reserved for secret markers")
 	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a"), "opts": map[string]any{string(MarkEnd): 1}}))
-	errAt(t, err, KindTarget, "/spec/blocks/0/params/opts/"+string(MarkEnd), "reserved for secret markers")
+	errAt(t, err, KindTarget, "/spec/blocks/0/params/opts", "reserved for secret markers")
 	_, err = Validate(secDocs("a"+string(MarkStart), map[string]any{"db_password": ref("a")}))
 	errAt(t, err, KindBlock, "/spec/resources/0/file/content", "reserved for secret markers")
 }
