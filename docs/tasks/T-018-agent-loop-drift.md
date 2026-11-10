@@ -2,7 +2,7 @@
 
 - **Owner:** pl-frontend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** M   · **Depends on:** T-003, T-005   · **Parallel with:** T-009
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** review
 
 ## Goal
 The agent can enroll, run commands from the controller and report drift.
@@ -31,4 +31,8 @@ The agent can enroll, run commands from the controller and report drift.
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-018-agent-loop-drift` (based on T-005, main merged), PR below. `internal/agent`: `config.go`, `client.go` (pinned CA only), `store.go` (credential + desired list 0600 in a 0700 dir), `agent.go` (enroll, poll loop, backoff), `exec.go` (observe/apply/watch, order, restart, risk), `drift.go` + `inotify.go`. `plumb-agent run [-config]`. Rules: D-055.
+- Output rule (T-005 review should 3): every `Item.Output` and resource error goes through `resource.SafeOutput`; an observed `State` never leaves the guest.
+- Status codes: 401 → drop credential, enroll from the token source; 429/503/network → backoff, credential kept. Both tested.
+- Tests: `go test ./internal/agent/...` pass against an `httptest` TLS controller (enroll + cloud-init flag + 0600, re-enroll after 401, foreign CA refused, observe with restart, apply order/risk/single restart, own apply = no drift then one drift then resolved, desired list on disk + resend after reconnect, 429/503, command errors, cycle check). Stable with `-count=5 -cpu 1,4`. Coverage 84 %.
+- Not tested on a real guest (inotify on real `/etc`, systemd): runs with T-005 guest tests once Docker is there.

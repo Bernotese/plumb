@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -319,5 +320,38 @@ func TestLoadConfig(t *testing.T) {
 		if _, err := LoadConfig(p); err == nil {
 			t.Errorf("%s: want error", name)
 		}
+	}
+}
+
+// 429 and 503 mean "busy": retry with backoff, keep the credential.
+func TestBusyIsNotRevoked(t *testing.T) {
+	for _, code := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			ca := newCA(t)
+			ctl := newController(t, ca, "tok-1")
+			ta := startAgent(t, ctl, ca, "tok-1")
+			waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) == 1 })
+			ctl.mu.Lock()
+			ctl.failCode, ctl.pollFail = code, 5
+			ctl.mu.Unlock()
+			waitFor(t, "all busy answers used", func() bool {
+				ctl.mu.Lock()
+				defer ctl.mu.Unlock()
+				return ctl.pollFail == 0
+			})
+			ctl.send(t, "o1", wire.CommandObserve, wire.ObserveBody{})
+			if rep := ctl.result(t, "o1"); rep.Error != "" {
+				t.Fatalf("after recovery: %+v", rep)
+			}
+			ctl.mu.Lock()
+			enrolled := len(ctl.enrolled)
+			ctl.mu.Unlock()
+			if enrolled != 1 {
+				t.Fatalf("enrollments = %d; a busy controller must not cause re-enrollment", enrolled)
+			}
+			if b, _ := os.ReadFile(filepath.Join(ta.cfg.StateDir, credentialFile)); strings.TrimSpace(string(b)) != "cred-1" {
+				t.Fatalf("credential changed: %q", b)
+			}
+		})
 	}
 }

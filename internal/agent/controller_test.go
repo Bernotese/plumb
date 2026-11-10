@@ -76,7 +76,8 @@ type controller struct {
 	enrolled    []string        // tokens that enrolled
 	enrollTries int
 	rejected    map[string]int // 401 answers per credential
-	pollFail    int            // answer this many polls with 503
+	pollFail    int            // answer this many polls with failCode
+	failCode    int            // default 503
 	reports     []wire.Report
 	commands    chan wire.Command
 }
@@ -135,7 +136,11 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		c.mu.Unlock()
 		if fail {
-			w.WriteHeader(http.StatusServiceUnavailable)
+			code := c.failCode
+			if code == 0 {
+				code = http.StatusServiceUnavailable
+			}
+			w.WriteHeader(code)
 			return
 		}
 		select {
