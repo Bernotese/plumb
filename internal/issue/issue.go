@@ -28,7 +28,11 @@ const (
 var ErrAcceptSensitive = errors.New("issue: accept is not possible for a sensitive attribute; revert it or change the secret")
 
 // ErrNotOpen is returned when an Issue is resolving or resolved already.
-var ErrNotOpen = errors.New("issue: the issue is not open")
+var ErrNotOpen = store.ErrIssueNotOpen
+
+// ErrAcceptImage is returned for accept of an image or kind drift: a guest
+// cannot take another image or kind, so there is nothing to write.
+var ErrAcceptImage = errors.New("issue: accept is not possible for the image or the kind of a guest; revert it or create a new target")
 
 // Service keeps Issues.
 type Service struct {
@@ -126,11 +130,46 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, principal strin
 	if err != nil {
 		return store.Plan{}, err
 	}
+	// Only an open Issue becomes resolving: of two quick resolves, the
+	// second fails here and its Plan stays pending until it goes stale.
 	if err := s.st.SetIssueResolving(ctx, id, p.ID); err != nil {
 		return store.Plan{}, err
 	}
 	s.emit(ctx, "issue.updated", id, principal, map[string]any{"status": store.IssueResolving, "action": action, "plan": p.ID})
+	if action == ActionRevert {
+		s.attachCovered(ctx, iss.Target, id, p, principal)
+	}
 	return p, nil
+}
+
+// attachCovered links the other open Issues of the target whose resource
+// the revert Plan also changes. The Plan shows those changes, so their
+// resolution names this Plan and its approver, not "gone" (review T-010 m3).
+func (s *Service) attachCovered(ctx context.Context, target string, primary int64, p store.Plan, principal string) {
+	var targets []plan.TargetPlan
+	if err := json.Unmarshal(p.Changes, &targets); err != nil {
+		return
+	}
+	planned := map[string]bool{}
+	for _, tp := range targets {
+		if tp.Target == target {
+			for _, r := range tp.Resources {
+				planned[r.Resource] = true
+			}
+		}
+	}
+	open, err := s.st.Issues(ctx, target)
+	if err != nil {
+		return
+	}
+	for _, other := range open {
+		if other.ID == primary || other.Status != store.IssueOpen || !planned[other.Resource] {
+			continue
+		}
+		if s.st.SetIssueResolving(ctx, other.ID, p.ID) == nil {
+			s.emit(ctx, "issue.updated", other.ID, principal, map[string]any{"status": store.IssueResolving, "action": ActionRevert, "plan": p.ID})
+		}
+	}
 }
 
 // acceptDoc returns the Target document with the observed values of the
@@ -163,6 +202,9 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 	for _, c := range changes {
 		if c.Sensitive {
 			return state.Doc{}, ErrAcceptSensitive
+		}
+		if iss.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind") {
+			return state.Doc{}, ErrAcceptImage
 		}
 		if c.Attr == wire.AttrRestart {
 			continue

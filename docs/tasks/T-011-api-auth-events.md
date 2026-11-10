@@ -26,6 +26,8 @@ Everything the slice can do is reachable through the documented API, with login,
 - [ ] From the T-017 contract check: `Event.type` in `api/openapi.yaml` is a closed enum. Add every new event type there first.
 - [ ] From T-009 QA: `plumb` embeds the real `plumb-agent` binary (built first by `make build`) and wires it into `link.Config.AgentBinary`. Test: `GET /agent/v1/binary` from the built `plumb` returns a binary whose `version` output matches. (T-009 serves only a fixture.)
 
+- [ ] From the T-010 review (m5): a pending Plan keeps its Issue `resolving` until the Plan goes stale. Add a way to drop a pending Plan (for example `DELETE /plans/{id}` → stale → the Issue opens again).
+
 ## Out of scope
 - Token management UI, secrets, export/import endpoints.
 

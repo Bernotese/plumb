@@ -346,3 +346,40 @@ func (s *Store) Bindings(ctx context.Context, kind string) ([]Binding, error) {
 	}
 	return out, rows.Err()
 }
+
+// RunningRuns returns the Runs with status running.
+func (s *Store) RunningRuns(ctx context.Context) ([]Run, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM run WHERE status = 'running' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	out := make([]Run, 0, len(ids))
+	for _, id := range ids {
+		r, err := s.GetRun(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// FailUnfinishedSteps marks every pending or running step of a Run as
+// failed with the output.
+func (s *Store) FailUnfinishedSteps(ctx context.Context, runID int64, output string) error {
+	now := s.now()
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE run_step SET status = 'failed', output = ?, finished_at = ?, started_at = COALESCE(started_at, ?)
+		 WHERE run_id = ? AND status IN ('pending', 'running')`, output, now, now, runID)
+	return err
+}

@@ -155,3 +155,45 @@ func TestCommandBodyRoundTrip(t *testing.T) {
 		t.Errorf("round trip lost data: %+v %+v", cmd, got)
 	}
 }
+
+func TestCovers(t *testing.T) {
+	planned := []Change{
+		{Attr: "content", From: "old", To: "new", Risk: RiskReversible},
+		{Attr: "mode", From: "0644", To: "0600", Risk: RiskReversible},
+		{Attr: "cores", From: 2, To: 4, Risk: RiskDisruptive},
+		{Attr: "secret", Sensitive: true, Risk: RiskReversible},
+		{Attr: "groups", From: []any{"a", "b"}, To: map[string]any{"y": 1, "x": 2}, Risk: RiskReversible},
+	}
+	for _, tc := range []struct {
+		name string
+		now  []Change
+		want bool
+	}{
+		{"nothing differs", nil, true},
+		{"subset", []Change{{Attr: "content", From: "old", To: "new", Risk: RiskReversible}}, true},
+		{"all, other order", []Change{planned[2], planned[0], planned[1], planned[3], planned[4]}, true},
+		{"number forms", []Change{{Attr: "cores", From: 2.0, To: json.Number("4"), Risk: RiskDisruptive}}, true},
+		{"nested values", []Change{{Attr: "groups", From: []string{"a", "b"}, To: map[string]int{"x": 2, "y": 1}, Risk: RiskReversible}}, true},
+		{"unplanned attribute", []Change{{Attr: "owner", From: "a", To: "b", Risk: RiskReversible}}, false},
+		{"other from", []Change{{Attr: "content", From: "edited", To: "new", Risk: RiskReversible}}, false},
+		{"other to", []Change{{Attr: "content", From: "old", To: "newer", Risk: RiskReversible}}, false},
+		{"other risk", []Change{{Attr: "content", From: "old", To: "new", Risk: RiskDisruptive}}, false},
+		{"missing vs null", []Change{{Attr: "content", To: "new", Risk: RiskReversible}}, false},
+		{"sensitive now, plain planned", []Change{{Attr: "content", Sensitive: true, Risk: RiskReversible}}, true},
+		{"sensitive planned", []Change{{Attr: "secret", From: "x", To: "y", Risk: RiskReversible}}, true},
+		{"sensitive, other risk", []Change{{Attr: "secret", Sensitive: true, Risk: RiskDisruptive}}, false},
+		{"restart not planned", []Change{{Attr: AttrRestart, Risk: RiskDisruptive}}, false},
+	} {
+		if got := Covers(planned, tc.now); got != tc.want {
+			t.Errorf("%s: Covers = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if Covers(nil, []Change{{Attr: "a", Risk: RiskRead}}) {
+		t.Error("an empty plan covers a change")
+	}
+	// The JSON form of the body keeps planned.
+	raw, _ := json.Marshal(ApplyBody{PlanID: 1, Planned: []Planned{{Resource: "file:/x", Unverified: true}}, MaxRisk: RiskReversible})
+	if !strings.Contains(string(raw), `"planned":[{"resource":"file:/x","unverified":true}]`) {
+		t.Errorf("ApplyBody JSON: %s", raw)
+	}
+}

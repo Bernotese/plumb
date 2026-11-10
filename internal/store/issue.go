@@ -134,16 +134,21 @@ func (s *Store) IssuesOfPlan(ctx context.Context, planID int64) ([]Issue, error)
 	return out, rows.Err()
 }
 
+// ErrIssueNotOpen is returned when an Issue is not open (another Plan
+// resolves it, or it is resolved).
+var ErrIssueNotOpen = errors.New("store: the issue is not open")
+
 // SetIssueResolving links an open Issue to the Plan that resolves it.
+// Only an open Issue can change; else ErrIssueNotOpen.
 func (s *Store) SetIssueResolving(ctx context.Context, id, planID int64) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE issue SET status = 'resolving', plan_id = ?, resolution = NULL, updated_at = ?
-		 WHERE id = ? AND status <> 'resolved'`, planID, s.now(), id)
+		 WHERE id = ? AND status = 'open'`, planID, s.now(), id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+		return ErrIssueNotOpen
 	}
 	return nil
 }

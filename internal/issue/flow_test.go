@@ -307,12 +307,28 @@ func TestReenroll(t *testing.T) {
 			t.Errorf("token change carries a value: %+v", c)
 		}
 	}
-	if run := e.approve(p.ID); run.Status != "succeeded" {
-		steps, _ := e.st.Steps(e.ctx, run.ID)
+	run = e.approve(p.ID)
+	steps, _ := e.st.Steps(e.ctx, run.ID)
+	if run.Status != "succeeded" || len(steps) != 1 || steps[0].Resource != wire.GuestConfigID {
 		t.Fatalf("reenroll run %s: %+v", run.Status, steps)
 	}
-	if a.Enrolls() != 1 || a.Guest("file:/etc/motd")["content"] != "x" {
+	// D-075: the re-enrollment applies nothing. The new agent gets the
+	// watch list, and what differs becomes an Issue.
+	for _, c := range a.Commands() {
+		if c == wire.CommandApply {
+			t.Error("a re-enrollment sent an apply")
+		}
+	}
+	if a.Enrolls() != 1 || a.Guest("file:/etc/motd") != nil {
 		t.Errorf("after reenroll: enrolls %d, file %v", a.Enrolls(), a.Guest("file:/etc/motd"))
+	}
+	iss := e.openIssue("web1", "file:/etc/motd")
+	rp, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run := e.approve(rp.ID); run.Status != "succeeded" || a.Guest("file:/etc/motd")["content"] != "x" {
+		t.Errorf("revert after reenroll: %s, file %v", run.Status, a.Guest("file:/etc/motd"))
 	}
 }
 

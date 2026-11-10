@@ -38,12 +38,28 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 			return store.Run{}, err
 		}
 	}
-	var prop Proposal
-	if err := json.Unmarshal(p.Proposal, &prop); err != nil {
-		return store.Run{}, err
-	}
 	var targets []TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
+		return store.Run{}, err
+	}
+	// Reserve the targets before anything is committed. A second approval
+	// for a busy target fails here; on any later error the reservation is
+	// released.
+	names := make([]string, len(targets))
+	for i, tp := range targets {
+		names[i] = tp.Target
+	}
+	if err := e.reserve(names); err != nil {
+		return store.Run{}, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			e.release(names)
+		}
+	}()
+	var prop Proposal
+	if err := json.Unmarshal(p.Proposal, &prop); err != nil {
 		return store.Run{}, err
 	}
 	// Rebuild exactly the planned set on the base of the Plan. When the
@@ -89,14 +105,16 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	}
 
 	e.mu.Lock()
-	for _, tp := range targets {
-		e.busy[tp.Target]++
-	}
+	e.active[run.ID] = true
 	e.mu.Unlock()
+	started = true
 	e.runs.Add(1)
 	go func() {
 		defer e.runs.Done()
 		e.execute(e.ctx, p, run, next, targets)
+		e.mu.Lock()
+		delete(e.active, run.ID)
+		e.mu.Unlock()
 	}()
 	return run, nil
 }
@@ -113,11 +131,7 @@ func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *
 		go func() {
 			defer wg.Done()
 			ok[i] = e.runTarget(ctx, p, run, set, tp)
-			e.mu.Lock()
-			if e.busy[tp.Target]--; e.busy[tp.Target] <= 0 {
-				delete(e.busy, tp.Target)
-			}
-			e.mu.Unlock()
+			e.release([]string{tp.Target})
 		}()
 	}
 	wg.Wait()
@@ -154,6 +168,7 @@ type stepper struct {
 }
 
 func (s *stepper) add(ctx context.Context, resource string) {
+	ctx = context.WithoutCancel(ctx) // the record of a Run outlives a cancel
 	seq, err := s.e.st.AddStep(ctx, store.Step{RunID: s.run.ID, Target: s.target, Resource: resource, Status: string(wire.StatusPending)})
 	if err != nil {
 		s.e.log.Error("add step", "err", err)
@@ -164,6 +179,9 @@ func (s *stepper) add(ctx context.Context, resource string) {
 }
 
 func (s *stepper) set(ctx context.Context, resource string, status wire.Status, changes []wire.Change, output string) {
+	// A closing engine cancels the Run, but its steps must still get a
+	// final status (QA T-010): writes use a context without the cancel.
+	ctx = context.WithoutCancel(ctx)
 	seq, known := s.seq[resource]
 	if !known {
 		s.add(ctx, resource) // the agent reported a resource that was not planned
@@ -215,7 +233,8 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	if guestChange != nil {
 		s.add(ctx, wire.GuestConfigID)
 	}
-	if r != nil {
+	reenroll := tp.Guest == "reenroll"
+	if r != nil && !reenroll { // a re-enrollment applies no resource (D-075)
 		for _, res := range r.Resources {
 			s.add(ctx, res.ID)
 		}
@@ -254,11 +273,22 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"agent": "online", "run": run.ID})
 	}
 
-	// 3. Resource steps. The agent observes again and refuses every change
-	// above the approved risk of this target (D-022).
+	// A re-enrollment only gives the new agent its watch list. What
+	// differs becomes an Issue through the drift report (D-075).
+	if reenroll {
+		if _, err := e.cfg.Agents.Send(tp.Target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources}); err != nil {
+			e.log.Error("watch", "target", tp.Target, "err", err)
+			return false
+		}
+		return s.ok
+	}
+
+	// 3. Resource steps. The agent observes again and changes a resource
+	// only as far as the Plan shows it (D-075), and never above the
+	// approved risk of this target (D-022).
 	maxRisk := tp.risk()
 	rep, err := e.command(ctx, tp.Target, wire.CommandApply,
-		wire.ApplyBody{PlanID: p.ID, Resources: r.Resources, MaxRisk: maxRisk}, e.cfg.ApplyTimeout,
+		wire.ApplyBody{PlanID: p.ID, Resources: r.Resources, Planned: planned(tp), MaxRisk: maxRisk}, e.cfg.ApplyTimeout,
 		func(pr wire.Report) {
 			for _, it := range pr.Items {
 				if it.Status == wire.StatusRunning {
@@ -416,4 +446,87 @@ func (e *Engine) fetchImage(ctx context.Context, name string) error {
 		return err
 	}
 	return e.st.PutBinding(ctx, store.Binding{Kind: state.KindImage, Name: name, Ref: string(ref)})
+}
+
+// Recover closes what a controller crash left open. Call it once at
+// start, before agents connect and before the guest poll. A Run in the
+// database with status running has no goroutine after a restart: its
+// unfinished steps fail, the Run fails, and OnPlanDone opens its Issues
+// again. There is no automatic resend (D-067); the user plans again.
+func (e *Engine) Recover(ctx context.Context) error {
+	runs, err := e.st.RunningRuns(ctx)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		e.mu.Lock()
+		active := e.active[run.ID]
+		e.mu.Unlock()
+		if active {
+			continue // a Run of this process
+		}
+		if err := e.st.FailUnfinishedSteps(ctx, run.ID, "the controller restarted during the Run"); err != nil {
+			return err
+		}
+		if err := e.st.FinishRun(ctx, run.ID, "failed"); err != nil {
+			return err
+		}
+		e.emit(ctx, "run.finished", fmt.Sprintf("run:%d", run.ID), "system",
+			map[string]any{"plan": run.PlanID, "status": "failed", "reason": "controller restart"})
+		if e.cfg.OnPlanDone != nil {
+			e.cfg.OnPlanDone(ctx, run.PlanID, false)
+		}
+	}
+	return nil
+}
+
+// checkIdle returns ErrTargetBusy when a Run works on one of the targets.
+func (e *Engine) checkIdle(targets []string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, t := range targets {
+		if e.busy[t] > 0 {
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; wait for it to finish, then plan again"}
+		}
+	}
+	return nil
+}
+
+// reserve marks the targets busy, or fails when one is busy already.
+func (e *Engine) reserve(targets []string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, t := range targets {
+		if e.busy[t] > 0 {
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; approve after it finished"}
+		}
+	}
+	for _, t := range targets {
+		e.busy[t]++
+	}
+	return nil
+}
+
+func (e *Engine) release(targets []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, t := range targets {
+		if e.busy[t]--; e.busy[t] <= 0 {
+			delete(e.busy, t)
+		}
+	}
+}
+
+// planned lists what the approved Plan shows for the agent resources of a
+// target: the changes, or unverified for a resource of a new target. The
+// stored changes are redacted already, so no secret value goes back.
+func planned(tp TargetPlan) []wire.Planned {
+	out := []wire.Planned{}
+	for _, rc := range tp.Resources {
+		if rc.Resource == wire.GuestConfigID || (len(rc.Changes) == 0 && !rc.Unverified) {
+			continue
+		}
+		out = append(out, wire.Planned{Resource: rc.Resource, Changes: rc.Changes, Unverified: rc.Unverified})
+	}
+	return out
 }
