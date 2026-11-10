@@ -22,7 +22,7 @@ Reasons for each choice: `docs/DECISIONS.md` D-018 … D-041. Terms: `docs/BRIEF
 ## 2. Components (`internal/<package>`)
 | Package | Job | May import (plus `wire`) |
 |---|---|---|
-| `api` | HTTP handlers, sessions, API tokens, SSE, static UI | `plan`, `issue`, `state`, `secret`, `event` |
+| `api` | HTTP handlers, sessions, API tokens, SSE, static UI | `plan`, `issue`, `state`, `secret`, `event`, `store` |
 | `plan` | Proposal → Plan → approval → Revision → Run. Risk classes | `state`, `link`, `driver`, `secret`, `event`, `store` |
 | `issue` | Drift intake, issues, resolve actions, ignore rules | `plan`, `state`, `event`, `store` |
 | `state` | Documents, JSON Schema validation, Block rendering, revision diff, export/import | `resource` (schemas), `store` |
@@ -47,7 +47,7 @@ type Driver interface {              // internal/driver – runs in the controll
     FetchImage(ctx, ImageSpec) (ImageRef, error)       // download, verify, make template
     Create(ctx, GuestSpec, Bootstrap) (GuestID, error) // clone, set the enrollment token, start
     Observe(ctx, GuestID) (GuestState, error)          // config, config digest, power, IPs
-    Diff(desired GuestSpec, observed GuestState) []Change // pure; sets the risk of each change
+    Diff(desired GuestSpec, observed GuestState) ([]Change, error) // pure; sets the risk; error for a create-only change
     Update(ctx, GuestID, []Change) error; Power(ctx, GuestID, Action) error; Delete(ctx, GuestID) error
 }
 ```
@@ -78,7 +78,7 @@ spec:
 - Order: resources of one Block apply in the listed order. Different Blocks apply in parallel. Package-manager operations share one lock per guest.
 - Restart: `service` has `restart_on: [resource ids]`. When a listed resource changes, the agent adds a `restart` change (risk `disruptive`) to the service and applies it after them. The Plan shows this change.
 - Each resource type states its target kinds (`vm`, `lxc`). The Proxmox settings of a target are one resource, `guest:config`. The driver handles it, not the agent. So plans and issues have one shape for both levels.
-- Tables: `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `agent`, `enroll_token`, `event`, `secret`, `user`, `session`, `api_token`.
+- Tables: `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `binding` (document → driver id), `agent`, `enroll_token`, `event`, `secret`, `user`, `session`, `api_token`.
 
 ## 4. Change flow and API (D-022, D-023)
 1. A client sends a **proposal**: documents to put or delete, and a reason.

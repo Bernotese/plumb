@@ -30,4 +30,10 @@ The Go side builds, tests and lints. The Go contracts that the other slice cards
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+T-003 done · branch `pl-architect/T-003-scaffold-contracts` · tests: `make lint test build` → pass (local and CI)
+- Contracts: `internal/wire`, `internal/resource` (+5 schemas), `internal/driver`, `internal/state` (+3 schemas), `internal/store/migrations/0001_init.sql`.
+- `internal/rules_test.go` enforces the import rules of ARCHITECTURE §2, the binary rules and the dependency allowlist (D-035).
+- Three small contract changes, also in ARCHITECTURE: `api` may import `store`; new table `binding` (document → driver id); `Driver.Diff` returns an error for create-only changes.
+- Names may contain `.` (needed for `ubuntu-26.04`). A target may use the same Block more than once.
+- Stubs `test-guest` and `test-pve` fail with a message until T-007 / T-012 fill them. `build-web` and `lint-web` pass as stubs for T-017.
+- Tools: Go 1.27.3 and GNU make are in `~/.local/bin`. staticcheck runs with `go run` (pinned in the Makefile).

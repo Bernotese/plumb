@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/user.json",
+  "title": "user",
+  "description": "A local user account. Key: name.",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+      "description": "Login name."
+    },
+    "shell": {
+      "type": "string",
+      "pattern": "^/",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)|\\x00"
+      },
+      "maxLength": 4096,
+      "default": "/bin/bash",
+      "description": "Login shell."
+    },
+    "home": {
+      "type": "string",
+      "pattern": "^/",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)|\\x00"
+      },
+      "maxLength": 4096,
+      "description": "Home directory. Default: /home/<name>."
+    },
+    "groups": {
+      "type": "array",
+      "uniqueItems": true,
+      "default": [],
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z_][a-z0-9_-]{0,31}$"
+      },
+      "description": "Supplementary groups. They must exist."
+    },
+    "ssh_keys": {
+      "type": "array",
+      "uniqueItems": true,
+      "default": [],
+      "items": {
+        "type": "string",
+        "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( .*)?$"
+      },
+      "description": "Public keys for authorized_keys. The list is complete: other keys are drift."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  }
+}
