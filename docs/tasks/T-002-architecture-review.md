@@ -22,4 +22,9 @@ The user gets an independent check of the architecture before any code is writte
 - Editing ARCHITECTURE.md (the architect fixes findings).
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+Verdict: **changes needed** · review: https://github.com/Bernotese/plumb/pull/1#pullrequestreview-5835441562 (4 must, 15 should, 9 nit) · tests: n/a
+- must 1: symlink in the snippet dir lets the controller read host files through cicustom (breaks D-006).
+- must 2: snippet deleted while cicustom stays; next VM start fails.
+- must 3: no notify/restart mechanism (nginx block needs it).
+- must 4: command resource must be risk class destructive; an apply token is root on the guests.
+- D-001..017 respected, BRIEF §6 answered. Rework: T-016.
