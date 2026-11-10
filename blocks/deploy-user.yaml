@@ -1,0 +1,23 @@
+kind: Block
+name: deploy-user
+spec:
+  title: Deployment user
+  description: Create a user for deployments and install its SSH public key.
+  params:
+    type: object
+    required:
+      - ssh_key
+    properties:
+      name:
+        type: string
+        title: User name
+        default: deploy
+      ssh_key:
+        type: string
+        title: SSH public key
+  resources:
+    - user:
+        name: "{{ .name }}"
+        shell: /bin/bash
+        ssh_keys:
+          - "{{ .ssh_key }}"

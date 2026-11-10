@@ -1,0 +1,17 @@
+kind: Block
+name: motd
+spec:
+  title: Login message
+  description: Set the message shown when users log in.
+  params:
+    type: object
+    properties:
+      message:
+        type: string
+        title: Message
+        default: Managed by Plumb.
+  resources:
+    - file:
+        path: /etc/motd
+        content: "{{ .message }}\n"
+        mode: "0644"

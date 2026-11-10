@@ -1,0 +1,34 @@
+kind: Block
+name: nginx
+spec:
+  title: Nginx web server
+  description: Install Nginx and set the default site's content.
+  params:
+    type: object
+    properties:
+      server_name:
+        type: string
+        title: Server name
+        default: _
+  resources:
+    - package:
+        name: nginx
+    - file:
+        path: /etc/nginx/sites-available/default
+        content: |-
+          server {
+              listen 80 default_server;
+              root /var/www/html;
+              index index.html;
+              server_name {{ .server_name }};
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+        mode: "0644"
+    - service:
+        name: nginx
+        state: running
+        enabled: true
+        restart_on:
+          - file:/etc/nginx/sites-available/default
