@@ -10,11 +10,11 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-010 plan/apply/issues | pl-backend | PR #14: QA + review running; flow test with the real agent waits for T-018 |
-| T-011 API, auth, events | pl-backend | in progress (stacked on T-010) |
+| T-011 API, auth, events | pl-backend | in progress |
+| T-021 flow test with the real agent | pl-codex-qa | waits for T-018 |
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
 | T-005 resources | pl-frontend | PR #8: static review approve (ea35c1e); merge after the first real guest run. **Blocked: Docker access** |
-| T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): changes requested (1 blocker, 2 major), fix by pl-frontend |
+| T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): fixes + D-075 pushed (0b05b5b), re-review running |
 | T-006 web UI slice (mock API) | pl-frontend | in progress |
 | T-014, T-015 | see cards | later waves |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
@@ -28,6 +28,7 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 - 2026-11-10 · T-017: OpenAPI contract, web skeleton, web build in Makefile and CI (PR #2, d4d481b).
 - 2026-11-10 · T-004: state package, migration 0002, decisions D-050 … D-053 (PR #7).
 - 2026-11-10 · T-009: agent link, event stream, fake driver, race step in CI, decisions D-060 … D-064 (PR #11).
+- 2026-11-10 · T-010: plan/approve/apply engine, issues, crash recovery, D-065 … D-069, D-075 (PR #14).
 
 ## Open for the user
 - Restart `pl-codex-fix` (Codex session error after `/new`: "permission profile cannot be safely represented by the legacy app-server sandbox policy").
