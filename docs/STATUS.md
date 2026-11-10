@@ -16,8 +16,8 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
 | T-005 resources | pl-frontend | PR #8: static approve, main merged in (fd7c9e6); merge after the first real guest run. **Blocked: Docker access** |
 | T-018 agent loop + drift | pl-frontend | PR #13: static approve, main merged in (5e5f86d); merge after #8. **Blocked: Docker access** |
-| T-014 UI on the real API | pl-frontend | PR #28: QA + review running |
-| T-024 dev mode: simulated agent for new targets | pl-backend | in progress |
+| T-014 UI on the real API | pl-frontend | PR #28: changes requested (2 major), fix by pl-frontend; QA running |
+| T-024 dev mode: simulated agent for new targets | pl-backend | PR #30: review running |
 | T-015 slice acceptance | pl-codex-qa | after T-021 |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (6a51128), 3 minors in work. Real-host part (20 items) **blocked: test host** |
