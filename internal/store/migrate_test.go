@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -201,8 +202,9 @@ func TestMigrateSlice1ThroughSecrets(t *testing.T) {
 	defer s.Close()
 	var version int
 	s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
-	if want := migrationNumber(t, "_plan_origin.sql"); version != want || migrationNumber(t, "_secret.sql") != 3 {
-		t.Fatalf("user_version %d, want %d", version, want)
+	all, _ := migrations()
+	if version != len(all) || migrationNumber(t, "_secret.sql") != 3 || migrationNumber(t, "_plan_origin.sql") != 4 {
+		t.Fatalf("user_version %d, want %d", version, len(all))
 	}
 	if p, err := s.GetPlan(ctx, 1); err != nil || p.Reason != "one" {
 		t.Fatalf("plan: %+v %v", p, err)
@@ -228,5 +230,75 @@ func TestMigrateSlice1ThroughSecrets(t *testing.T) {
 	s.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk)
 	if fk != 1 {
 		t.Error("foreign keys are off after the migration")
+	}
+}
+
+// Migration 0005 (T-032) rebuilds the issue table: Issues, comments and
+// the Plans that point at them survive; resolution "ignore" and
+// plan.human_only are new.
+func TestMigrateIssueIgnore(t *testing.T) {
+	ctx := context.Background()
+	const ts = "'2026-11-10T00:00:00.000000000Z'"
+	path := openAt(t, migrationNumber(t, "_issue_ignore.sql")-1,
+		`INSERT INTO issue (id, target, resource, status, changes, opened_at, updated_at) VALUES (3, 'web1', 'file:/open', 'open', '[]', `+ts+`, `+ts+`)`,
+		`INSERT INTO revision (id, author, reason, created_at) VALUES (1, 'system', 'seed', `+ts+`)`,
+		`INSERT INTO issue (id, target, resource, status, changes, opened_at, updated_at) VALUES (1, 'web1', 'file:/etc/motd', 'resolving', '[]', `+ts+`, `+ts+`)`,
+		`INSERT INTO issue (id, target, resource, status, changes, resolution, opened_at, updated_at, resolved_by, resolved_at)
+		 VALUES (2, 'web1', 'file:/etc/a', 'resolved', '[]', 'gone', `+ts+`, `+ts+`, 'system', `+ts+`)`,
+		`INSERT INTO plan (id, base_revision, origin, issue_id, proposal, changes, risk, status, reason, author, created_at)
+		 VALUES (1, 1, 'revert', 1, '{}', '[]', 'reversible', 'pending', 'r', 'user:admin', `+ts+`)`,
+		`UPDATE issue SET plan_id = 1 WHERE id = 1`,
+		`INSERT INTO issue_comment (issue_id, author, body, created_at) VALUES (1, 'user:admin', 'hi', `+ts+`)`,
+	)
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if iss, err := s.GetIssue(ctx, 3); err != nil || iss.Status != IssueOpen || string(iss.Changes) != "[]" {
+		t.Fatalf("open issue after migration: %+v %v", iss, err)
+	}
+	if iss, err := s.GetIssue(ctx, 1); err != nil || iss.Status != IssueResolving || iss.PlanID != 1 {
+		t.Fatalf("issue 1: %+v %v", iss, err)
+	}
+	if iss, err := s.GetIssue(ctx, 2); err != nil || iss.Resolution != "gone" {
+		t.Fatalf("issue 2: %+v %v", iss, err)
+	}
+	if c, err := s.Comments(ctx, 1); err != nil || len(c) != 1 {
+		t.Fatalf("comments: %+v %v", c, err)
+	}
+	if p, err := s.GetPlan(ctx, 1); err != nil || p.IssueID != 1 || len(p.HumanOnly) != 0 {
+		t.Fatalf("plan: %+v %v", p, err)
+	}
+	for _, table := range []string{"plan", "issue_comment"} {
+		var schema string
+		s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_schema WHERE name = ?`, table).Scan(&schema)
+		if !strings.Contains(schema, "REFERENCES issue (id)") {
+			t.Errorf("%s lost its reference to issue: %s", table, schema)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO issue_comment (issue_id, author, body, created_at) VALUES (99, 'x', 'y', `+ts+`)`); err == nil {
+		t.Error("a comment of a missing issue was accepted")
+	}
+	// One open Issue per target and resource still holds.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO issue (target, resource, status, changes, opened_at, updated_at) VALUES ('web1', 'file:/etc/motd', 'open', '[]', `+ts+`, `+ts+`)`); err == nil {
+		t.Error("the unique open index is gone")
+	}
+	// New: resolution ignore, with its memory.
+	if _, err := s.db.ExecContext(ctx, `UPDATE issue SET status = 'open', plan_id = NULL WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.IgnoreIssue(ctx, 1, "user:admin", json.RawMessage(`[]`), json.RawMessage(`[]`)); err != nil {
+		t.Fatalf("ignore: %v", err)
+	}
+	if _, err := s.IgnoredOnce(ctx, "web1", "file:/etc/motd"); err != nil {
+		t.Errorf("memory: %v", err)
+	}
+	p, err := s.CreatePlan(ctx, Plan{BaseRevision: 1, Origin: "ignore_rule", HumanOnly: []string{"rule-change"}, Risk: "read", Reason: "r", Author: "user:admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetPlan(ctx, p.ID); len(got.HumanOnly) != 1 || got.HumanOnly[0] != "rule-change" {
+		t.Errorf("human_only: %+v", got.HumanOnly)
 	}
 }
