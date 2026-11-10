@@ -5,11 +5,13 @@
   import { go, href, isRouteHash, parse, type Route } from "./lib/router";
   import { applyTheme, loadTheme, type Theme } from "./lib/theme";
   import type { Session } from "./lib/types";
+  import History from "./screens/History.svelte";
   import ChangePassword from "./screens/ChangePassword.svelte";
   import IssueView from "./screens/IssueView.svelte";
   import Issues from "./screens/Issues.svelte";
   import Login from "./screens/Login.svelte";
   import PlanView from "./screens/PlanView.svelte";
+  import RevisionView from "./screens/RevisionView.svelte";
   import RunView from "./screens/RunView.svelte";
   import TargetForm from "./screens/TargetForm.svelte";
   import Targets from "./screens/Targets.svelte";
@@ -130,6 +132,9 @@
         aria-current={navCurrent(["targets", "target-new", "target-edit"])}>Targets</a
       >
       <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue"])}>Issues</a>
+      <a href={href({ name: "history" })} aria-current={navCurrent(["history", "revision"])}
+        >History</a
+      >
     </nav>
   {/if}
   <div class="tools">
@@ -170,6 +175,10 @@
     <Issues {api} />
   {:else if route.name === "issue"}
     {#key route.id}<IssueView {api} id={route.id} />{/key}
+  {:else if route.name === "history"}
+    <History {api} />
+  {:else if route.name === "revision"}
+    {#key route.id}<RevisionView {api} id={route.id} />{/key}
   {:else}
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p>

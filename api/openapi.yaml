@@ -1269,7 +1269,8 @@ paths:
         `n`, and returns its Plan (origin `rollback`). Nothing changes before the approval. The
         Plan follows every rule of `POST /plans`. Secret values have no history and do not roll
         back (D-093). A rollback that brings back a secret binding or changes a rule can be
-        approved by a human session only (`Plan.human_only`, D-099).
+        approved by a human session only (`Plan.human_only`, D-099). The Plan records `n` as
+        `rollback_to` (D-131).
       security:
         - session: []
         - token: [plan]
@@ -1290,6 +1291,7 @@ paths:
               example:
                 id: 16
                 origin: rollback
+                rollback_to: 6
                 issue_id: null
                 status: pending
                 risk: reversible
@@ -1432,7 +1434,6 @@ paths:
     get:
       tags: [tokens]
       operationId: listTokens
-      x-plumb-planned: T-030
       summary: List API tokens, newest first
       description: Human session only. Revoked tokens stay in the list. No bearer value or hash is returned.
       security:
@@ -1476,7 +1477,6 @@ paths:
     post:
       tags: [tokens]
       operationId: createToken
-      x-plumb-planned: T-030
       summary: Create an API token
       description: |
         Human session only. The answer holds the bearer value once; Plumb stores only a hash.
@@ -1519,7 +1519,6 @@ paths:
     delete:
       tags: [tokens]
       operationId: revokeToken
-      x-plumb-planned: T-030
       summary: Revoke an API token
       description: |
         Human session only. The token fails at its next call and its open event streams end
@@ -2265,6 +2264,15 @@ components:
         issue_id:
           $ref: "#/components/schemas/NullableId"
           description: The issue, for `revert`, `accept` and `ignore_rule`.
+        rollback_to:
+          type: [integer, "null"]
+          format: int64
+          minimum: 1
+          description: |
+            The revision `n` of `POST /revisions/{n}/rollback` (D-131). Set when `origin` is
+            `rollback`; missing or `null` for every other origin. The server sets it; no request
+            can send it. The Plan was built against `base_revision`, so the revision that an
+            approval commits has the same documents as revision `rollback_to`.
         status: { $ref: "#/components/schemas/PlanStatus" }
         risk: { $ref: "#/components/schemas/Risk" }
         reason: { type: string }

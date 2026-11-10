@@ -248,6 +248,12 @@ func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.L
 	if err != nil {
 		return err
 	}
-	log.Info("dev demo seeded", "pending_plan", p.ID)
+	// A plan token, so the token list is not empty (T-030). Its bearer is
+	// thrown away: nobody can use it, and it is never printed.
+	_, tok, err := api.CreateToken(ctx, st, "demo: Claude (plans and comments)", api.TierPlan, "", "user:"+api.DevUser)
+	if err != nil {
+		return err
+	}
+	log.Info("dev demo seeded", "pending_plan", p.ID, "token", tok.ID)
 	return nil
 }

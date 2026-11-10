@@ -19,12 +19,15 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-015 slice acceptance (HTTP) | pl-codex-qa | waits for T-018 on main; real-host part waits for the test host |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
-| T-028 secret store → T-029 secret references → T-032 ignore actions → T-033 export/import | pl-backend | T-028 running |
-| T-030 token API, T-031 revision API | pl-reviewer (implements; pl-architect reviews) | T-030 running |
-| T-034 UI history → T-035 UI settings → T-036 UI secret params + ignore | pl-frontend | T-034 running (mock first) |
+| T-028 secret store | pl-backend | PR #37: review approve; open: U+FFFD fix (pl-codex-fix), key clearing, QA result, D-130 decision on row replay |
+| T-031 revision API | pl-backend | PR #39 (stacked on #37): review by pl-architect running; QA next |
+| T-029 secret references → T-032 ignore actions → T-033 export/import | pl-backend | next, after the PR #37 items |
+| T-034 UI history | pl-frontend | PR #35 (mock part): approved, QA merged in, delta check running; e2e part waits for T-031 on main |
+| T-035 UI settings → T-036 UI secret params + ignore | pl-frontend | T-035 running (stacked on T-034) |
 | T-037 slice 2 acceptance, leak hunt | pl-codex-qa | waits for T-029 … T-033 on main |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
+| T-040 bad-bearer limit scope | tbd | backlog |
 
 Merge order when Docker works: #5 (real run, digest pins) → #8 → #13 → #21, #27 → T-015.
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
@@ -44,10 +47,10 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-024: dev mode simulated agent for new targets (PR #30).
 - T-014: UI on the real API, Playwright e2e (PR #28).
 - T-025, T-027: slice 2 plan (PR #32) and API contract (PR #33), approved by the user (D-101).
+- T-030: token API (PR #34).
 - T-026: QA crash recovery test ported to main (PR #31); stale PR #16 closed.
 
 ## Open for the user
 - Give `jannes` Docker access on the dev VM: `sudo usermod -aG docker jannes` and `sudo setfacl -m u:jannes:rw /var/run/docker.sock`.
 - Provide the Proxmox test host (fully updated PVE 9.2: qemu-server ≥ 9.2.11, libpve-storage-perl ≥ 9.1.13; needs: ARCHITECTURE §8).
-- Restart `pl-codex-fix` (Codex session error after `/new`).
 - Optional: delete old temp dirs `/tmp/plumb-e2e-*` on the dev VM.

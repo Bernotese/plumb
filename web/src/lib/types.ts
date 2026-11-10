@@ -21,3 +21,13 @@ export type RunStep = S["RunStep"];
 export type Issue = S["Issue"];
 export type IssueAction = S["IssueAction"];
 export type PlumbEvent = S["Event"];
+export type StateDocument = S["Document"];
+export type DocumentRef = S["DocumentRef"];
+export type RevisionInfo = S["RevisionInfo"];
+export type RevisionDiff = S["RevisionDiff"];
+export type DocumentChange = S["DocumentChange"];
+/** One page of a list answer (`Page` with typed items). */
+export interface PageOf<T> {
+  items: T[];
+  next: string | null;
+}

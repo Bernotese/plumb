@@ -128,6 +128,7 @@ func (s *Store) DeleteSession(ctx context.Context, idHash string) error {
 
 // Token is an API token. Only the hash of its secret part is stored.
 type Token struct {
+	Seq        int64 // insertion order, for paging
 	ID         string
 	Name       string
 	Hash       string
@@ -157,15 +158,13 @@ func (s *Store) CreateToken(ctx context.Context, t Token) (Token, error) {
 	return t, nil
 }
 
-// TokenByID returns a token that is not revoked.
-func (s *Store) TokenByID(ctx context.Context, id string) (Token, error) {
-	t := Token{ID: id}
+const tokenCols = `rowid, id, name, hash, tier, COALESCE(max_risk, ''), created_by, created_at, last_used_at, revoked_at`
+
+func scanToken(row interface{ Scan(...any) error }) (Token, error) {
+	var t Token
 	var created string
 	var lastUsed, revoked sql.NullString
-	err := s.db.QueryRowContext(ctx,
-		`SELECT name, hash, tier, COALESCE(max_risk, ''), created_by, created_at, last_used_at, revoked_at
-		 FROM api_token WHERE id = ? AND revoked_at IS NULL`, id).
-		Scan(&t.Name, &t.Hash, &t.Tier, &t.MaxRisk, &t.CreatedBy, &created, &lastUsed, &revoked)
+	err := row.Scan(&t.Seq, &t.ID, &t.Name, &t.Hash, &t.Tier, &t.MaxRisk, &t.CreatedBy, &created, &lastUsed, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Token{}, ErrNotFound
 	}
@@ -182,16 +181,58 @@ func (s *Store) TokenByID(ctx context.Context, id string) (Token, error) {
 	return t, err
 }
 
+// TokenByID returns a token that is not revoked.
+func (s *Store) TokenByID(ctx context.Context, id string) (Token, error) {
+	return scanToken(s.db.QueryRowContext(ctx, `SELECT `+tokenCols+` FROM api_token WHERE id = ? AND revoked_at IS NULL`, id))
+}
+
+// Tokens returns up to n tokens, revoked ones included, newest first.
+// before is the Seq of the last token of the previous page, or 0.
+func (s *Store) Tokens(ctx context.Context, before int64, n int) ([]Token, error) {
+	q := `SELECT ` + tokenCols + ` FROM api_token`
+	args := []any{}
+	if before > 0 {
+		q += ` WHERE rowid < ?`
+		args = append(args, before)
+	}
+	q += ` ORDER BY rowid DESC LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, q, append(args, n)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Token
+	for rows.Next() {
+		t, err := scanToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // TouchToken records a use of a token.
 func (s *Store) TouchToken(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE api_token SET last_used_at = ? WHERE id = ?`, s.now(), id)
 	return err
 }
 
-// RevokeToken revokes a token.
-func (s *Store) RevokeToken(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE api_token SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, s.now(), id)
-	return err
+// RevokeToken revokes a token. The row stays (soft revoke, D-085).
+// revoked is false when the token was revoked already; an unknown id is
+// ErrNotFound.
+func (s *Store) RevokeToken(ctx context.Context, id string) (t Token, revoked bool, err error) {
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE api_token SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, s.now(), id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		revoked = n == 1
+		t, err = scanToken(tx.QueryRowContext(ctx, `SELECT `+tokenCols+` FROM api_token WHERE id = ?`, id))
+		return err
+	})
+	return t, revoked, err
 }
 
 // Comment is a comment on an Issue.

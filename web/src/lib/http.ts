@@ -8,8 +8,11 @@ import type {
   BlockView,
   ImageView,
   Issue,
+  PageOf,
   Plan,
   PlumbEvent,
+  RevisionDiff,
+  RevisionInfo,
   Run,
   Session,
   TargetView,
@@ -130,6 +133,14 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     getIssue: (id) => call<Issue>("GET", `/issues/${id}`),
     resolveIssue: (id, action, reason) =>
       call<Plan>("POST", `/issues/${id}/resolve`, reason ? { action, reason } : { action }),
+    listRevisions: (cursor, limit = 50) =>
+      call<PageOf<RevisionInfo>>(
+        "GET",
+        `/revisions?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      ),
+    diffRevision: (n, from) =>
+      call<RevisionDiff>("GET", `/revisions/${n}/diff${from !== undefined ? `?from=${from}` : ""}`),
+    rollbackRevision: (n, reason) => call<Plan>("POST", `/revisions/${n}/rollback`, { reason }),
 
     events(since, onEvent, onOpen) {
       // The browser reconnects an EventSource by itself after a network
