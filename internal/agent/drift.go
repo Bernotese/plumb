@@ -290,10 +290,16 @@ func (a *Agent) flushDrift(ctx context.Context, all bool) error {
 		return nil
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Resource < items[j].Resource })
-	if err := a.send(ctx, wire.Report{Type: wire.ReportDrift, Items: items}); err != nil {
-		return err
-	}
+	handled, err := a.sendDrift(ctx, items)
+	a.markSent(handled) // taken, or refused for good one by one
+	return err
+}
+
+// markSent clears the items that are sent (or refused for good), unless
+// they changed meanwhile.
+func (a *Agent) markSent(items []wire.Item) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, it := range items {
 		if cur, ok := a.open[it.Resource]; ok && sameItem(cur, it) {
 			delete(a.dirty, it.Resource)
@@ -302,6 +308,65 @@ func (a *Agent) flushDrift(ctx context.Context, all bool) error {
 			delete(a.resolved, it.Resource)
 		}
 	}
-	a.mu.Unlock()
-	return nil
+}
+
+// Limits of the link for one report (internal/link: maxItems, maxOutput;
+// wire.MaxReportBytes for the body).
+const (
+	maxDriftItems  = 10000
+	maxItemOutput  = 64 << 10
+	maxDriftBytes  = wire.MaxReportBytes * 3 / 4 // room for the envelope
+	truncateMarker = "\n[output truncated by the agent]"
+)
+
+// sendDrift sends drift items within the limits of the link (T-022): the
+// Output of an item is cut to the limit, and the items go out in chunks.
+// A chunk that the controller refuses for good is split, so only an item
+// that is refused on its own is dropped (logged). It returns the items
+// that are handled; on a temporary error, the ones before it.
+func (a *Agent) sendDrift(ctx context.Context, items []wire.Item) ([]wire.Item, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	if len(items) > 1 && (len(items) > maxDriftItems || driftSize(items) > maxDriftBytes) {
+		return a.sendHalves(ctx, items)
+	}
+	err := a.send(ctx, wire.Report{Type: wire.ReportDrift, Items: limitOutput(items)})
+	switch {
+	case err == nil:
+		return items, nil
+	case !permanent(err):
+		return nil, err
+	case len(items) == 1:
+		a.log.Warn("drift item refused for good; dropped", "resource", items[0].Resource, "err", err)
+		return items, nil
+	}
+	return a.sendHalves(ctx, items)
+}
+
+func (a *Agent) sendHalves(ctx context.Context, items []wire.Item) ([]wire.Item, error) {
+	mid := len(items) / 2
+	left, err := a.sendDrift(ctx, items[:mid])
+	if err != nil {
+		return left, err
+	}
+	right, err := a.sendDrift(ctx, items[mid:])
+	return append(left, right...), err
+}
+
+// limitOutput returns copies with Output cut to the link limit.
+func limitOutput(items []wire.Item) []wire.Item {
+	out := make([]wire.Item, len(items))
+	for i, it := range items {
+		if len(it.Output) > maxItemOutput {
+			it.Output = strings.ToValidUTF8(it.Output[:maxItemOutput-len(truncateMarker)], "") + truncateMarker
+		}
+		out[i] = it
+	}
+	return out
+}
+
+func driftSize(items []wire.Item) int {
+	b, _ := json.Marshal(limitOutput(items))
+	return len(b)
 }

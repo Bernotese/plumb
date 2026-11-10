@@ -81,6 +81,10 @@ type controller struct {
 	retryAfter  string         // Retry-After of a failed poll or report
 	reportFail  int            // answer this many reports with failCode
 	resultCode  int            // when set, answer every result report with it
+	driftCode   int            // when set, answer every drift report with it
+	linkLimits  bool           // refuse a drift report above the limits of internal/link (400)
+	rejectRes   string         // refuse every drift report that holds this resource (400)
+	driftTries  int            // drift reports answered with driftCode
 	pollTimes   []time.Time
 	reports     []wire.Report
 	commands    chan wire.Command
@@ -170,6 +174,17 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 		c.mu.Lock()
 		if c.resultCode != 0 && rep.Type == wire.ReportResult {
 			w.WriteHeader(c.resultCode)
+			c.mu.Unlock()
+			return
+		}
+		if rep.Type == wire.ReportDrift && (c.linkLimits && overLinkLimits(rep) || c.rejectRes != "" && holds(rep, c.rejectRes)) {
+			w.WriteHeader(http.StatusBadRequest)
+			c.mu.Unlock()
+			return
+		}
+		if c.driftCode != 0 && rep.Type == wire.ReportDrift {
+			c.driftTries++
+			w.WriteHeader(c.driftCode)
 			c.mu.Unlock()
 			return
 		}
