@@ -67,8 +67,8 @@ func devDocs() []state.Doc {
 
 // devAgents runs one simulated agent per bound target of --dev: the seed
 // targets and every target created through the API (T-024). It follows
-// the target bindings: a new binding starts an agent, a removed binding
-// stops it.
+// the target bindings: a new binding starts an agent, a removed or
+// replaced binding (new guest ref) stops it.
 type devAgents struct {
 	st  *store.Store
 	lk  *link.Link
@@ -81,6 +81,7 @@ type devAgents struct {
 }
 
 type devAgent struct {
+	ref    string // the guest the agent stands for
 	a      *linktest.Agent
 	cancel context.CancelFunc
 }
@@ -136,41 +137,37 @@ func (d *devAgents) sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	bound := map[string]bool{}
+	bound := map[string]string{} // target → guest ref
 	for _, b := range bs {
-		bound[b.Name] = true
+		bound[b.Name] = b.Ref
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for t, a := range d.agents {
-		if !bound[t] {
+		if ref, ok := bound[t]; !ok || ref != a.ref {
 			a.cancel()
 			delete(d.agents, t)
 			d.log.Info("dev agent stopped", "target", t)
 		}
 	}
-	for t := range bound {
+	for t, ref := range bound {
 		if d.agents[t] == nil {
-			d.start(ctx, t)
+			d.start(ctx, t, ref)
 			d.log.Info("dev agent started", "target", t)
 		}
 	}
 	return nil
 }
 
-// start runs a simulated agent for target. d.mu is held.
-func (d *devAgents) start(ctx context.Context, target string) {
+// start runs a simulated agent for the guest ref of target. d.mu is held.
+func (d *devAgents) start(ctx context.Context, target, ref string) {
 	token := func() (string, bool) {
-		b, err := d.st.GetBinding(ctx, state.KindTarget, target)
-		if err != nil {
-			return "", false
-		}
-		boot, ok := d.drv.Bootstrap(driver.GuestID(b.Ref))
+		boot, ok := d.drv.Bootstrap(driver.GuestID(ref))
 		return boot.Token, ok
 	}
 	a := linktest.New(d.lk.Handler(), token)
 	actx, cancel := context.WithCancel(ctx)
-	d.agents[target] = &devAgent{a: a, cancel: cancel}
+	d.agents[target] = &devAgent{ref: ref, a: a, cancel: cancel}
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -187,12 +184,10 @@ func (d *devAgents) stopAll() {
 	}
 }
 
-// seedDev starts the simulated agents and, on an empty store, plans and
-// approves the seed documents (D-039). With demo it adds the demo data of
-// D-080: one open drift Issue and one pending Plan.
-func seedDev(ctx context.Context, st *store.Store, events *event.Log, eng *plan.Engine, lk *link.Link, drv *fake.Driver, demo bool, log *slog.Logger) error {
-	agents := newDevAgents(st, lk, drv, log)
-	go agents.run(ctx, events)
+// seedDev plans and approves the seed documents on an empty store
+// (D-039). With demo it adds the demo data of D-080: one open drift Issue
+// and one pending Plan. agents must run.
+func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, agents *devAgents, demo bool, log *slog.Logger) error {
 	if _, err := st.Head(ctx); err == nil {
 		if demo {
 			log.Info("demo data skipped: store already seeded")

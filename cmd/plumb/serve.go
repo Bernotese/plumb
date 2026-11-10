@@ -256,8 +256,15 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		httpSrv.Shutdown(shut)
 	}()
 	if f.dev {
+		// The simulated agents stop before runServer returns and the store
+		// closes (review T-024 m1).
+		actx, stop := context.WithCancel(ctx)
+		agents := newDevAgents(st, lk, drv.(*fake.Driver), log)
+		agentsDone := make(chan struct{})
+		go func() { agents.run(actx, events); close(agentsDone) }()
+		defer func() { stop(); <-agentsDone }()
 		go func() {
-			if err := seedDev(ctx, st, events, eng, lk, drv.(*fake.Driver), f.devDemo, log); err != nil && ctx.Err() == nil {
+			if err := seedDev(actx, st, eng, lk, agents, f.devDemo, log); err != nil && actx.Err() == nil {
 				log.Error("dev seed", "err", err)
 			}
 		}()

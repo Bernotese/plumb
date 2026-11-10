@@ -16,7 +16,9 @@ import (
 	"time"
 )
 
-// devAgentRuns counts the goroutines that run a simulated agent.
+// devAgentRuns counts the goroutines that run a simulated agent. The
+// count is global for the process: tests that use it must not run in
+// parallel.
 func devAgentRuns() int {
 	var b bytes.Buffer
 	pprof.Lookup("goroutine").WriteTo(&b, 2)
@@ -101,14 +103,21 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		}
 		return resp.StatusCode
 	}
-	// The seed is done when the demo Plan is pending.
+	// The seed is done when the demo Plan is pending. The seed Plan is
+	// pending too for a moment, so match the demo Plan by its reason.
 	eventually(t, "demo plan", 30*time.Second, func() bool {
-		var pl struct{ Items []json.RawMessage }
-		return call("GET", "/api/v1/plans?status=pending", nil, &pl) == 200 && len(pl.Items) == 1
+		var pl struct{ Items []struct{ Reason string } }
+		if call("GET", "/api/v1/plans?status=pending", nil, &pl) != 200 {
+			return false
+		}
+		for _, p := range pl.Items {
+			if strings.HasPrefix(p.Reason, "demo:") {
+				return true
+			}
+		}
+		return false
 	})
-	if n := devAgentRuns(); n != 2 {
-		t.Fatalf("seed: %d agents, want 2", n)
-	}
+	eventually(t, "2 seed agents", 5*time.Second, func() bool { return devAgentRuns() == 2 })
 
 	apply := func(reason string, body map[string]any) {
 		t.Helper()
@@ -137,9 +146,7 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		"guest":  map[string]any{"cores": 1, "memory": 1024, "disk": 10, "bridge": "vmbr0"},
 		"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "Hello from web3"}}},
 	}}}})
-	if n := devAgentRuns(); n != 3 {
-		t.Fatalf("after create: %d agents, want 3", n)
-	}
+	eventually(t, "agent of web3", 5*time.Second, func() bool { return devAgentRuns() == 3 })
 	apply("delete web3", map[string]any{"delete": []any{map[string]any{"kind": "Target", "name": "web3"}}})
 	eventually(t, "agent of web3 stops", 5*time.Second, func() bool { return devAgentRuns() == 2 })
 
@@ -147,5 +154,8 @@ func TestDevAgentForNewTarget(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "all agents stop", 5*time.Second, func() bool { return devAgentRuns() == 0 })
+	// runServer waits for its agents (review T-024 m1).
+	if n := devAgentRuns(); n != 0 {
+		t.Fatalf("after shutdown: %d agents run", n)
+	}
 }
