@@ -49,5 +49,4 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 ## Open for the user
 - Give `jannes` Docker access on the dev VM: `sudo usermod -aG docker jannes` and `sudo setfacl -m u:jannes:rw /var/run/docker.sock`.
 - Provide the Proxmox test host (fully updated PVE 9.2: qemu-server ≥ 9.2.11, libpve-storage-perl ≥ 9.1.13; needs: ARCHITECTURE §8).
-- Restart `pl-codex-fix` (Codex session error after `/new`).
 - Optional: delete old temp dirs `/tmp/plumb-e2e-*` on the dev VM.
