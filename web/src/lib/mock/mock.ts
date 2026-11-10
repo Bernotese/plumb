@@ -6,6 +6,7 @@ import type { PlumbApi } from "../client";
 import type {
   BlockDoc,
   BlockView,
+  DocumentChange,
   ImageView,
   Change,
   Issue,
@@ -15,9 +16,11 @@ import type {
   Problem,
   Proposal,
   ResourcePlan,
+  RevisionInfo,
   Risk,
   Run,
   Session,
+  StateDocument,
   TargetDoc,
   TargetView,
 } from "../types";
@@ -252,6 +255,93 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     ...[...targets.values()].map((t) => t.revision),
     ...[...plans.values()].map((p) => p.revision ?? 0),
   );
+  // Revision history (T-034): one document snapshot per revision. The head
+  // is the example state; revision 6 is the head with the diffRevision
+  // example undone; revision 5 is a seed with the old memory of db1 (the
+  // reason of revision 6). An older base is the empty state (from: null).
+  type Snapshot = Map<string, StateDocument>;
+  const docKey = (d: { kind: string; name: string }) => `${d.kind}/${d.name}`;
+  const headDocs: Snapshot = new Map();
+  for (const d of [
+    ...images.map((i) => i.document),
+    ...blockViews.map((b) => b.document),
+    ...[...targets.values()].map((t) => t.document),
+  ] as StateDocument[])
+    headDocs.set(docKey(d), d);
+  const revisions = new Map<number, { info: RevisionInfo; docs: Snapshot }>();
+  {
+    const listed = exampleItems<RevisionInfo>(example("listRevisions", 200));
+    const diff = example("diffRevision", 200);
+    const r6 = new Map(headDocs);
+    for (const c of diff.changes) {
+      if (c.before) r6.set(docKey(c), c.before);
+      else r6.delete(docKey(c));
+    }
+    const r5 = new Map(r6);
+    const db1 = r5.get("Target/db1") as TargetDoc | undefined;
+    if (db1) {
+      const old = structuredClone(db1);
+      (old.spec.guest as Record<string, unknown>)["memory"] = 4096;
+      r5.set("Target/db1", old);
+    }
+    const snaps: Record<number, Snapshot> = { [head]: headDocs, [diff.from ?? 0]: r6, 5: r5 };
+    for (const info of listed) {
+      const docs = snaps[info.id];
+      if (docs) revisions.set(info.id, { info: { ...info, documents: docs.size }, docs });
+    }
+    revisions.set(5, {
+      info: {
+        id: 5,
+        author: "system",
+        reason: "Seeded by the demo.",
+        plan_id: null,
+        created_at: "2026-11-09T08:00:00Z",
+        documents: r5.size,
+      },
+      docs: r5,
+    });
+    // The examples of the other screens may name a newer head.
+    for (let n = Math.max(...revisions.keys()) + 1; n <= head; n++) {
+      revisions.set(n, {
+        info: {
+          id: n,
+          author: "user:admin",
+          reason: "Demo revision.",
+          plan_id: null,
+          created_at: "2026-11-10T09:00:00Z",
+          documents: headDocs.size,
+        },
+        docs: new Map(headDocs),
+      });
+    }
+  }
+
+  function findRevision(n: number) {
+    const r = revisions.get(n);
+    if (!r) throw problem("not-found", "Not found", 404, `Revision ${n} does not exist.`);
+    return r;
+  }
+
+  /** Documents that differ from `a` to `b`, sorted by kind and name. */
+  function diffDocs(a: Snapshot, b: Snapshot): DocumentChange[] {
+    const keys = [...new Set([...a.keys(), ...b.keys()])].sort();
+    const out: DocumentChange[] = [];
+    for (const k of keys) {
+      const before = a.get(k) ?? null;
+      const after = b.get(k) ?? null;
+      if (same(before, after)) continue;
+      const ref = (after ?? before) as StateDocument;
+      out.push({
+        kind: ref.kind,
+        name: ref.name,
+        op: !before ? "added" : !after ? "removed" : "changed",
+        before: structuredClone(before),
+        after: structuredClone(after),
+      });
+    }
+    return out;
+  }
+
   let nextPlan = Math.max(...plans.keys()) + 1;
   let nextRun = Math.max(...runs.keys()) + 1;
   let seq = 1100;
@@ -443,7 +533,22 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       if (p.status !== "pending")
         throw problem("conflict", "Plan is not pending", 409, `Plan ${id} is ${p.status}.`);
+      const proposal = pendingDocs.get(p.id);
+      const docs = new Map(findRevision(head).docs);
+      for (const d of proposal?.put ?? []) docs.set(docKey(d), structuredClone(d));
+      for (const d of proposal?.delete ?? []) docs.delete(docKey(d));
       head += 1;
+      revisions.set(head, {
+        info: {
+          id: head,
+          author: s.principal,
+          reason: p.reason,
+          plan_id: p.id,
+          created_at: now(),
+          documents: docs.size,
+        },
+        docs,
+      });
       p.status = "approved";
       p.approved_by = s.principal;
       p.approved_at = now();
@@ -479,9 +584,18 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           emit("plan.stale", `plan:${other.id}`, {});
         }
       }
-      const proposal = pendingDocs.get(p.id);
+      emit("revision.committed", `revision:${head}`, { plan_id: p.id });
       const job = simulate(run, p, () => {
+        for (const ref of proposal?.delete ?? [])
+          if (ref.kind === "Target") targets.delete(ref.name);
         for (const doc of proposal?.put ?? []) {
+          if (doc.kind === "Block") {
+            const b = doc as BlockDoc;
+            const view = blockViews.find((v) => v.document.name === b.name);
+            if (view) Object.assign(view, { revision: head, document: b });
+            else blockViews.push({ revision: head, document: b });
+            blocks.set(b.name, b);
+          }
           if (doc.kind !== "Target") continue;
           const t = doc as TargetDoc;
           const prev = targets.get(t.name);
@@ -580,6 +694,72 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       issue.plan_id = p.id;
       issue.actions = [];
       emit("issue.updated", `issue:${id}`, { plan_id: p.id });
+      return p;
+    },
+    async listRevisions(cursor, limit = 50) {
+      auth();
+      const all = [...revisions.values()].map((r) => r.info).sort((a, b) => b.id - a.id);
+      // The mock cursor is the id of the first item of the page.
+      const from = cursor ? Number(cursor) : Infinity;
+      const rest = all.filter((r) => r.id <= from);
+      const items = rest.slice(0, limit);
+      const next = rest[limit];
+      return structuredClone({ items, next: next ? String(next.id) : null });
+    },
+    async diffRevision(n, from) {
+      auth();
+      const to = findRevision(n);
+      const base = from ?? n - 1;
+      if (from !== undefined) findRevision(from);
+      const before = revisions.get(base);
+      return {
+        from: before ? base : null,
+        to: n,
+        changes: diffDocs(before?.docs ?? new Map(), to.docs),
+      };
+    },
+    async rollbackRevision(n, reason) {
+      auth();
+      if (!reason.trim()) {
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [{ pointer: "/reason", message: "A reason is required." }],
+        });
+      }
+      const target = findRevision(n);
+      const changes = diffDocs(findRevision(head).docs, target.docs);
+      if (changes.length === 0) {
+        const e = example("rollbackRevision", 409);
+        throw new ApiError({
+          ...e,
+          detail: `Revision ${n} has the same documents as the head revision.`,
+        });
+      }
+      const proposal: Proposal = {
+        reason,
+        put: changes.flatMap((c) => (c.after ? [c.after] : [])),
+        delete: changes.filter((c) => !c.after).map((c) => ({ kind: c.kind, name: c.name })),
+      };
+      const planTargets = changes
+        .filter((c) => c.kind === "Target" && c.after)
+        .map((c) => ({
+          target: c.name,
+          resources: planTarget(
+            targets.get(c.name)?.document.spec,
+            (c.after as TargetDoc).spec,
+            blocks,
+          ),
+        }));
+      const warnings = changes
+        .filter((c) => c.kind === "Target" && !c.after)
+        .map((c) => `Target ${c.name} is removed from Plumb. Plumb does not delete its guest.`);
+      const p = newPlan({
+        origin: "rollback",
+        issue_id: null,
+        reason,
+        targets: planTargets,
+        warnings,
+      });
+      pendingDocs.set(p.id, proposal);
       return p;
     },
     events(since, onEvent, onOpen) {

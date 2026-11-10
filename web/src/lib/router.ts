@@ -10,6 +10,8 @@ export type Route =
   | { name: "run"; id: number }
   | { name: "issues" }
   | { name: "issue"; id: number }
+  | { name: "history" }
+  | { name: "revision"; id: number }
   | { name: "not-found"; path: string };
 
 const NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
@@ -40,6 +42,8 @@ export function parse(hash: string): Route {
   if (a === "runs" && n) return { name: "run", id: n };
   if (parts.length === 1 && a === "issues") return { name: "issues" };
   if (a === "issues" && n) return { name: "issue", id: n };
+  if (parts.length === 1 && a === "history") return { name: "history" };
+  if (a === "revisions" && n) return { name: "revision", id: n };
   return { name: "not-found", path };
 }
 
@@ -63,6 +67,10 @@ export function href(r: Route): string {
       return "#/issues";
     case "issue":
       return `#/issues/${r.id}`;
+    case "history":
+      return "#/history";
+    case "revision":
+      return `#/revisions/${r.id}`;
     case "not-found":
       return `#${r.path}`;
   }

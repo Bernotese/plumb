@@ -5,9 +5,12 @@ import type {
   ImageView,
   Issue,
   IssueAction,
+  PageOf,
   Plan,
   PlumbEvent,
   Proposal,
+  RevisionDiff,
+  RevisionInfo,
   Run,
   Session,
   TargetView,
@@ -29,6 +32,12 @@ export interface PlumbApi {
   listIssues(): Promise<Issue[]>;
   getIssue(id: number): Promise<Issue>;
   resolveIssue(id: number, action: IssueAction, reason?: string): Promise<Plan>;
+  /** One page of revisions, newest first (T-034). */
+  listRevisions(cursor?: string, limit?: number): Promise<PageOf<RevisionInfo>>;
+  /** The documents that differ between `from` (default n-1) and revision `n`. */
+  diffRevision(n: number, from?: number): Promise<RevisionDiff>;
+  /** Plans a rollback to revision `n`: a Plan with origin `rollback`. */
+  rollbackRevision(n: number, reason: string): Promise<Plan>;
   /**
    * Subscribes to the event stream: events after `since`, or only new ones
    * when `since` is undefined. Reconnects by itself. Returns the unsubscribe

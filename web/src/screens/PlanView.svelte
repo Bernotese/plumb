@@ -90,6 +90,10 @@
           ? `, ${restarts} restart${restarts === 1 ? "" : "s"}`
           : ""}
       </dd>
+      {#if plan.origin === "rollback"}
+        <dt>Origin</dt>
+        <dd>Rollback to an earlier revision</dd>
+      {/if}
       {#if plan.issue_id}
         <dt>Issue</dt>
         <dd>
