@@ -2,7 +2,7 @@
 
 - **Owner:** pl-codex-qa   · **Reviewer:** pl-reviewer   · **QA:** –
 - **Size:** S (Codex)   · **Depends on:** T-010 (merged), T-018 (PR #13 merged)
-- **Status:** draft ready; requires PR #8 and PR #13 first
+- **Status:** local validation passed; awaiting PR #21 CI
 
 ## Goal
 The open T-010 criterion is closed: the core flow is proven with the real agent code, not only with the fake agent.
@@ -23,8 +23,8 @@ The open T-010 criterion is closed: the core flow is proven with the real agent 
 
 ## Result (owner, max 8 lines)
 `pl-codex-qa/T-021-real-agent-flow` · see draft PR commits.
-Based on remote T-018 `29aa0a4`, with origin/main `8f591ab` merged (`ea0e811`).
+Merged origin/main `f4b8da1` after PR #8, #5 and #13; resolved squash conflicts with main.
 New test-only code: `internal/issue/real_agent_flow_test.go` (137 lines).
-Focused tests and `make lint test` pass locally; no C compiler for local race checks.
-CI `make test-race` passed on `f07a8a2` (run `42750604704`).
-Draft PR #21 must wait for PR #8 and PR #13.
+`make lint test` and focused flow/concurrent approval tests with `-count=10` pass.
+Only this card and the original T-021 test file differ from main.
+PR #21 CI includes the race detector and Debian/Ubuntu guest tests.
