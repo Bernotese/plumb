@@ -10,15 +10,17 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/guest.test" ./test/guest
 for distro in debian:13 ubuntu:26.04; do
-  image="plumb-guest-${distro//:/-}"
-  name="${image}-$$"
+  image="plumb-guest-${distro//:/-}-$$"
+  name="$image"
   docker build --build-arg "DISTRO=$distro" -t "$image" test/guest
   containers+=("$name")
-  docker run -d --name "$name" --privileged --cgroupns=host \
+  # Privileged mode gives systemd a writable private cgroup on cgroup v2.
+  # Only the read-only test binary is mounted; host system paths need review.
+  docker run -d --name "$name" --privileged --cgroupns=private \
     --tmpfs /run --tmpfs /run/lock \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     -v "$tmp/guest.test:/guest.test:ro" "$image"
   ready=false
   for ((attempt=0; attempt<60; attempt++)); do

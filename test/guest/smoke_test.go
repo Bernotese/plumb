@@ -10,6 +10,9 @@ import (
 )
 
 func TestPackageAndService(t *testing.T) {
+	if _, err := os.Stat("/.dockerenv"); err != nil && os.Getenv("container") != "docker" {
+		t.Skip("guest test requires a Docker container")
+	}
 	comm, err := os.ReadFile("/proc/1/comm")
 	if err != nil || strings.TrimSpace(string(comm)) != "systemd" {
 		t.Fatalf("PID 1 must be systemd: comm=%q err=%v", comm, err)

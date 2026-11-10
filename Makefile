@@ -43,7 +43,7 @@ lint-go:
 lint-web:
 	@echo "lint-web: stub, filled by T-017"
 
-## test-guest: resource tests in privileged Debian and Ubuntu systemd containers
+## test-guest: resource tests in privileged Debian/Ubuntu containers (images kept for cache)
 test-guest:
 	bash test/guest/run.sh
 
