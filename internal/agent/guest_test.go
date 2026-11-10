@@ -203,36 +203,58 @@ func TestGuestAgentLoop(t *testing.T) {
 	const secret = "plumb-canary-version-9a7f23"
 	pkg := wire.Resource{ID: "package:less", Type: "package", Block: "canary",
 		Attrs: map[string]any{"name": "less", "strictness": "exact", "version": secret}, Sensitive: []string{"version"}}
+	for len(runner.errors) > 0 {
+		<-runner.errors
+	}
 	id, err = ctl.Send("guest", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{pkg},
 		Planned: unverified(pkg), MaxRisk: wire.RiskDisruptive})
 	if err != nil {
 		t.Fatal(err)
 	}
+	resultSeen, driftSeen := false, false
 	deadline := time.After(30 * time.Second)
 	for {
 		select {
 		case d := <-deliveries:
-			if d.Report.Type != wire.ReportResult || d.Report.CommandID != id {
+			if d.Report.Type == wire.ReportDrift {
+				for _, it := range d.Report.Items {
+					driftSeen = driftSeen || (it.Resource == pkg.ID && it.Status == wire.StatusDiffers)
+				}
+			}
+			if d.Report.Type == wire.ReportResult && d.Report.CommandID == id {
+				resultSeen = true
+				if len(d.Report.Items) != 1 || d.Report.Items[0].Status != wire.StatusFailed || d.Report.Items[0].Output != resource.HiddenOutput {
+					t.Fatalf("canary did not exercise a tool failure: %+v", d)
+				}
+				found := false
+				for len(runner.errors) > 0 {
+					rawErr := <-runner.errors
+					found = strings.Contains(rawErr.Error(), secret) || found
+				}
+				if !found {
+					t.Fatal("canary did not reach the agent's real tool stderr")
+				}
+				stored, err := os.ReadFile(filepath.Join(reports, id+"-"+string(wire.ReportResult)))
+				if err != nil || strings.Contains(string(stored), secret) || !strings.Contains(string(stored), resource.HiddenOutput) {
+					t.Fatalf("controller stored an unsafe canary result: %s: %v", stored, err)
+				}
+			}
+			if !resultSeen || !driftSeen {
 				continue
 			}
-			if len(d.Report.Items) != 1 || d.Report.Items[0].Status != wire.StatusFailed || d.Report.Items[0].Output != resource.HiddenOutput {
-				t.Fatalf("canary did not exercise a tool failure: %+v", d)
+			entries, err := os.ReadDir(reports)
+			if err != nil {
+				t.Fatal(err)
 			}
-			found := false
-			for len(runner.errors) > 0 {
-				rawErr := <-runner.errors
-				found = strings.Contains(rawErr.Error(), secret) || found
-			}
-			if !found {
-				t.Fatal("canary did not reach the agent's real tool stderr")
-			}
-			stored, err := os.ReadFile(filepath.Join(reports, id+"-"+string(wire.ReportResult)))
-			if err != nil || strings.Contains(string(stored), secret) || !strings.Contains(string(stored), resource.HiddenOutput) {
-				t.Fatalf("controller stored an unsafe canary result: %s: %v", stored, err)
+			for _, entry := range entries {
+				stored, err := os.ReadFile(filepath.Join(reports, entry.Name()))
+				if err != nil || strings.Contains(string(stored), secret) {
+					t.Fatalf("unsafe stored report %s: %s: %v", entry.Name(), stored, err)
+				}
 			}
 			return
 		case <-deadline:
-			t.Fatal("no canary result")
+			t.Fatal("missing canary result or drift report")
 		}
 	}
 }
