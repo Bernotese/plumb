@@ -13,13 +13,13 @@ The Go side builds, tests and lints. The Go contracts that the other slice cards
 
 ## Acceptance criteria
 - [ ] Layout as in ARCHITECTURE §9. Go module `github.com/Bernotese/plumb`. `plumb version` and `plumb-agent version` print a version.
-- [ ] `internal/wire`: types for enroll, poll, report and the commands `observe`, `apply`, `watch`. A resource has `id`, `type`, `block`, `attrs` and `sensitive` (attribute names). Types only.
+- [ ] `internal/wire`: types for enroll, poll, report and the commands `observe`, `apply`, `watch`. A resource has `id`, `type`, `block`, `attrs` and `sensitive` (attribute names). A change of a sensitive attribute has only a `changed` flag, no `from` and no `to`. Types only.
 - [ ] `internal/resource`: `Resource` interface, registry, and JSON Schemas for `file`, `directory`, `package`, `service` (with `restart_on`), `user`. No implementations.
 - [ ] `internal/driver`: `Driver` interface with seven methods (including `Diff`) and its types. No implementation.
 - [ ] `internal/state/schema`: JSON Schemas for the documents `Image` (with pinned `sha256`), `Block`, `Target`.
 - [ ] `internal/store/migrations/0001_init.sql`: tables for the slice (ARCHITECTURE §3).
 - [ ] A test checks the import rules of ARCHITECTURE §2.
-- [ ] `Makefile`: `build`, `test`, `lint`, `test-guest` (stub), `test-pve` (stub). A GitHub Actions workflow runs lint, test and build on every PR.
+- [ ] `Makefile`: `build`, `test`, `lint`, `test-guest` (stub), `test-pve` (stub), `build-web` and `lint-web` (stubs that T-017 fills). A GitHub Actions workflow runs lint, test and build on every PR.
 - [ ] Tests: `make lint test build` passes on a clean checkout. CI is green.
 
 ## Out of scope

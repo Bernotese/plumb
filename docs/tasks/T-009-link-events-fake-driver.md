@@ -20,7 +20,7 @@ The controller can enroll agents, send them commands and receive reports. A fake
 - [ ] Command queue per agent with long poll. A target is online when it polled in the last 90 s.
 - [ ] Reports have a size limit and are validated against the `wire` types.
 - [ ] `event`: append to the store and subscribe from a sequence number.
-- [ ] `driver/fake`: guests in memory, async tasks, config digest, `Diff` with risks. Tests can inject failures and outside changes.
+- [ ] `driver/fake`: guests in memory, async tasks, config digest, `Diff` with risks and the same create-only fields as the Proxmox driver. Tests can inject failures and outside changes.
 - [ ] Tests: `go test ./internal/link/... ./internal/event/... ./internal/driver/...` passes. Negative tests: token reuse, expired token, token of another target, credential of another target, oversized report.
 
 ## Out of scope

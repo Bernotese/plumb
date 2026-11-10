@@ -14,6 +14,7 @@ The agent can enroll, run commands from the controller and report drift.
 ## Acceptance criteria
 - [ ] Enroll: URL and CA come from `/etc/plumb-agent/agent.json`. The token comes from a configurable source (default: `/sys/class/dmi/id/product_serial`). The agent stores the credential with mode 0600.
 - [ ] After a successful enrollment the agent creates `/etc/cloud/cloud-init.disabled`.
+- [ ] On a 401 the agent drops the old credential, reads the token source again and enrolls again, with backoff. It never stops and never loops on the old credential. A test rejects the credential, sets a new token and expects a new enrollment.
 - [ ] The agent refuses any TLS certificate that the pinned CA did not sign. A test uses a certificate from another CA.
 - [ ] Poll loop with backoff. It handles `observe`, `apply` and `watch`. `apply` observes again and refuses a change above `max_risk`.
 - [ ] Order: listed order inside a Block, Blocks in parallel. A `restart` change is added when a `restart_on` resource changed, and runs after it.

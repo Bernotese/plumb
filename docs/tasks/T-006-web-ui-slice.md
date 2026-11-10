@@ -16,7 +16,7 @@ The user can see targets, create a target from an image and Blocks, read a plan,
 - [ ] Screens: login with forced password change · target list with status (in plumb, out of plumb, applying, offline) · new target · plan preview · run view · issue inbox · issue detail.
 - [ ] New target: choose image, guest settings and Blocks. A form is built from the JSON Schema of each Block: string, number, boolean, enum, multi-line text, list of strings, default, required.
 - [ ] Plan preview: changes per target, one risk badge per change (restarts are visible), reason field, approve button. A stale plan shows a clear message.
-- [ ] Run view: live steps from the event stream. Issue detail: diff, `Accept`, `Revert`. A sensitive attribute shows "changed (hidden)" and has no `Accept`.
+- [ ] Run view: live steps from the event stream. Issue detail: diff, `Accept`, `Revert`. A sensitive attribute shows "changed (hidden)" and has no `Accept`. Create-only fields are read-only when the user edits an existing target.
 - [ ] The mock uses the examples of `api/openapi.yaml`. API types are generated, not hand-written.
 - [ ] Keyboard use works on every screen. Every input has a label. Light and dark theme.
 - [ ] The PR has `browser-shot` screenshots of every screen (light and dark).

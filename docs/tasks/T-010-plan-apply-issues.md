@@ -14,6 +14,7 @@ A proposal becomes a Plan, an approved Plan becomes a Revision and a Run, and dr
 ## Acceptance criteria
 - [ ] `plan`: proposal → validate → render → observe (agents and driver) → Plan with changes and risk. `restart` changes are part of the Plan.
 - [ ] The Plan fails with a clear reason only when a target that the proposal touches is offline. Other offline targets do not matter.
+- [ ] A proposal that changes a create-only field of an existing target (`ip`, bootstrap user, `disk`) is refused with a clear message.
 - [ ] A new target plans `guest:config` as create and lists its resources as "unverified until first boot".
 - [ ] Approve: fails when the Plan is stale. It takes a check function for the rights of the principal (used by T-011).
 - [ ] Approve commits the Revision with author, reason and plan id, then starts the Run.

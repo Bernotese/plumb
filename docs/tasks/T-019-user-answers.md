@@ -27,7 +27,9 @@ Review: https://github.com/Bernotese/plumb/pull/1#pullrequestreview-5835523725 (
 - [ ] Nits: fix the cheap ones.
 
 ## Result (owner, max 8 lines)
-T-019 done · branch `pl-architect/T-001-architecture` · PR #1 · tests: none (docs only)
-- D-019, D-030, D-032 are final (no "pending"). New: D-040 (LAN only, Plumb CA certificate), D-041 (test host later; blocked cards).
-- ARCHITECTURE §11 now shows the five answers. Only the test host is open.
-- Wave plan (T-001 card): explicit list of cards that start without the host. T-012, T-013 and the real-host part of T-015 are marked blocked.
+T-019 done (part 1 + 2) · branch `pl-architect/T-001-architecture` · PR #1 · tests: none (docs only)
+- Part 1: D-019, D-030, D-032 final. New D-040 (LAN only, Plumb CA certificate), D-041 (test host later). §11 shows the answers; wave plan lists cards without the host.
+- Should 1: `ip`, bootstrap user and `disk` are create-only in the slice; disk grow moved to the roadmap (D-025, §5, T-009, T-010, T-012, T-006).
+- Should 2: sensitive attributes report only changed / not changed, no hash (D-037, §7, T-003, T-005).
+- Should 3: the agent re-enrolls on 401 (D-038, §5, T-018).
+- Nits: all 4 fixed (smbios `uuid` kept, CA key backup note, decision range, Makefile stubs in T-003/T-017).
