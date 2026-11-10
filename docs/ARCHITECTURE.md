@@ -78,7 +78,7 @@ spec:
 - Order: resources of one Block apply in the listed order. Different Blocks apply in parallel. Package-manager operations share one lock per guest.
 - Restart: `service` has `restart_on: [resource ids]`. When a listed resource changes, the agent adds a `restart` change (risk `disruptive`) to the service and applies it after them. The Plan shows this change.
 - Each resource type states its target kinds (`vm`, `lxc`). The Proxmox settings of a target are one resource, `guest:config`. The driver handles it, not the agent. So plans and issues have one shape for both levels.
-- Tables: `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `binding` (document → driver id), `agent`, `enroll_token`, `event`, `secret`, `user`, `session`, `api_token`.
+- Tables of the first slice (migration 0001): `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `binding` (document → driver id), `agent`, `enroll_token`, `event`, `user`, `session`, `api_token`. The table `secret` comes with the secret store, in its own migration (§10).
 
 ## 4. Change flow and API (D-022, D-023)
 1. A client sends a **proposal**: documents to put or delete, and a reason.

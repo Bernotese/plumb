@@ -14,7 +14,8 @@ import (
 
 const module = "github.com/Bernotese/plumb"
 
-// mayImport is the "May import" column of ARCHITECTURE §2.
+// mayImport is the "May import" column of ARCHITECTURE §2, copied 1:1.
+// (api may import store: sessions and API tokens live there.)
 // Every package may also import wire and its own sub-packages.
 // A new package or a new arrow needs a change of ARCHITECTURE §2 first.
 var mayImport = map[string][]string{

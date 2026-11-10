@@ -45,6 +45,8 @@ func openMigrated(t *testing.T) *sql.DB {
 
 func TestMigrationsCreateSliceTables(t *testing.T) {
 	db := openMigrated(t)
+	// The exact list of ARCHITECTURE §3. The secret table is not in the
+	// first slice; the secret store adds it with its own migration.
 	want := []string{
 		"agent", "api_token", "binding", "doc", "enroll_token", "event", "issue",
 		"plan", "revision", "revision_doc", "run", "run_step", "session", "user",
