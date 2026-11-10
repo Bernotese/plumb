@@ -2,3 +2,4 @@ node_modules/
 dist/*
 !dist/.gitkeep
 src/lib/api.gen.ts
+src/lib/mock/examples.gen.json

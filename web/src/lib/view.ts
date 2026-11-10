@@ -1,0 +1,70 @@
+// Display rules shared by the screens. Pure functions, tested in view.test.ts.
+import type { Change, Risk, TargetView } from "./types";
+
+export type Tone = "ok" | "warn" | "danger" | "info" | "muted";
+
+/** The four user-facing target states of the card, plus the rare ones. */
+export function targetState(t: TargetView): { label: string; tone: Tone; detail: string } {
+  const s = t.status;
+  if (s.agent === "offline") {
+    return { label: "Offline", tone: "muted", detail: "The agent has not polled in the last 90 s." };
+  }
+  switch (s.phase) {
+    case "ready":
+      return { label: "In Plumb", tone: "ok", detail: "The guest matches the desired state." };
+    case "drifted":
+      return {
+        label: "Out of Plumb",
+        tone: "warn",
+        detail: `${s.open_issues} open issue${s.open_issues === 1 ? "" : "s"}.`,
+      };
+    case "applying":
+    case "provisioning":
+    case "enrolling":
+      return { label: "Applying", tone: "info", detail: `Phase: ${s.phase}.` };
+    case "pending":
+      return { label: "Pending", tone: "muted", detail: "No guest yet." };
+    case "error":
+      return { label: "Error", tone: "danger", detail: "The last run failed." };
+  }
+}
+
+export const riskTone: Record<Risk, Tone> = {
+  read: "muted",
+  reversible: "ok",
+  disruptive: "warn",
+  destructive: "danger",
+};
+
+export const riskOrder: Risk[] = ["read", "reversible", "disruptive", "destructive"];
+
+export function maxRisk(risks: Risk[]): Risk {
+  return risks.reduce<Risk>(
+    (hi, r) => (riskOrder.indexOf(r) > riskOrder.indexOf(hi) ? r : hi),
+    "read",
+  );
+}
+
+export function isSensitive(c: Change): c is Extract<Change, { sensitive: true }> {
+  return "sensitive" in c && c.sensitive === true;
+}
+
+/** Text of one side of a change. A missing value means "not there". */
+export function valueText(v: unknown): string {
+  if (v === undefined || v === null) return "(not there)";
+  if (typeof v === "string") return v === "" ? '""' : v;
+  if (Array.isArray(v)) return v.length === 0 ? "(empty list)" : v.map(String).join("\n");
+  return JSON.stringify(v);
+}
+
+/** One change as text pairs for display: sensitive values are never shown. */
+export function changeView(c: Change): { attr: string; from: string; to: string; hidden: boolean } {
+  if (isSensitive(c)) return { attr: c.attr, from: "", to: "", hidden: true };
+  return { attr: c.attr, from: valueText(c.from), to: valueText(c.to), hidden: false };
+}
+
+export function formatTime(iso: string | null | undefined): string {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}

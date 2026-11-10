@@ -178,6 +178,15 @@ paths:
                         type: vm
                         url: https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img
                         sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                  - revision: 7
+                    document:
+                      kind: Image
+                      name: debian-13
+                      spec:
+                        title: Debian 13 (trixie)
+                        type: vm
+                        url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+                        sha256: 9a8b7c6d5e4f30211203f4e5d6c7b8a99a8b7c6d5e4f30211203f4e5d6c7b8a9
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -247,6 +256,46 @@ paths:
                               name: "{{ .name }}"
                               shell: /bin/bash
                               ssh_keys: ["{{ .ssh_key }}"]
+                  - revision: 7
+                    document:
+                      kind: Block
+                      name: motd
+                      spec:
+                        description: Message of the day.
+                        params:
+                          type: object
+                          properties:
+                            text: { type: string, title: Message, default: Managed by Plumb. }
+                        resources:
+                          - file: { path: /etc/motd, content: "{{ .text }}\n", mode: "0644" }
+                  - revision: 7
+                    document:
+                      kind: Block
+                      name: web-app
+                      spec:
+                        title: Web app
+                        description: An nginx site in front of an app port.
+                        params:
+                          type: object
+                          required: [server_names]
+                          properties:
+                            server_names:
+                              type: array
+                              title: Server names
+                              items: { type: string }
+                              minItems: 1
+                            port: { type: integer, title: App port, default: 8080, minimum: 1, maximum: 65535 }
+                            tls: { type: boolean, title: Serve HTTPS, default: false }
+                            log_level: { type: string, title: Log level, enum: [error, warn, info], default: warn }
+                            extra_config:
+                              type: string
+                              title: Extra nginx config
+                              contentMediaType: text/plain
+                              default: ""
+                        resources:
+                          - package: { name: nginx }
+                          - file: { path: /etc/nginx/sites-enabled/app.conf, content: "server_name {{ .server_names }};\n" }
+                          - service: { name: nginx, restart_on: ["file:/etc/nginx/sites-enabled/app.conf"] }
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -325,6 +374,66 @@ paths:
                       applied_revision: 7
                       open_issues: 1
                       last_run_id: 3
+                  - revision: 6
+                    document:
+                      kind: Target
+                      name: db1
+                      spec:
+                        type: vm
+                        image: debian-13
+                        guest: { cores: 4, memory: 8192, disk: 100, bridge: vmbr0, ip: 192.168.1.20/24 }
+                        blocks: [{ use: motd }]
+                        overrides: {}
+                    status:
+                      phase: ready
+                      agent: online
+                      power: running
+                      last_seen: "2026-11-10T09:14:05Z"
+                      guest_id: "9002"
+                      ips: [192.168.1.20]
+                      applied_revision: 6
+                      open_issues: 0
+                      last_run_id: 2
+                  - revision: 7
+                    document:
+                      kind: Target
+                      name: cache1
+                      spec:
+                        type: vm
+                        image: ubuntu-26.04
+                        guest: { cores: 1, memory: 1024, disk: 10, bridge: vmbr0, ip: dhcp }
+                        blocks: []
+                        overrides: {}
+                    status:
+                      phase: applying
+                      agent: online
+                      power: running
+                      last_seen: "2026-11-10T09:14:01Z"
+                      guest_id: "9003"
+                      ips: [192.168.1.43]
+                      applied_revision: 5
+                      open_issues: 0
+                      last_run_id: 4
+                  - revision: 5
+                    document:
+                      kind: Target
+                      name: backup1
+                      spec:
+                        type: vm
+                        image: debian-13
+                        guest: { cores: 2, memory: 2048, disk: 500, bridge: vmbr0, ip: dhcp }
+                        blocks: []
+                        overrides: {}
+                    status:
+                      phase: ready
+                      agent: offline
+                      power: stopped
+                      last_seen: "2026-11-09T22:40:00Z"
+                      guest_id: "9004"
+                      ips: []
+                      applied_revision: 5
+                      open_issues: 0
+                      last_run_id: 1
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -762,6 +871,19 @@ paths:
                     changes:
                       - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
                     actions: [accept, revert]
+                    plan_id: null
+                    resolution: null
+                    comments: []
+                  - id: 9
+                    target: web1
+                    resource: "file:/etc/app.conf"
+                    status: open
+                    risk: reversible
+                    opened_at: "2026-11-10T09:11:30Z"
+                    updated_at: "2026-11-10T09:11:30Z"
+                    changes:
+                      - { attr: content, sensitive: true, risk: reversible }
+                    actions: [revert]
                     plan_id: null
                     resolution: null
                     comments: []

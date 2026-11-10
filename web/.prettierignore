@@ -2,3 +2,4 @@ dist/
 node_modules/
 package-lock.json
 src/lib/api.gen.ts
+src/lib/mock/examples.gen.json
