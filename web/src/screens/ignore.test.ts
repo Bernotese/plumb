@@ -2,6 +2,7 @@
 // Screen tests of T-036 on the mock: secret parameters, ignore actions, rules.
 import { flushSync } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/api";
 import { createMockApi } from "../lib/mock/mock";
 import IssueView from "./IssueView.svelte";
 import Issues from "./Issues.svelte";
@@ -51,7 +52,14 @@ describe("secret parameters", () => {
 
   it("creates a secret in place and selects it", async () => {
     const api = adminApi();
-    const put = vi.spyOn(api, "putSecret");
+    const saveSecret = api.putSecret.bind(api);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => (release = resolve));
+    const put = vi.spyOn(api, "putSecret").mockImplementation(async (name, value) => {
+      await pending;
+      return saveSecret(name, value);
+    });
+    const createPlan = vi.spyOn(api, "createPlan");
     show(TargetForm, { api });
     const picker = await newTargetWithApp();
     button("New secret")?.click();
@@ -67,11 +75,27 @@ describe("secret parameters", () => {
     type("#use-0-db_password-new-name", "app1-db");
     type("#use-0-db_password-new-value", "hunter22hunter22");
     button("Create secret")?.click();
+    flushSync();
+    expect(value.value).toBe(""); // cleared while the secret request is still pending
+    expect(picker.value).toBe("");
+    type("#t-reason", "Use the new secret.");
+    el<HTMLFormElement>("form").requestSubmit();
+    flushSync();
+    expect(createPlan).not.toHaveBeenCalled();
+    expect(text()).toContain("Choose a secret.");
+    release();
     await until(() => picker.value === "app1-db");
     expect(put).toHaveBeenCalledWith("app1-db", "hunter22hunter22");
     expect(document.querySelector("#use-0-db_password-new-value")).toBeNull();
     expect(document.body.innerHTML).not.toContain("hunter22hunter22");
     expect(document.activeElement).toBe(picker);
+    el<HTMLFormElement>("form").requestSubmit();
+    await planOpened();
+    const proposal = createPlan.mock.calls[0]?.[0];
+    expect(JSON.stringify(proposal)).not.toContain("hunter22hunter22");
+    expect(proposal?.put?.[0]).toMatchObject({
+      spec: { blocks: [{ use: "app", params: { db_password: { secret: "app1-db" } } }] },
+    });
   });
 });
 
@@ -103,6 +127,10 @@ describe("PlanView", () => {
     const plan = await api.createPlan({ reason: "New MOTD.", put: [t.document] });
     show(PlanView, { api, id: plan.id });
     await until(() => text().includes("A rule ignores this drift; this apply overwrites it."));
+    const row = rows().find((r) => r.includes("A rule ignores this drift"));
+    expect(row).toContain("content");
+    expect(row).toContain("New text");
+    expect(text()).not.toMatch(/No (resource|attribute) changes/);
   });
 });
 
@@ -165,6 +193,72 @@ describe("IssueView", () => {
     show(IssueView, { api, id: 9 });
     await until(() => button("Ignore once"));
     expect(button(/^Accept/)).toBeUndefined();
+  });
+
+  it.each([[], ["ignore_once"], ["ignore_rule"], ["revert"]] as const)(
+    "shows only advertised actions: %j",
+    async (...actions) => {
+      const api = adminApi();
+      const issue = await api.getIssue(8);
+      vi.spyOn(api, "getIssue").mockResolvedValue({ ...issue, actions: [...actions] });
+      show(IssueView, { api, id: 8 });
+      await until(() => text().includes("Resolve"));
+      expect(!!button("Ignore once")).toBe(actions.some((a) => a === "ignore_once"));
+      expect(!!button("Make ignore-rule plan")).toBe(actions.some((a) => a === "ignore_rule"));
+      expect(!!button(/^Revert:/)).toBe(actions.some((a) => a === "revert"));
+      expect(button(/^Accept:/)).toBeUndefined();
+    },
+  );
+
+  it("sends the default rule scope and reason, then explains human-only approval", async () => {
+    const api = adminApi();
+    const resolve = vi.spyOn(api, "resolveIssue");
+    show(IssueView, { api, id: 8 });
+    await until(() => button("Make ignore-rule plan"));
+    type("#resolve-reason", "Keep this local drift.");
+    button("Make ignore-rule plan")?.click();
+    const id = await planOpened();
+    expect(resolve).toHaveBeenCalledWith(8, "ignore_rule", "Keep this local drift.", {
+      all_targets: false,
+    });
+    reset();
+    show(PlanView, { api, id });
+    await until(() => text().includes("An API token cannot."));
+    expect(text()).toContain("It adds, changes or removes an ignore rule.");
+    const approve = vi.spyOn(api, "approvePlan").mockRejectedValue(
+      new ApiError({
+        type: "human-required",
+        title: "Human session required",
+        status: 403,
+        detail: "An API token cannot approve a plan that changes a rule.",
+      }),
+    );
+    el<HTMLFormElement>("form").requestSubmit();
+    await until(() => document.querySelector('[role="alert"]'));
+    expect(approve).toHaveBeenCalledWith(id, undefined);
+    expect(text()).toContain("An API token cannot approve a plan that changes a rule.");
+    expect(text()).toContain("It adds, changes or removes an ignore rule.");
+    expect(location.hash).toBe("");
+  });
+
+  it("keeps the reason visible when an ignore-rule request returns 403", async () => {
+    const api = adminApi();
+    vi.spyOn(api, "resolveIssue").mockRejectedValue(
+      new ApiError({
+        type: "human-required",
+        title: "Human session required",
+        status: 403,
+        detail: "This token cannot ignore this drift.",
+      }),
+    );
+    show(IssueView, { api, id: 8 });
+    await until(() => button("Make ignore-rule plan"));
+    type("#resolve-reason", "Investigated.");
+    button("Make ignore-rule plan")?.click();
+    await until(() => document.querySelector('[role="alert"]'));
+    expect(text()).toContain("This token cannot ignore this drift.");
+    expect(el<HTMLTextAreaElement>("#resolve-reason").value).toBe("Investigated.");
+    expect(location.hash).toBe("");
   });
 });
 
