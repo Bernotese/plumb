@@ -30,4 +30,7 @@ The target form takes secrets for secret parameters. The issue view offers "Igno
 - Block editor (declaring a secret parameter in the UI). Raw mode.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Mock part done: branch `pl-frontend/T-036-ui-secret-params-ignore` (stacked on T-035). Secret picker, Plan view secrets / human_only / ignored, Issue ignore actions, rules list, ignored drift on targets; `ignoreOnce`, `listRules`, `resolveIssue(…, rule)` in PlumbApi, HTTP and mock (D-140…D-144).
+- Tests: `make lint test` → pass (199 web tests; 12 new screen tests in `screens/ignore.test.ts`, schemaForm secret kind, humanOnlyReasons, HTTP).
+- Fix on the way: editing a target turned the schema default `user: plumb` into a create-only change (422); create-only fields now keep their stored value.
+- Pictures: branch `pl-frontend/T-036-screens`, in the PR. Open: Playwright e2e waits for T-029 and T-032 on `main`.

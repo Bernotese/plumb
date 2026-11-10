@@ -56,6 +56,11 @@ describe("secret parameters", () => {
     const picker = await newTargetWithApp();
     button("New secret")?.click();
     await until(() => document.activeElement?.id === "use-0-db_password-new-name");
+    button("Create secret")?.click();
+    await until(() => document.querySelector("#use-0-db_password-new-name-error"));
+    expect(el("#use-0-db_password-new-value-error").textContent).toBe("Enter a value.");
+    expect(el("#use-0-db_password-new-name").getAttribute("aria-invalid")).toBe("true");
+    expect(put).not.toHaveBeenCalled();
     const value = el<HTMLInputElement>("#use-0-db_password-new-value");
     expect(value.type).toBe("password");
     expect(value.getAttribute("autocomplete")).toBe("new-password");
@@ -163,6 +168,29 @@ describe("IssueView", () => {
   });
 });
 
+describe("TargetForm edit", () => {
+  it("does not turn a create-only default into a change", async () => {
+    // web1 stores no guest user; the form shows the schema default "plumb".
+    const api = adminApi();
+    const createPlan = vi.spyOn(api, "createPlan");
+    show(TargetForm, { api, name: "web1" });
+    await until(() => document.querySelector("#use-1-text"));
+    expect(el<HTMLInputElement>("#guest-user").value).toBe("plumb");
+    type("#use-1-text", "New text");
+    type("#t-reason", "New MOTD.");
+    el<HTMLFormElement>("form").requestSubmit();
+    await planOpened();
+    const put = createPlan.mock.calls[0]?.[0].put?.[0] as { spec: { guest: object } };
+    expect(put.spec.guest).toEqual({
+      cores: 2,
+      memory: 2048,
+      disk: 20,
+      bridge: "vmbr0",
+      ip: "dhcp",
+    });
+  });
+});
+
 describe("Issues and rules", () => {
   it("lists resolved issues with their resolution", async () => {
     const api = adminApi();
@@ -193,6 +221,9 @@ describe("Issues and rules", () => {
     button("Make removal plan")?.click();
     flushSync();
     expect(createPlan).not.toHaveBeenCalled(); // a reason is required
+    expect(el("#remove-reason-ignore-web1-motd-error").textContent).toBe(
+      "Give a reason for the removal.",
+    );
     type("#remove-reason-ignore-web1-motd", "Not needed.");
     button("Make removal plan")?.click();
     const id = await planOpened();

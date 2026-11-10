@@ -13,6 +13,7 @@
   let reason = $state("");
   let removeError = $state<unknown>(null);
   let busy = $state(false);
+  let reasonMissing = $state(false);
 
   $effect(() => {
     const live = liveSnapshot({
@@ -30,6 +31,7 @@
   async function askRemove(name: string) {
     removing = name;
     reason = "";
+    reasonMissing = false;
     removeError = null;
     await tick();
     document.getElementById(`remove-reason-${name}`)?.focus();
@@ -37,7 +39,8 @@
 
   async function remove(e: SubmitEvent, name: string) {
     e.preventDefault();
-    if (!reason.trim()) {
+    reasonMissing = !reason.trim();
+    if (reasonMissing) {
       document.getElementById(`remove-reason-${name}`)?.focus();
       return;
     }
@@ -101,7 +104,7 @@
             </td>
             <td data-label="Action">
               {#if removing === r.document.name}
-                <form class="remove" onsubmit={(e) => remove(e, r.document.name)}>
+                <form class="remove" onsubmit={(e) => remove(e, r.document.name)} novalidate>
                   <label for="remove-reason-{r.document.name}">Reason (required)</label>
                   <input
                     id="remove-reason-{r.document.name}"
@@ -109,7 +112,15 @@
                     bind:value={reason}
                     maxlength="2000"
                     autocomplete="off"
+                    aria-invalid={reasonMissing}
+                    aria-describedby={reasonMissing
+                      ? `remove-reason-${r.document.name}-error`
+                      : undefined}
+                    oninput={() => (reasonMissing = false)}
                   />
+                  {#if reasonMissing}<span class="error" id="remove-reason-{r.document.name}-error"
+                      >Give a reason for the removal.</span
+                    >{/if}
                   <div class="row">
                     <button class="btn danger" type="submit" disabled={busy}>
                       Make removal plan
@@ -149,6 +160,10 @@
     flex-direction: column;
     gap: var(--space-2);
     min-width: 0;
+  }
+  .error {
+    font-size: var(--text-xs);
+    color: var(--color-danger);
   }
   .remove label {
     font-weight: 600;

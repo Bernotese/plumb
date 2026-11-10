@@ -152,9 +152,13 @@
     const spec: TargetSpec = {
       type: "vm",
       image,
+      // On an existing target the create-only fields keep their stored
+      // value: a schema default the form shows must not become a change.
       guest: mergeParams(
         existing?.document.spec.guest ?? {},
-        guestFields,
+        editing
+          ? guestFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
+          : guestFields,
         guest,
       ) as TargetSpec["guest"],
       blocks: uses.map((u) => ({

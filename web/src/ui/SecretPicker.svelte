@@ -6,6 +6,7 @@
   import type { PlumbApi } from "../lib/client";
   import type { SecretInfo } from "../lib/types";
   import ProblemBox from "./ProblemBox.svelte";
+  import { describedBy, pointerErrors } from "../lib/formErrors";
 
   let {
     api,
@@ -30,6 +31,8 @@
   let newValue = $state("");
   let createError = $state<unknown>(null);
   let busy = $state(false);
+  let own = $state<Record<string, string>>({});
+  const errs: Record<string, string> = $derived({ ...pointerErrors(createError), ...own });
 
   const NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
   const load = () =>
@@ -59,13 +62,22 @@
     newName = "";
     newValue = "";
     createError = null;
+    own = {};
     document.getElementById(id)?.focus();
   }
 
   async function create() {
-    if (!NAME.test(newName) || newValue === "") return;
-    busy = true;
     createError = null;
+    const check: Record<string, string> = {};
+    if (!NAME.test(newName))
+      check["/name"] = "Use lower-case letters, digits, dots and dashes (at most 63).";
+    if (newValue === "") check["/value"] = "Enter a value.";
+    own = check;
+    if (Object.keys(check).length) {
+      document.getElementById(check["/name"] ? `${id}-new-name` : `${id}-new-value`)?.focus();
+      return;
+    }
+    busy = true;
     const sent = newValue;
     newValue = ""; // never kept after the request
     try {
@@ -120,10 +132,12 @@
           autocomplete="off"
           spellcheck="false"
           maxlength="63"
-          aria-invalid={newName !== "" && !NAME.test(newName)}
-          aria-describedby="{id}-new-name-hint"
+          name="plumb-secret-name"
+          aria-invalid={!!errs["/name"]}
+          aria-describedby={describedBy(`${id}-new-name`, errs["/name"])}
           onkeydown={onKey}
         />
+        {#if errs["/name"]}<span class="error" id="{id}-new-name-error">{errs["/name"]}</span>{/if}
         <span class="hint" id="{id}-new-name-hint"
           >Lower-case letters, digits, dots and dashes.</span
         >
@@ -134,22 +148,23 @@
           id="{id}-new-value"
           type="password"
           bind:value={newValue}
+          name="plumb-secret-value"
           autocomplete="new-password"
           spellcheck="false"
-          aria-describedby="{id}-new-value-hint"
+          aria-invalid={!!errs["/value"]}
+          aria-describedby={describedBy(`${id}-new-value`, errs["/value"])}
           onkeydown={onKey}
         />
+        {#if errs["/value"]}<span class="error" id="{id}-new-value-error">{errs["/value"]}</span
+          >{/if}
         <span class="hint" id="{id}-new-value-hint"
           >Plumb stores it encrypted and never shows it again. The target refers to it by name.</span
         >
       </div>
-      <ProblemBox error={createError} />
+      <ProblemBox error={createError} fields={["/name", "/value"]} />
       <div class="row">
-        <button
-          class="btn primary"
-          type="button"
-          disabled={busy || !NAME.test(newName) || newValue === ""}
-          onclick={create}>Create secret</button
+        <button class="btn primary" type="button" disabled={busy} onclick={create}
+          >Create secret</button
         >
         <button class="btn" type="button" onclick={close}>Cancel</button>
       </div>
