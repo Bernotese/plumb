@@ -48,4 +48,4 @@ The team has a reviewed plan for the work after the first slice. The user can ap
 4. **Agent in LXC templates:** Plumb repacks the Proxmox base template inside the controller and uploads it (one new Go dependency for zstd). The other way is an installer step as root on the host for every new OS release. **Recommendation: repack in the controller.** Plumb keeps zero root access on the host. The final check needs the test host.
 
 ## Result (owner, max 8 lines)
-pl-architect/T-025-slice-2-plan · see PR · tests: docs only, `api/openapi.yaml` not touched, so no `make lint` run needed · 13 cards T-027 … T-039, D-085 … D-098, ARCHITECTURE §12, 4 questions for the user.
+pl-architect/T-025-slice-2-plan · PR #32 · tests: docs only, `api/openapi.yaml` not touched, so no `make lint` run needed · 13 cards T-027 … T-039, D-085 … D-098, ARCHITECTURE §12, 4 questions for the user.
