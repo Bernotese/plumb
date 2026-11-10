@@ -67,16 +67,21 @@ func TestGuestAgentLoop(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-done })
 	receive := func(typ wire.ReportType, id string) wire.Report {
 		t.Helper()
-		select {
-		case d := <-deliveries:
-			if d.Target != "guest" || d.Report.Type != typ || d.Report.CommandID != id {
-				t.Fatalf("unexpected delivery: %+v", d)
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case d := <-deliveries:
+				if d.Report.Type == wire.ReportProgress && d.Report.CommandID == id {
+					continue
+				}
+				if d.Target != "guest" || d.Report.Type != typ || d.Report.CommandID != id {
+					t.Fatalf("unexpected delivery: %+v", d)
+				}
+				return d.Report
+			case <-deadline:
+				t.Fatalf("no %s report for %q", typ, id)
 			}
-			return d.Report
-		case <-time.After(5 * time.Second):
-			t.Fatalf("no %s report for %q", typ, id)
 		}
-		return wire.Report{}
 	}
 	receive(wire.ReportHello, "")
 	if mode(t, a.cfg.StateDir) != 0o700 {
