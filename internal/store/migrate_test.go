@@ -145,3 +145,50 @@ func TestMigrateRefusesBrokenReference(t *testing.T) {
 		t.Errorf("error: %v", err)
 	}
 }
+
+// A slice 1 database (version 2) migrates through the secret store (0003)
+// and the plan origins (0004) with the runner of D-115. The guards of
+// 0003 work afterwards: the triggers survive foreign keys off.
+func TestMigrateSlice1ThroughSecrets(t *testing.T) {
+	ctx := context.Background()
+	const ts = "'2026-11-10T00:00:00.000000000Z'"
+	path := openAt(t, 2,
+		`INSERT INTO revision (id, author, reason, created_at) VALUES (1, 'system', 'seed', `+ts+`)`,
+		`INSERT INTO plan (id, base_revision, origin, proposal, changes, risk, status, reason, author, created_at)
+		 VALUES (1, 1, 'proposal', '{}', '[]', 'read', 'pending', 'one', 'user:admin', `+ts+`)`)
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var version int
+	s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
+	if want := migrationNumber(t, "_plan_origin.sql"); version != want || migrationNumber(t, "_secret.sql") != 3 {
+		t.Fatalf("user_version %d, want %d", version, want)
+	}
+	if p, err := s.GetPlan(ctx, 1); err != nil || p.Reason != "one" {
+		t.Fatalf("plan: %+v %v", p, err)
+	}
+	m, err := s.PutSecret(ctx, "a", "user:admin", func(int64) ([]byte, []byte, error) {
+		return make([]byte, 12), make([]byte, 17), nil
+	})
+	if err != nil || m.Version != 1 {
+		t.Fatalf("put secret: %+v %v", m, err)
+	}
+	for _, q := range []string{`UPDATE secret_counter SET value = 0`, `DELETE FROM secret_counter`} {
+		if _, err := s.db.ExecContext(ctx, q); err == nil {
+			t.Errorf("%s was accepted", q)
+		}
+	}
+	if err := s.SetKeyCheck(ctx, make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM key_check`); err == nil {
+		t.Error("the key check value was deleted")
+	}
+	var fk int
+	s.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk)
+	if fk != 1 {
+		t.Error("foreign keys are off after the migration")
+	}
+}

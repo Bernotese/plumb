@@ -5,8 +5,6 @@
 -- SQLite cannot change a CHECK, so the table is rebuilt. The runner turns
 -- foreign keys off for the migration and checks them before the commit
 -- (D-115); the ids stay, so revision, run and issue keep their references.
--- The file number is 0003 until T-028 (0003 secrets) is on main; the card
--- that merges second renumbers (D-096).
 
 CREATE TABLE plan_new (
     id            INTEGER PRIMARY KEY,
