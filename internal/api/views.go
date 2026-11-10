@@ -120,18 +120,15 @@ type planView struct {
 	ApprovedAt   *time.Time       `json:"approved_at"`
 	Revision     *int64           `json:"revision"`
 	RunID        *int64           `json:"run_id"`
+	HumanOnly    []string         `json:"human_only"`
 	Targets      []targetPlanView `json:"targets"`
 	Warnings     []string         `json:"warnings"`
-	HumanOnly    []string         `json:"human_only"`
 }
 
 func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 	v := planView{ID: p.ID, Origin: p.Origin, IssueID: nullID(p.IssueID), RollbackTo: nullID(p.RollbackTo), Status: p.Status, Risk: p.Risk,
 		Reason: p.Reason, Author: p.Author, CreatedAt: p.CreatedAt.UTC(), BaseRevision: nullID(p.BaseRevision),
-		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), Targets: []targetPlanView{}, Warnings: []string{}, HumanOnly: plan.HumanOnly(p)}
-	if v.HumanOnly == nil {
-		v.HumanOnly = []string{}
-	}
+		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), HumanOnly: append([]string{}, p.HumanOnly...), Targets: []targetPlanView{}, Warnings: []string{}}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {
 		v.RunID, v.Revision = &run.ID, &run.RevisionID
 	} else if err != store.ErrNotFound {

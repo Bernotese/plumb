@@ -201,8 +201,9 @@ func TestMigrateSlice1ThroughSecrets(t *testing.T) {
 	defer s.Close()
 	var version int
 	s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
-	if want := migrationNumber(t, "_plan_origin.sql"); version != want || migrationNumber(t, "_secret.sql") != 3 {
-		t.Fatalf("user_version %d, want %d", version, want)
+	all, _ := migrations()
+	if version != len(all) || migrationNumber(t, "_secret.sql") != 3 || migrationNumber(t, "_plan_origin.sql") != 4 {
+		t.Fatalf("user_version %d, want %d", version, len(all))
 	}
 	if p, err := s.GetPlan(ctx, 1); err != nil || p.Reason != "one" {
 		t.Fatalf("plan: %+v %v", p, err)
