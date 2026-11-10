@@ -196,6 +196,8 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.Dev && s.cfg.DevLoginToken != "" {
 		mux.HandleFunc("GET /dev/login", s.devLogin)
 	}
+	// Reserve dev routes so disabled endpoints cannot fall back to the SPA.
+	mux.HandleFunc("/dev/", http.NotFound)
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "not-found", "Not found", "No such API operation.")
