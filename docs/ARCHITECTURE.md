@@ -170,7 +170,7 @@ Secret store UI · LXC targets · image builds with Blocks, seal, retention, sch
 4. **Master key:** a key file on a volume that backups skip, created at install. The installer shows a recovery key once. No passphrase at start (D-030).
 5. **UI stack:** Svelte 5 (D-019).
 
-## 12. Slice 2 (D-085 … D-098)
+## 12. Slice 2 (D-085 … D-099)
 **Scope, part A – build and verify now** (no Docker, no Proxmox host; tests use `driver/fake` and the simulated agents of `link/linktest`):
 API tokens · revision history with diff and rollback · secret store · "Ignore once" and "Ignore by rule" · export/import.
 **Part B – design only, cards `blocked: test host`:** LXC targets (D-097) · image builds with seal, retention, schedule (D-098).
@@ -192,9 +192,10 @@ What slice 1 already has: token tiers and `api.CreateToken` without an HTTP rout
 
 Rule for the order: a card is in part A only when its acceptance criteria can be checked with `make lint test` and Playwright on `plumb serve --dev`.
 
-**Secret store (D-086 … D-090)**
+**Secret store (D-086 … D-090, D-099)**
 ```
-key file (32 bytes, own volume, not in backups) ── recovery key = the same bytes, shown once
+key file (32 bytes, own volume, not in backups) ── recovery key = the same bytes, shown once on a terminal
+   │   made only by `plumb key init` (installer); `serve` never makes a key and stops without one
    └─ HKDF-SHA256 per purpose ─► secret-store key ─► AES-256-GCM per secret (table `secret`)
 Block:   params: {properties: {db_password: {type: string, writeOnly: true}}}
 Target:  blocks: [{use: app, params: {db_password: {secret: app-db}}}]
@@ -204,19 +205,21 @@ agent:   compares locally, reports {attr: content, sensitive: true, risk}; desir
 ```
 - Clear values exist in three places only: controller memory, the pinned TLS link, the guest. The database holds ciphertext. Documents, Plans, the render cache, run steps, events, logs and API responses hold names or markers.
 - The redaction list of `link` (D-062) is `Resource.Sensitive` of the head render. The render fills it from the markers.
-- A template can only print a secret parameter. It cannot cut, compare or measure it.
-- A new secret value reaches a guest only through a Plan for the targets that use it (`Proposal.targets`).
-- The export holds secret values only inside a passphrase-encrypted bundle (D-094).
+- A template can only print a secret parameter. It cannot cut, compare, measure or forge it: the render accepts only markers that it made.
+- A new secret value reaches a guest only through a Plan for the targets that use it (`Proposal.targets`). A Plan records the secret versions it was planned with; another version makes it stale, a missing one fails the Run.
+- **Only a human approves** a Plan that gives a secret to a target and resource that did not have it, for every origin (D-099). So a token cannot read a secret by sending it to a guest.
+- The export holds secret values only inside a passphrase-encrypted bundle (D-094). An import creates missing secrets only; it overwrites a live value only when the request names it (D-095).
 
 **Other part A items**
 - **Tokens:** list, create (bearer shown once), revoke. Human session only. Inside D-046.
 - **History:** list, diff of two revisions, rollback as a Plan (D-093).
-- **Ignore once:** resolves the Issue without a Plan and remembers its changes (D-091). **Ignore by rule:** a `Rule` document through a Plan; the controller filters drift at intake (D-092).
+- **Ignore once:** resolves the Issue without a Plan and remembers its changes. A human can do it, or an `apply` token within its `max_risk` and never for a sensitive change; a `plan` token cannot (D-091).
+- **Ignore by rule:** a `Rule` document through a Plan. Only a human approves any `Rule` change (D-099). The controller filters drift at intake and shows per target what it dropped (D-092).
 - **Export/import:** one YAML stream of the head revision; import is a Plan with mode `replace` or `merge` (D-094, D-095).
 - **Migrations:** 0003 secrets, 0004 Plan origins, 0005 Issue resolution `ignore`. Merge in this order (D-096).
 
 **Part B at decision level**
-- **Image builds:** `Image` gets `blocks`, `retention.keep`, `schedule`. Build = Run on a temporary guest → `seal` → template → image version. A build never changes a target.
-- **LXC targets:** the controller repacks the base template with the agent inside and uploads it through the API. Enrollment uses the `env` token (§5). No host access.
+- **Image builds:** `Image` gets `blocks`, `retention.keep`, `schedule`. Build = Run on a temporary guest → `seal` → template → image version. A build never changes a target and uses no secrets.
+- **LXC targets:** the controller checks the base template against the Proxmox checksum, repacks it with the agent inside and uploads it through the API. Enrollment uses the `env` token (§5). No host access.
 
 Questions for the user: `docs/tasks/T-025-slice-2-plan.md`.

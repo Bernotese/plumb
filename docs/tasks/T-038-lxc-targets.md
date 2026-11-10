@@ -7,7 +7,7 @@
 A Target with `type: lxc` is created from a Plumb template, enrolls with the `env` token and is configured by the agent like a VM.
 
 ## Design (decision level – D-097, ARCHITECTURE §5, §6, §12)
-- The agent is in the template. The controller repacks the Proxmox base template and uploads it through the API. No host access.
+- The agent is in the template. The controller checks the Proxmox base template against the checksum of the Proxmox appliance index, repacks it and uploads it through the API. No host access.
 - Enrollment: `env` option before the first start, read from `/proc/1/environ`, removed after enrollment.
 - `guest:config` owns hostname and network of a container. Kernel-level resources are VM-only.
 

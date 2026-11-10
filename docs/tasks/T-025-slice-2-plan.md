@@ -34,18 +34,26 @@ The team has a reviewed plan for the work after the first slice. The user can ap
 - Changes to slice 1 PRs that wait for Docker or the host.
 
 ## Plan (pl-architect)
-- Design: `docs/ARCHITECTURE.md` §12 (50 lines). Decisions: D-085 … D-098.
+- Design: `docs/ARCHITECTURE.md` §12 (53 lines). Decisions: D-085 … D-099.
 - What slice 1 already has: token tiers and `CreateToken` (no route), `store.Revisions` / `Diff` (no route), redaction (`wire.Redact`, `link`) without a secret source. No rollback, export, `Rule` kind or UI for these.
 - Part A cards (unblocked): T-027 contract → T-028, T-029 secrets · T-030 token API · T-031 revision API · T-032 ignore actions · T-033 export/import · T-034, T-035, T-036 UI · T-037 QA leak hunt.
 - Part B cards (`blocked: test host`): T-038 LXC targets, T-039 image builds. T-039 comes first.
 - Lanes: `pl-backend` T-028 → T-029 → T-032 → T-033. `pl-reviewer` implements T-030 and T-031 (small; `pl-architect` reviews them). `pl-frontend` T-034 → T-035 → T-036 on the mock, then e2e. `pl-lead` can route differently.
 - `api/openapi.yaml` is not changed here. T-027 does it, because every response needs examples and the mock must follow; that is more than a plan.
 
+## Review round 1 (pl-reviewer, PR #32)
+- M1 → D-086, T-028: only `plumb key init` (installer, terminal) makes the key and shows the recovery key. `serve` never makes a key and always stops without one.
+- M2 → D-088, T-029: markers carry a per-render nonce while the templates run; the render refuses every other marker. Forgery tests.
+- M3, M4 → new D-099, T-029, T-031, T-032, T-033, T-037: only a human approves a new secret binding or any `Rule` change, by content, for every origin.
+- M5 → D-091, T-032: `ignore_once` for a human, or an `apply` token within its `max_risk` and never for a sensitive change. Question 3 changed.
+- M6 → D-095, T-033, T-035: import creates missing secrets only; a different live value is 409 unless `overwrite` names it.
+- S1 … S9: all taken (D-087, D-089, D-092, D-094, D-096 … D-098 and the cards). One difference in S8: "replaces part of D-022" is on D-091 (the line that defines `ignore_once`), not on D-089.
+
 ## Questions for the user
-1. **Ignore by rule:** a rule hides the Issue. Must it also stop Plumb from overwriting that difference at the next apply? **Recommendation: no.** The Plan still shows the difference, marks it "ignored drift" and applies the desired state. To keep a manual change, use "Accept". Reason: one truth for every apply, and no agent change (the agent PRs wait for Docker).
+1. **Ignore by rule:** a rule hides the Issue. Must it also stop Plumb from overwriting that difference at the next apply? **Recommendation: no.** The Plan still shows the difference, marks it "ignored drift" and applies the desired state. To keep a manual change, use "Accept". Reason: one truth for every apply, and no agent change (the agent PRs wait for Docker). Fixed in any case: only a human can approve a new, changed or removed rule, and the target view shows what a rule hides.
 2. **Scheduled image builds:** may Plumb start a scheduled rebuild without a click? **Recommendation: yes.** A human approves the schedule once with the Image document. A build only makes a new template and never changes a target. Retention then removes old versions that no guest needs.
-3. **AI tokens and ignore:** may a `plan` token (for example an AI client) use "Ignore once"? **Recommendation: yes.** It changes no guest and no state, and the Issue records who did it. "Ignore by rule" needs an approved Plan anyway.
+3. **AI tokens and ignore:** may an API token (for example an AI client) use "Ignore once"? **Recommendation: only a token that could also approve the revert.** A `plan` token cannot ignore; it can comment and recommend. An `apply` token can ignore drift up to its `max_risk`, and never a change of a secret value. Everything else needs a human. Reason: an ignore hides the drift for as long as it stays, so it is as strong as an approval. The stricter choice is "humans only"; say so if you prefer it.
 4. **Agent in LXC templates:** Plumb repacks the Proxmox base template inside the controller and uploads it (one new Go dependency for zstd). The other way is an installer step as root on the host for every new OS release. **Recommendation: repack in the controller.** Plumb keeps zero root access on the host. The final check needs the test host.
 
 ## Result (owner, max 8 lines)
-pl-architect/T-025-slice-2-plan · PR #32 · tests: docs only, `api/openapi.yaml` not touched, so no `make lint` run needed · 13 cards T-027 … T-039, D-085 … D-098, ARCHITECTURE §12, 4 questions for the user.
+pl-architect/T-025-slice-2-plan · PR #32 · tests: docs only, `go test ./internal/` → ok; `api/openapi.yaml` not touched · 13 cards T-027 … T-039, D-085 … D-099, ARCHITECTURE §12, 4 questions for the user. Review round 1: 6 must fixed, 9 should taken.

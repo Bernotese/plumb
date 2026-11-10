@@ -7,7 +7,7 @@
 A client can read the revision history, compare two revisions and roll back to one through a Plan.
 
 ## Context (read only these)
-- `docs/DECISIONS.md` D-022, D-093, D-096 · `api/openapi.yaml` – `/revisions` operations
+- `docs/DECISIONS.md` D-022, D-093, D-096, D-099 · `api/openapi.yaml` – `/revisions` operations
 - `internal/store/revision.go` (`Revisions`, `Diff`, `RevisionDocs`), `internal/plan/plan.go` (`Proposal`, origins), `internal/api/handlers.go`
 
 ## Files
@@ -17,6 +17,7 @@ A client can read the revision history, compare two revisions and roll back to o
 - [ ] `GET /revisions` and `GET /revisions/{n}/diff` per the contract. The diff holds both document versions; unknown `n` or `from` is 404.
 - [ ] `POST /revisions/{n}/rollback` builds a proposal that puts and deletes documents until the set equals revision `n`, and returns a Plan with origin `rollback`. The Plan follows every normal rule (stale, tiers, risk, create-only fields).
 - [ ] Rollback to a set that equals the head is 409 `nothing-to-do`.
+- [ ] The rollback goes through the same `plan.Propose` as every proposal and skips no check. The human-only rules of D-099 read the content of the proposal, so they hold for a rollback; the cards that add them (T-029, T-032) add the rollback tests.
 - [ ] After approval the new revision has the same document hashes as revision `n`.
 - [ ] Migration 0004 adds the origins `rollback`, `import`, `ignore_rule` (table rebuild; existing rows and foreign keys survive; a test migrates a database with Plans, Runs and Issues).
 - [ ] Stays inside approved decisions (D-093, D-096).

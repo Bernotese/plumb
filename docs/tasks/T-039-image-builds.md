@@ -10,6 +10,7 @@ Plumb builds its own templates from a base image plus Blocks, keeps versions, re
 - `Image` spec gets `blocks`, `retention.keep`, `schedule`.
 - Build = Run: temporary guest → apply Blocks → agent `seal` → stop → template → image version row.
 - A build never changes a target. A target records its image version.
+- Blocks of an Image cannot use secret references. `seal` also removes the agent's desired list, so a template holds no secret.
 - Retention keeps the newest `keep` versions and every version that a guest still needs.
 - A scheduled build is planned by `system`. Its approval rule waits for the user's answer (T-025, question 2).
 
