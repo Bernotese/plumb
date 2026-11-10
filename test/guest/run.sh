@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+run_id=${GUEST_RUN_ID:-$$}
+if [[ ! "$run_id" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+  echo "GUEST_RUN_ID must be numeric with an optional numeric attempt suffix" >&2
+  exit 2
+fi
 tmp=$(mktemp -d)
 containers=()
 images=()
@@ -15,7 +20,6 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-run_id=${GUEST_RUN_ID:-$$}
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/guest.test" ./test/guest
 for distro in \
   debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 \
@@ -55,7 +59,7 @@ for distro in \
   docker rm -f "$name" >/dev/null
 done
 cleanup
-if [[ -n $(docker ps -aq --filter name=plumb-guest-) || -n $(docker images -q "plumb-guest-*-$run_id") ]]; then
+if [[ -n $(docker ps -aq --filter "name=$run_id") || -n $(docker images -q "plumb-guest-*-$run_id") ]]; then
   echo "guest containers or images remain after cleanup" >&2
   exit 1
 fi
