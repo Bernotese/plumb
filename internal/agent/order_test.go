@@ -203,7 +203,7 @@ func TestApplyAfterDependencyNotOK(t *testing.T) {
 				ta.runner.onUnit = units(map[string]func(context.Context, string) error{"a": failA})
 				items := applyNow(t, context.Background(), ta, list, tt.max)
 				want(t, items, map[string][2]string{
-					depID:           {tt.st, ""},
+					depID:          {tt.st, ""},
 					"file:/srv/d1": {"skipped", "not applied: " + depID + " was " + tt.st},
 					"file:/srv/d2": {"skipped", "not applied: file:/srv/d1 was skipped"},
 				})
@@ -235,10 +235,10 @@ func TestApplyAfterChain(t *testing.T) {
 		})
 		items := applyNow(t, context.Background(), ta, list, wire.RiskDisruptive)
 		want(t, items, map[string][2]string{
-			"service:a":       {"failed", ""},
-			"file:/srv/u1":    {"skipped", "not applied: service:a was failed"},
-			"file:/srv/u2":    {"skipped", "not applied: file:/srv/u1 was skipped"},
-			"file:/srv/u3":    {"skipped", "not applied: file:/srv/u2 was skipped"},
+			"service:a":      {"failed", ""},
+			"file:/srv/u1":   {"skipped", "not applied: service:a was failed"},
+			"file:/srv/u2":   {"skipped", "not applied: file:/srv/u1 was skipped"},
+			"file:/srv/u3":   {"skipped", "not applied: file:/srv/u2 was skipped"},
 			"file:/srv/free": {"applied", ""},
 		})
 	})
