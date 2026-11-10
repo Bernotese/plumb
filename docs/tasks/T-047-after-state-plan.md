@@ -33,4 +33,4 @@ Render: `restarts` (list stays `[]any`), overrides, schemas, `restart_on` check,
 S3: `state.Load` keeps a stored cycle (`Set.Cycles`); the engine logs one warning per revision and Target (`Engine.load`); `Validate` refuses it. Tests: `TestLoadKeepsAStoredCycle`, `TestStoredCycleIsServedAndMustBeRepaired`.
 S2: `TestRestartsWithANewSecretBinding` (planned restart of D-160 with `restart_by`, Run succeeds). Plan fields: `TestPlanShowsAfterAndRestartBy`, `TestPlanShowsAfterOnANewTarget`, both checked against `api/openapi.yaml`.
 Review nits of T-046: the cycle hint names the order of the resources in a Block (N1); `RestartOn` returns a copy (N3). N4 (`minItems`) not taken: a contract change with no effect.
-Dev seed: `nginx-site` on `web2` (the e2e tests edit `web1`). Mutations (local): 7, all caught (PR text).
+Dev seed: `nginx-site` on `web2` (the e2e tests edit `web1`). Mutations (local): 6, all caught (PR text).
