@@ -13,6 +13,9 @@
   let error = $state<unknown>(null);
   let moreError = $state<unknown>(null);
   let busy = $state(false);
+  // A reload of the first page starts a new generation. An older-page answer
+  // from an earlier generation is dropped, else it leaves a gap (review #1).
+  let generation = 0;
 
   $effect(() => {
     // The first page follows the stream: a new revision reloads it, and
@@ -21,6 +24,8 @@
       load: () => api.listRevisions(undefined, pageSize),
       subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
       onSnapshot: (p) => {
+        generation++;
+        busy = false;
         first = p;
         older = [];
         next = p.next;
@@ -38,16 +43,18 @@
 
   async function loadMore() {
     if (!next) return;
+    const gen = generation;
     busy = true;
     moreError = null;
     try {
       const p = await api.listRevisions(next, pageSize);
+      if (gen !== generation) return;
       older = [...older, ...p.items];
       next = p.next;
     } catch (e) {
-      moreError = e;
+      if (gen === generation) moreError = e;
     } finally {
-      busy = false;
+      if (gen === generation) busy = false;
     }
   }
 </script>

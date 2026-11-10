@@ -26,6 +26,11 @@ describe("scalar", () => {
       "*a",
       "- a",
       "y",
+      "2026-11-10",
+      "2026-11-10T09:00:00Z",
+      "0b101",
+      "1_000",
+      "12:30",
     ]) {
       expect(scalar(s)).toBe(JSON.stringify(s));
     }
@@ -80,6 +85,14 @@ describe("toYaml", () => {
     expect(toYaml({ content: "a\nb" })).toBe("content: |-\n  a\n  b\n");
     expect(toYaml({ content: "a\n\n" })).toBe("content: |+\n  a\n\n");
     expect(toYaml(["x\ny\n"])).toBe("- |\n  x\n  y\n");
+  });
+  it("quotes multi-line strings with an indented first line, blank-space lines or controls", () => {
+    // QA T-034 findings 1 and 2, review finding 4.
+    for (const c of ["\n  x\ny", "a\n\u0000b", "\n   \nx", "a\n \nb", "a\u0085\nb"]) {
+      expect(toYaml({ c })).toBe(`c: ${JSON.stringify(c)}\n`);
+    }
+    // A blank first line with a plain next line is still a block.
+    expect(toYaml({ c: "\nx\n" })).toBe("c: |\n\n  x\n");
   });
   it("quotes multi-line strings that a literal block cannot hold", () => {
     expect(toYaml({ c: " lead\nx" })).toBe('c: " lead\\nx"\n');

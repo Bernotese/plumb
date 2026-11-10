@@ -12,6 +12,8 @@
   let rollbackError = $state<unknown>(null);
   let nothing = $state(false);
   let reason = $state("");
+  /** Set by a submit with an empty reason; the field shows an error. */
+  let reasonMissing = $state(false);
   let busy = $state(false);
 
   $effect(() => {
@@ -31,7 +33,8 @@
     e.preventDefault();
     rollbackError = null;
     nothing = false;
-    if (!reason.trim()) {
+    reasonMissing = !reason.trim();
+    if (reasonMissing) {
       document.getElementById("rollback-reason")?.focus();
       return;
     }
@@ -86,7 +89,12 @@
         bind:value={reason}
         required
         maxlength="2000"
-        aria-describedby="rollback-hint"></textarea>
+        aria-invalid={reasonMissing}
+        aria-describedby={reasonMissing ? "rollback-error rollback-hint" : "rollback-hint"}
+        oninput={() => (reasonMissing = false)}></textarea>
+      {#if reasonMissing}
+        <p id="rollback-error" class="error">Give a reason for the rollback.</p>
+      {/if}
       <p id="rollback-hint" class="muted hint">
         Why do you roll back? The reason goes into the plan.
       </p>
@@ -98,7 +106,7 @@
     {/if}
     <ProblemBox error={rollbackError} />
     <div class="row">
-      <button class="btn primary" type="submit" disabled={busy || !reason.trim()}>
+      <button class="btn primary" type="submit" disabled={busy}>
         Roll back to this revision
       </button>
     </div>
@@ -111,6 +119,11 @@
   .back {
     margin: 0 0 var(--space-2);
     font-size: var(--text-sm);
+  }
+  .error {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-danger);
   }
   .hint {
     margin: var(--space-1) 0 0;

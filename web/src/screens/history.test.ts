@@ -126,13 +126,11 @@ describe("RevisionView", () => {
     const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
     show(RevisionView, { api, id: 6 });
     const submit = await until(() => button("Roll back to this revision"));
-    expect(submit.disabled).toBe(true); // a reason is required
     const reason = document.querySelector<HTMLTextAreaElement>("#rollback-reason");
     if (!reason) throw new Error("no reason field");
     reason.value = "The MOTD change was wrong.";
     reason.dispatchEvent(new Event("input", { bubbles: true }));
     flushSync();
-    expect(submit.disabled).toBe(false);
     submit.click();
     const id = await until(() => /^#\/plans\/(\d+)$/.exec(location.hash)?.[1]);
     const plan = await api.getPlan(Number(id));
@@ -274,12 +272,39 @@ describe("History QA edges", () => {
     reason.value = " \n\t ";
     reason.dispatchEvent(new Event("input", { bubbles: true }));
     flushSync();
-    expect(button("Roll back to this revision")?.disabled).toBe(true);
+    // The button stays enabled; an empty reason gives a field error (review #2).
+    expect(button("Roll back to this revision")?.disabled).toBe(false);
     required(document.querySelector("form")).dispatchEvent(
       new Event("submit", { bubbles: true, cancelable: true }),
     );
     expect(rollback).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(reason);
+    flushSync();
+    expect(reason.getAttribute("aria-invalid")).toBe("true");
+    expect(document.querySelector("#rollback-error")?.textContent).toBe(
+      "Give a reason for the rollback.",
+    );
     expect(location.hash).toBe("");
+  });
+
+  it("drops an older page that arrives after a reload of the first page", async () => {
+    // Review #1: a commit while "Load older" is in flight must not leave a gap.
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
+    const real = api.listRevisions.bind(api);
+    let release: () => void = () => undefined;
+    vi.spyOn(api, "listRevisions").mockImplementation(async (cursor, limit) => {
+      if (cursor) await new Promise<void>((r) => (release = r));
+      return real(cursor, limit);
+    });
+    show(History, { api, pageSize: 2 });
+    await until(() => rows().length === 2);
+    button("Load older revisions")?.click();
+    await changeWeb1(api, 4, "New head.");
+    await until(() => rows()[0]?.includes("New head."), 3000);
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    flushSync();
+    expect(rows().map((r) => /Revision (\d+)/.exec(r ?? "")?.[1])).toEqual(["8", "7"]);
+    expect(button("Load older revisions")?.disabled).toBe(false);
   });
 });
