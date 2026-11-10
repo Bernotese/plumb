@@ -44,8 +44,9 @@ func TestSymlinkQAAsRoot(t *testing.T) {
 		if err := os.WriteFile(link, []byte("keep"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := rs.Apply(context.Background(), changes); err == nil {
-			t.Fatal("stale plan replaced file")
+		// present: refused. absent: the link is absent already (D-163).
+		if err := rs.Apply(context.Background(), changes); (err == nil) != (state == "absent") {
+			t.Fatalf("%s: stale plan: %v", state, err)
 		}
 		if b, err := os.ReadFile(link); err != nil || string(b) != "keep" {
 			t.Fatalf("file changed: %q %v", b, err)

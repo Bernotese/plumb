@@ -33,8 +33,10 @@ func TestSymlinkQAEdges(t *testing.T) {
 			t.Fatal(err)
 		}
 		mustWrite(t, p, "keep")
-		if err := rs.Apply(ctx, changes); err == nil {
-			t.Fatal("stale plan replaced a file")
+		// present: refused. absent: the link is absent already (D-163), no
+		// error; in both cases the file stays.
+		if err := rs.Apply(ctx, changes); (err == nil) != (state == "absent") {
+			t.Fatalf("%s: stale plan: %v", state, err)
 		}
 		if b, err := os.ReadFile(p); err != nil || string(b) != "keep" {
 			t.Fatalf("file changed: %q %v", b, err)
@@ -74,11 +76,22 @@ func TestSymlinkQANonLinks(t *testing.T) {
 					t.Fatal(err)
 				}
 				changes := rs.Diff(obs)
-				if len(changes) == 0 || wire.MaxRisk(changes) != wire.RiskDestructive {
-					t.Fatalf("plan: %+v", changes)
-				}
-				if err := rs.Apply(ctx, changes); err == nil {
-					t.Fatal("Apply accepted a non-link")
+				if state == "absent" {
+					// A non-link means the link is absent: no change (D-163).
+					if len(changes) != 0 {
+						t.Fatalf("absent plan: %+v", changes)
+					}
+					forged := []wire.Change{{Attr: wire.AttrState, Risk: wire.RiskDestructive}}
+					if err := rs.Apply(ctx, forged); err != nil {
+						t.Fatalf("absent Apply: %v", err)
+					}
+				} else {
+					if len(changes) == 0 || wire.MaxRisk(changes) != wire.RiskDestructive {
+						t.Fatalf("plan: %+v", changes)
+					}
+					if err := rs.Apply(ctx, changes); err == nil {
+						t.Fatal("Apply accepted a non-link")
+					}
 				}
 				after, err := os.Lstat(p)
 				if err != nil || !os.SameFile(before, after) {
