@@ -1,0 +1,4 @@
+node_modules/
+dist/*
+!dist/.gitkeep
+src/lib/api.gen.ts

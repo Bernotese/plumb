@@ -2,7 +2,7 @@
 
 - **Owner:** pl-frontend   · **Reviewer:** pl-reviewer (pl-architect checks the contract)   · **QA:** pl-codex-qa
 - **Size:** M   · **Depends on:** user approval; merge after T-003   · **Parallel with:** T-003
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** review (PR open; Makefile lines wait for T-003)
 
 ## Goal
 The public API contract for the slice exists, and the web app builds with generated API types.
@@ -27,4 +27,10 @@ The public API contract for the slice exists, and the web app builds with genera
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-017-openapi-web-skeleton`. `api/openapi.yaml` covers session (incl. password), images, blocks, targets (+status, reenroll), plans, runs, issues, events. Token tiers = 3.1 security roles (minimum tier).
+- `npm run check:api`: Redocly `recommended-strict` (examples validated against schemas) + own checks: every response body has an example, all properties snake_case. Part of `npm run lint` → `make lint-web` → CI.
+- `web/`: Svelte 5 + Vite + TS (5.9; openapi-typescript needs TS 5). One page (Targets). `src/lib/api.ts` typed GET client over generated `api.gen.ts` (not committed; `npm run gen`).
+- Embed: Go package `web` (`web/embed.go`, `//go:embed all:dist`, `FS()`, `Built()`). `web/dist/.gitkeep` is force-added (root `.gitignore` has `dist/`). `cmd/plumb`/`internal/api` import it (T-011 serves it).
+- Makefile lines for after T-003: `build-web: cd web && npm ci && npm run build` · `lint-web: cd web && npm ci && npm run lint` · also add `cd web && npm test` to `test`?
+- Tests: web lint/test(8)/build pass; clean checkout `go vet ./... && go test ./web` passes with and without built UI. `make` not yet run (no Makefile on main).
+- Not in contract (card scope): revisions, tokens, secrets, export/import. `npm audit`: dev-tool advisories only (deepmerge, minimatch), nothing in `dist`.
