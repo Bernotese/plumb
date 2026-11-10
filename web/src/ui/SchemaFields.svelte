@@ -20,6 +20,12 @@
 
   const fid = (f: Field) => `${prefix}-${f.name}`;
   const ro = (f: Field) => readonly.includes(f.name);
+  // The read-only hint is left out when the description already says it.
+  function hintText(f: Field): string {
+    const d = f.description ?? "";
+    if (!ro(f) || /create-only/i.test(d)) return d;
+    return `${readonlyHint} ${d}`.trim();
+  }
   function describe(f: Field): string | undefined {
     const ids = [];
     if (f.description || ro(f)) ids.push(`${fid(f)}-hint`);
@@ -100,9 +106,7 @@
         {/if}
       {/if}
       {#if f.description || ro(f)}
-        <span class="hint" id="{fid(f)}-hint"
-          >{ro(f) ? readonlyHint : ""} {f.description ?? ""}</span
-        >
+        <span class="hint" id="{fid(f)}-hint">{hintText(f)}</span>
       {/if}
       {#if errors[f.name]}
         <span class="error" id="{fid(f)}-error">{errors[f.name]}</span>

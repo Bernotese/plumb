@@ -90,3 +90,18 @@ export function formatTime(iso: string | null | undefined): string {
 
 /** Guest settings that cannot change after create in the first slice (D-025). */
 export const CREATE_ONLY = ["ip", "gateway", "user", "ssh_keys", "disk"] as const;
+
+/** Applies one run.step event to a run snapshot; false when it does not fit. */
+export function applyStepEvent(
+  run: { id: number; targets: { target: string; steps: { resource: string; status: string }[] }[] },
+  e: { type: string; subject: string; data: Record<string, unknown> },
+): boolean {
+  if (e.type !== "run.step" || e.subject !== `run:${run.id}`) return false;
+  const d = e.data as { target?: string; resource?: string; status?: string };
+  const step = run.targets
+    .find((t) => t.target === d.target)
+    ?.steps.find((s) => s.resource === d.resource);
+  if (!step || !d.status) return false;
+  step.status = d.status;
+  return true;
+}

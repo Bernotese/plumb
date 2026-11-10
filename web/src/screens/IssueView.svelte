@@ -86,7 +86,7 @@
             Revert: apply the desired state
           </button>
         {/if}
-        {#if issue.actions.includes("accept")}
+        {#if issue.actions.includes("accept") && !hidden}
           <button class="btn" type="button" disabled={busy} onclick={() => resolve("accept")}>
             Accept: keep the guest value
           </button>

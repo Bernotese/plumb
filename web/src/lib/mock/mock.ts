@@ -24,6 +24,9 @@ import type {
 import { CREATE_ONLY, maxRisk } from "../view";
 import { example, exampleItems } from "./examples";
 
+/** Banner of a mock build. */
+export const MOCK_BANNER = "Demo data: this build uses a mock of the Plumb API.";
+
 /** Login of the mock (shown on the login screen in dev mode). */
 export const MOCK_USER = { username: "admin", password: "correct-horse-battery-staple" };
 

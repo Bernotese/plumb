@@ -1,7 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { PlumbApi } from "./lib/client";
-  import { createMockApi, MOCK_USER } from "./lib/mock/mock";
   import { go, href, parse, type Route } from "./lib/router";
   import { applyTheme, loadTheme, type Theme } from "./lib/theme";
   import type { Session } from "./lib/types";
@@ -14,14 +13,30 @@
   import TargetForm from "./screens/TargetForm.svelte";
   import Targets from "./screens/Targets.svelte";
 
-  // T-006 runs against the mock API; T-014 switches to the HTTP client.
-  // "?as=admin" starts signed in, "?as=first-login" at the forced password
-  // change (screenshots, development).
-  const as = new URLSearchParams(location.search).get("as");
-  const api: PlumbApi = createMockApi({
-    signedIn: as === "admin",
-    firstLogin: as === "first-login",
-  });
+  // The API. The HTTP client comes with T-014. Until then only a mock build
+  // (VITE_PLUMB_MOCK=1, `npm run dev:mock` / `npm run build:mock`) has one.
+  // In every other build the condition is a constant false, so Rollup drops
+  // the mock, its example data and its demo login (checked by
+  // scripts/check-dist.mjs after `npm run build`).
+  async function loadApi(): Promise<{ api: PlumbApi; hint?: string; banner?: string } | null> {
+    if (import.meta.env.VITE_PLUMB_MOCK === "1") {
+      const mock = await import("./lib/mock/mock");
+      // "?as=admin" starts signed in, "?as=first-login" at the forced
+      // password change (screenshots of the mock build).
+      const as = new URLSearchParams(location.search).get("as");
+      return {
+        api: mock.createMockApi({ signedIn: as === "admin", firstLogin: as === "first-login" }),
+        hint: `Demo login: ${mock.MOCK_USER.username} / ${mock.MOCK_USER.password}`,
+        banner: mock.MOCK_BANNER,
+      };
+    }
+    return null;
+  }
+
+  let api = $state<PlumbApi | null>(null);
+  let loginHint = $state<string | undefined>();
+  let banner = $state<string | undefined>();
+  let unavailable = $state(false);
 
   let route = $state<Route>(parse(location.hash));
   let session = $state<Session | null>(null);
@@ -31,13 +46,23 @@
   $effect(() => applyTheme(theme));
 
   $effect(() => {
-    api
-      .session()
-      .then(
-        (s) => (session = s),
-        () => (session = null),
-      )
-      .finally(() => (ready = true));
+    void loadApi().then((loaded) => {
+      if (!loaded) {
+        unavailable = true;
+        ready = true;
+        return;
+      }
+      api = loaded.api;
+      loginHint = loaded.hint;
+      banner = loaded.banner;
+      loaded.api
+        .session()
+        .then(
+          (s) => (session = s),
+          () => (session = null),
+        )
+        .finally(() => (ready = true));
+    });
     const onHash = () => {
       route = parse(location.hash);
       // Move focus to the new page title, so keyboard and screen-reader
@@ -51,6 +76,7 @@
   // Which screen to show: login and the forced password change come first.
   const screen = $derived.by(() => {
     if (!ready) return "loading";
+    if (unavailable) return "unavailable";
     if (!session) return "login";
     if (session.must_change_password) return "password";
     return "app";
@@ -69,7 +95,7 @@
   }
 
   async function logout() {
-    await api.logout();
+    await api?.logout();
     session = null;
     go({ name: "login" });
   }
@@ -102,13 +128,16 @@
     {/if}
   </div>
 </header>
-<p class="demo">Demo data: this build uses a mock of the Plumb API.</p>
+{#if banner}<p class="demo">{banner}</p>{/if}
 
 <main id="main" tabindex="-1">
   {#if screen === "loading"}
     <p class="muted" aria-live="polite">Loading…</p>
+  {:else if screen === "unavailable" || !api}
+    <h1 id="page-title" tabindex="-1">Plumb</h1>
+    <p class="banner info">The API client is not available in this build yet (T-014).</p>
   {:else if screen === "login"}
-    <Login {api} onlogin={onLogin} hint="Demo login: {MOCK_USER.username} / {MOCK_USER.password}" />
+    <Login {api} onlogin={onLogin} hint={loginHint} />
   {:else if screen === "password"}
     <ChangePassword {api} ondone={onPasswordChanged} />
   {:else if route.name === "targets" || route.name === "login" || route.name === "password"}
