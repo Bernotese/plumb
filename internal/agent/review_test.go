@@ -89,8 +89,9 @@ func TestCheckDoesNotOverlapApply(t *testing.T) {
 	ctl.result(t, "w1")
 	<-blocked // the full check is inside the service observe
 
+	xb := fileRes("x", "/srv/x", map[string]any{"content": "b"})
 	ctl.send(t, "a1", wire.CommandApply, wire.ApplyBody{MaxRisk: wire.RiskReversible,
-		Resources: []wire.Resource{fileRes("x", "/srv/x", map[string]any{"content": "b"})}})
+		Resources: []wire.Resource{xb}, Planned: unverified(xb)})
 	time.Sleep(300 * time.Millisecond)
 	if b, _ := os.ReadFile(filepath.Join(ta.root, "srv/x")); string(b) != "a" {
 		t.Fatal("the apply ran while a drift check observed")

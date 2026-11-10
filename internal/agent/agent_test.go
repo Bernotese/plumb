@@ -164,7 +164,7 @@ func TestApplyOrderRiskAndRestart(t *testing.T) {
 		fileRes("cleanup", "/srv/old.txt", map[string]any{"state": "absent"}),
 		fileRes("cleanup", "/srv/after.txt", map[string]any{"content": "x"}),
 	}
-	ctl.send(t, "a1", wire.CommandApply, wire.ApplyBody{PlanID: 7, Resources: list, MaxRisk: wire.RiskDisruptive})
+	ctl.send(t, "a1", wire.CommandApply, wire.ApplyBody{PlanID: 7, Resources: list, Planned: unverified(list...), MaxRisk: wire.RiskDisruptive})
 	rep := ctl.result(t, "a1")
 	var st []string
 	for i, it := range rep.Items {
@@ -197,7 +197,7 @@ func TestOwnApplyIsNoDrift(t *testing.T) {
 	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) > 0 })
 
 	motd := fileRes("motd", "/srv/motd", map[string]any{"content": "hi\n"})
-	ctl.send(t, "a1", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{motd}, MaxRisk: wire.RiskReversible})
+	ctl.send(t, "a1", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{motd}, Planned: unverified(motd), MaxRisk: wire.RiskReversible})
 	if rep := ctl.result(t, "a1"); rep.Items[0].Status != wire.StatusApplied {
 		t.Fatalf("apply = %+v", rep)
 	}

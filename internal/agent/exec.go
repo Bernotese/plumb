@@ -112,6 +112,10 @@ func (a *Agent) apply(ctx context.Context, cmdID string, body wire.ApplyBody) ([
 	if err != nil {
 		return nil, err
 	}
+	planned, err := plannedByID(body)
+	if err != nil {
+		return nil, err
+	}
 	// The applied resources become part of the desired list, so the drift
 	// check after the apply compares against what was applied.
 	// No drift check runs while the apply changes the guest.
@@ -133,7 +137,7 @@ func (a *Agent) apply(ctx context.Context, cmdID string, body wire.ApplyBody) ([
 				if failed {
 					s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusSkipped}
 				} else {
-					a.applyStep(ctx, s, body.MaxRisk)
+					a.applyStep(ctx, s, body.MaxRisk, planned)
 					st := s.item.Status
 					failed = st == wire.StatusFailed || st == wire.StatusRefused
 				}
@@ -150,7 +154,36 @@ func (a *Agent) apply(ctx context.Context, cmdID string, body wire.ApplyBody) ([
 	return items, nil
 }
 
-func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk) {
+// notPlanned is the output of a resource whose difference the approved
+// Plan does not show (D-075).
+const notPlanned = "the guest differs from the approved Plan; plan again"
+
+// plannedByID checks the planned entries of an apply: each names a resource
+// of the body, and at most once.
+func plannedByID(body wire.ApplyBody) (map[string]wire.Planned, error) {
+	inBody := map[string]bool{}
+	for _, r := range body.Resources {
+		inBody[r.ID] = true
+	}
+	out := map[string]wire.Planned{}
+	for _, p := range body.Planned {
+		if !inBody[p.Resource] {
+			return nil, fmt.Errorf("planned resource %s is not in the resource list", p.Resource)
+		}
+		if _, dup := out[p.Resource]; dup {
+			return nil, fmt.Errorf("planned resource %s is listed twice", p.Resource)
+		}
+		out[p.Resource] = p
+	}
+	return out, nil
+}
+
+// applyStep applies one resource (D-075): observe again; nothing differs →
+// unchanged; the new difference must be covered by the planned changes
+// (or the entry is unverified) and stay within max_risk, else refused and
+// nothing of the resource changes. The agent never fixes a difference that
+// the Plan does not show; the drift check reports it.
+func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk, planned map[string]wire.Planned) {
 	var changedBefore []string
 	for _, dep := range s.after {
 		select {
@@ -173,6 +206,11 @@ func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk) {
 	}
 	if len(item.Changes) == 0 {
 		s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusUnchanged}
+		return
+	}
+	if p, ok := planned[s.r.ID]; !ok || (!p.Unverified && !wire.Covers(p.Changes, item.Changes)) {
+		s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusRefused, Changes: item.Changes,
+			Output: resource.SafeOutput(s.r, notPlanned)}
 		return
 	}
 	for _, c := range item.Changes {

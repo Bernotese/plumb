@@ -342,6 +342,15 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
+// unverified plans every resource as unverified: only max_risk limits it.
+func unverified(list ...wire.Resource) []wire.Planned {
+	out := make([]wire.Planned, len(list))
+	for i, r := range list {
+		out[i] = wire.Planned{Resource: r.ID, Unverified: true}
+	}
+	return out
+}
+
 func fileRes(block, path string, attrs map[string]any) wire.Resource {
 	a := map[string]any{"path": path}
 	for k, v := range attrs {

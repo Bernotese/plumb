@@ -82,7 +82,7 @@ func TestAgentWithRealLink(t *testing.T) {
 	}
 	receive(wire.ReportHello, "")
 	r := fileRes("integration", "/srv/linked", map[string]any{"content": "hello"})
-	id, err := ctl.Send("web1", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{r}, MaxRisk: wire.RiskReversible})
+	id, err := ctl.Send("web1", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{r}, Planned: unverified(r), MaxRisk: wire.RiskReversible})
 	if err != nil {
 		t.Fatal(err)
 	}
