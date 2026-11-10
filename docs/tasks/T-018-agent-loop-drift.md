@@ -30,6 +30,9 @@ The agent can enroll, run commands from the controller and report drift.
 
 ## Plan (architect, optional)
 
+Protocol status rule: 401 means revoked credentials and triggers re-enrollment.
+429 (honor Retry-After) and 503 mean back off and retry with the current credential.
+
 ## Result (owner, max 8 lines)
 - Branch `pl-frontend/T-018-agent-loop-drift` (based on T-005, main merged), PR below. `internal/agent`: `config.go`, `client.go` (pinned CA only), `store.go` (credential + desired list 0600 in a 0700 dir), `agent.go` (enroll, poll loop, backoff), `exec.go` (observe/apply/watch, order, restart, risk), `drift.go` + `inotify.go`. `plumb-agent run [-config]`. Rules: D-055.
 - Output rule (T-005 review should 3): every `Item.Output` and resource error goes through `resource.SafeOutput`; an observed `State` never leaves the guest.
