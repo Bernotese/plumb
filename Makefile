@@ -62,9 +62,11 @@ lint-web: $(WEB_DEPS)
 test-guest:
 	@echo "test-guest: not implemented yet (T-007)"; exit 1
 
-## test-pve: tests against a real Proxmox host (stub; T-012 and T-013 fill it)
+## test-pve: tests against a real Proxmox host; needs the PLUMB_PVE_* variables
+## (internal/driver/proxmox/host_test.go). T-013 adds the installer checks.
 test-pve:
-	@echo "test-pve: not implemented yet (T-012, T-013)"; exit 1
+	@test -n "$$PLUMB_PVE_URL" || { echo "test-pve: set PLUMB_PVE_URL and the other PLUMB_PVE_* variables (see internal/driver/proxmox/host_test.go)"; exit 1; }
+	go test -tags pve -count=1 -timeout 45m ./internal/driver/proxmox/...
 
 clean:
 	rm -f bin/plumb bin/plumb-agent

@@ -41,7 +41,7 @@ func TestServeFlags(t *testing.T) {
 	// Without --dev the controller refuses to start until the Proxmox
 	// driver exists (T-012); it never falls back to the fake.
 	var out, errOut bytes.Buffer
-	if code := serve(context.Background(), []string{"--data", t.TempDir()}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "Proxmox driver") {
+	if code := serve(context.Background(), []string{"--data", t.TempDir()}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "installer") {
 		t.Errorf("serve without --dev: %d %q", code, errOut.String())
 	}
 	if code := serve(context.Background(), []string{"--dev", "--driver", "proxmox"}, &out, &errOut); code != 2 {
