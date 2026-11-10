@@ -125,3 +125,52 @@ func TestRestartDuringRunFinalizesSteps(t *testing.T) {
 		t.Fatalf("a fresh plan cannot recover the target: %+v", retried)
 	}
 }
+
+func TestCrashDuringResolveRunRecoversIssue(t *testing.T) {
+	e := newEnv(t)
+	e.seed("web1")
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{
+		Resource: "file:/etc/motd", Status: wire.StatusDiffers,
+		Changes: []wire.Change{{Attr: "content", From: "outside", To: "hello web1", Risk: wire.RiskReversible}},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	iss := e.openIssue("web1", "file:/etc/motd")
+	p, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.stop("web1")
+	// Revoke the credential so the Run waits for a fresh enrollment.
+	if _, _, err := e.link.NewEnrollToken(e.ctx, "web1"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := e.eng.Approve(e.ctx, p.ID, "user:admin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "resolve run waiting for enrollment", func() bool {
+		steps, err := e.st.Steps(e.ctx, run.ID)
+		return err == nil && len(steps) == 1 && steps[0].Status == "pending"
+	})
+	// Start the replacement before Close: cleanup must not mask missing
+	// crash recovery by finalizing the old engine's Run gracefully.
+	first := e.eng
+	t.Cleanup(first.Close)
+	e.start()
+	if got, err := e.st.GetRun(e.ctx, run.ID); err != nil || got.Status != "failed" || got.FinishedAt.IsZero() {
+		t.Errorf("crash left the Run unfinished: %+v, %v", got, err)
+	}
+	steps, err := e.st.Steps(e.ctx, run.ID)
+	if err != nil || len(steps) != 1 {
+		t.Fatalf("crash recovery steps: %+v, %v", steps, err)
+	}
+	for _, step := range steps {
+		if step.Status == "pending" || step.Status == "running" || step.FinishedAt.IsZero() {
+			t.Errorf("crash left an unfinished step: %+v", step)
+		}
+	}
+	if got, err := e.st.GetIssue(e.ctx, iss.ID); err != nil || got.Status != store.IssueOpen || got.PlanID != 0 {
+		t.Errorf("crash must reopen the resolving Issue: %+v, %v", got, err)
+	}
+}
