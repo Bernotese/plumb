@@ -26,6 +26,22 @@ Plumb has a reviewed architecture that respects D-001 … D-017, and a first set
 - Detailed design of later features (image rebuild schedule, Compose block, MCP, backups). Name them in a roadmap list only.
 
 ## Plan (architect, optional)
+First slice = cards T-003 … T-015, all "proposed". Cards in one wave can run in parallel.
+
+| Wave | Cards | Needs |
+|---|---|---|
+| 0 | T-003 scaffold + contracts | T-002 verdict + user approval |
+| 1 | T-004 state/store · T-005 agent/resources · T-006 UI (mock API) · T-007 guest harness · T-008 starter blocks · T-009 link/events/fake driver · T-012 Proxmox VM driver | T-003 only |
+| 2 | T-010 plan/apply/issues · T-013 minimal installer | T-004 + T-005 + T-009 · T-012 |
+| 3 | T-011 API/auth/events | T-010 |
+| 4 | T-014 UI on the real API · T-015 slice acceptance | T-006 + T-011 · T-014 (+ T-012, T-013 for the real host) |
+
+- Backend is the bottleneck: T-004, T-009, T-010, T-011, T-012, T-013 are backend cards. T-005 goes to `pl-reviewer` as fallback implementer; `pl-architect` reviews it.
+- T-012 and T-013 need the Proxmox test host (ARCHITECTURE §8, question 1). All other cards need no Proxmox.
+- Facts to verify on the real host (in T-012/T-013): `cicustom` and LXC `env` work with the restricted token; `hookscript` stays root-only; `download-url` works with `Sys.AccessNetwork`.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+T-001 done · branch `pl-architect/T-001-architecture` · tests: none (docs only; no code allowed)
+- `docs/ARCHITECTURE.md` (§1–11), decisions D-018 … D-035, cards T-003 … T-015 (proposed).
+- Proxmox facts checked against the public PVE 9.2 API schema, not against a real host.
+- Five questions for the user are in ARCHITECTURE §11. Question 1 (test host) blocks T-012/T-013.
