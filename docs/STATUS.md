@@ -10,7 +10,7 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-012 Proxmox VM driver | pl-backend | offline part in progress (httptest fake); real-host part **blocked: test host** |
+| T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part done (22 items to verify on host), static review queued. Real-host part **blocked: test host** |
 | T-021 flow test with the real agent | pl-codex-qa | in progress (stacked on T-018 branch; merges after #8, #13) |
 | T-022 agent: 4xx on drift flush | pl-codex-fix | waits for T-018 |
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
@@ -19,7 +19,7 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 | T-006 web UI slice (mock API) | pl-frontend | PR #19: review running, QA queued |
 | T-014, T-015 | see cards | later waves |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
-| T-013 installer, real-host part of T-012 and T-015 | pl-backend | **blocked: test host (D-041)** |
+| T-013 minimal installer | pl-backend | offline part in progress (dry-run mode). Real-host part **blocked: test host** |
 
 ## Done
 - 2026-11-10 · Team setup, auto mode, GitHub remote, model split.
