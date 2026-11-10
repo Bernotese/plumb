@@ -10,10 +10,10 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-009 link/events/fake driver | pl-backend | PR #11: QA + review running |
+| T-009 link/events/fake driver | pl-backend | PR #11: fixes pushed (fd3673c), re-review running |
 | T-010 plan/apply/issues | pl-backend | in progress (stacked on T-009; part waits for T-018) |
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
-| T-005 resources | pl-frontend | PR #8: changes requested (2 must, security); fix by pl-frontend. Guest run **blocked: Docker access** |
+| T-005 resources | pl-frontend | PR #8: static review approve (ea35c1e); merge after the first real guest run. **Blocked: Docker access** |
 | T-018 agent loop + drift | pl-frontend | in progress (stacked on T-005) |
 | T-006, T-010, T-011, T-014, T-015 | see cards | later waves |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
