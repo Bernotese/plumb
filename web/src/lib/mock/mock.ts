@@ -814,7 +814,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
             }));
           resources = [...resources.filter((r) => !ids.has(r.resource)), ...unverified];
           warnings.push(
-            `${t.name}: ${ids.size} resources get a new secret and are not observed before the approval (D-156).`,
+            `${t.name}: ${ids.size} resources are not observed before the approval: they get a new secret, or a value that the import writes (D-156, D-158).`,
           );
         }
         planTargets.push({ target: t.name, ...(used.length ? { secrets: used } : {}), resources });

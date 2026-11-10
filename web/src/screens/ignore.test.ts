@@ -121,7 +121,7 @@ describe("PlanView", () => {
       action: "create",
       risk: "disruptive",
     });
-    expect(plan.warnings[0]).toContain("not observed before the approval (D-156)");
+    expect(plan.warnings[0]).toContain("not observed before the approval: they get a new secret");
     expect(document.body.innerHTML).not.toContain("");
   });
 
