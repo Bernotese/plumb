@@ -316,7 +316,7 @@ write_snippet() {
 
 host_ip() {
 	local line
-	line=$(query ip -4 -o addr show dev "$BRIDGE" | head -n1)
+	line=$({ query ip -4 -o addr show dev "$BRIDGE" || true; } | head -n1)
 	[[ $line =~ inet\ ([0-9.]+)/ ]] || die "no IPv4 address on $BRIDGE"
 	echo "${BASH_REMATCH[1]}"
 }
@@ -398,16 +398,19 @@ state_put() {
 
 # --- the Plumb LXC (D-006, D-083) ---
 
+# lxc_template sets TEMPLATE to the newest Debian 13 template, and
+# downloads it through Proxmox's own template list when it is missing.
+TEMPLATE=""
 lxc_template() {
 	local name
-	name=$(query pveam list "$TEMPLATE_STORAGE" | awk '/debian-13-standard_/ {sub(/.*vztmpl\//, "", $1); print $1}' | sort -V | tail -n1)
+	name=$({ query pveam list "$TEMPLATE_STORAGE" || true; } | awk '/debian-13-standard_/ {sub(/.*vztmpl\//, "", $1); print $1}' | sort -V | tail -n1)
 	if [[ -z $name ]]; then
-		run pveam update >/dev/null
+		run pveam update
 		name=$(query pveam available --section system | awk '/debian-13-standard_/ {print $2}' | sort -V | tail -n1)
 		[[ -n $name ]] || die "no debian-13-standard template in the Proxmox template list"
 		run pveam download "$TEMPLATE_STORAGE" "$name"
 	fi
-	echo "$TEMPLATE_STORAGE:vztmpl/$name"
+	TEMPLATE="$TEMPLATE_STORAGE:vztmpl/$name"
 }
 
 ensure_lxc() {
@@ -424,8 +427,9 @@ ensure_lxc() {
 	fi
 	local net="name=eth0,bridge=$BRIDGE,ip=$LXC_IP"
 	[[ -n $LXC_GW ]] && net+=",gw=$LXC_GW"
+	lxc_template
 	# Unprivileged, no mount point, not in the Plumb pool (ARCHITECTURE §7).
-	run pct create "$LXC_ID" "$(lxc_template)" --hostname "$LXC_HOSTNAME" --unprivileged 1 --features nesting=1 \
+	run pct create "$LXC_ID" "$TEMPLATE" --hostname "$LXC_HOSTNAME" --unprivileged 1 --features nesting=1 \
 		--cores 2 --memory 1024 --swap 512 --rootfs "$DISK_STORAGE:8" --net0 "$net" --onboot 1 --ostype debian \
 		--description "Plumb controller, installed by install.sh"
 	run pct start "$LXC_ID"
@@ -443,7 +447,7 @@ lxc_ip() {
 	fi
 	local ip i
 	for i in $(seq 1 60); do
-		ip=$(query pct exec "$LXC_ID" -- hostname -I 2>/dev/null | awk '{print $1}')
+		ip=$({ query pct exec "$LXC_ID" -- hostname -I 2>/dev/null || true; } | awk '{print $1}')
 		[[ -n $ip ]] && {
 			echo "$ip"
 			return 0
@@ -459,7 +463,6 @@ lxc_ip() {
 push_env() {
 	local host=$1 ip=$2 tmp
 	tmp=$(mktemp)
-	trap 'rm -f "$tmp"' RETURN
 	cat >"$tmp" <<EOF
 # Plumb controller settings, written by install.sh. Mode 0600.
 PLUMB_PVE_URL=https://$host:8006
@@ -476,7 +479,11 @@ PLUMB_PVE_BRIDGE=$BRIDGE
 PLUMB_PVE_VMID_RANGE=$VMID_MIN-$VMID_MAX
 PLUMB_HOSTS=$ip,$LXC_HOSTNAME
 EOF
-	run pct push "$LXC_ID" "$tmp" /etc/plumb/plumb.env --perms 0600 --user 0 --group 0
+	if ! run pct push "$LXC_ID" "$tmp" /etc/plumb/plumb.env --perms 0600 --user 0 --group 0; then
+		rm -f "$tmp"
+		die "cannot write the settings into the LXC"
+	fi
+	rm -f "$tmp"
 	run pct exec "$LXC_ID" -- chown plumb:plumb /etc/plumb/plumb.env
 }
 
@@ -574,7 +581,7 @@ do_install() {
 		return 0
 	fi
 	local pw
-	pw=$(query pct exec "$LXC_ID" -- journalctl -u plumb.service -o cat --no-pager 2>/dev/null | sed -n 's/^First start\. User: admin  Password: //p' | head -n1)
+	pw=$({ query pct exec "$LXC_ID" -- journalctl -u plumb.service -o cat --no-pager 2>/dev/null || true; } | sed -n 's/^First start\. User: admin  Password: //p' | head -n1)
 	if [[ -n $pw && $LXC_NEW == 1 ]]; then
 		say "Initial login: user admin, password $pw (change it at the first login)."
 	else

@@ -11,7 +11,7 @@ GO_FILES     = $(shell find . -name '*.go' -not -path '*/node_modules/*')
 # npm ci runs only when the lock file changed; npm writes this file on every install.
 WEB_DEPS     = web/node_modules/.package-lock.json
 
-.PHONY: build check-embed build-web test test-go test-race test-web lint lint-go lint-web test-guest test-pve clean
+.PHONY: build check-embed build-web test test-go test-race test-web lint lint-go lint-sh lint-web test-guest test-pve clean
 
 ## build: web UI and both static binaries → bin/
 build: build-web
@@ -46,7 +46,16 @@ test-web: $(WEB_DEPS)
 	cd web && npm test
 
 ## lint: all linters
-lint: lint-go lint-web
+lint: lint-go lint-sh lint-web
+
+## lint-sh: shellcheck for the shell scripts. CI must have shellcheck; on a
+## machine without it the check is skipped with a warning.
+SH_FILES = install/install.sh install/testdata/fakepve scripts/check-embed.sh
+lint-sh:
+	@for f in $(SH_FILES); do bash -n "$$f" || exit 1; done
+	@if command -v shellcheck >/dev/null 2>&1; then shellcheck -x $(SH_FILES); \
+	elif [ -n "$$CI" ]; then echo "lint-sh: shellcheck is required in CI"; exit 1; \
+	else echo "lint-sh: shellcheck not installed; skipped (CI runs it)"; fi
 
 lint-go:
 	@files="$$(gofmt -l $(GO_FILES))"; if [ -n "$$files" ]; then echo "gofmt needed:"; echo "$$files"; exit 1; fi
