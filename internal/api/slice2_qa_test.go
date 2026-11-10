@@ -398,6 +398,20 @@ func TestSlice2TokenAndImportBoundaries(t *testing.T) {
 	p := slice2Call(t, adm, "POST", "/plans", map[string]any{"reason": "seed", "put": []state.Doc{doc(state.KindImage, "ubuntu", imageSpec), appBlock("/etc/app.env"), appTarget("web1", "app-db")}}, 201)
 	slice2Approve(t, adm, p)
 	e.waitWatch("web1")
+	// D-091 also refuses a plan token when the drift has no sensitive changes.
+	if err := e.agents["web1"].Change(e.ctx, "file:/etc/other.env", map[string]any{"path": "/etc/other.env", "content": "manual", "mode": "0600"}); err != nil {
+		t.Fatal(err)
+	}
+	plain := slice2Call(t, adm, "GET", "/issues?status=open", nil, 200)
+	var ordinary struct{ Items []struct{ ID int64 } }
+	if err := json.Unmarshal(plain, &ordinary); err != nil || len(ordinary.Items) != 1 || bytes.Contains(plain, []byte(`"sensitive":true`)) {
+		t.Fatal("expected one non-sensitive issue")
+	}
+	path := "/issues/" + itoa(ordinary.Items[0].ID) + "/resolve"
+	if b := slice2Call(t, planner, "POST", path, map[string]string{"action": "ignore_once"}, 403); problemType(b) != "human-required" {
+		t.Fatal("plan token ignored non-sensitive drift")
+	}
+	slice2Call(t, adm, "POST", path, map[string]string{"action": "ignore_once"}, 200)
 	if err := e.agents["web1"].Change(e.ctx, "file:/etc/app.env", map[string]any{"path": "/etc/app.env", "content": "manual", "mode": "0600"}); err != nil {
 		t.Fatal(err)
 	}
