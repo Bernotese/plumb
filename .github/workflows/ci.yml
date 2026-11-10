@@ -43,9 +43,13 @@ jobs:
           timeout --preserve-status -s INT -k 60 25 bash test/guest/run.sh
           status=$?
           set -e
+          echo "interrupt exit status: $status"
           test "$status" -eq 130
-          test -z "$(docker ps -aq --filter "name=$GUEST_RUN_ID")"
-          test -z "$(docker images -q "plumb-guest-*-$GUEST_RUN_ID")"
+          containers=$(docker ps -aq --filter "name=$GUEST_RUN_ID")
+          images=$(docker images -q "plumb-guest-*-$GUEST_RUN_ID")
+          echo "leftover containers: ${containers:-none}; images: ${images:-none}"
+          test -z "$containers"
+          test -z "$images"
           ! compgen -G '/tmp/tmp.*/guest.test' >/dev/null
         env:
           GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
