@@ -13,7 +13,8 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
 }
