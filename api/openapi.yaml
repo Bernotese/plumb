@@ -987,6 +987,9 @@ paths:
         applies it. Who may call it: a human session; an `apply` token when every change of the
         Issue has a risk up to its `max_risk` and none is sensitive. Every other token gets 403
         `human-required` or `risk-too-high`.
+
+        The two ignore actions are served from T-032. Until then this server answers 400 for
+        them, and `Issue.actions` does not list them.
       security:
         - session: []
         - token: [plan]
@@ -2476,6 +2479,8 @@ components:
             attrs:
               type: array
               minItems: 1
+              maxItems: 50
+              uniqueItems: true
               description: Attributes to ignore. Default is every attribute of the resource.
               items: { type: string, minLength: 1, maxLength: 100 }
     Comment:
@@ -2545,6 +2550,7 @@ components:
       type: object
       description: Metadata of a secret. There is no schema with a readable secret value.
       required: [name, version, updated_by, updated_at, used_by]
+      additionalProperties: false
       properties:
         name: { $ref: "#/components/schemas/Name" }
         version:
@@ -2581,6 +2587,7 @@ components:
       type: object
       description: An API token without its bearer value.
       required: [id, name, tier, max_risk, created_by, created_at, last_used_at, revoked_at]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -2610,6 +2617,7 @@ components:
     TokenCreated:
       type: object
       required: [token, bearer]
+      additionalProperties: false
       properties:
         token: { $ref: "#/components/schemas/Token" }
         bearer:

@@ -101,7 +101,8 @@ spec:
 | `GET /revisions`, `GET /revisions/{n}/diff`, `POST /revisions/{n}/rollback` | History. Rollback returns a Plan |
 | `GET /issues`, `POST /issues/{id}/resolve`, `POST /issues/{id}/comments` | Actions: `accept`, `revert`, `ignore_once`, `ignore_rule` (D-068, D-091, D-092) |
 | `GET /events?since=<seq>` | Server-sent events, resumable |
-| `GET/POST/DELETE /tokens`, `PUT /secrets/{name}`, `GET /export`, `POST /import` | Admin |
+| `GET/POST/DELETE /tokens`, `GET /secrets`, `PUT/DELETE /secrets/{name}`, `GET/POST /export`, `POST /import` | Admin. Token tiers per operation: `api/openapi.yaml` (§12) |
+| `GET /rules`, `GET /rules/{name}` | Read the rules (D-092) |
 
 Contract: `api/openapi.yaml` (OpenAPI 3.1, written first). Errors are `application/problem+json`. Times are UTC RFC 3339. JSON fields are `snake_case`.
 

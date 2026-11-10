@@ -25,6 +25,7 @@ A user can ignore one drift, or ignore a kind of drift for good with a `Rule` do
 - [ ] Every drop is recorded per target and resource (rule name, attributes, last time; no values). The target view returns it as `ignored_drift`. The record goes away when the resource reports `unchanged` or the rule is removed.
 - [ ] A Plan still shows and applies a difference that a rule matches, with `ignored: true` on the change.
 - [ ] A sensitive change can be ignored (the match uses `attr` only).
+- [ ] The sentence "served from T-032; until then 400" is removed from `resolveIssue` in `api/openapi.yaml`.
 - [ ] `Issue.actions` lists `ignore_once` and `ignore_rule` for an open Issue. The list does not depend on the caller; the server enforces the rules above.
 - [ ] Migration 0005: resolution `ignore`, the ignore memory and the record of dropped drift (table rebuild as in T-031).
 - [ ] Stays inside approved decisions (D-091, D-092, D-099). They replace D-044.
