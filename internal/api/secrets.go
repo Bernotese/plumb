@@ -83,28 +83,51 @@ func secretBody(w http.ResponseWriter, r *http.Request) (string, bool) {
 		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "The body could not be read.")
 		return "", false
 	}
-	var req struct {
-		Value *string `json:"value"`
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil || dec.More() {
+	value, ok := valueObject(raw)
+	if !ok {
 		problem(w, http.StatusBadRequest, "bad-request", "Bad request", `The body must be one JSON object {"value": "<text>"} and nothing else.`)
 		return "", false
 	}
-	if req.Value == nil {
+	if value == nil {
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
 			Detail: "value is required.", Errors: []fieldError{{Pointer: "/value", Message: "required"}}})
 		return "", false
 	}
 	// encoding/json silently replaces invalid UTF-8 and lone surrogates
 	// with U+FFFD. A value must arrive exactly as sent, so refuse both.
-	if !utf8.Valid(raw) || hasLoneSurrogateEscape(raw) || !secret.ValidValue(*req.Value) {
+	if !utf8.Valid(raw) || hasLoneSurrogateEscape(raw) || !secret.ValidValue(*value) {
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
 			Detail: "value must be UTF-8 text of 1 to 65536 bytes.", Errors: []fieldError{{Pointer: "/value", Message: "UTF-8 text of 1 to 65536 bytes"}}})
 		return "", false
 	}
-	return *req.Value, true
+	return *value, true
+}
+
+// valueObject reads {"value": <string or null>} or {}. Unlike a struct
+// decode it refuses a second key and a key in another case ("VALUE"):
+// encoding/json would match those too and keep the last one, so the
+// stored value could differ from the one a reader of the body sees.
+func valueObject(raw []byte) (*string, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	var value *string
+	if dec.More() {
+		if key, err := dec.Token(); err != nil || key != "value" {
+			return nil, false
+		}
+		if err := dec.Decode(&value); err != nil {
+			return nil, false
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return value, true
 }
 
 // encoding/json accepts lone surrogate escapes and replaces them with U+FFFD.
