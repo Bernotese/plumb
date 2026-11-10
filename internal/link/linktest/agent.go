@@ -366,6 +366,17 @@ func (a *Agent) apply(ctx context.Context, id string, body wire.ApplyBody) {
 		plans[p.Resource] = p
 	}
 	a.mu.Lock()
+	// Like the real agent (beginApply, D-055): the applied resources join
+	// the watch list now, not when the next watch command arrives. Else a
+	// guest change between this apply and that watch is compared with the
+	// old desired values.
+	for _, r := range body.Resources {
+		if i := slices.IndexFunc(a.watch, func(w wire.Resource) bool { return w.ID == r.ID }); i >= 0 {
+			a.watch[i] = r
+		} else {
+			a.watch = append(a.watch, r)
+		}
+	}
 	items := a.observeAll(body.Resources)
 	a.mu.Unlock()
 	for i := range items {
