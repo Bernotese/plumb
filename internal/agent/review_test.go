@@ -241,3 +241,29 @@ func TestHelloRateIsBounded(t *testing.T) {
 		t.Fatalf("%d hellos in 1 s: the backoff is reset too early", n)
 	}
 }
+
+// T-022: a drift report that the controller refuses for good (400) does
+// not keep the agent from polling after a reconnect.
+func TestDriftRefusedForGood(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok-1")
+	startAgent(t, ctl, ca, "tok-1")
+	conf := fileRes("app", "/srv/conf", map[string]any{"content": "x"})
+	ctl.send(t, "w1", wire.CommandWatch, wire.WatchBody{Resources: []wire.Resource{conf}})
+	ctl.result(t, "w1")
+	waitFor(t, "open drift", func() bool { return len(ctl.driftItems(conf.ID)) == 1 })
+
+	ctl.mu.Lock()
+	ctl.driftCode = http.StatusBadRequest
+	ctl.pollFail, ctl.failCode = 1, http.StatusInternalServerError // reconnect: hello + flush of all drift
+	ctl.mu.Unlock()
+	waitFor(t, "refused flush", func() bool { ctl.mu.Lock(); defer ctl.mu.Unlock(); return ctl.driftTries > 0 })
+	ctl.send(t, "o1", wire.CommandObserve, wire.ObserveBody{})
+	ctl.result(t, "o1")
+	ctl.mu.Lock()
+	tries := ctl.driftTries
+	ctl.mu.Unlock()
+	if n := len(ctl.reportsOf(wire.ReportHello)); n > 3 || tries > 2 {
+		t.Fatalf("hellos %d, refused flushes %d: the agent retried a permanent refusal", n, tries)
+	}
+}

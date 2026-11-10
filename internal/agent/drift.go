@@ -291,7 +291,15 @@ func (a *Agent) flushDrift(ctx context.Context, all bool) error {
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Resource < items[j].Resource })
 	if err := a.send(ctx, wire.Report{Type: wire.ReportDrift, Items: items}); err != nil {
-		return err
+		if !permanent(err) {
+			return err
+		}
+		// The controller refuses this report for good (for example more
+		// than 10 000 items or an Output over 64 KiB). Sending it again
+		// cannot help and would keep the agent from polling (T-022): the
+		// items count as sent. They stay open and go out again when they
+		// change.
+		a.log.Warn("drift report refused for good; dropped", "items", len(items), "err", err)
 	}
 	a.mu.Lock()
 	for _, it := range items {
