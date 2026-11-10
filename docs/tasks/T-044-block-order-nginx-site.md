@@ -1,7 +1,7 @@
 # T-044 – Order between Block uses (`after`), then `nginx-site`
 
 - **Owner:** pl-architect (plan first), then tbd   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
-- **Size:** M   · **Depends on:** T-020 on `main`   · **State:** planning (user go for the plan: 2026-11-10); the plan needs the user's approval before any feature code, because it changes the agent
+- **Size:** M   · **Depends on:** T-020 on `main`   · **State:** plan ready (2026-11-10), waits for the user's approval. No feature code and no contract edit before that, because the plan changes the agent
 
 ## Goal
 A Block use can depend on another Block use of the same Target, so a Block such as `nginx-site` applies clean in the first Run on a new Target.
@@ -16,15 +16,16 @@ A Block use can depend on another Block use of the same Target, so a Block such 
 - `docs/ARCHITECTURE.md` §10 (roadmap: `after`, `uses`), `docs/DECISIONS.md` D-027, D-165
 - `internal/agent/exec.go`, `internal/state` (render, validate)
 
-## Acceptance criteria (draft; the plan refines them)
-- [ ] A Block (or a Block use) names what it comes after. Only named dependencies are sequential; everything else stays parallel.
-- [ ] Cycles and unknown names are save-time errors. The Plan shows the order.
-- [ ] The skip rule after a failed dependency is defined and tested.
-- [ ] `nginx-site` and `spec.restarts` come back. The reviewer's one-command test passes: a new Target with `nginx` and two `nginx-site` uses applies clean in the first Run, and both sites answer.
-- [ ] Guest test in the CI guest job.
+## Acceptance criteria (refined by the plan; final after the user's approval)
+- [ ] A Block names the resources it comes after (`spec.after`, D-167). Only these edges are sequential; everything else stays parallel.
+- [ ] An unknown id, an id of the same use and a cycle are save-time errors (D-168). The Plan shows `after` on the resource that waits (D-171).
+- [ ] Skip rule (D-170): a use whose `after` resource ended `failed`, `refused` or `skipped` is skipped and names it; other uses run. Tested in `internal/agent`.
+- [ ] `nginx-site` and `spec.restarts` are back (D-172, D-173). One apply command on a guest without `/etc/nginx`, with `nginx` and two `nginx-site` uses, in both Target orders: no step fails, and each site answers with its own page.
+- [ ] That test (`TestGuestNginxSitesFirstRun`) runs in the CI guest job (D-174). `make test`, `make lint` and `sg docker -c "make test-guest"` pass.
 
 ## Out of scope
 - `when`, `each`, `uses`, typed values (other roadmap template features).
+- `after` on a Block use in the Target, Block names in `after`, templates in `after` / `restarts`, reverse order for removal (D-175).
 
 ## Plan (architect)
 
