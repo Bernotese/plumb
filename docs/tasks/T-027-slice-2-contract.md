@@ -47,7 +47,7 @@ Schema changes: `Proposal.targets`; `TargetPlan.secrets` (`[{name, version}]`, D
 - Handlers, store code, UI screens. Part B operations (image versions, builds).
 
 ## Result (owner, max 8 lines)
-pl-architect/T-027-slice-2-contract · draft PR (waits for the user's approval of T-025) · tests: `make lint test` → ok (Go all packages, web 88 tests).
+pl-architect/T-027-slice-2-contract · draft PR #33 (waits for the user's approval of T-025) · tests: `make lint test` → ok (Go all packages, web 88 tests).
 - 14 new operations, 5 new tags, `rule.json`. All new operations carry `x-plumb-planned` (D-100), because a QA test wants a tier row for every operation.
 - New fields on existing schemas are optional ("missing = none"), so the slice 1 server still matches the contract.
 - Test-only Go change: 8 lines in `internal/api/access_qa_test.go`. Web: 2 lines in the mock (it refuses the two new issue actions until T-036).
