@@ -72,6 +72,7 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 - Address and login: `~/.config/plump/testhost.env` on the dev VM (`ssh "$PLUMB_TEST_PVE_SSH"`). The repo is public: never commit the address, host keys, tokens or passwords, and keep them out of PRs, logs and reports.
 - Only the agent that `pl-lead` names in a card works on the host, one agent at a time. Do only what the card lists.
 - Installer: `--dry-run` first. Send the result to `pl-lead` and wait for the go before a real run.
+- Real installer runs with `plumb key init` on this host: an agent may run them (D-180, user decision; only this host). Give the TTY with `ssh -tt` or `script(1)`; do not change the installer for it. Put the recovery key into `~/.config/plump/testhost-recovery.key` (0600) and never into the repo, a PR, a log or a report; write only "key stored in <path>". On every other host a person runs the installer.
 - Never change the network config, the SSH config, `authorized_keys`, the root password or the storages `local` and `local-lvm`. Never reboot or upgrade the host without `pl-lead`. Never touch other machines in that network.
 - Guests and objects that a test makes stay in the Plumb pool and are removed at the end. Secrets made on the host (API tokens) go to a 0600 file outside the repo.
 
