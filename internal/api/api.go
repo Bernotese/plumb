@@ -62,9 +62,11 @@ type Server struct {
 	loginPair *failLimiter
 	loginIP   *failLimiter
 	loginUser *failLimiter
-	bearers   *failLimiter // bad bearers per client and token id (D-157)
-	bearerIP  *failLimiter // bad bearers per client, hard cap (D-157)
-	dummy     string       // a password hash for unknown users (same work)
+	// bearers counts bad bearers per client and token id (20/min) while the
+	// key is kept; eviction can drop it, so the guaranteed bound is bearerIP.
+	bearers  *failLimiter
+	bearerIP *failLimiter // bad bearers per client, hard cap 300/min (D-157)
+	dummy    string       // a password hash for unknown users (same work)
 	// hashSlots bounds concurrent argon2id work (64 MiB each, review M2).
 	hashSlots chan struct{}
 
