@@ -13,9 +13,13 @@ import type {
   PlumbEvent,
   RevisionDiff,
   RevisionInfo,
+  RuleView,
   Run,
+  SecretInfo,
   Session,
   TargetView,
+  Token,
+  TokenCreated,
 } from "./types";
 
 /** Every event type of the contract: an SSE listener is needed per name. */
@@ -31,6 +35,10 @@ export const EVENT_TYPES = [
   "issue.resolved",
   "target.status",
   "revision.committed",
+  "token.created",
+  "token.revoked",
+  "secret.updated",
+  "secret.deleted",
 ] as const satisfies readonly components["schemas"]["Event"]["type"][];
 
 export interface HttpOptions {
@@ -67,16 +75,14 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     path: string,
     body?: unknown,
     quiet401 = false,
+    accept = "application/json",
   ): Promise<T> {
     let res: Response;
     try {
       res = await doFetch(API_BASE + path, {
         method,
         credentials: "same-origin",
-        headers:
-          body === undefined
-            ? { accept: "application/json" }
-            : { accept: "application/json", "content-type": "application/json" },
+        headers: body === undefined ? { accept } : { accept, "content-type": "application/json" },
         body: body === undefined ? null : JSON.stringify(body),
       });
     } catch (err) {
@@ -88,6 +94,7 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
       throw new ApiError(problem);
     }
     if (res.status === 204) return undefined as T;
+    if (accept !== "application/json") return (await res.text()) as T;
     return (await res.json()) as T;
   }
 
@@ -131,8 +138,18 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     getRun: (id) => call<Run>("GET", `/runs/${id}`),
     listIssues: async () => (await all<Issue>("/issues")).sort((a, b) => b.id - a.id),
     getIssue: (id) => call<Issue>("GET", `/issues/${id}`),
-    resolveIssue: (id, action, reason) =>
-      call<Plan>("POST", `/issues/${id}/resolve`, reason ? { action, reason } : { action }),
+    resolveIssue: (id, action, reason, rule) =>
+      call<Plan>("POST", `/issues/${id}/resolve`, {
+        action,
+        ...(reason ? { reason } : {}),
+        ...(rule ? { rule } : {}),
+      }),
+    ignoreOnce: (id, reason) =>
+      call<Issue>("POST", `/issues/${id}/resolve`, {
+        action: "ignore_once",
+        ...(reason ? { reason } : {}),
+      }),
+    listRules: () => all<RuleView>("/rules"),
     listRevisions: (cursor, limit = 50) =>
       call<PageOf<RevisionInfo>>(
         "GET",
@@ -141,6 +158,22 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     diffRevision: (n, from) =>
       call<RevisionDiff>("GET", `/revisions/${n}/diff${from !== undefined ? `?from=${from}` : ""}`),
     rollbackRevision: (n, reason) => call<Plan>("POST", `/revisions/${n}/rollback`, { reason }),
+    listTokens: () => all<Token>("/tokens"),
+    createToken: (req) => call<TokenCreated>("POST", "/tokens", req),
+    revokeToken: async (id) => {
+      await call<undefined>("DELETE", `/tokens/${encodeURIComponent(id)}`);
+    },
+    listSecrets: () => all<SecretInfo>("/secrets"),
+    putSecret: (name, value) =>
+      call<SecretInfo>("PUT", `/secrets/${encodeURIComponent(name)}`, { value }),
+    deleteSecret: async (name) => {
+      await call<undefined>("DELETE", `/secrets/${encodeURIComponent(name)}`);
+    },
+    exportState: (passphrase) =>
+      passphrase === undefined
+        ? call<string>("GET", "/export", undefined, false, "application/yaml")
+        : call<string>("POST", "/export", { passphrase }, false, "application/yaml"),
+    importState: (req) => call<Plan>("POST", "/import", req),
 
     events(since, onEvent, onOpen) {
       // The browser reconnects an EventSource by itself after a network

@@ -25,7 +25,11 @@ export function scalar(s: string): string {
   ) {
     return s;
   }
-  return JSON.stringify(s);
+  // JSON leaves DEL, the C1 controls and LS/PS raw; YAML wants them escaped.
+  return JSON.stringify(s).replace(
+    /[\u007f-\u009f\u2028\u2029]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
 
 /**

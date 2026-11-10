@@ -253,13 +253,21 @@ func TestIgnoreRuleFlow(t *testing.T) {
 	if code != 201 || !strings.Contains(string(body), `"ignored":true`) {
 		t.Errorf("plan with ignored drift: %d %s", code, body)
 	}
-	adm.do("DELETE", "/api/v1/plans/"+planIDOf(body), nil)
+	if c, b := adm.do("POST", "/api/v1/plans/"+planIDOf(body)+"/approve", nil); c != 202 {
+		t.Fatalf("apply ignored drift: %d %s", c, b)
+	}
+	e.eng.Wait()
+	if got := e.agents["web1"].Guest("file:/etc/motd")["content"]; got != "new text" {
+		t.Fatalf("ignored drift was not applied: %v", got)
+	}
+	e.approve(adm, "restore desired text", targetDoc("web1", "hello"))
 
 	// Unchanged ends the record.
 	e.motd("hello")
 	if _, body = adm.do("GET", "/api/v1/targets/web1", nil); strings.Contains(string(body), "ignored_drift") {
 		t.Errorf("record after unchanged: %s", body)
 	}
+	e.motd("edited again") // leave a record for rule deletion to prune
 	// The rule is removed (by a human): the drift opens an Issue again.
 	code, body = planTok.do("POST", "/api/v1/plans", map[string]any{"reason": "drop rule", "delete": []map[string]string{{"kind": "Rule", "name": rule}}})
 	if code != 201 || !strings.Contains(string(body), `"human_only":["rule-change"]`) {
@@ -269,6 +277,9 @@ func TestIgnoreRuleFlow(t *testing.T) {
 		t.Fatalf("approve delete: %d %s", code, body)
 	}
 	e.eng.Wait()
+	if records, err := e.st.IgnoredDriftOf(e.ctx, "web1"); err != nil || len(records) != 0 {
+		t.Fatalf("removed rule kept dropped-drift records: %+v %v", records, err)
+	}
 	e.motd("edited again")
 	if e.openIssueID() == 0 {
 		t.Error("after the rule is gone, the drift must open an Issue")
@@ -367,6 +378,16 @@ func TestRuleHumanOnly(t *testing.T) {
 	// Change the rule.
 	code, body = planTok.do("POST", "/api/v1/plans", map[string]any{"reason": "narrow", "put": []state.Doc{rule("*", "mode")}})
 	adm.do("DELETE", "/api/v1/plans/"+humanOnly("change", code, body), nil)
+	// Rollback must enforce the same check when it removes or changes a Rule.
+	code, body = planTok.do("POST", "/api/v1/revisions/"+itoa(before.ID)+"/rollback", map[string]string{"reason": "remove rule"})
+	adm.do("DELETE", "/api/v1/plans/"+humanOnly("rollback deletes", code, body), nil)
+	full, err := e.st.Head(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.approve(adm, "narrow rule", rule("*", "mode"))
+	code, body = planTok.do("POST", "/api/v1/revisions/"+itoa(full.ID)+"/rollback", map[string]string{"reason": "restore all attrs"})
+	adm.do("DELETE", "/api/v1/plans/"+humanOnly("rollback changes", code, body), nil)
 	// Delete the rule.
 	code, body = planTok.do("POST", "/api/v1/plans", map[string]any{"reason": "delete", "delete": []map[string]string{{"kind": "Rule", "name": "motd-all"}}})
 	if id := humanOnly("delete", code, body); id != "" {

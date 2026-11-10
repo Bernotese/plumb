@@ -13,6 +13,12 @@
   let error = $state<unknown>(null);
   let filter = $state<"open" | "resolving" | "resolved" | "all">("open");
   const tone: Record<Issue["status"], Tone> = { open: "warn", resolving: "info", resolved: "ok" };
+  const resolutionText: Record<NonNullable<Issue["resolution"]>["action"], string> = {
+    accept: "Accepted",
+    revert: "Reverted",
+    gone: "Gone by itself",
+    ignore: "Ignored",
+  };
 
   $effect(() => {
     // The inbox follows the event stream (live.ts): reload on every
@@ -34,6 +40,7 @@
 <div class="spread">
   <h1 id="page-title" tabindex="-1">Issues</h1>
   <div class="row">
+    <a href={href({ name: "rules" })}>Ignore rules</a>
     <label for="issue-filter">Show</label>
     <select id="issue-filter" bind:value={filter}>
       <option value="open">Open</option>
@@ -62,6 +69,7 @@
           <th scope="col">Status</th>
           <th scope="col">Revert risk</th>
           <th scope="col">Opened</th>
+          <th scope="col">Resolution</th>
         </tr>
       </thead>
       <tbody>
@@ -73,6 +81,12 @@
             <td><Badge tone={tone[i.status]} label={i.status} /></td>
             <td><RiskBadge risk={i.risk} /></td>
             <td>{formatTime(i.opened_at)}</td>
+            <td>
+              {#if i.resolution}
+                {resolutionText[i.resolution.action]}
+                <span class="by mono">{i.resolution.by}</span>
+              {:else}–{/if}
+            </td>
           </tr>
         {/each}
       </tbody>
@@ -81,6 +95,11 @@
 {/if}
 
 <style>
+  .by {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
   .flush {
     padding: 0;
     overflow: hidden;

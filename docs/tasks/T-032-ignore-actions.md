@@ -16,7 +16,7 @@ A user can ignore one drift, or ignore a kind of drift for good with a `Rule` do
 
 ## Acceptance criteria
 - [x] The operations of this card lose `x-plumb-planned` in `api/openapi.yaml` and get their rows in the tier matrix of `internal/api` (D-100).
-- [x] Who may `ignore_once` (D-091): a human session; an `apply` token only when every change of the Issue has a risk up to its `max_risk` and none is sensitive. A `plan` or `read` token gets 403 `human-required`; an `apply` token over its limit gets 403 `risk-too-high`; a sensitive or `destructive` change is human-only.
+- [x] Who may `ignore_once` (D-091): a human session; an `apply` token only when every change of the Issue has a risk up to its `max_risk` and none is sensitive. A `plan` token gets 403 `human-required` (a `read` token stops at the tier check with 403 `forbidden`, D-146); an `apply` token over its limit gets 403 `risk-too-high`; a sensitive or `destructive` change is human-only.
 - [x] `ignore_once` (D-091): 200 with the Issue, `resolved`, resolution `ignore`, no Plan, no revision. An equal later report opens no Issue. A report with other changes opens one. After `unchanged` or an apply of the resource, the same drift opens an Issue again.
 - [x] `ignore_rule` (D-092): 201 with a Plan (origin `ignore_rule`, risk `read`, no target change) that puts one `Rule`. The Issue is `resolving`; it resolves as `ignore` when the revision commits and is `open` again when the Plan is dropped or stale.
 - [x] Human-only rule (D-099): a Plan that puts, changes or deletes a `Rule` has `human_only: [rule-change]`, for every origin (issue action, plain proposal, rollback, import). A token that approves gets 403 `human-required`. A `plan` token may still propose it.

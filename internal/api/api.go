@@ -62,8 +62,11 @@ type Server struct {
 	loginPair *failLimiter
 	loginIP   *failLimiter
 	loginUser *failLimiter
-	bearers   *failLimiter // bad bearer tokens per client
-	dummy     string       // a password hash for unknown users (same work)
+	// bearers counts bad bearers per client and token id (20/min) while the
+	// key is kept; eviction can drop it, so the guaranteed bound is bearerIP.
+	bearers  *failLimiter
+	bearerIP *failLimiter // bad bearers per client, hard cap 300/min (D-157)
+	dummy    string       // a password hash for unknown users (same work)
 	// hashSlots bounds concurrent argon2id work (64 MiB each, review M2).
 	hashSlots chan struct{}
 
@@ -102,6 +105,7 @@ func New(cfg Config) *Server {
 		loginIP:   newFailLimiter(cfg.Now, 20, time.Minute),
 		loginUser: newFailLimiter(cfg.Now, 100, time.Minute),
 		bearers:   newFailLimiter(cfg.Now, 20, time.Minute),
+		bearerIP:  newFailLimiter(cfg.Now, 300, time.Minute),
 		dummy:     HashPassword(randomText(16), cfg.PasswordParams),
 		hashSlots: make(chan struct{}, hashSlotCount),
 		streams:   map[string]map[uint64]context.CancelFunc{},
@@ -305,20 +309,29 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 func (s *Server) authenticate(r *http.Request) (*principal, error) {
 	ctx := r.Context()
 	if auth := r.Header.Get("Authorization"); auth != "" {
-		if s.bearers.blocked(clientKey(r)) > 0 {
-			return nil, errRateLimited
-		}
 		bearer, ok := strings.CutPrefix(auth, "Bearer ")
 		id, sec, ok2 := strings.Cut(bearer, ".")
+		wellFormed := ok && ok2 && len(bearer) < 256
+		// The pair key uses the presented id, not the stored token, so a
+		// blocked id gives no oracle for which ids exist (D-157).
+		client := clientKey(r)
+		pair := client + " id:"
+		if wellFormed {
+			pair += id
+		}
+		if s.bearerIP.blocked(client) > 0 || s.bearers.blocked(pair) > 0 {
+			return nil, errRateLimited
+		}
 		want := sha256Hex("no token")
 		var tok store.Token
-		if ok && ok2 && len(bearer) < 256 {
+		if wellFormed {
 			if t, err := s.st.TokenByID(ctx, id); err == nil {
 				tok, want = t, t.Hash
 			}
 		}
 		if subtle.ConstantTimeCompare([]byte(sha256Hex(sec)), []byte(want)) != 1 || tok.ID == "" {
-			s.bearers.fail(clientKey(r))
+			s.bearers.fail(pair)
+			s.bearerIP.fail(client)
 			return nil, nil
 		}
 		s.st.TouchToken(ctx, tok.ID)

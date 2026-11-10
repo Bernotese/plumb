@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/plan"
@@ -292,7 +293,13 @@ func (s *Service) PlanDone(ctx context.Context, planID int64, ok bool) {
 	if p.Status == store.PlanApproved {
 		// The revision committed: its rules apply to open Issues (D-092),
 		// and a succeeded Run ends "Ignore once" of what it applied (D-091).
-		defer s.applyRules(ctx, p.ApprovedBy)
+		// The approver of a rule change resolves what the rule covers;
+		// after any other Plan the rules are only re-applied, by system.
+		by := "system"
+		if slices.Contains(p.HumanOnly, plan.HumanOnlyRuleChange) {
+			by = p.ApprovedBy
+		}
+		defer s.applyRules(ctx, by)
 		if ok {
 			s.forgetApplied(ctx, p)
 		}

@@ -30,7 +30,7 @@ describe("mock api", () => {
     expect((await api.getPlan(11)).status).toBe("stale");
     const issue = (await api.listIssues()).find((i) => i.id === 9);
     expect(issue?.changes[0]).toEqual({ attr: "content", sensitive: true, risk: "reversible" });
-    expect(issue?.actions).toEqual(["revert"]);
+    expect(issue?.actions).toEqual(["revert", "ignore_once", "ignore_rule"]);
   });
 
   it("plans, approves and runs a new target with live events", async () => {
