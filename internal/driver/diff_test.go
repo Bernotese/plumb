@@ -76,3 +76,16 @@ func TestIntValue(t *testing.T) {
 		}
 	}
 }
+
+func TestDriftGuest(t *testing.T) {
+	have := spec()
+	have.Cores, have.DiskGB = 8, 50
+	c := DriftGuest(spec(), GuestState{Spec: have})
+	if len(c) != 2 || c[0].Attr != AttrDisk || c[0].Risk != wire.RiskDestructive || c[0].From != 50 ||
+		c[1].Attr != AttrCores || c[1].From != 8 || c[1].To != 2 {
+		t.Errorf("drift = %+v", c)
+	}
+	if _, err := DiffGuest(spec(), GuestState{Spec: have}); err == nil {
+		t.Error("DiffGuest must refuse the same difference")
+	}
+}

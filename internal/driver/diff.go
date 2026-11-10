@@ -37,13 +37,27 @@ var guestRisk = map[string]wire.Risk{
 // A difference in a create-only setting returns a *CreateOnlyError for
 // the first such attribute, in the order of CreateOnly.
 func DiffGuest(desired GuestSpec, observed GuestState) ([]wire.Change, error) {
-	have := observed.Spec
-	for _, attr := range CreateOnly {
-		if !equal(createOnlyValue(desired, attr), createOnlyValue(have, attr)) {
-			return nil, &CreateOnlyError{Attr: attr}
+	changes := DriftGuest(desired, observed)
+	for _, c := range changes {
+		if IsCreateOnly(c.Attr) {
+			return nil, &CreateOnlyError{Attr: c.Attr}
 		}
 	}
+	return changes, nil
+}
+
+// DriftGuest lists every difference, the create-only ones included, for
+// a drift report: a create-only setting changed outside Plumb has the
+// risk destructive, because only a new guest can bring it back.
+func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
+	have := observed.Spec
 	var out []wire.Change
+	for _, attr := range CreateOnly {
+		from, to := createOnlyValue(have, attr), createOnlyValue(desired, attr)
+		if !equal(from, to) {
+			out = append(out, wire.Change{Attr: attr, From: from, To: to, Risk: wire.RiskDestructive})
+		}
+	}
 	add := func(attr string, from, to any) {
 		if !equal(from, to) {
 			out = append(out, wire.Change{Attr: attr, From: from, To: to, Risk: guestRisk[attr]})
@@ -52,7 +66,7 @@ func DiffGuest(desired GuestSpec, observed GuestState) ([]wire.Change, error) {
 	add(AttrCores, have.Cores, desired.Cores)
 	add(AttrMemory, have.MemoryMB, desired.MemoryMB)
 	add(AttrBridge, have.Bridge, desired.Bridge)
-	return out, nil
+	return out
 }
 
 func createOnlyValue(s GuestSpec, attr string) any {

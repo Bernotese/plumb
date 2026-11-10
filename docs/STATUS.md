@@ -10,14 +10,16 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-010 plan/apply/issues | pl-backend | in progress (part waits for T-018) |
+| T-012 Proxmox VM driver | pl-backend | offline part in progress (httptest fake); real-host part **blocked: test host** |
+| T-021 flow test with the real agent | pl-codex-qa | in progress (stacked on T-018 branch; merges after #8, #13) |
+| T-022 agent: 4xx on drift flush | pl-codex-fix | waits for T-018 |
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
 | T-005 resources | pl-frontend | PR #8: static review approve (ea35c1e); merge after the first real guest run. **Blocked: Docker access** |
-| T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): QA + review running |
+| T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): static review approve (29aa0a4); merge after #8 and the first real guest run. **Blocked: Docker access** |
 | T-006 web UI slice (mock API) | pl-frontend | in progress |
-| T-011, T-014, T-015 | see cards | later waves |
+| T-014, T-015 | see cards | later waves |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
-| T-013 installer → T-012 Proxmox driver → real-host part of T-015 | pl-backend | **blocked: test host (D-041)** |
+| T-013 installer, real-host part of T-012 and T-015 | pl-backend | **blocked: test host (D-041)** |
 
 ## Done
 - 2026-11-10 · Team setup, auto mode, GitHub remote, model split.
@@ -27,6 +29,8 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 - 2026-11-10 · T-017: OpenAPI contract, web skeleton, web build in Makefile and CI (PR #2, d4d481b).
 - 2026-11-10 · T-004: state package, migration 0002, decisions D-050 … D-053 (PR #7).
 - 2026-11-10 · T-009: agent link, event stream, fake driver, race step in CI, decisions D-060 … D-064 (PR #11).
+- 2026-11-10 · T-010: plan/approve/apply engine, issues, crash recovery, D-065 … D-069, D-075 (PR #14).
+- 2026-11-10 · T-011: HTTP API, sessions, token tiers, SSE, embedded UI + agent binary, serve --dev, D-070 … D-074 (PR #17).
 
 ## Open for the user
 - Restart `pl-codex-fix` (Codex session error after `/new`: "permission profile cannot be safely represented by the legacy app-server sandbox policy").
