@@ -148,7 +148,7 @@ func canonValue(v any) (any, error) {
 // Limits of number literals in documents. They keep big.Rat work small.
 const (
 	maxNumberText     = 100 // characters
-	maxNumberExponent = 100 // |exponent| after normalisation
+	maxNumberExponent = 100 // |exponent| as written in the literal
 )
 
 // canonNumber returns the canonical text of a JSON number literal:

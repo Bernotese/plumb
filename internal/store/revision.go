@@ -161,8 +161,9 @@ func (s *Store) Revision(ctx context.Context, id int64) (Revision, error) {
 }
 
 // Revisions returns up to limit revisions with an id below before, newest
-// first. before <= 0 starts at the head.
+// first. before <= 0 starts at the head. limit is clamped to 1…500.
 func (s *Store) Revisions(ctx context.Context, before int64, limit int) ([]Revision, error) {
+	limit = min(max(limit, 1), 500)
 	if before <= 0 {
 		before = 1<<63 - 1
 	}

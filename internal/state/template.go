@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,7 +11,7 @@ import (
 )
 
 // Limits bound the work of rendering one Target. Block templates are user
-// input, so a template must not run for ever or fill the memory.
+// input, so a template must not run for ever or fill the memory (D-052).
 type Limits struct {
 	// Timeout is the time limit for all templates of one Target.
 	Timeout time.Duration
@@ -18,28 +19,104 @@ type Limits struct {
 	// templates of one Target. Every string that a function returns
 	// counts against it too.
 	MaxOutput int
+	// TotalTimeout and TotalOutput bound one Validate (and Load) call over
+	// all Targets. Each Target render gets the smaller of its own budget
+	// and the rest of the total.
+	TotalTimeout time.Duration
+	TotalOutput  int
 }
 
-// DefaultLimits are the limits of Validate and of the controller.
-var DefaultLimits = Limits{Timeout: 2 * time.Second, MaxOutput: 1 << 20}
+// DefaultLimits are the limits of Validate, Load and the controller.
+var DefaultLimits = Limits{
+	Timeout: 2 * time.Second, MaxOutput: 1 << 20,
+	TotalTimeout: 10 * time.Second, TotalOutput: 32 << 20,
+}
 
-// ErrRenderLimit is wrapped by every error from a render limit.
+// withDefaults returns the limits with every zero field set from
+// DefaultLimits. A zero never means "no limit".
+func (l Limits) withDefaults() Limits {
+	if l.Timeout <= 0 {
+		l.Timeout = DefaultLimits.Timeout
+	}
+	if l.MaxOutput <= 0 {
+		l.MaxOutput = DefaultLimits.MaxOutput
+	}
+	if l.TotalTimeout <= 0 {
+		l.TotalTimeout = DefaultLimits.TotalTimeout
+	}
+	if l.TotalOutput <= 0 {
+		l.TotalOutput = DefaultLimits.TotalOutput
+	}
+	return l
+}
+
+// ErrRenderLimit is wrapped by every error from the limit of one Target render.
 var ErrRenderLimit = errors.New("render limit")
 
-// budget is the shared allowance of one Target render.
-type budget struct {
-	deadline time.Time
-	left     int // output bytes
-	max      int
+// ErrTotalBudget is wrapped by the error from the total budget of one
+// Validate call. It is not an ErrRenderLimit: the caller of Load can tell
+// "the whole state is too slow to render" from "this Target is broken".
+var ErrTotalBudget = errors.New("total render budget exceeded")
+
+// limitError is a budget error. It keeps its short message when it comes
+// back wrapped in a template error.
+type limitError struct {
+	kind error // ErrRenderLimit or ErrTotalBudget
+	msg  string
 }
 
-func newBudget(lim Limits) *budget {
-	return &budget{deadline: time.Now().Add(lim.Timeout), left: lim.MaxOutput, max: lim.MaxOutput}
+func (e *limitError) Error() string {
+	if strings.HasPrefix(e.msg, "(") {
+		return e.kind.Error() + " " + e.msg
+	}
+	return e.kind.Error() + ": " + e.msg
+}
+func (e *limitError) Unwrap() error { return e.kind }
+
+// budget is the allowance of one Target render. total is the shared
+// allowance of the whole Validate call, or nil.
+type budget struct {
+	deadline time.Time
+	timeout  time.Duration
+	left     int // output bytes
+	max      int
+	total    *budget
+}
+
+func newBudget(lim Limits, total *budget) *budget {
+	return &budget{
+		deadline: time.Now().Add(lim.Timeout), timeout: lim.Timeout,
+		left: lim.MaxOutput, max: lim.MaxOutput, total: total,
+	}
+}
+
+// newTotal returns the budget of one Validate call. It starts now.
+func newTotal(lim Limits) *budget {
+	return &budget{
+		deadline: time.Now().Add(lim.TotalTimeout), timeout: lim.TotalTimeout,
+		left: lim.TotalOutput, max: lim.TotalOutput,
+	}
+}
+
+func (b *budget) totalError(what string) error {
+	return &limitError{ErrTotalBudget, fmt.Sprintf("%s (%v, %d bytes over all Targets)", what, b.total.timeout, b.total.max)}
+}
+
+// exhausted reports the total budget error when nothing is left of it.
+func (b *budget) exhausted() error {
+	if time.Now().After(b.deadline) || b.left <= 0 {
+		return &limitError{ErrTotalBudget, fmt.Sprintf("(%v, %d bytes over all Targets)", b.timeout, b.max)}
+	}
+	return nil
 }
 
 func (b *budget) checkTime() error {
-	if time.Now().After(b.deadline) {
-		return fmt.Errorf("%w: rendering took longer than the time limit", ErrRenderLimit)
+	now := time.Now()
+	if b.total != nil && now.After(b.total.deadline) {
+		return b.totalError("time is up")
+	}
+	if now.After(b.deadline) {
+		return &limitError{ErrRenderLimit, "rendering took longer than the time limit"}
 	}
 	return nil
 }
@@ -48,7 +125,10 @@ func (b *budget) checkTime() error {
 // It does not use up the budget; only written output does.
 func (b *budget) fits(n int) error {
 	if n > b.max {
-		return fmt.Errorf("%w: a value is larger than %d bytes", ErrRenderLimit, b.max)
+		return &limitError{ErrRenderLimit, fmt.Sprintf("a value is larger than %d bytes", b.max)}
+	}
+	if b.total != nil && n > b.total.left {
+		return b.totalError("a value does not fit the rest of the output")
 	}
 	return b.checkTime()
 }
@@ -60,13 +140,20 @@ type budgetWriter struct {
 }
 
 func (w *budgetWriter) Write(p []byte) (int, error) {
-	if err := w.b.checkTime(); err != nil {
+	b := w.b
+	if err := b.checkTime(); err != nil {
 		return 0, err
 	}
-	if len(p) > w.b.left {
-		return 0, fmt.Errorf("%w: the output is larger than %d bytes", ErrRenderLimit, w.b.max)
+	if len(p) > b.left {
+		return 0, &limitError{ErrRenderLimit, fmt.Sprintf("the output is larger than %d bytes", b.max)}
 	}
-	w.b.left -= len(p)
+	if b.total != nil {
+		if len(p) > b.total.left {
+			return 0, b.totalError("the output is too large")
+		}
+		b.total.left -= len(p)
+	}
+	b.left -= len(p)
 	return w.buf.Write(p)
 }
 
@@ -120,8 +207,8 @@ func funcs(b *budget) template.FuncMap {
 				switch e := e.(type) {
 				case string:
 					parts[i] = e
-				case fmt.Stringer: // json.Number
-					parts[i] = e.String()
+				case number:
+					parts[i] = string(e)
 				case bool:
 					parts[i] = fmt.Sprint(e)
 				default:
@@ -272,6 +359,33 @@ func checkBranch(n *parse.BranchNode, tick *parse.ActionNode) error {
 	return nil
 }
 
+// number is how a template sees a JSON number: its canonical text. The
+// type has no methods, so ".n.Float64" and similar calls fail, and no
+// value goes through float64 (D-050).
+type number string
+
+// templateData converts the parameters for a template: every json.Number
+// becomes a number. Strings, bools, lists and maps have no methods.
+func templateData(v any) any {
+	switch v := v.(type) {
+	case json.Number:
+		return number(v)
+	case map[string]any:
+		m := make(map[string]any, len(v))
+		for k, e := range v {
+			m[k] = templateData(e)
+		}
+		return m
+	case []any:
+		s := make([]any, len(v))
+		for i, e := range v {
+			s[i] = templateData(e)
+		}
+		return s
+	}
+	return v
+}
+
 // execTemplate renders one value template with the budget.
 func execTemplate(text string, data map[string]any, b *budget) (string, error) {
 	if !strings.Contains(text, "{{") {
@@ -287,21 +401,11 @@ func execTemplate(text string, data map[string]any, b *budget) (string, error) {
 	}
 	w := &budgetWriter{b: b}
 	if err := t.Execute(w, data); err != nil {
-		if errors.Is(err, ErrRenderLimit) {
-			return "", unwrapLimit(err)
+		var le *limitError
+		if errors.As(err, &le) {
+			return "", le
 		}
 		return "", fmt.Errorf("template: %s", strings.TrimPrefix(err.Error(), "template: "))
 	}
 	return w.buf.String(), nil
-}
-
-// unwrapLimit returns the limit error inside a template error, so the
-// message is short and errors.Is still works.
-func unwrapLimit(err error) error {
-	for e := err; e != nil; e = errors.Unwrap(e) {
-		if strings.HasPrefix(e.Error(), ErrRenderLimit.Error()) {
-			return e
-		}
-	}
-	return err
 }

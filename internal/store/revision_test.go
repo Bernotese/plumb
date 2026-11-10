@@ -37,6 +37,8 @@ func TestRevisionDocumentSharing(t *testing.T) {
 		// Migration 0002 makes revisions immutable; its triggers fire first.
 		{`DELETE FROM doc WHERE hash = 'shared'`, sqlite3.SQLITE_CONSTRAINT_TRIGGER},
 		{`DELETE FROM revision WHERE id = 1`, sqlite3.SQLITE_CONSTRAINT_TRIGGER},
+		{`UPDATE revision SET reason = 'rewritten' WHERE id = 1`, sqlite3.SQLITE_CONSTRAINT_TRIGGER},
+		{`DELETE FROM revision_doc WHERE revision_id = 1`, sqlite3.SQLITE_CONSTRAINT_TRIGGER},
 		{`UPDATE doc SET body = '{"x":1}' WHERE hash = 'shared'`, sqlite3.SQLITE_CONSTRAINT_TRIGGER},
 		{`UPDATE revision_doc SET hash = 'other' WHERE revision_id = 2`, sqlite3.SQLITE_CONSTRAINT_TRIGGER},
 		{`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (1, 'Block', 'other', 'shared')`, sqlite3.SQLITE_CONSTRAINT_TRIGGER},

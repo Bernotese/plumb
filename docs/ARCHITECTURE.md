@@ -77,7 +77,7 @@ spec:
 - The controller **renders** each Target to a flat resource list. A resource id is `type:key` (for example `file:/etc/motd`). Two resources with the same id on one target are an error.
 - Block values are Go `text/template` strings over the parameters. Rendering has a time limit and a size limit. Conditions, loops, Block includes and typed values come only when a real Block needs them (§10).
 - Order: resources of one Block apply in the listed order. Different Blocks apply in parallel. Package-manager operations share one lock per guest. A Block use has an `id` (default: the Block name); two uses of one Block need different ids (D-048).
-- Restart: `service` has `restart_on: [resource ids]`. When a listed resource changes, the agent adds a `restart` change (risk `disruptive`) to the service and applies it after them. The Plan shows this change.
+- Restart: `service` has `restart_on: [resource ids]`. A Block parameter can set a resource key (for example a file path), so `restart_on` across Blocks names ids that depend on parameters; render checks that each id exists. When a listed resource changes, the agent adds a `restart` change (risk `disruptive`) to the service and applies it after them. The Plan shows this change.
 - Each resource type states its target kinds (`vm`, `lxc`). The Proxmox settings of a target are one resource, `guest:config`. The driver handles it, not the agent. So plans and issues have one shape for both levels.
 - Tables of the first slice (migration 0001): `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `issue_comment`, `binding` (document → driver id), `agent`, `enroll_token`, `event`, `user`, `session`, `api_token`. The table `secret` comes with the secret store, in its own migration (§10).
 

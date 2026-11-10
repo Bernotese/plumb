@@ -33,7 +33,11 @@ func (r *Rendered) All() []wire.Resource {
 // Render renders one Target of the set into its flat resource list:
 // value templates over the Block parameters, then the overrides. The
 // limits of the Set apply. The error is of type Errors.
-func (s *Set) Render(target string) (*Rendered, error) {
+func (s *Set) Render(target string) (*Rendered, error) { return s.render(target, nil) }
+
+// render renders one Target. total is the shared budget of a Validate
+// call, or nil.
+func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	t, ok := s.targets[target]
 	if !ok {
 		return nil, Errors{{Kind: KindTarget, Name: target, Msg: "Target does not exist"}}
@@ -52,12 +56,12 @@ func (s *Set) Render(target string) (*Rendered, error) {
 		Attrs: withDefaults(t.Guest, sch.guestDefaults),
 	}
 
-	bud := newBudget(s.limits)
+	bud := newBudget(s.limits, total)
 	where := map[string]string{} // resource id → path of its origin
 	byID := map[string]*wire.Resource{}
 	for i, use := range t.Blocks {
 		b := s.blocks[use.Use]
-		params := withDefaults(use.Params, b.defaults)
+		params := templateData(withDefaults(use.Params, b.defaults)).(map[string]any)
 		usePath := ptr("/spec/blocks", i)
 		for j, br := range b.resources {
 			origin := fmt.Sprintf("%s (Block %q /spec/resources/%d)", usePath, use.Use, j)

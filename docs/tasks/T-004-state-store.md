@@ -34,6 +34,7 @@ Plumb can store documents as revisions and can render a Target into the flat res
 - store: `Open` (WAL, foreign keys, busy timeout, BEGIN IMMEDIATE), user_version migrations, `CommitRevision`, `Head`, `Revision(s)`, `RevisionDocs`, `RevisionDoc`, `Doc`, `Diff` (0 = empty state).
 - Migration 0002: revisions and doc rows immutable by triggers (D-051). Existing revision test adapted to it.
 - state: `Validate` → `*Set` (schemas, refs, params with defaults, every Target renders), `Render`, `Commit`, `Load`. Errors carry kind, name and a JSON pointer.
-- Sandbox and limits (D-052): allowlist; `$ref` loader blocked; tests stop a `{{ range 1000000000000 }}` and nested ranges by time, writing loops and a doubling variable by size.
+- Sandbox and limits (D-052): allowlist; `$ref` loader blocked; numbers have no methods in templates; budget per Target (2 s, 1 MiB) plus a total per `Validate`/`Load` (10 s, 32 MiB, own error `ErrTotalBudget`). Tests stop huge, nested and writing loops, a doubling variable, and 10 slow Targets at the total.
+- Review fixes: invalid Block/Image is "invalid", not "does not exist"; `Set.Docs` copies specs (QA PR #9); end-to-end test 2048.0 vs 2048 in the store; `Revisions` limit clamped.
 - Canonical numbers normalised (D-050): `2048.0` = `2048`; the pinned hash in `TestCanonical` changed.
 - Golden tests: `internal/state/testdata` renders deploy-user, nginx, motd (two Targets); `go test ./internal/state -update` rewrites.
