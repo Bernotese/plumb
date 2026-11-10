@@ -50,8 +50,8 @@ test("create target → plan → run → issue → revert", async ({ page }) => 
   await page.getByRole("link", { name: "Issues", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
   await page
+    .getByRole("row", { name: /file:\/etc\/motd/ })
     .getByRole("link", { name: /^Issue \d+$/ })
-    .first()
     .click();
   await expect(page.getByText("differs from the desired state")).toBeVisible();
   const issueUrl = page.url();
