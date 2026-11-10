@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PlumbApi } from "../lib/client";
+  import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { Issue } from "../lib/types";
   import { formatTime, type Tone } from "../lib/view";
@@ -13,17 +14,19 @@
   let filter = $state<"open" | "resolving" | "resolved" | "all">("open");
   const tone: Record<Issue["status"], Tone> = { open: "warn", resolving: "info", resolved: "ok" };
 
-  const load = () =>
-    api.listIssues().then(
-      (i) => (issues = i),
-      (e: unknown) => (error = e),
-    );
   $effect(() => {
-    void load();
-    // The inbox follows the event stream: no reload needed.
-    return api.events(undefined, (e) => {
-      if (e.type.startsWith("issue.")) void load();
+    // The inbox follows the event stream (live.ts): reload on every
+    // (re)open and, coalesced, on every issue event.
+    const live = liveSnapshot({
+      load: () => api.listIssues(),
+      subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
+      onSnapshot: (i) => (issues = i),
+      onError: (e) => (error = e),
+      onEvent: (e, l) => {
+        if (e.type.startsWith("issue.")) l.reloadSoon();
+      },
     });
+    return () => live.stop();
   });
   const shown = $derived(issues?.filter((i) => filter === "all" || i.status === filter) ?? []);
 </script>

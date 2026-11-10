@@ -64,7 +64,7 @@
   <ChangeTable
     changes={issue.changes}
     caption="Difference of {issue.resource}"
-    fromLabel="On the guest now"
+    fromLabel={issue.status === "open" ? "On the guest now" : "On the guest when found"}
     toLabel="Desired"
   />
   {#if hidden}

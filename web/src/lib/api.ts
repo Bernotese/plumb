@@ -55,7 +55,8 @@ export function buildUrl(
   return `${API_BASE}${filled}${qs ? `?${qs}` : ""}`;
 }
 
-async function toProblem(res: Response): Promise<Problem> {
+/** The problem of a non-2xx answer: its problem+json body, else a generic one. */
+export async function toProblem(res: Response): Promise<Problem> {
   if (res.headers.get("content-type")?.includes("application/problem+json")) {
     return (await res.json()) as Problem;
   }

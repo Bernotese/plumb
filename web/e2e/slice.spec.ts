@@ -57,7 +57,7 @@ test("create target → plan → run → issue → revert", async ({ page }) => 
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await page.getByRole("button", { name: "Approve and apply" }).click();
   await expect(page.getByRole("heading", { name: /^Run \d+$/ })).toBeVisible();
-  await expect(page.locator(".card .badge").first()).toHaveText("succeeded", { timeout: 30_000 });
+  await expect(page.getByText(/Run status:\s*succeeded/)).toBeVisible({ timeout: 30_000 });
 
   await page.goto(issueUrl);
   await expect(page.getByText("Status: resolved")).toBeVisible();

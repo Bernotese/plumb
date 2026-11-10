@@ -2,7 +2,7 @@
 // one-time admin password to the test through the environment.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -43,5 +43,7 @@ export default async function globalSetup() {
   process.env["PLUMB_E2E_PASSWORD"] = password;
   return async () => {
     proc.kill("SIGTERM");
+    await new Promise((done) => proc.once("exit", done));
+    await rm(data, { recursive: true, force: true });
   };
 }

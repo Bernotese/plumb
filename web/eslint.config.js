@@ -9,7 +9,6 @@ export default ts.config(
   {
     ignores: [
       "dist/",
-      "dist-mock/",
       "test-results/",
       "playwright-report/",
       "node_modules/",

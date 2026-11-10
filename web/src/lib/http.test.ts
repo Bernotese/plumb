@@ -84,6 +84,16 @@ describe("http api", () => {
     expect(lost).toHaveBeenCalledOnce();
   });
 
+  it("a wrong current password is an error, not a lost session (M1)", async () => {
+    const lost = vi.fn();
+    const f = fakeFetch(() => problem(401, "Wrong password"));
+    const api = createHttpApi({ fetch: f.fn, onUnauthorized: lost });
+    const err = await api.changePassword("wrong", "new-password-1234").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).problem.title).toBe("Wrong password");
+    expect(lost).not.toHaveBeenCalled();
+  });
+
   it("keeps the problem title and detail of an API error", async () => {
     const f = fakeFetch(() => problem(409, "Plan is stale"));
     const err = (await createHttpApi({ fetch: f.fn })
@@ -145,7 +155,14 @@ describe("event stream", () => {
       reconnectDelay: () => 100,
     });
     const got: number[] = [];
-    const stop = api.events(undefined, (e) => got.push(e.seq));
+    let opens = 0;
+    const stop = api.events(
+      undefined,
+      (e) => got.push(e.seq),
+      () => opens++,
+    );
+    streams[0]?.onopen?.(new Event("open"));
+    expect(opens).toBe(1);
     expect(streams[0]?.url).toBe("/api/v1/events");
     streams[0]?.emit({ seq: 5, type: "run.step" });
     streams[0]?.emit({ seq: 6, type: "issue.opened" });
@@ -154,6 +171,8 @@ describe("event stream", () => {
     expect(streams).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(100);
     expect(streams[1]?.url).toBe("/api/v1/events?since=6");
+    streams[1]?.onopen?.(new Event("open"));
+    expect(opens).toBe(2); // every reopen: the screen reloads its snapshot
     streams[1]?.emit({ seq: 6, type: "issue.opened" }); // seen already
     streams[1]?.emit({ seq: 7, type: "run.finished" });
     expect(got).toEqual([5, 6, 7]);
@@ -174,5 +193,31 @@ describe("event stream", () => {
     );
     expect(urls).toEqual(["/api/v1/events?since=41"]);
     stop();
+  });
+});
+
+describe("lost session on the stream (m1)", () => {
+  it("probes the session when the stream closes; a 401 calls onUnauthorized", async () => {
+    vi.useFakeTimers();
+    const lost = vi.fn();
+    const f = fakeFetch(() => problem(401, "Authentication required"));
+    const streams: FakeStream[] = [];
+    const api = createHttpApi({
+      fetch: f.fn,
+      onUnauthorized: lost,
+      eventSource: (u) => {
+        const st = new FakeStream(u);
+        streams.push(st);
+        return st;
+      },
+      reconnectDelay: () => 100,
+    });
+    const stop = api.events(undefined, () => {});
+    streams[0]?.fail();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.calls.map((c) => c.url)).toEqual(["/api/v1/session"]);
+    expect(lost).toHaveBeenCalledOnce();
+    stop();
+    vi.useRealTimers();
   });
 });

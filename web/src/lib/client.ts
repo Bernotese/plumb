@@ -32,7 +32,12 @@ export interface PlumbApi {
   /**
    * Subscribes to the event stream: events after `since`, or only new ones
    * when `since` is undefined. Reconnects by itself. Returns the unsubscribe
-   * function.
+   * function. `onOpen` runs on every (re)open of the stream: a snapshot
+   * loaded before it can have missed events (see live.ts).
    */
-  events(since: number | undefined, onEvent: (e: PlumbEvent) => void): () => void;
+  events(
+    since: number | undefined,
+    onEvent: (e: PlumbEvent) => void,
+    onOpen?: () => void,
+  ): () => void;
 }

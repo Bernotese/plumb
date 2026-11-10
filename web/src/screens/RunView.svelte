@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PlumbApi } from "../lib/client";
+  import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { PlumbEvent, Run } from "../lib/types";
   import { applyStepEvent, formatTime, type Tone } from "../lib/view";
@@ -22,51 +23,28 @@
     skipped: "muted",
   };
 
-  // The server adds steps while the run goes on: a step that the snapshot
-  // does not have yet loads the run again (at most every 300 ms).
-  let reloadTimer: ReturnType<typeof setTimeout> | undefined;
-  function reloadSoon() {
-    if (reloadTimer) return;
-    reloadTimer = setTimeout(() => {
-      reloadTimer = undefined;
-      void api.getRun(id).then((r) => (run = r));
-    }, 300);
-  }
-
-  function onEvent(e: PlumbEvent) {
-    if (e.subject !== `run:${id}` || !run) return;
-    const d = e.data as { target?: string; resource?: string; status?: string };
-    if (applyStepEvent(run, e)) {
-      announce = `${d.resource} on ${d.target}: ${d.status}`;
-    } else if (e.type === "run.step") {
-      announce = `${d.resource} on ${d.target}: ${d.status}`;
-      reloadSoon();
-    } else if (e.type === "run.finished") {
-      void api.getRun(id).then((r) => {
-        run = r;
-        announce = `Run ${id} ${r.status}.`;
-      });
-    }
-  }
-
   $effect(() => {
-    // Subscribe first and buffer, so no step event is lost while the
-    // snapshot loads; then apply the buffer to the snapshot.
-    let buffer: PlumbEvent[] | null = [];
-    const stop = api.events(undefined, (e: PlumbEvent) => (buffer ? buffer.push(e) : onEvent(e)));
-    api.getRun(id).then(
-      (r) => {
+    // The snapshot follows the stream without gaps (live.ts): it is loaded
+    // again on every (re)open. The server adds steps while the run goes on,
+    // so a step the snapshot does not have yet, and the end of the run,
+    // load it again (coalesced).
+    const live = liveSnapshot({
+      load: () => api.getRun(id),
+      subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
+      onSnapshot: (r) => {
         run = r;
-        const queued = buffer ?? [];
-        buffer = null;
-        queued.forEach(onEvent);
+        if (r.status !== "running") announce = `Run ${id} ${r.status}.`;
       },
-      (e: unknown) => (error = e),
-    );
-    return () => {
-      stop();
-      clearTimeout(reloadTimer);
-    };
+      onError: (e) => (error = e),
+      onEvent: (e: PlumbEvent, l) => {
+        if (e.subject !== `run:${id}` || !run) return;
+        const d = e.data as { target?: string; resource?: string; status?: string };
+        if (e.type === "run.step") announce = `${d.resource} on ${d.target}: ${d.status}`;
+        if (!applyStepEvent(run, e) && (e.type === "run.step" || e.type === "run.finished"))
+          l.reloadSoon();
+      },
+    });
+    return () => live.stop();
   });
 </script>
 
@@ -76,6 +54,7 @@
 {#if run}
   <div class="card spread">
     <div>
+      <span class="sr-only">Run status:</span>
       <Badge tone={tone[run.status] ?? "muted"} label={run.status} />
       <span class="muted"
         >Started {formatTime(run.started_at)}{run.finished_at

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PlumbApi } from "../lib/client";
+  import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { TargetView } from "../lib/types";
   import { formatTime, targetState } from "../lib/view";
@@ -10,18 +11,21 @@
   let targets = $state<TargetView[] | null>(null);
   let error = $state<unknown>(null);
 
-  const load = () =>
-    api.listTargets().then(
-      (t) => (targets = t.sort((a, b) => a.document.name.localeCompare(b.document.name))),
-      (e: unknown) => (error = e),
-    );
   $effect(() => {
-    void load();
-    // Status changes arrive as events: the list follows them.
-    return api.events(undefined, (e) => {
-      if (e.type === "target.status" || e.type === "run.finished" || e.type.startsWith("issue."))
-        void load();
+    // The list follows the event stream (live.ts): reload on every
+    // (re)open and, coalesced, on status, run and issue events.
+    const live = liveSnapshot({
+      load: () => api.listTargets(),
+      subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
+      onSnapshot: (t) =>
+        (targets = t.sort((a, b) => a.document.name.localeCompare(b.document.name))),
+      onError: (e) => (error = e),
+      onEvent: (e, l) => {
+        if (e.type === "target.status" || e.type === "run.finished" || e.type.startsWith("issue."))
+          l.reloadSoon();
+      },
     });
+    return () => live.stop();
   });
 </script>
 

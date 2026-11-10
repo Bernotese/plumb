@@ -1,7 +1,7 @@
 // The PlumbApi over HTTP: /api/v1 of the controller (T-014). Same origin,
 // session cookie, no token or password is stored by the UI. Errors are
 // ApiError with the problem+json body.
-import { API_BASE, ApiError, NetworkError } from "./api";
+import { API_BASE, ApiError, NetworkError, toProblem } from "./api";
 import type { PlumbApi } from "./client";
 import type { components } from "./api.gen";
 import type {
@@ -10,7 +10,6 @@ import type {
   Issue,
   Plan,
   PlumbEvent,
-  Problem,
   Run,
   Session,
   TargetView,
@@ -52,17 +51,6 @@ export interface EventSourceLike {
 
 const CLOSED = 2;
 const PAGE = 200;
-
-async function toProblem(res: Response): Promise<Problem> {
-  if (res.headers.get("content-type")?.includes("application/problem+json")) {
-    try {
-      return (await res.json()) as Problem;
-    } catch {
-      // fall through to the generic problem
-    }
-  }
-  return { type: "about:blank", title: res.statusText || "Request failed", status: res.status };
-}
 
 export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
   const doFetch =
@@ -121,10 +109,13 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
       await call<undefined>("DELETE", "/session");
     },
     changePassword: async (current, next) => {
-      await call<undefined>("PUT", "/session/password", {
-        current_password: current,
-        new_password: next,
-      });
+      // A wrong current password is a 401 too: it must not end the session.
+      await call<undefined>(
+        "PUT",
+        "/session/password",
+        { current_password: current, new_password: next },
+        true,
+      );
     },
     listImages: () => all<ImageView>("/images"),
     listBlocks: () => all<BlockView>("/blocks"),
@@ -140,7 +131,7 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     resolveIssue: (id, action, reason) =>
       call<Plan>("POST", `/issues/${id}/resolve`, reason ? { action, reason } : { action }),
 
-    events(since, onEvent) {
+    events(since, onEvent, onOpen) {
       // The browser reconnects an EventSource by itself after a network
       // error (with Last-Event-ID). When it gives up (CLOSED, for example
       // after a 401 or a server restart), the client opens a new one from
@@ -156,10 +147,14 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
         es = openStream(`${API_BASE}/events${last !== undefined ? `?since=${last}` : ""}`);
         es.onopen = () => {
           attempt = 0;
+          onOpen?.();
         };
         es.onerror = () => {
           if (stopped || !es || es.readyState !== CLOSED) return;
           es.close();
+          // The browser gave up. If the session is gone, the probe calls
+          // onUnauthorized at once instead of waiting for the next click.
+          void call("GET", "/session").catch(() => undefined);
           timer = setTimeout(open, delay(attempt++));
         };
         for (const type of EVENT_TYPES) {

@@ -15,7 +15,7 @@
   import Targets from "./screens/Targets.svelte";
 
   // The API: /api/v1 of the controller (T-014). A mock build
-  // (VITE_PLUMB_MOCK=1, `npm run dev:mock` / `npm run build:mock`) uses the
+  // (VITE_PLUMB_MOCK=1, `npm run dev:mock`, development only) uses the
   // mock instead. In every other build that condition is a constant false,
   // so Rollup drops the mock, its example data and its demo login (checked
   // by scripts/check-dist.mjs after `npm run build`).
