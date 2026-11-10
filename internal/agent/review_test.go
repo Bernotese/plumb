@@ -3,7 +3,9 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -235,23 +237,107 @@ func TestCleanStaleTemps(t *testing.T) {
 	}
 }
 
+// PR #64 F1: a cleanup error only warns; the start goes on.
 func TestNewContinuesWhenTempCleanupFails(t *testing.T) {
 	ca := newCA(t)
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o755); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, ".desired.json-crash"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := removeFile
+	removeFile = func(string) error { return errors.New("forced remove failure") }
+	t.Cleanup(func() { removeFile = orig })
 	var logs bytes.Buffer
 	a, err := New(Options{Config: Config{URL: "https://127.0.0.1:8444", CA: ca.pem, StateDir: dir}, Root: t.TempDir(), Runner: &runner{}, Log: slog.New(slog.NewTextHandler(&logs, nil))})
 	if err != nil {
 		t.Fatalf("New stopped on cleanup error: %v", err)
 	}
-	if !strings.Contains(logs.String(), "could not clean stale agent state temp files") {
+	if !strings.Contains(logs.String(), "could not clean stale agent state temp files") || !strings.Contains(logs.String(), "forced remove failure") {
 		t.Fatalf("cleanup warning missing: %s", logs.String())
 	}
-	if err := a.state.saveDesired(nil); err == nil {
-		t.Fatal("write succeeded despite invalid state dir")
+	removeFile = orig
+	if err := a.state.saveDesired(nil); err != nil {
+		t.Fatalf("write in a valid state dir: %v", err)
 	}
+}
+
+// T-043 / D-161: an unsafe state dir stops New; the agent does not fix it.
+func TestNewRefusesUnsafeStateDir(t *testing.T) {
+	ca := newCA(t)
+	newAgent := func(dir string) error {
+		_, err := New(Options{Config: Config{URL: "https://127.0.0.1:8444", CA: ca.pem, StateDir: dir}, Root: t.TempDir(), Runner: &runner{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		return err
+	}
+	mkdir := func(t *testing.T, mode os.FileMode) string {
+		dir := filepath.Join(t.TempDir(), "state")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	for _, mode := range []os.FileMode{0o755, 0o750, 0o701, 0o500} {
+		t.Run(fmt.Sprintf("mode %04o", mode), func(t *testing.T) {
+			dir := mkdir(t, mode)
+			err := newAgent(dir)
+			if err == nil {
+				t.Fatal("New accepted the state dir")
+			}
+			for _, want := range []string{dir, fmt.Sprintf("has mode %04o", mode), "mode 0700", "chmod 0700 " + dir} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q lacks %q", err, want)
+				}
+			}
+			if fi, _ := os.Stat(dir); fi.Mode().Perm() != mode {
+				t.Errorf("the agent changed the mode to %v", fi.Mode().Perm())
+			}
+		})
+	}
+	t.Run("symlink", func(t *testing.T) {
+		target := mkdir(t, 0o700)
+		link := filepath.Join(t.TempDir(), "state")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		err := newAgent(link)
+		if err == nil || !strings.Contains(err.Error(), link+" is a symlink") || !strings.Contains(err.Error(), "(fix: set state_dir to a new path)") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("not a directory", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "state")
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := newAgent(file); err == nil || !strings.Contains(err.Error(), file+" is not a directory") || !strings.Contains(err.Error(), "(fix: set state_dir to a new path)") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("other owner", func(t *testing.T) {
+		dir := mkdir(t, 0o700)
+		other := os.Geteuid() + 1
+		agentUID = func() int { return other }
+		t.Cleanup(func() { agentUID = os.Geteuid })
+		want := fmt.Sprintf("%s is not owned by the agent user", dir)
+		fix := fmt.Sprintf("chown %d %s", other, dir)
+		if err := newAgent(dir); err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), fix) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("missing dir is created 0700", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "a", "state")
+		if err := newAgent(dir); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Lstat(dir); err != nil || fi.Mode().Perm() != 0o700 || !fi.IsDir() {
+			t.Fatalf("new state dir: %v %v", fi, err)
+		}
+	})
 }
 
 func TestRetryAfterParse(t *testing.T) {
