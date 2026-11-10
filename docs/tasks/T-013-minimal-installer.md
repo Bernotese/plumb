@@ -29,7 +29,7 @@ One script prepares a Proxmox host for Plumb, so the real-host tests and the fir
 ## Follow-up (pl-lead, 2026-11-10)
 - Slice 2 (D-086, PR #32): only `plumb key init` creates the master key and shows the recovery key, on a terminal. `plumb serve` never creates it. When the secret store (T-028) is on `main`, the installer must create the key volume and call `plumb key init` with a real TTY (`pct enter` or `lxc-attach`, not `pct exec`). This needs its own card and a review; it is not part of the minimal installer.
 - Where it goes in `install/install.sh` (pl-backend, T-041; not implemented):
-  1. `create_lxc`, `pct create` (~l. 615): add the key volume, e.g. `--mp0 "$DISK_STORAGE:1,mp=/var/lib/plumb/key,backup=0"`; drop the comment "no mount point".
+  1. `ensure_lxc`, `pct create` (~l. 615): add the key volume, e.g. `--mp0 "$DISK_STORAGE:1,mp=/var/lib/plumb/key,backup=0"`; drop the comment "no mount point".
   2. `setup_lxc` (~l. 699): after `install -d … /var/lib/plumb`, give the mount point `/var/lib/plumb/key` to `plumb`, mode 0700 (D-102: `key init` never creates the directory).
   3. `setup_lxc`, before `systemctl restart plumb.service` (~l. 711): if `/var/lib/plumb/key/master.key` is missing, run `plumb key init --data /var/lib/plumb` as user `plumb` on a real TTY (`lxc-attach`/`pct enter`, not `pct exec`). A repair run with a key skips it. `--dry-run` only prints it. Without a terminal the installer stops before the start.
   4. `--remove`: `pct destroy --purge` also destroys the key volume; the confirmation text must say that the database is unreadable without the recovery key.
