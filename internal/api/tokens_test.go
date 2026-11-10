@@ -36,9 +36,6 @@ func (e *env) createToken(adm *client, body map[string]any) createdToken {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		e.t.Fatal(err)
 	}
-	if rec.Header().Get("Location") != "/api/v1/tokens/"+out.Token.ID {
-		e.t.Errorf("Location %q", rec.Header().Get("Location"))
-	}
 	return out
 }
 

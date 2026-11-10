@@ -110,7 +110,6 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	s.tokenEvent(r, "token.created", t, p)
-	w.Header().Set("Location", "/api/v1/tokens/"+t.ID)
 	writeJSON(w, http.StatusCreated, tokenCreated{Token: viewToken(t), Bearer: bearer}) // writeJSON sets no-store
 }
 
