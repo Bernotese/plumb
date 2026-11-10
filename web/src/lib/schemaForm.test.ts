@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { fieldsOf, humanize, initialValues, mergeParams, toParams, validate } from "./schemaForm";
+import {
+  fieldsOf,
+  humanize,
+  initialValues,
+  mergeParams,
+  secretName,
+  toParams,
+  validate,
+} from "./schemaForm";
 
 const schema = {
   type: "object",
@@ -117,5 +125,72 @@ describe("mergeParams", () => {
       nested: { a: 1 },
       unknown_key: [1, 2],
     });
+  });
+});
+
+describe("secret parameters (D-088)", () => {
+  const schema = {
+    required: ["db_password"],
+    properties: {
+      db_password: { type: "string", writeOnly: true, title: "Database password", default: "x" },
+      api_key: { type: "string", writeOnly: true },
+      host: { type: "string", default: "db1" },
+    },
+  };
+  const fields = fieldsOf(schema);
+
+  it("a writeOnly string is a secret field", () => {
+    expect(fields.map((f) => f.kind)).toEqual(["secret", "secret", "text"]);
+  });
+  it("writeOnly wins over an enum and never saves a literal (QA T-036 F1)", () => {
+    const f = fieldsOf({
+      properties: {
+        password: {
+          type: "string",
+          writeOnly: true,
+          enum: ["literal-example"],
+          default: "literal-example",
+        },
+      },
+    });
+    expect(f[0]?.kind).toBe("secret");
+    expect(initialValues(f)).toEqual({ password: "" });
+    expect(toParams(f, { password: "app-db" })).toEqual({ password: { secret: "app-db" } });
+  });
+  it("reads a stored reference and never a literal or default", () => {
+    expect(initialValues(fields, { db_password: { secret: "app-db" } })).toEqual({
+      db_password: "app-db",
+      api_key: "",
+      host: "db1",
+    });
+    expect(initialValues(fields, { db_password: "literal", api_key: { secret: 1 } })).toMatchObject(
+      {
+        db_password: "",
+        api_key: "",
+      },
+    );
+  });
+  it("requires a secret name when required", () => {
+    expect(validate(fields, initialValues(fields))).toEqual({ db_password: "Choose a secret." });
+    expect(validate(fields, { db_password: "Bad Name", api_key: "", host: "" })).toEqual({
+      db_password: "Choose a secret.",
+    });
+  });
+  it("saves {secret: name} and leaves out an empty optional secret", () => {
+    const params = toParams(fields, { db_password: "app-db", api_key: "", host: "db1" });
+    expect(params).toEqual({ db_password: { secret: "app-db" }, host: "db1" });
+  });
+  it("keeps a stored reference on merge when the form owns the field", () => {
+    const values = initialValues(fields, { db_password: { secret: "app-db" } });
+    expect(mergeParams({ db_password: { secret: "app-db" } }, fields, values)).toEqual({
+      db_password: { secret: "app-db" },
+      host: "db1",
+    });
+  });
+  it("secretName reads only a pure reference", () => {
+    expect(secretName({ secret: "a" })).toBe("a");
+    expect(secretName({ secret: "a", x: 1 })).toBeUndefined();
+    expect(secretName("a")).toBeUndefined();
+    expect(secretName(null)).toBeUndefined();
   });
 });

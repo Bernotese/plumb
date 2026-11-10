@@ -26,7 +26,11 @@
       {#each changes as c, i (i)}
         {@const v = changeView(c)}
         <tr>
-          <th scope="row" class="mono">{v.attr}</th>
+          <th scope="row" class="mono"
+            >{v.attr}{#if c.ignored}<span class="ignored"
+                >A rule ignores this drift; this apply overwrites it.</span
+              >{/if}</th
+          >
           {#if v.hidden}
             <td colspan="2"><em>changed (hidden)</em></td>
           {:else if v.restart}
@@ -45,6 +49,14 @@
 </div>
 
 <style>
+  .ignored {
+    display: block;
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    font-weight: 400;
+    color: var(--color-warn);
+    white-space: normal;
+  }
   .value {
     margin: 0;
     white-space: pre-wrap;

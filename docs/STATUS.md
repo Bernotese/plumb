@@ -19,11 +19,11 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-015 slice acceptance (HTTP) | pl-codex-qa | waits for T-018 on main; real-host part waits for the test host |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
-| T-029 secret references → T-033 export/import | pl-backend | T-029 running |
-| T-032 ignore actions (migration 0005) | pl-reviewer (implements; pl-architect reviews) | starts after the PR #45 delta check |
-| T-034 UI history, e2e part | pl-frontend | unblocked (T-031 on main); after the T-036 mock PR |
-| T-035 UI settings | pl-frontend | PR #45 (mock part, ac005f8): fixes done, delta check by pl-reviewer running |
-| T-036 UI secret params + ignore | pl-frontend | running (mock, stacked on T-035) |
+| T-029 secret references | pl-backend | PR #49: changes requested (3 must). Must 2, 3 fixed; must 1 (secret before approval) waits for D-156 by pl-architect. Merges after T-032 |
+| T-033 export/import | pl-backend | after the T-029 fixes |
+| T-032 ignore actions (migration 0005, Plan.human_only) | pl-reviewer (implements; pl-architect reviews) | running |
+| T-034, T-035 e2e parts (history, rollback, tokens, secrets) | pl-frontend | PR #51: review by pl-architect queued |
+| T-036 e2e part; export/import e2e | pl-frontend | wait for T-029, T-032, T-033 on main |
 | T-037 slice 2 acceptance, leak hunt | pl-codex-qa | waits for T-029 … T-033 on main |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
@@ -50,6 +50,8 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-030: token API (PR #34).
 - T-034 mock part: history UI (PR #35).
 - T-028: secret store (PR #37), D-102 … D-109, D-130.
+- T-035 mock part: settings UI (PR #45).
+- T-036 mock part: secret parameters, human-only Plans, ignore actions (PR #48).
 - T-031: revision API, rollback through a Plan (PR #39), D-115, D-125 … D-128.
 - D-131 Plan.rollback_to in the contract (PR #44); closed schemas (PR #46).
 - T-026: QA crash recovery test ported to main (PR #31); stale PR #16 closed.

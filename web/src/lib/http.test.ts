@@ -59,6 +59,72 @@ describe("http api", () => {
     ]);
   });
 
+  it("calls the settings operations (T-035)", async () => {
+    const accepts: string[] = [];
+    const f = fakeFetch((c) =>
+      c.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : c.url.endsWith("/export")
+          ? new Response("kind: Export\nformat: 1\n", {
+              headers: { "content-type": "application/yaml" },
+            })
+          : Response.json({ items: [], next: null }),
+    );
+    const fetchFn: typeof fetch = async (input, init) => {
+      accepts.push(new Headers(init?.headers).get("accept") ?? "");
+      return f.fn(input, init);
+    };
+    const api = createHttpApi({ fetch: fetchFn });
+    await api.listTokens();
+    await api.createToken({ name: "CI", tier: "apply", max_risk: "reversible" });
+    await api.revokeToken("tok_ci");
+    await api.listSecrets();
+    await api.putSecret("app-db", "v");
+    await api.deleteSecret("app-db");
+    expect(await api.exportState()).toBe("kind: Export\nformat: 1\n");
+    expect(await api.exportState("long passphrase")).toBe("kind: Export\nformat: 1\n");
+    await api.importState({ content: "x", mode: "merge", reason: "r", overwrite: ["app-db"] });
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["GET", "/api/v1/tokens?limit=200", undefined],
+      ["POST", "/api/v1/tokens", { name: "CI", tier: "apply", max_risk: "reversible" }],
+      ["DELETE", "/api/v1/tokens/tok_ci", undefined],
+      ["GET", "/api/v1/secrets?limit=200", undefined],
+      ["PUT", "/api/v1/secrets/app-db", { value: "v" }],
+      ["DELETE", "/api/v1/secrets/app-db", undefined],
+      ["GET", "/api/v1/export", undefined],
+      ["POST", "/api/v1/export", { passphrase: "long passphrase" }],
+      [
+        "POST",
+        "/api/v1/import",
+        { content: "x", mode: "merge", reason: "r", overwrite: ["app-db"] },
+      ],
+    ]);
+    expect(accepts[6]).toBe("application/yaml");
+    expect(accepts[7]).toBe("application/yaml");
+    expect(accepts[8]).toBe("application/json");
+  });
+
+  it("calls the ignore operations and the rules (T-036)", async () => {
+    const f = fakeFetch(() => Response.json({ items: [], next: null }));
+    const api = createHttpApi({ fetch: f.fn });
+    await api.ignoreOnce(8);
+    await api.ignoreOnce(8, "Known.");
+    await api.resolveIssue(9, "ignore_rule", undefined, { all_targets: true, attrs: ["content"] });
+    await api.resolveIssue(9, "revert", "r");
+    await api.listRules();
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["POST", "/api/v1/issues/8/resolve", { action: "ignore_once" }],
+      ["POST", "/api/v1/issues/8/resolve", { action: "ignore_once", reason: "Known." }],
+      [
+        "POST",
+        "/api/v1/issues/9/resolve",
+        { action: "ignore_rule", rule: { all_targets: true, attrs: ["content"] } },
+      ],
+      ["POST", "/api/v1/issues/9/resolve", { action: "revert", reason: "r" }],
+      ["GET", "/api/v1/rules?limit=200", undefined],
+    ]);
+  });
+
   it("sends the right method and body", async () => {
     const f = fakeFetch((c) =>
       c.method === "DELETE" || c.method === "PUT"

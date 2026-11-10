@@ -28,4 +28,7 @@ A human manages API tokens and secrets and runs export and import in the web UI.
 - User management, password policy, scheduled backups.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Mock part done: branch `pl-frontend/T-035-ui-settings` (from `main` after T-034). Settings tabs Tokens, Secrets, Export and import; 8 operations in PlumbApi, HTTP and mock (D-120…D-124).
+- Tests: `make lint test` → pass (167 web tests; 18 new screen tests in `screens/settings.test.ts`, HTTP calls, router).
+- Pictures: branch `pl-frontend/T-035-screens`, in the PR.
+- Open: Playwright e2e waits for T-028 and T-033 on `main` (T-030 is there; the token part can start now).
