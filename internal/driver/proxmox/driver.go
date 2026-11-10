@@ -208,7 +208,7 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	// failed earlier try: remove it before the next try (review T-012 #6).
 	for _, m := range ms {
 		if m.Name == name && m.Template != 1 && m.VMID >= d.cfg.VMIDMin && m.VMID <= d.cfg.VMIDMax {
-			d.removeHalfMade(ctx, m.VMID)
+			d.removeHalfMade(ctx, m.VMID, name)
 		}
 	}
 
@@ -247,11 +247,11 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		"serial0": {"socket"}, "vga": {"serial0"},
 		"description": {"Plumb image " + spec.Name + "\nsha256=" + spec.SHA256},
 	}); err != nil {
-		d.removeHalfMade(ctx, id)
+		d.removeHalfMade(ctx, id, name)
 		return "", fmt.Errorf("proxmox: create template VM: %w", err)
 	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/template", nil); err != nil {
-		d.removeHalfMade(ctx, id)
+		d.removeHalfMade(ctx, id, name)
 		return "", fmt.Errorf("proxmox: convert to template: %w", err)
 	}
 	return driver.ImageRef(strconv.Itoa(id)), nil
@@ -332,21 +332,32 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		"newid": {strconv.Itoa(id)}, "name": {spec.Name}, "pool": {d.cfg.Pool},
 		"full": {"1"}, "storage": {d.cfg.DiskStorage},
 	}); err != nil {
+		// A clone that failed or was stopped after Proxmox made the VM
+		// leaves a half-made guest (review N2).
+		d.removeHalfMade(ctx, id, spec.Name)
 		return "", fmt.Errorf("proxmox: clone: %w", err)
 	}
 	gid := driver.GuestID(strconv.Itoa(id))
 	if err := d.configure(ctx, id, tpl, spec, boot.Token); err != nil {
-		d.removeHalfMade(ctx, id)
+		d.removeHalfMade(ctx, id, spec.Name)
 		return "", scrub(err, boot.Token)
 	}
 	return gid, nil
 }
 
 // removeHalfMade deletes a guest that a failed Create or FetchImage left
-// behind. It is best effort, with its own deadline.
-func (d *Driver) removeHalfMade(ctx context.Context, id int) {
+// behind. It is best effort, with its own deadline. Like every change, it
+// first checks that the VMID is ours: in the range, in the pool, with the
+// name this call gave it and no template. A failed create can mean that
+// someone else took the id after nextID; that guest is never touched
+// (review N1).
+func (d *Driver) removeHalfMade(ctx context.Context, id int, name string) {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
+	_, m, err := d.own(cleanup, strconv.Itoa(id))
+	if err != nil || m.Name != name || m.Template == 1 {
+		return
+	}
 	if st, err := d.status(cleanup, id); err == nil && st == "running" {
 		_ = d.c.Task(cleanup, d.cfg.Node, "POST", vmPath(d, id)+"/status/stop", nil)
 	}

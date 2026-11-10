@@ -48,6 +48,10 @@ type fakePVE struct {
 	nullAnswer   map[string]bool   // request key → 200 with data null
 	statusFails  int               // task status reads that fail with 500 first
 	stoppedTasks []string          // UPIDs that got DELETE
+	// raceVMID: right after nextid says this id is free, someone else
+	// creates a guest with it (in another pool, or in ours with another name).
+	raceVMID int
+	racePool string
 }
 
 type fakeVM struct {
@@ -265,6 +269,10 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, strconv.Itoa(id))
+		if id == f.raceVMID {
+			f.raceVMID = 0
+			f.vms[id] = &fakeVM{cfg: map[string]string{"name": "someone-else", "smbios1": "uuid=" + uuid()}, pool: f.racePool, running: true}
+		}
 
 	case reStorage.MatchString(path):
 		m := reStorage.FindStringSubmatch(path)

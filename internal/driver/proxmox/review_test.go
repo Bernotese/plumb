@@ -215,3 +215,50 @@ func TestNoRedirect(t *testing.T) {
 		t.Error("redirects are followed")
 	}
 }
+
+// Review N1: when another party takes the VMID between nextid and the
+// create, the failed create cleans up nothing of theirs.
+func TestCleanupNeverTouchesARacedGuest(t *testing.T) {
+	for _, pool := range []string{"other", fakePool} { // a foreign pool, and ours with another name
+		f := newFakePVE(t)
+		d := f.driver(t)
+		ctx := context.Background()
+		f.raceVMID, f.racePool = 9000, pool
+		if _, err := d.FetchImage(ctx, image); err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("pool %s: %v", pool, err)
+		}
+		vm, ok := f.vms[9000]
+		if !ok || !vm.running || f.countExact("DELETE /nodes/pve/qemu/9000") != 0 || f.countExact("POST /nodes/pve/qemu/9000/status/stop") != 0 {
+			t.Errorf("pool %s: the raced guest was touched: %v", pool, f.log)
+		}
+		// Create: the same race on the clone target.
+		f.raceVMID, f.racePool = 0, ""
+		ref, err := d.FetchImage(ctx, image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := 9002
+		f.raceVMID, f.racePool = next, pool
+		if _, err := d.Create(ctx, guest(ref), driver.Bootstrap{Token: "t"}); err == nil {
+			t.Fatalf("pool %s: create on a raced id worked", pool)
+		}
+		if vm, ok := f.vms[next]; !ok || !vm.running || vm.cfg["name"] != "someone-else" {
+			t.Errorf("pool %s: the raced clone target was touched", pool)
+		}
+	}
+}
+
+// Review N2: a clone that fails after Proxmox made the VM leaves nothing.
+func TestCloneFailureCleansUp(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	ctx := context.Background()
+	ref, _ := d.FetchImage(ctx, image)
+	f.failNext["POST /nodes/pve/qemu/"+string(ref)+"/clone"] = "clone failed: storage full"
+	if _, err := d.Create(ctx, guest(ref), driver.Bootstrap{Token: "t"}); err == nil {
+		t.Fatal("want an error")
+	}
+	if _, ok := f.vms[9001]; ok {
+		t.Error("the half-made clone stayed")
+	}
+}
