@@ -16,7 +16,7 @@ The open T-010 criterion is closed: the core flow is proven with the real agent 
 - [x] One in-process test uses `driver/fake`, the real `internal/link` and the real `internal/agent` code: create target → approve → apply → change a file → Issue opens → `revert` closes it.
 - [x] D-075 case: a second file drifts between plan and apply → the agent refuses, the Run fails, a drift Issue opens, the file is not overwritten.
 - [x] Concurrent approval of a Plan **without targets**: exactly one winner through the DB transaction guard (the busy guard does not apply).
-- [ ] Tests: `make lint test` passes, also with `-race` in CI. Test-only diff, aim ≤ ~150 lines.
+- [x] Tests: `make lint test` passes, also with `-race` in CI. Test-only diff, aim ≤ ~150 lines.
 
 ## Out of scope
 - Production code changes. Report a bug instead.
@@ -26,4 +26,5 @@ The open T-010 criterion is closed: the core flow is proven with the real agent 
 Based on remote T-018 `29aa0a4`, with origin/main `8f591ab` merged (`ea0e811`).
 New test-only code: `internal/issue/real_agent_flow_test.go` (137 lines).
 Focused tests and `make lint test` pass locally; no C compiler for local race checks.
-CI runs `make test-race`; result pending. Draft must wait for PR #8 and PR #13.
+CI `make test-race` passed on `f07a8a2` (run `42750604704`).
+Draft PR #21 must wait for PR #8 and PR #13.
