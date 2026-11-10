@@ -15,10 +15,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **blocked: test host**. Follow-up: key volume + `plumb key init` (D-086), see card |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
-| T-020 symlink resource type | tbd | backlog (after the slice) |
+| T-020 symlink resource type | pl-frontend | running |
 
-Merge order when the guest job is green in CI: #5 (real run, digest pins) → #8 → #13 → #21, #27 → T-015.
-All six waiting PRs are in line with `main` again (T-041, 2026-11-10). For the Docker guest run, add: a canary where the real agent puts a secret into Output/Error through real `systemctl` output (review note on PR #21).
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
 
 ## Done (all 2026-11-10)
