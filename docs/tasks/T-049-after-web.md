@@ -24,4 +24,7 @@ The Plan view shows what a resource waits for and what causes a restart; the moc
 - A Block field on Plan resources, a view of Blocks, raw mode.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-frontend/T-049-after-web` · e2d4aff · PR #79 · `cd web && npm run lint && npm test` → pass (220).
+- Plan view labels `after …` and `restart because of …`; Run view needed no change (test only).
+- Mock `after` check runs before `restarts` (a site without nginx names package:nginx). `restart_on` gives no update change in the mock.
+- Demo Plan 16 in dev:mock; screenshots `docs/screenshots/T-049-plan-order-{light,dark}.png`.
