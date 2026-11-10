@@ -38,12 +38,28 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 			return store.Run{}, err
 		}
 	}
-	var prop Proposal
-	if err := json.Unmarshal(p.Proposal, &prop); err != nil {
-		return store.Run{}, err
-	}
 	var targets []TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
+		return store.Run{}, err
+	}
+	// Reserve the targets before anything is committed. A second approval
+	// for a busy target fails here; on any later error the reservation is
+	// released.
+	names := make([]string, len(targets))
+	for i, tp := range targets {
+		names[i] = tp.Target
+	}
+	if err := e.reserve(names); err != nil {
+		return store.Run{}, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			e.release(names)
+		}
+	}()
+	var prop Proposal
+	if err := json.Unmarshal(p.Proposal, &prop); err != nil {
 		return store.Run{}, err
 	}
 	// Rebuild exactly the planned set on the base of the Plan. When the
@@ -89,14 +105,16 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	}
 
 	e.mu.Lock()
-	for _, tp := range targets {
-		e.busy[tp.Target]++
-	}
+	e.active[run.ID] = true
 	e.mu.Unlock()
+	started = true
 	e.runs.Add(1)
 	go func() {
 		defer e.runs.Done()
 		e.execute(e.ctx, p, run, next, targets)
+		e.mu.Lock()
+		delete(e.active, run.ID)
+		e.mu.Unlock()
 	}()
 	return run, nil
 }
@@ -113,11 +131,7 @@ func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *
 		go func() {
 			defer wg.Done()
 			ok[i] = e.runTarget(ctx, p, run, set, tp)
-			e.mu.Lock()
-			if e.busy[tp.Target]--; e.busy[tp.Target] <= 0 {
-				delete(e.busy, tp.Target)
-			}
-			e.mu.Unlock()
+			e.release([]string{tp.Target})
 		}()
 	}
 	wg.Wait()
@@ -416,4 +430,73 @@ func (e *Engine) fetchImage(ctx context.Context, name string) error {
 		return err
 	}
 	return e.st.PutBinding(ctx, store.Binding{Kind: state.KindImage, Name: name, Ref: string(ref)})
+}
+
+// Recover closes what a controller crash left open. Call it once at
+// start, before agents connect and before the guest poll. A Run in the
+// database with status running has no goroutine after a restart: its
+// unfinished steps fail, the Run fails, and OnPlanDone opens its Issues
+// again. There is no automatic resend (D-067); the user plans again.
+func (e *Engine) Recover(ctx context.Context) error {
+	runs, err := e.st.RunningRuns(ctx)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		e.mu.Lock()
+		active := e.active[run.ID]
+		e.mu.Unlock()
+		if active {
+			continue // a Run of this process
+		}
+		if err := e.st.FailUnfinishedSteps(ctx, run.ID, "the controller restarted during the Run"); err != nil {
+			return err
+		}
+		if err := e.st.FinishRun(ctx, run.ID, "failed"); err != nil {
+			return err
+		}
+		e.emit(ctx, "run.finished", fmt.Sprintf("run:%d", run.ID), "system",
+			map[string]any{"plan": run.PlanID, "status": "failed", "reason": "controller restart"})
+		if e.cfg.OnPlanDone != nil {
+			e.cfg.OnPlanDone(ctx, run.PlanID, false)
+		}
+	}
+	return nil
+}
+
+// checkIdle returns ErrTargetBusy when a Run works on one of the targets.
+func (e *Engine) checkIdle(targets []string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, t := range targets {
+		if e.busy[t] > 0 {
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; wait for it to finish, then plan again"}
+		}
+	}
+	return nil
+}
+
+// reserve marks the targets busy, or fails when one is busy already.
+func (e *Engine) reserve(targets []string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, t := range targets {
+		if e.busy[t] > 0 {
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; approve after it finished"}
+		}
+	}
+	for _, t := range targets {
+		e.busy[t]++
+	}
+	return nil
+}
+
+func (e *Engine) release(targets []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, t := range targets {
+		if e.busy[t]--; e.busy[t] <= 0 {
+			delete(e.busy, t)
+		}
+	}
 }

@@ -36,6 +36,11 @@ func (e *ProposalError) Unwrap() error { return e.Err }
 // ErrOffline is wrapped when a target that the proposal touches is offline.
 var ErrOffline = errors.New("target is offline")
 
+// ErrTargetBusy is wrapped when a Run works on a target that a proposal
+// or an approval touches. Only one Run works on a target at a time, and
+// nobody plans against a half-applied guest.
+var ErrTargetBusy = errors.New("a Run is working on the target")
+
 // ErrCreateOnly is wrapped when a proposal changes a create-only setting.
 var ErrCreateOnly = errors.New("create-only setting")
 
@@ -139,6 +144,9 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		names = append(names, t)
 	}
 	sort.Strings(names)
+	if err := e.checkIdle(names); err != nil {
+		return store.Plan{}, err
+	}
 	plans := make([]TargetPlan, len(names))
 	errs := make([]error, len(names))
 	var wg sync.WaitGroup

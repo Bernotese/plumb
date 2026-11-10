@@ -126,8 +126,9 @@ type Engine struct {
 	runs   sync.WaitGroup
 
 	mu      sync.Mutex
-	results map[string]chan wire.Report // command id → reports
-	busy    map[string]int              // targets with a running Run
+	results map[string]chan wire.Report // command id → reports; only waiters create them
+	busy    map[string]int              // targets with a running or starting Run
+	active  map[int64]bool              // Runs of this process
 	cache   *sensitiveCache
 }
 
@@ -150,7 +151,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
-		results: map[string]chan wire.Report{}, busy: map[string]int{}}, nil
+		results: map[string]chan wire.Report{}, busy: map[string]int{}, active: map[int64]bool{}}, nil
 }
 
 // Close cancels all Runs and waits for them.
@@ -180,11 +181,16 @@ func (e *Engine) emit(ctx context.Context, typ, subject, actor string, data any)
 func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 	switch d.Report.Type {
 	case wire.ReportResult, wire.ReportProgress:
-		select {
-		case e.resultChan(d.Report.CommandID) <- d.Report:
-		default: // nobody reads (the waiter timed out); drop it
+		e.mu.Lock()
+		ch, ok := e.results[d.Report.CommandID]
+		e.mu.Unlock()
+		if ok {
+			select {
+			case ch <- d.Report:
+			default: // the waiter does not read; drop it
+			}
 		}
-		return nil
+		return nil // a report without a waiter (it timed out) is dropped
 	case wire.ReportDrift:
 		if e.cfg.OnDrift != nil {
 			return e.cfg.OnDrift(ctx, d.Target, d.Report)
@@ -194,19 +200,6 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		return e.sendWatch(ctx, d.Target)
 	}
 	return nil
-}
-
-// resultChan returns the report channel of a command. Whoever comes
-// first, the waiter or the report, creates it.
-func (e *Engine) resultChan(id string) chan wire.Report {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	ch, ok := e.results[id]
-	if !ok {
-		ch = make(chan wire.Report, 1024)
-		e.results[id] = ch
-	}
-	return ch
 }
 
 func (e *Engine) dropChan(id string) {
@@ -222,11 +215,18 @@ var ErrTimeout = errors.New("plan: the agent did not answer in time")
 // progress report. A lost command (D-061) ends in ErrTimeout.
 func (e *Engine) command(ctx context.Context, target string, typ wire.CommandType, body any,
 	timeout time.Duration, progress func(wire.Report)) (wire.Report, error) {
+	// Send and register under one lock: HandleReport takes the same lock,
+	// so a fast result cannot arrive before its channel exists.
+	ch := make(chan wire.Report, 1024)
+	e.mu.Lock()
 	id, err := e.cfg.Agents.Send(target, typ, body)
+	if err == nil {
+		e.results[id] = ch
+	}
+	e.mu.Unlock()
 	if err != nil {
 		return wire.Report{}, err
 	}
-	ch := e.resultChan(id)
 	defer e.dropChan(id)
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
