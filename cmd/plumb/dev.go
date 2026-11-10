@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/api"
-
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/link"
@@ -66,7 +65,7 @@ func devDocs() []state.Doc {
 
 // seedDev starts a simulated agent per dev target and, on an empty
 // store, plans and approves the seed documents (D-039). With demo it adds
-// the demo data of D-080: the user dev, one open drift Issue and one
+// the demo data of D-080: one open drift Issue and one
 // pending Plan.
 func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, drv *fake.Driver, demo bool, log *slog.Logger) error {
 	agents := map[string]*linktest.Agent{}
@@ -84,6 +83,9 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 		go a.Run(ctx)
 	}
 	if _, err := st.Head(ctx); err == nil {
+		if demo {
+			log.Info("demo data skipped: store already seeded")
+		}
 		return nil // seeded already
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -104,11 +106,6 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 
 // seedDemo waits for the seed Run and adds the demo data of D-080.
 func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, agents map[string]*linktest.Agent, log *slog.Logger) error {
-	// The user dev has no usable password: "!" is no PHC string, so no
-	// login form accepts any password for it. Only /dev/login logs it in.
-	if _, err := st.CreateUser(ctx, store.User{Name: api.DevUser, PasswordHash: "!"}); err != nil && !errors.Is(err, store.ErrExists) {
-		return err
-	}
 	eng.Wait()
 	deadline := time.Now().Add(30 * time.Second)
 	for _, t := range devTargets {

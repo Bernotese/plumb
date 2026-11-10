@@ -200,6 +200,11 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	// in memory only. It is printed once below.
 	var devToken string
 	if f.devDemo {
+		// Create the login user before printing its URL, even on a seeded store.
+		// "!" is not a password hash; only the dev login route can log it in.
+		if _, err := st.CreateUser(ctx, store.User{Name: api.DevUser, PasswordHash: "!"}); err != nil && !errors.Is(err, store.ErrExists) {
+			return err
+		}
 		devToken = randomToken()
 	}
 	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
