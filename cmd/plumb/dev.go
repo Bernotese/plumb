@@ -56,11 +56,24 @@ func devDocs() []state.Doc {
 			`{"package":{"name":"nginx"}},`+
 			`{"file":{"path":"/etc/nginx/sites-enabled/default","content":"server { listen 80; server_name {{ .server_name }}; }\n"}},`+
 			`{"service":{"name":"nginx","restart_on":["file:/etc/nginx/sites-enabled/default"]}}]}`),
+		// A Block that comes after a resource of another Block and
+		// restarts its service (D-167, D-172).
+		d(state.KindBlock, "nginx-site", `{"title":"Nginx site","description":"One more Nginx site. Use it with the nginx Block.",`+
+			`"params":{"type":"object","properties":{`+
+			`"name":{"type":"string","title":"Site name","default":"site","pattern":"^[a-z0-9][a-z0-9._-]{0,63}$"},`+
+			`"server_name":{"type":"string","title":"Server name","default":"site.lan"}}},`+
+			`"after":["package:nginx"],"restarts":["service:nginx"],"resources":[`+
+			`{"file":{"path":"/etc/nginx/sites-available/{{ .name }}","content":"server { listen 80; server_name {{ .server_name }}; }\n"}},`+
+			`{"symlink":{"path":"/etc/nginx/sites-enabled/{{ .name }}","target":"/etc/nginx/sites-available/{{ .name }}"}}]}`),
 	}
 	for _, t := range devTargets {
+		site := ""
+		if t == "web2" { // one Target shows the order between Blocks; the e2e tests edit web1
+			site = `,{"use":"nginx-site","id":"site-shop","params":{"name":"shop","server_name":"shop.` + t + `.lan"}}`
+		}
 		docs = append(docs, d(state.KindTarget, t, `{"type":"vm","image":"ubuntu-26.04",`+
 			`"guest":{"cores":2,"memory":2048,"disk":20,"bridge":"vmbr0"},`+
-			`"blocks":[{"use":"motd","params":{"text":"Hello from `+t+`"}},{"use":"nginx","params":{"server_name":"`+t+`.lan"}}]}`))
+			`"blocks":[{"use":"motd","params":{"text":"Hello from `+t+`"}},{"use":"nginx","params":{"server_name":"`+t+`.lan"}}`+site+`]}`))
 	}
 	return docs
 }

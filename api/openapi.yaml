@@ -2367,6 +2367,7 @@ components:
             rest of its Block use start only when each named resource ended `unchanged` or
             `applied`; else they are `skipped`. A named resource can be absent from this Plan: then
             it has no change, and the order still holds.
+          uniqueItems: true
           items: { type: string }
           examples: [["package:nginx"]]
         restart_by:
@@ -2376,6 +2377,7 @@ components:
             `restart_on` list that cause the restart, in list order. They change in this Plan, or
             nobody observed them (D-156). Missing means the Plan does not name a cause. It is for
             display only; the apply does not use it.
+          uniqueItems: true
           items: { type: string }
           examples: [["file:/etc/nginx/sites-available/a", "symlink:/etc/nginx/sites-enabled/a"]]
 
