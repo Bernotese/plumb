@@ -57,11 +57,17 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	}
 
 	bud := newBudget(s.limits, total)
+	nonce := newNonce()          // markers of this render only (D-088)
 	where := map[string]string{} // resource id → path of its origin
 	byID := map[string]*wire.Resource{}
 	for i, use := range t.Blocks {
 		b := s.blocks[use.Use]
 		params := templateData(withDefaults(use.Params, b.defaults)).(map[string]any)
+		for p := range b.secrets {
+			if name, ok := refName(params[p]); ok && name != "" {
+				params[p] = secretValue{marker: renderMarker(nonce, name)}
+			}
+		}
 		usePath := ptr("/spec/blocks", i)
 		for j, br := range b.resources {
 			origin := fmt.Sprintf("%s (Block %q /spec/resources/%d)", usePath, use.Use, j)
@@ -71,12 +77,24 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 					use.Use, j, br.Type, t.Type)
 			}
 			attrs, err := renderValue(br.Attrs, params, bud, ptr("/spec/resources", j, br.Type))
+			if err == nil {
+				attrs, err = finalizeMarkers(attrs, nonce, ptr("/spec/resources", j, br.Type))
+			}
 			if err != nil {
 				e := errf(usePath, "Block %q %v", use.Use, err)
 				e[0].Err = err
 				return nil, e
 			}
 			am := attrs.(map[string]any)
+			// A key attribute names the resource and restart_on names
+			// others: both are visible everywhere, so no secret (D-088).
+			for _, attr := range []string{rt.Key, "restart_on"} {
+				names := map[string]bool{}
+				stableNames(am[attr], names)
+				if len(names) > 0 {
+					return nil, errf(usePath, "Block %q /spec/resources/%d: %s cannot hold a secret", use.Use, j, attr)
+				}
+			}
 			key, ok := am[rt.Key].(string)
 			if !ok || key == "" {
 				return nil, errf(usePath, "Block %q /spec/resources/%d: key attribute %q must be a non-empty string",
@@ -113,11 +131,31 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 			keyAttr = rt.Key
 		}
 		for attr, v := range t.Overrides[id] {
+			if _, isRef := refName(v); isRef {
+				return nil, errf(ptr(path, attr), "an override cannot hold a secret reference (D-088)")
+			}
 			if attr == keyAttr && !reflect.DeepEqual(v, r.Attrs[attr]) {
 				return nil, errf(ptr(path, attr), "an override cannot change the key attribute; it would change the resource id")
 			}
 			r.Attrs[attr] = deepCopy(v)
 		}
+	}
+
+	// An attribute with a secret marker is sensitive (D-088). It is
+	// computed after the overrides, so an override with a literal makes
+	// the attribute plain again.
+	for i := range out.Resources {
+		r := &out.Resources[i]
+		var sens []string
+		for attr, v := range r.Attrs {
+			names := map[string]bool{}
+			stableNames(v, names)
+			if len(names) > 0 {
+				sens = append(sens, attr)
+			}
+		}
+		sort.Strings(sens)
+		r.Sensitive = sens
 	}
 
 	// Every attribute set must match the schema of its type.

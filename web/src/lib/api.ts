@@ -55,7 +55,8 @@ export function buildUrl(
   return `${API_BASE}${filled}${qs ? `?${qs}` : ""}`;
 }
 
-async function toProblem(res: Response): Promise<Problem> {
+/** The problem of a non-2xx answer: its problem+json body, else a generic one. */
+export async function toProblem(res: Response): Promise<Problem> {
   if (res.headers.get("content-type")?.includes("application/problem+json")) {
     return (await res.json()) as Problem;
   }
@@ -80,4 +81,12 @@ export async function get<P extends JsonGetPath>(
   });
   if (!res.ok) throw new ApiError(await toProblem(res));
   return (await res.json()) as GetResult<P>;
+}
+
+/** The server could not be reached (fetch failed). Thrown only by the HTTP client. */
+export class NetworkError extends Error {
+  constructor(cause: unknown) {
+    super("The Plumb API is not reachable.", { cause });
+    this.name = "NetworkError";
+  }
 }

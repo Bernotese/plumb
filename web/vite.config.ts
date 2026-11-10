@@ -8,12 +8,16 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "PLUMB_");
   return {
     plugins: [svelte()],
+    // Screen tests mount components in happy-dom: they need Svelte's client build.
+    ...(process.env["VITEST"] ? { resolve: { conditions: ["browser"] } } : {}),
     build: {
       outDir: "dist",
       emptyOutDir: true,
       sourcemap: false,
     },
     server: {
+      // The guest form reads internal/state/schema/target.json (one schema source, D-043).
+      fs: { allow: [".", "../internal/state/schema"] },
       proxy: {
         "/api": env["PLUMB_DEV_URL"] ?? "http://127.0.0.1:8443",
       },

@@ -26,6 +26,9 @@ One script prepares a Proxmox host for Plumb, so the real-host tests and the fir
 ## Out of scope
 - Tarball download and checksum, key volume, upgrades, backups (full installer comes later).
 
+## Follow-up (pl-lead, 2026-11-10)
+- Slice 2 (D-086, PR #32): only `plumb key init` creates the master key and shows the recovery key, on a terminal. `plumb serve` never creates it. When the secret store (T-028) is on `main`, the installer must create the key volume and call `plumb key init` with a real TTY (`pct enter` or `lxc-attach`, not `pct exec`). This needs its own card and a review; it is not part of the minimal installer.
+
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)

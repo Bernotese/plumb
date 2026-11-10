@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"errors"
 	"fmt"
@@ -125,6 +126,12 @@ func migrations() ([]migration, error) {
 
 // migrate applies every migration above the user_version of the database.
 // Each migration and its version bump run in one transaction.
+//
+// Foreign keys are off while a migration runs, so a migration can rebuild a
+// table that other tables refer to (the SQLite procedure for a changed
+// CHECK, D-096, D-115): DROP TABLE would otherwise delete the rows of the
+// parent first. Before the commit, PRAGMA foreign_key_check must find no
+// broken reference, so a migration cannot leave the database worse.
 func (s *Store) migrate(ctx context.Context) error {
 	all, err := migrations()
 	if err != nil {
@@ -137,19 +144,75 @@ func (s *Store) migrate(ctx context.Context) error {
 	if current > len(all) {
 		return fmt.Errorf("store: database has schema version %d, this program knows only %d", current, len(all))
 	}
+	if current == len(all) {
+		return nil
+	}
+	// One connection: the foreign_keys pragma is per connection and is a
+	// no-op inside a transaction.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
 	for _, m := range all[current:] {
-		err := s.tx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, m.body); err != nil {
-				return err
-			}
-			_, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", m.version))
-			return err
-		})
-		if err != nil {
+		if err := migrateOne(ctx, conn, m); err != nil {
+			conn.Raw(func(any) error { return driver.ErrBadConn }) // never reuse a connection without foreign keys
 			return fmt.Errorf("store: migration %s: %w", m.name, err)
 		}
 	}
+	// The pragma is a silent no-op in some states: read it back.
+	var fk int
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		conn.Raw(func(any) error { return driver.ErrBadConn })
+		return fmt.Errorf("store: %w", err)
+	}
+	if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+		conn.Raw(func(any) error { return driver.ErrBadConn })
+		return fmt.Errorf("store: foreign keys did not come back on after the migrations (%d, %v)", fk, err)
+	}
 	return nil
+}
+
+func migrateOne(ctx context.Context, conn *sql.Conn, m migration) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, m.body); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
+	if err != nil {
+		return err
+	}
+	broken := rows.Next()
+	var table, parent string
+	var rowID sql.NullInt64
+	var fkid int
+	if broken {
+		if err := rows.Scan(&table, &rowID, &parent, &fkid); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	if broken {
+		row := "null"
+		if rowID.Valid {
+			row = strconv.FormatInt(rowID.Int64, 10)
+		}
+		return fmt.Errorf("foreign key violation in table %q rowid %s referencing %q", table, row, parent)
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", m.version)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // tx runs fn in a write transaction and commits when fn returns nil.

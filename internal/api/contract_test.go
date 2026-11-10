@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/issue"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/wire"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -53,7 +54,7 @@ func loadContract(t *testing.T) *contract {
 		t.Fatal(err)
 	}
 	// The document schemas the spec refers to (D-043).
-	for _, kind := range []string{"image", "block", "target"} {
+	for _, kind := range []string{"image", "block", "target", "rule"} {
 		b, err := os.ReadFile(filepath.Join("../state/schema", kind+".json"))
 		if err != nil {
 			t.Fatal(err)
@@ -136,10 +137,19 @@ func (k *contract) check(t *testing.T, r recorded) {
 	if r.ctype == "text/event-stream" {
 		return
 	}
-	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(r.body))
-	if err != nil {
-		t.Errorf("%s: body is not JSON: %s", name, r.body)
-		return
+	var inst any
+	if r.ctype == "application/yaml" {
+		// An export file: a string by the schema, and a file that Decode reads.
+		if _, err := state.Decode(r.body); err != nil {
+			t.Errorf("%s: the export file does not decode: %v", name, err)
+		}
+		inst = string(r.body)
+	} else {
+		var err error
+		if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(r.body)); err != nil {
+			t.Errorf("%s: body is not JSON: %s", name, r.body)
+			return
+		}
 	}
 	s := k.schema(t, pointer+"/content/"+ptrEscape(r.ctype)+"/schema")
 	if err := s.Validate(inst); err != nil {
@@ -260,6 +270,75 @@ func TestContract(t *testing.T) {
 	call(adm, "POST", "/api/v1/targets/nope/reenroll", "/targets/{name}/reenroll", nil) // 404
 	call(adm, "DELETE", "/api/v1/plans/"+id(re), "/plans/{id}", nil)
 	call(adm, "DELETE", "/api/v1/plans/"+id(re), "/plans/{id}", nil) // 409
+
+	// Secrets (T-028).
+	call(adm, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", map[string]string{"value": "contract-value"})
+	call(adm, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", map[string]string{})                 // 422
+	call(adm, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", []byte(`{"value": nope}`))           // 400
+	call(readTok, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", map[string]string{"value": "x"}) // 403
+	call(adm, "PUT", "/api/v1/secrets/other", "/secrets/{name}", map[string]string{"value": "x"})
+	// A Plan with a secret reference (T-029): secrets, a sensitive change, human_only.
+	withSecret := call(adm, "POST", "/api/v1/plans", "/plans", map[string]any{"reason": "secret", "put": []state.Doc{appBlock("/etc/app.env"), appTarget("web9", "app-db")}})
+	call(adm, "GET", "/api/v1/plans/"+id(withSecret), "/plans/{id}", nil)
+	call(adm, "DELETE", "/api/v1/plans/"+id(withSecret), "/plans/{id}", nil)
+	call(adm, "POST", "/api/v1/plans", "/plans", map[string]any{"reason": "missing", "put": []state.Doc{appBlock("/etc/app.env"), appTarget("web9", "nope")}}) // 422
+	call(readTok, "GET", "/api/v1/secrets", "/secrets", nil)
+	call(adm, "GET", "/api/v1/secrets?limit=1", "/secrets", nil)
+	e.sec.SetUsage(func(context.Context) (map[string]secret.Usage, error) {
+		return map[string]secret.Usage{"app-db": {Targets: []string{"web1"}, Plans: []int64{1}}}, nil
+	})
+	call(adm, "DELETE", "/api/v1/secrets/app-db", "/secrets/{name}", nil) // 409
+	e.sec.SetUsage(nil)
+	call(adm, "DELETE", "/api/v1/secrets/app-db", "/secrets/{name}", nil)
+	call(adm, "DELETE", "/api/v1/secrets/app-db", "/secrets/{name}", nil) // 404
+	call(tok, "DELETE", "/api/v1/secrets/other", "/secrets/{name}", nil)  // 403
+	call(e.anon(), "GET", "/api/v1/secrets", "/secrets", nil)             // 401
+
+	// Revisions (T-031): one more revision, then history, diff and rollback.
+	changed := call(adm, "POST", "/api/v1/plans", "/plans", map[string]any{"reason": "new text", "put": []state.Doc{targetDoc("web1", "changed")}})
+	call(adm, "POST", "/api/v1/plans/"+id(changed)+"/approve", "/plans/{id}/approve", nil)
+	e.eng.Wait()
+	headRev, _ := e.st.Head(e.ctx)
+	head := strconv.FormatInt(headRev.ID, 10)
+	call(readTok, "GET", "/api/v1/revisions", "/revisions", nil)
+	call(adm, "GET", "/api/v1/revisions?limit=1", "/revisions", nil)
+	call(e.anon(), "GET", "/api/v1/revisions", "/revisions", nil) // 401
+	call(readTok, "GET", "/api/v1/revisions/"+head+"/diff", "/revisions/{n}/diff", nil)
+	call(readTok, "GET", "/api/v1/revisions/"+head+"/diff?from=1", "/revisions/{n}/diff", nil)
+	call(readTok, "GET", "/api/v1/revisions/1/diff", "/revisions/{n}/diff", nil)
+	call(readTok, "GET", "/api/v1/revisions/999/diff", "/revisions/{n}/diff", nil)      // 404
+	call(readTok, "GET", "/api/v1/revisions/1/diff?from=x", "/revisions/{n}/diff", nil) // 400
+	rb := call(adm, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "back"})
+	call(adm, "DELETE", "/api/v1/plans/"+id(rb), "/plans/{id}", nil)
+	call(adm, "POST", "/api/v1/revisions/"+head+"/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "x"}) // 409 nothing-to-do
+	call(adm, "POST", "/api/v1/revisions/999/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "x"})      // 404
+	call(adm, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", map[string]string{})                     // 422
+	call(adm, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", []byte(`{`))                             // 400
+	call(readTok, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "x"})    // 403
+
+	// API tokens (T-030).
+	var newTok struct{ Token struct{ ID string } }
+	json.Unmarshal(call(adm, "POST", "/api/v1/tokens", "/tokens", map[string]any{"name": "CI", "tier": "apply", "max_risk": "reversible"}), &newTok)
+	call(adm, "POST", "/api/v1/tokens", "/tokens", map[string]any{"name": "x", "tier": "plan", "max_risk": "reversible"}) // 422
+	call(adm, "POST", "/api/v1/tokens", "/tokens", []byte(`{`))                                                           // 400
+	call(readTok, "POST", "/api/v1/tokens", "/tokens", map[string]any{"name": "x", "tier": "read"})                       // 403
+	call(e.anon(), "GET", "/api/v1/tokens", "/tokens", nil)                                                               // 401
+	call(readTok, "GET", "/api/v1/tokens", "/tokens", nil)                                                                // 403
+	call(adm, "DELETE", "/api/v1/tokens/"+newTok.Token.ID, "/tokens/{id}", nil)
+	call(adm, "DELETE", "/api/v1/tokens/tok_nope", "/tokens/{id}", nil) // 404
+	call(readTok, "DELETE", "/api/v1/tokens/tok_nope", "/tokens/{id}", nil)
+	call(adm, "GET", "/api/v1/tokens?limit=1", "/tokens", nil)
+	call(adm, "GET", "/api/v1/tokens", "/tokens", nil)
+
+	// Export and import (T-033).
+	exported := call(readTok, "GET", "/api/v1/export", "/export", nil)
+	call(adm, "POST", "/api/v1/export", "/export", map[string]string{"passphrase": "short"})             // 422
+	call(tok, "POST", "/api/v1/export", "/export", map[string]string{"passphrase": "a long passphrase"}) // 403
+	call(adm, "POST", "/api/v1/export", "/export", map[string]string{"passphrase": "a long passphrase"})
+	call(adm, "POST", "/api/v1/import", "/import", map[string]any{"content": "kind: X\n", "reason": "x"}) // 422
+	call(adm, "POST", "/api/v1/import", "/import", []byte(`{`))                                           // 400
+	imp := call(adm, "POST", "/api/v1/import", "/import", map[string]any{"content": string(exported), "reason": "same", "mode": "merge"})
+	call(adm, "DELETE", "/api/v1/plans/"+id(imp), "/plans/{id}", nil)
 
 	// Logout.
 	call(adm, "DELETE", "/api/v1/session", "/session", nil)
