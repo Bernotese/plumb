@@ -2,7 +2,7 @@ kind: Block
 name: nginx
 spec:
   title: Nginx web server
-  description: Install Nginx and set the default site's content.
+  description: Install Nginx and overwrite the distro default site. Changes restart Nginx (not reload).
   params:
     type: object
     properties:
@@ -10,12 +10,14 @@ spec:
         type: string
         title: Server name
         default: _
+        pattern: "^[A-Za-z0-9*_.-]+( [A-Za-z0-9*_.-]+)*$"
+        maxLength: 253
   resources:
     - package:
         name: nginx
     - file:
         path: /etc/nginx/sites-available/default
-        content: |-
+        content: |
           server {
               listen 80 default_server;
               root /var/www/html;
@@ -26,6 +28,8 @@ spec:
               }
           }
         mode: "0644"
+        owner: root
+        group: root
     - service:
         name: nginx
         state: running

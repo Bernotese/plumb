@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"text/template"
 	"text/template/parse"
@@ -66,7 +67,8 @@ func TestStarterParameterMetadataAndTemplates(t *testing.T) {
 			params := spec["params"].(map[string]any)["properties"].(map[string]any)
 			for name, value := range params {
 				param := value.(map[string]any)
-				if param["type"] != "string" || param["title"] == nil || param["title"] == "" {
+				title, ok := param["title"].(string)
+				if param["type"] != "string" || !ok || title == "" {
 					t.Errorf("%s needs a string type and title", name)
 				}
 				if name != "ssh_key" && param["default"] == nil {
@@ -75,6 +77,36 @@ func TestStarterParameterMetadataAndTemplates(t *testing.T) {
 			}
 			if err := plainValues(spec["resources"], params); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestParametersRejectUnsafeValues(t *testing.T) {
+	for _, tc := range []struct {
+		block, param string
+		invalid      []any
+	}{
+		{"deploy-user", "name", []any{"root", "-option", "Bad Name", 123}},
+		{"deploy-user", "ssh_key", []any{"invalid", "ssh-ed25519 AAAA\ninjected"}},
+		{"nginx", "server_name", []any{"_; location /x { alias /etc/; }", "ok\ninjected", "", strings.Repeat("a", 254)}},
+		{"motd", "message", []any{strings.Repeat("a", 2001)}},
+	} {
+		t.Run(tc.block+"/"+tc.param, func(t *testing.T) {
+			raw, err := os.ReadFile(tc.block + ".yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := yaml.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			params := doc["spec"].(map[string]any)["params"].(map[string]any)
+			schema := compileSchemaValue(t, params["properties"].(map[string]any)[tc.param])
+			for _, invalid := range tc.invalid {
+				if err := schema.Validate(invalid); err == nil {
+					t.Errorf("accepted unsafe %s=%q", tc.param, invalid)
+				}
 			}
 		})
 	}

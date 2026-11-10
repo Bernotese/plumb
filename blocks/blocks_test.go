@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"text/template"
 
+	"github.com/Bernotese/plumb/internal/resource"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"go.yaml.in/yaml/v3"
 )
@@ -22,6 +24,19 @@ func compileSchema(t *testing.T, path string) *jsonschema.Schema {
 	if err != nil {
 		t.Fatalf("read schema %s: %v", path, err)
 	}
+	return compileSchemaValue(t, doc)
+}
+
+func compileSchemaValue(t *testing.T, doc any) *jsonschema.Schema {
+	t.Helper()
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err = jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
 	const url = "mem:///schema.json"
 	c := jsonschema.NewCompiler()
 	if err := c.AddResource(url, doc); err != nil {
@@ -29,7 +44,7 @@ func compileSchema(t *testing.T, path string) *jsonschema.Schema {
 	}
 	schema, err := c.Compile(url)
 	if err != nil {
-		t.Fatalf("compile schema %s: %v", path, err)
+		t.Fatalf("compile schema: %v", err)
 	}
 	return schema
 }
@@ -49,25 +64,26 @@ func validate(t *testing.T, schema *jsonschema.Schema, value any) {
 	}
 }
 
-func materializeTemplates(value any) any {
+func materializeTemplates(t *testing.T, value any, params map[string]any) any {
+	t.Helper()
 	switch value := value.(type) {
 	case string:
-		if strings.Contains(value, "{{ .name }}") {
-			return strings.ReplaceAll(value, "{{ .name }}", "deploy")
+		tmpl, err := template.New("value").Option("missingkey=error").Parse(value)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if strings.Contains(value, "{{ .ssh_key }}") {
-			return strings.ReplaceAll(value, "{{ .ssh_key }}", "ssh-ed25519 AAAA")
+		var out bytes.Buffer
+		if err := tmpl.Execute(&out, params); err != nil {
+			t.Fatal(err)
 		}
-		if strings.Contains(value, "{{") {
-			return strings.ReplaceAll(strings.ReplaceAll(value, "{{ .page_title }}", "Welcome"), "{{ .message }}", "Managed by Plumb.")
-		}
+		return out.String()
 	case []any:
 		for i := range value {
-			value[i] = materializeTemplates(value[i])
+			value[i] = materializeTemplates(t, value[i], params)
 		}
 	case map[string]any:
 		for key, child := range value {
-			value[key] = materializeTemplates(child)
+			value[key] = materializeTemplates(t, child, params)
 		}
 	}
 	return value
@@ -76,7 +92,14 @@ func materializeTemplates(value any) any {
 func TestBlocks(t *testing.T) {
 	blockSchema := compileSchema(t, "../internal/state/schema/block.json")
 	resourceSchemas := map[string]*jsonschema.Schema{}
-	for _, path := range []string{"../internal/resource/schema/directory.json", "../internal/resource/schema/file.json", "../internal/resource/schema/package.json", "../internal/resource/schema/service.json", "../internal/resource/schema/user.json"} {
+	// This fixed list is the slice allowlist; new types require a slice decision.
+	for _, path := range []string{
+		"../internal/resource/schema/directory.json",
+		"../internal/resource/schema/file.json",
+		"../internal/resource/schema/package.json",
+		"../internal/resource/schema/service.json",
+		"../internal/resource/schema/user.json",
+	} {
 		name := strings.TrimSuffix(filepath.Base(path), ".json")
 		resourceSchemas[name] = compileSchema(t, path)
 	}
@@ -102,21 +125,56 @@ func TestBlocks(t *testing.T) {
 			if !ok {
 				t.Fatal("spec is not an object")
 			}
+			paramSchema := spec["params"].(map[string]any)
+			sample := map[string]any{}
+			for name, value := range paramSchema["properties"].(map[string]any) {
+				prop := value.(map[string]any)
+				if def, ok := prop["default"]; ok {
+					validate(t, compileSchemaValue(t, prop), def)
+					sample[name] = def
+				}
+			}
+			fixtures := map[string]map[string]any{"deploy-user": {"ssh_key": "ssh-ed25519 AAAA"}}
+			required, _ := paramSchema["required"].([]any)
+			for _, value := range required {
+				name := value.(string)
+				fixture, ok := fixtures[document["name"].(string)][name]
+				if !ok {
+					t.Fatalf("missing required parameter fixture: %s", name)
+				}
+				sample[name] = fixture
+			}
+			validate(t, compileSchemaValue(t, paramSchema), sample)
 			resources, ok := spec["resources"].([]any)
 			if !ok {
 				t.Fatal("resources is not an array")
 			}
+			ids := map[string]bool{}
+			var restarts []string
 			for _, entry := range resources {
-				resource, ok := entry.(map[string]any)
-				if !ok || len(resource) != 1 {
+				entryMap, ok := entry.(map[string]any)
+				if !ok || len(entryMap) != 1 {
 					t.Fatalf("resource must have one type: %#v", entry)
 				}
-				for kind, attributes := range resource {
+				for kind, attributes := range entryMap {
 					schema, ok := resourceSchemas[kind]
 					if !ok {
 						t.Fatalf("unsupported resource type %q", kind)
 					}
-					validate(t, schema, materializeTemplates(attributes))
+					rendered := materializeTemplates(t, attributes, sample).(map[string]any)
+					validate(t, schema, rendered)
+					typ, _ := resource.Lookup(kind)
+					ids[kind+":"+rendered[typ.Key].(string)] = true
+					if refs, ok := rendered["restart_on"].([]any); ok {
+						for _, ref := range refs {
+							restarts = append(restarts, ref.(string))
+						}
+					}
+				}
+			}
+			for _, ref := range restarts {
+				if !ids[ref] {
+					t.Errorf("restart_on references missing resource %q", ref)
 				}
 			}
 		})
