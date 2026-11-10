@@ -19,6 +19,20 @@ import (
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
+// Keep raw failures from the real runner to prove the canary reached tool stderr.
+type guestExecRunner struct{ errors chan error }
+
+func (r guestExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := (resource.ExecRunner{}).Run(ctx, name, args...)
+	if err != nil {
+		select {
+		case r.errors <- err:
+		default:
+		}
+	}
+	return out, err
+}
+
 func TestGuestAgentLoop(t *testing.T) {
 	comm, err := os.ReadFile("/proc/1/comm")
 	if os.Geteuid() != 0 || err != nil || strings.TrimSpace(string(comm)) != "systemd" {
@@ -74,9 +88,10 @@ func TestGuestAgentLoop(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	runner := guestExecRunner{errors: make(chan error, 32)}
 	opt := Options{Config: Config{URL: srv.URL, CA: string(ctl.CA().CertPEM),
 		TokenFile: filepath.Join(dir, "token"), StateDir: state, FullCheck: Duration(time.Hour)},
-		Root: "/", Runner: resource.ExecRunner{}, Hostname: "guest", CloudInitFlag: filepath.Join(dir, "cloud-init.disabled"),
+		Root: "/", Runner: runner, Hostname: "guest", CloudInitFlag: filepath.Join(dir, "cloud-init.disabled"),
 		Debounce: 500 * time.Millisecond, PollWait: 1,
 	}
 	a, err := New(opt)
@@ -183,10 +198,6 @@ func TestGuestAgentLoop(t *testing.T) {
 
 	// A real apt failure contains the sensitive version before redaction.
 	const secret = "plumb-canary-version-9a7f23"
-	_, rawErr := (resource.ExecRunner{}).Run(ctx, "apt-get", "--simulate", "install", "--", "less="+secret)
-	if rawErr == nil || !strings.Contains(rawErr.Error(), secret) {
-		t.Fatalf("canary did not reach real tool stderr: %v", rawErr)
-	}
 	pkg := wire.Resource{ID: "package:less", Type: "package", Block: "canary",
 		Attrs: map[string]any{"name": "less", "strictness": "exact", "version": secret}, Sensitive: []string{"version"}}
 	id, err = ctl.Send("guest", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{pkg},
@@ -203,6 +214,14 @@ func TestGuestAgentLoop(t *testing.T) {
 			}
 			if len(d.Report.Items) != 1 || d.Report.Items[0].Status != wire.StatusFailed || d.Report.Items[0].Output != resource.HiddenOutput {
 				t.Fatalf("canary did not exercise a tool failure: %+v", d)
+			}
+			found := false
+			for len(runner.errors) > 0 {
+				rawErr := <-runner.errors
+				found = strings.Contains(rawErr.Error(), secret) || found
+			}
+			if !found {
+				t.Fatal("canary did not reach the agent's real tool stderr")
 			}
 			stored, err := os.ReadFile(filepath.Join(reports, id+"-"+string(wire.ReportResult)))
 			if err != nil || strings.Contains(string(stored), secret) || !strings.Contains(string(stored), resource.HiddenOutput) {
