@@ -62,6 +62,18 @@ test("create target → plan → run → issue → revert", async ({ page }) => 
   await page.goto(issueUrl);
   await expect(page.getByText("Status: resolved")).toBeVisible();
 
+  // End the session elsewhere. The next API call must return to login.
+  const ended = await page.request.delete("/api/v1/session", {
+    headers: { origin: "http://127.0.0.1:18460" },
+  });
+  expect(ended.ok()).toBe(true);
+  await page.getByRole("link", { name: "Targets", exact: true }).click();
+  await expect(page.getByText("Your session has ended. Log in again.")).toBeVisible();
+  await page.getByLabel("User name").fill("admin");
+  await page.getByLabel("Password", { exact: true }).fill(newPassword);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("heading", { name: "Targets" })).toBeVisible();
+
   // Log out ends the session.
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page.getByRole("heading", { name: "Log in to Plumb" })).toBeVisible();

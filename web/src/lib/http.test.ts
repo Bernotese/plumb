@@ -85,11 +85,20 @@ describe("http api", () => {
   });
 
   it("keeps the problem title and detail of an API error", async () => {
-    const f = fakeFetch(() => problem(409, "Plan is stale"));
+    const f = fakeFetch(() =>
+      Response.json(
+        { status: 409, title: "Plan is stale", detail: "The head revision changed." },
+        { status: 409, headers: { "content-type": "application/problem+json" } },
+      ),
+    );
     const err = (await createHttpApi({ fetch: f.fn })
       .approvePlan(1)
       .catch((e: unknown) => e)) as ApiError;
-    expect(err.problem).toMatchObject({ status: 409, title: "Plan is stale" });
+    expect(err.problem).toMatchObject({
+      status: 409,
+      title: "Plan is stale",
+      detail: "The head revision changed.",
+    });
   });
 });
 
