@@ -83,8 +83,10 @@ func (u *user) Observe(_ context.Context) (State, error) {
 	}, nil
 }
 
-// Diff compares shell, home, groups and ssh_keys. Deleting the user is
-// destructive; every other change is reversible.
+// Diff compares shell, home, groups and ssh_keys. Create is reversible,
+// delete is destructive. An update that can take access away is disruptive
+// (D-054): it removes an entry from groups or ssh_keys, or it changes shell
+// or home. An update that only adds entries is reversible.
 func (u *user) Diff(observed State) []wire.Change {
 	if u.a.State == wire.StateAbsent {
 		if observed[wire.AttrState] == wire.StatePresent {
@@ -114,15 +116,15 @@ func (u *user) Diff(observed State) []wire.Change {
 	for _, attr := range []string{"shell", "home"} {
 		want := map[string]string{"shell": u.a.Shell, "home": u.a.Home}[attr]
 		if observed[attr] != want {
-			out = append(out, change(attr, observed[attr], want, wire.RiskReversible))
+			out = append(out, change(attr, observed[attr], want, wire.RiskDisruptive))
 		}
 	}
 	if cur := toStrings(observed["groups"]); !equalStrings(sortedSet(cur), u.a.Groups) {
-		out = append(out, change("groups", cur, u.a.Groups, wire.RiskReversible))
+		out = append(out, change("groups", cur, u.a.Groups, removalRisk(cur, u.a.Groups)))
 	}
 	// The order of keys does not matter; duplicates do not count.
 	if cur := toStrings(observed["ssh_keys"]); !equalStrings(sortedSet(cur), sortedSet(keys)) {
-		out = append(out, change("ssh_keys", cur, keys, wire.RiskReversible))
+		out = append(out, change("ssh_keys", cur, keys, removalRisk(cur, keys)))
 	}
 	return u.finish(out)
 }
@@ -288,4 +290,21 @@ func (u *user) writeKeys() error {
 		_ = r.Remove(tmp)
 	}
 	return err
+}
+
+// removalRisk is disruptive when want lacks an entry of cur, else reversible.
+func removalRisk(cur, want []string) wire.Risk {
+	for _, c := range cur {
+		found := false
+		for _, w := range want {
+			if c == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return wire.RiskDisruptive
+		}
+	}
+	return wire.RiskReversible
 }

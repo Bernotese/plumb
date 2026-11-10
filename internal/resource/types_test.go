@@ -73,7 +73,7 @@ func TestFileSafety(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := build(t, res("file", "/etc/link", map[string]any{"content": "x"}), g.env())
-	if _, err := r.Observe(ctx); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+	if _, err := r.Observe(ctx); err == nil || !strings.Contains(err.Error(), "path component /etc/link is a symlink") {
 		t.Fatalf("Observe on a symlink: err = %v", err)
 	}
 
@@ -356,7 +356,8 @@ func TestUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = converge(t, r)
-	if attrsOf(got) != "shell=reversible,groups=reversible,ssh_keys=reversible" || got[0].From != "/bin/sh" || got[0].To != "/bin/bash" {
+	// Shell change and key removal can lock out: disruptive. Adding a group: reversible.
+	if attrsOf(got) != "shell=disruptive,groups=reversible,ssh_keys=disruptive" || got[0].From != "/bin/sh" || got[0].To != "/bin/bash" {
 		t.Fatalf("drift changes = %+v", got)
 	}
 	if b, _ := os.ReadFile(keys); string(b) != keyA+"\n" {
