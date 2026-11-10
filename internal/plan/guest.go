@@ -7,6 +7,7 @@ import (
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
@@ -80,4 +81,44 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Live is the live status of a target: what the API shows next to the
+// desired state. It is not part of the state.
+type Live struct {
+	Agent    string // none | online | offline
+	LastSeen time.Time
+	Power    string // running | stopped | unknown
+	IPs      []string
+	GuestID  string // "" when there is no guest
+	Busy     bool   // a Run works on the target
+}
+
+// Live reads the live status of a target from the agent table, the link
+// and the driver.
+func (e *Engine) Live(ctx context.Context, target string) (Live, error) {
+	l := Live{Agent: "none", Power: "unknown"}
+	e.mu.Lock()
+	l.Busy = e.busy[target] > 0
+	e.mu.Unlock()
+	if a, err := e.st.AgentByTarget(ctx, target); err == nil {
+		l.Agent, l.LastSeen = "offline", a.LastSeenAt
+		if e.cfg.Agents.Online(target) {
+			l.Agent = "online"
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return l, err
+	}
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if errors.Is(err, store.ErrNotFound) {
+		return l, nil
+	}
+	if err != nil {
+		return l, err
+	}
+	l.GuestID = b.Ref
+	if st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); err == nil {
+		l.Power, l.IPs = string(st.Power), st.IPs
+	}
+	return l, nil
 }

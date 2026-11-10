@@ -184,8 +184,8 @@ func (s *stepper) set(ctx context.Context, resource string, status wire.Status, 
 		s.final[resource] = true
 	}
 	// The event has no values: changes stay in the step (D-047).
-	s.e.emit(ctx, "step."+string(status), fmt.Sprintf("run:%d", s.run.ID), "system",
-		map[string]any{"target": s.target, "resource": resource, "action": wire.ActionOf(changes)})
+	s.e.emit(ctx, "run.step", fmt.Sprintf("run:%d", s.run.ID), "system",
+		map[string]any{"target": s.target, "resource": resource, "status": status, "action": wire.ActionOf(changes)})
 }
 
 // failRest marks every step that did not finish as failed.
@@ -246,12 +246,12 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 
 	// 2. Wait for the agent.
 	if newAgent || !e.cfg.Agents.Online(tp.Target) {
-		e.emit(ctx, "target.waiting", "target:"+tp.Target, "system", map[string]any{"run": run.ID})
+		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"phase": "enrolling", "run": run.ID})
 		if err := e.waitOnline(ctx, tp.Target); err != nil {
 			s.failRest(ctx, err.Error())
 			return false
 		}
-		e.emit(ctx, "target.online", "target:"+tp.Target, "system", map[string]any{"run": run.ID})
+		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"agent": "online", "run": run.ID})
 	}
 
 	// 3. Resource steps. The agent observes again and refuses every change
