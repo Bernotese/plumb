@@ -47,10 +47,8 @@ type guest struct {
 
 // Driver is the fake driver. The zero value is not usable; call New.
 type Driver struct {
-	// Latency is the duration of every task. Default 0.
-	Latency time.Duration
-
 	mu       sync.Mutex
+	latency  time.Duration
 	guests   map[driver.GuestID]*guest
 	images   map[string]driver.ImageRef // name+sha → ref
 	nextID   int
@@ -70,6 +68,13 @@ func New() *Driver {
 		failures: map[Op][]error{},
 		calls:    map[Op]int{},
 	}
+}
+
+// SetLatency sets the duration of every task. Default 0.
+func (d *Driver) SetLatency(l time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.latency = l
 }
 
 // Fail makes the next call of op return err. Several calls queue up.
@@ -135,11 +140,12 @@ func (d *Driver) task(ctx context.Context, op Op, fn func() error) error {
 		d.mu.Unlock()
 		return err
 	}
+	latency := d.latency
 	d.mu.Unlock()
-	done := make(chan error, 1)
+	done := make(chan error, 1) // buffered: an abandoned task does not leak
 	go func() {
-		if d.Latency > 0 {
-			time.Sleep(d.Latency)
+		if latency > 0 {
+			time.Sleep(latency)
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
