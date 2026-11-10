@@ -63,6 +63,19 @@ func TestDocumentSchemas(t *testing.T) {
 		{"block entry with two types", KindBlock, `{"kind":"Block","name":"two","spec":{"resources":[{"file":{"path":"/a"},"user":{"name":"a"}}]}}`, false},
 		{"block with template features that are not in the slice", KindBlock, `{"kind":"Block","name":"later","spec":{"uses":["motd"],"resources":[{"file":{"path":"/a"}}]}}`, false},
 
+		// spec.after and spec.restarts (D-167, D-172).
+		{"block with after and restarts", KindBlock, `{"kind":"Block","name":"nginx-site","spec":{"after":["package:nginx"],"restarts":["service:nginx"],"resources":[{"file":{"path":"/a"}}]}}`, true},
+		{"block with empty after and restarts", KindBlock, `{"kind":"Block","name":"b","spec":{"after":[],"restarts":[],"resources":[{"file":{"path":"/a"}}]}}`, true},
+		{"after with a Block name", KindBlock, `{"kind":"Block","name":"b","spec":{"after":["nginx"],"resources":[{"file":{"path":"/a"}}]}}`, false},
+		{"after without a key", KindBlock, `{"kind":"Block","name":"b","spec":{"after":["package:"],"resources":[{"file":{"path":"/a"}}]}}`, false},
+		{"after with the same id twice", KindBlock, `{"kind":"Block","name":"b","spec":{"after":["package:nginx","package:nginx"],"resources":[{"file":{"path":"/a"}}]}}`, false},
+		{"after that is no list", KindBlock, `{"kind":"Block","name":"b","spec":{"after":"package:nginx","resources":[{"file":{"path":"/a"}}]}}`, false},
+		{"after with 17 ids", KindBlock, `{"kind":"Block","name":"b","spec":{"after":["file:/1","file:/2","file:/3","file:/4","file:/5","file:/6","file:/7","file:/8","file:/9","file:/10","file:/11","file:/12","file:/13","file:/14","file:/15","file:/16","file:/17"],"resources":[{"file":{"path":"/a"}}]}}`, false},
+		{"restarts with a resource that is no service", KindBlock, `{"kind":"Block","name":"b","spec":{"restarts":["file:/etc/motd"],"resources":[{"file":{"path":"/a"}}]}}`, false},
+		{"restarts with the same id twice", KindBlock, `{"kind":"Block","name":"b","spec":{"restarts":["service:nginx","service:nginx"],"resources":[{"file":{"path":"/a"}}]}}`, false},
+		{"after on a resource", KindBlock, `{"kind":"Block","name":"b","spec":{"resources":[{"file":{"path":"/a"},"after":["package:nginx"]}]}}`, false},
+		{"after on a Block use of a Target", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",` + guest + `,"blocks":[{"use":"nginx-site","after":["nginx"]}]}}`, false},
+
 		// The Target of docs/ARCHITECTURE.md §3.
 		{"target", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"ubuntu-26.04",` + guest + `,
 			"blocks":[{"use":"deploy-user","params":{"ssh_key":"ssh-ed25519 AAAA"}},{"use":"nginx"}],"overrides":{}}}`, true},
