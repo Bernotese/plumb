@@ -10,11 +10,11 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-017 OpenAPI + web skeleton | pl-frontend | PR #2: aligning with T-003 contracts (13 points), then QA |
+| T-017 OpenAPI + web skeleton | pl-frontend | PR #2 at 0064a1a: contract check, QA, delta review running |
 | T-004 state/store → T-009 link/events/fake driver | pl-backend | T-004 in progress (wave 1) |
 | T-007 guest test harness | pl-codex-qa | PR #5 in review; guest run **blocked: Docker access for jannes (user action)** |
 | T-008 starter blocks | pl-codex-fix | PR #6: QA + review running |
-| T-005 resources → T-018 agent loop | pl-frontend | starts after T-017 |
+| T-005 resources → T-018 agent loop | pl-frontend | T-005 in progress |
 | T-006, T-010, T-011, T-014, T-015 | see cards | later waves |
 | T-013 installer → T-012 Proxmox driver → real-host part of T-015 | pl-backend | **blocked: test host (D-041)** |
 
