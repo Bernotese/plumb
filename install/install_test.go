@@ -592,3 +592,50 @@ func TestStorageAndVersionRules(t *testing.T) {
 		t.Errorf("minimum versions: %d %q", code, errOut)
 	}
 }
+
+// Review T-013 n1, n2, n3.
+func TestReReviewMinors(t *testing.T) {
+	// n1: an unreadable ACL list stops the install before any change.
+	h := newHost(t)
+	code, _, errOut := h.run([]string{"FAKE_ACL_FAIL=1"}, "--dry-run", "--plumb-binary", h.plumb)
+	if code == 0 || !strings.Contains(errOut, "cannot read the ACLs") {
+		t.Errorf("acl list fails: %d %q", code, errOut)
+	}
+	if c := h.changed(); len(c) != 0 {
+		t.Errorf("changed: %v", c)
+	}
+	// n2: an existing plumb@pve in a group is refused.
+	h = newHost(t)
+	os.WriteFile(filepath.Join(h.state, "user.plumb@pve"), nil, 0o644)
+	code, _, errOut = h.run([]string{"FAKE_USER_GROUPS=admins"}, "--dry-run", "--plumb-binary", h.plumb)
+	if code == 0 || !strings.Contains(errOut, `in the groups "admins"`) {
+		t.Errorf("user in a group: %d %q", code, errOut)
+	}
+	// n3: a plumb-images storage that existed before stays at --remove.
+	h = newHost(t)
+	os.WriteFile(filepath.Join(h.state, "storage.plumb-images"), nil, 0o644)
+	os.WriteFile(filepath.Join(h.state, "content.plumb-images"), []byte("import"), 0o644)
+	root := h.installed()
+	if st, _ := os.ReadFile(h.stateF); !strings.Contains(string(st), "image_dir=\n") {
+		t.Errorf("state file claims plumb-images: %s", st)
+	}
+	if code, out, errOut := h.run(root, "--remove", "--yes"); code != 0 {
+		t.Fatalf("remove: %s %s", out, errOut)
+	}
+	for _, c := range h.calls() {
+		if strings.HasPrefix(c, "pvesm remove plumb-images") {
+			t.Errorf("removed a storage the script did not make: %s", c)
+		}
+	}
+	// A storage that the script made is removed.
+	h = newHost(t)
+	root = h.installed()
+	h.run(root, "--remove", "--yes")
+	found := false
+	for _, c := range h.calls() {
+		found = found || strings.HasPrefix(c, "pvesm remove plumb-images")
+	}
+	if !found {
+		t.Error("plumb-images made by the script was not removed")
+	}
+}

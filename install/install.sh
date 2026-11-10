@@ -401,6 +401,9 @@ ensure_image_storage() {
 	if ! storage_content plumb-images >/dev/null; then
 		run install -d -o root -g root -m 0755 "$IMAGE_DIR"
 		run pvesm add dir plumb-images --path "$IMAGE_DIR" --content import --shared 0
+		IMAGES_MADE=1
+	elif [[ -n $(state_get image_dir) ]]; then
+		IMAGES_MADE=1 # made by an earlier run of this script
 	fi
 }
 
@@ -420,7 +423,10 @@ acl_entries() {
 # the plan, for example the single role of D-032 from an older install
 # (review T-013 #4).
 stray_acls() {
-	local path ugid role type planned r
+	local path ugid role type planned r acls
+	# Read the list first: a failing pveum or perl stops the run here
+	# instead of looking like "no old rights" (review T-013 n1).
+	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER; nothing was changed"
 	while read -r path ugid role type; do
 		[[ -n $path ]] || continue
 		planned=0
@@ -430,7 +436,19 @@ stray_acls() {
 			fi
 		done
 		[[ $planned == 1 ]] || printf '%s %s %s %s\n' "$path" "$ugid" "$role" "$type"
-	done < <(acl_entries)
+	done <<<"$acls"
+}
+
+# check_user_groups refuses an existing Plumb user that is in a group: the
+# ACLs of the group would count for the user and the token too (review
+# T-013 n2).
+check_user_groups() {
+	local groups
+	# shellcheck disable=SC2016 # perl code
+	groups=$(query pveum user list --output-format json |
+		json_rows 'for my $e (@$d) { next unless $e->{userid} eq $ARGV[0]; my $g = $e->{groups} // ""; $g = join ",", @$g if ref $g; print $g }' "$PVE_USER") ||
+		die "cannot read the users; nothing was changed"
+	[[ -z $groups ]] || die "user $PVE_USER is in the groups \"$groups\"; their ACLs would add rights to Plumb (D-081). Remove the user from them. Nothing was changed."
 }
 
 remove_stray_acls() {
@@ -519,8 +537,10 @@ state_put() {
 	run install -d -o root -g root -m 0700 "$(dirname "$STATE_FILE")"
 	local tmp
 	new_tmp tmp
+	# image_dir is set only when this script made plumb-images, so
+	# --remove never removes a storage that existed before (review n3).
 	local images=""
-	[[ $IMAGE_STORAGE == plumb-images ]] && images=$IMAGE_DIR
+	[[ $IMAGES_MADE == 1 ]] && images=$IMAGE_DIR
 	printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\n' "$LXC_ID" "$POOL" "$SNIPPET_STORAGE" "$SNIPPET_DIR" "$images" >"$tmp"
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"
@@ -725,6 +745,7 @@ do_install() {
 	say "It creates or keeps: pool $POOL, user $PVE_USER, token $PVE_USER!$TOKEN_NAME, storage $SNIPPET_STORAGE ($SNIPPET_DIR),"
 	say "the vendor snippet $SNIPPET, the image storage $IMAGE_STORAGE, and an unprivileged Debian 13 LXC \"$LXC_HOSTNAME\" without host mounts."
 	check_storages
+	check_user_groups
 	STRAY_ACLS=$(stray_acls)
 	if [[ -n $STRAY_ACLS ]]; then
 		say "These older rights of Plumb are not in the plan and are removed:"
@@ -850,5 +871,6 @@ main() {
 
 NODE=""
 LXC_NEW=0
+IMAGES_MADE=0
 STRAY_ACLS=""
 main "$@"

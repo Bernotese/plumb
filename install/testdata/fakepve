@@ -68,7 +68,17 @@ pveum)
 		fi
 		;;
 	"role delete") rm -f "$st/role.$3" ;;
-	"user list") list user userid ;;
+	"user list")
+		first=1
+		printf '['
+		for f in "$st"/user.*; do
+			[[ -e $f ]] || continue
+			[[ $first == 1 ]] || printf ','
+			first=0
+			printf '{"userid":"%s","groups":"%s"}' "${f##*/user.}" "${FAKE_USER_GROUPS:-}"
+		done
+		printf ']\n'
+		;;
 	"user add") touch "$st/user.$3" ;;
 	"user delete") rm -f "$st/user.$3" ;;
 	"acl modify" | "acl delete")
@@ -88,6 +98,7 @@ pveum)
 		if [[ $op == modify ]]; then echo "$path $ugid $role $type" >>"$st/acl"; fi
 		;;
 	"acl list")
+		[[ ${FAKE_ACL_FAIL:-0} == 1 ]] && exit 1
 		touch "$st/acl"
 		if [[ -n ${FAKE_EXTRA_ACL:-} && ! -e $st/extra-done ]]; then
 			echo "$FAKE_EXTRA_ACL" >>"$st/acl"
