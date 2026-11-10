@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -282,20 +281,21 @@ func (s *Server) importErrors(w http.ResponseWriter, file *state.ExportFile, se 
 
 // bundlePlan is what an import does with the secrets of its bundle.
 type bundlePlan struct {
-	values  map[string]string
-	create  []string
-	replace []string
-	by      string
+	values    map[string]string
+	overwrite []string
+	want      secret.BundleDecision
+	by        string
 }
 
 // names returns the names that the import writes.
-func (b *bundlePlan) names() []string { return append(append([]string{}, b.create...), b.replace...) }
+func (b *bundlePlan) names() []string {
+	return append(append([]string{}, b.want.Create...), b.want.Replace...)
+}
 
-// checkBundle decides per secret of the bundle (D-095): a missing name is
-// created, an equal value is skipped (no new version), another value is a
-// conflict unless overwrite names it. It writes nothing.
+// checkBundle decides per secret of the bundle (D-095) and writes
+// nothing. A conflict is 409 at once.
 func (s *Server) checkBundle(ctx context.Context, values map[string]string, overwrite []string, by string) (*bundlePlan, error) {
-	bp := &bundlePlan{values: values, by: by}
+	bp := &bundlePlan{values: values, overwrite: overwrite, by: by}
 	if len(values) == 0 {
 		return bp, nil
 	}
@@ -303,64 +303,52 @@ func (s *Server) checkBundle(ctx context.Context, values map[string]string, over
 	for n := range values {
 		names = append(names, n)
 	}
-	sort.Strings(names)
-	have, err := s.cfg.Secrets.Versions(ctx, names)
+	current, versions, err := s.cfg.Secrets.Current(ctx, names)
 	if err != nil {
 		return nil, err
 	}
-	var existing []string
-	for _, n := range names {
-		if _, ok := have[n]; ok {
-			existing = append(existing, n)
-		}
+	bp.want = secret.DecideBundle(values, current, overwrite)
+	bp.want.Versions = versions
+	for k := range current {
+		delete(current, k)
 	}
-	current, err := s.cfg.Secrets.Resolve(ctx, existing)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		for k := range current {
-			delete(current, k)
-		}
-	}()
-	allowed := map[string]bool{}
-	for _, n := range overwrite {
-		allowed[n] = true
-	}
-	var conflicts []string
-	for _, n := range names {
-		cur, exists := current[n]
-		switch {
-		case !exists:
-			bp.create = append(bp.create, n)
-		case cur.Text == values[n]:
-		case allowed[n]:
-			bp.replace = append(bp.replace, n)
-		default:
-			conflicts = append(conflicts, n)
-		}
-	}
-	if len(conflicts) > 0 {
-		return nil, &secretConflict{names: conflicts}
+	if len(bp.want.Conflicts) > 0 {
+		return nil, &secretConflict{names: bp.want.Conflicts}
 	}
 	return bp, nil
 }
 
-// write writes the secrets. Propose calls it after every check, just
-// before the Plan is stored (D-153). It returns the Plan warnings.
+// write writes the secrets in one transaction that decides again (D-158).
+// Propose calls it after every check, just before the Plan is stored
+// (D-153). It returns the Plan warnings.
 func (b *bundlePlan) write(ctx context.Context, s *Server) ([]string, error) {
-	var notes []string
-	for _, n := range b.create {
-		if _, err := s.cfg.Secrets.Put(ctx, n, b.values[n], b.by); err != nil {
-			return nil, err
+	if len(b.names()) == 0 {
+		return nil, nil
+	}
+	err := s.cfg.Secrets.WriteBundle(ctx, b.values, b.overwrite, b.want, b.by)
+	if errors.Is(err, secret.ErrBundleChanged) {
+		// Name what is in conflict now; when nothing is, every name the
+		// import would write (its decision changed).
+		names := b.names()
+		if cur, _, cerr := s.cfg.Secrets.Current(ctx, b.names()); cerr == nil {
+			if d := secret.DecideBundle(b.values, cur, b.overwrite); len(d.Conflicts) > 0 {
+				names = d.Conflicts
+			}
+			for k := range cur {
+				delete(cur, k)
+			}
 		}
+		return nil, &secretConflict{names: names}
+	}
+	if err != nil {
+		return nil, err
+	}
+	var notes []string
+	for _, n := range b.want.Create {
 		s.emitSecret(ctx, n, b.by)
 		notes = append(notes, fmt.Sprintf("The import created secret %q.", n))
 	}
-	for _, n := range b.replace {
-		if _, err := s.cfg.Secrets.Put(ctx, n, b.values[n], b.by); err != nil {
-			return nil, err
-		}
+	for _, n := range b.want.Replace {
 		s.emitSecret(ctx, n, b.by)
 		if err := s.cfg.Plans.SecretChanged(ctx, n); err != nil {
 			return nil, err

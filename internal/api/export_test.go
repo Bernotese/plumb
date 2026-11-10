@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
@@ -382,4 +383,159 @@ func TestImportValueNotObserved(t *testing.T) {
 	}
 	e.eng.Wait()
 	e.waitGuest("web1", "file:/etc/app.env", "DB_PASSWORD=file-value\n")
+}
+
+// commitSame commits the head documents again: the head moves, nothing
+// else changes.
+func (e *env) commitSame() {
+	head, err := e.st.Head(e.ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	rows, err := e.st.RevisionDocs(e.ctx, head.ID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.st.CommitRevision(e.ctx, store.NewRevision{Author: "system", Reason: "test: move the head", Docs: rows}); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// refusedImport runs an import that must fail with code and type and
+// checks that no secret and no secret event was written (D-153, D-158).
+func (e *env) refusedImport(name string, adm *client, req map[string]any, code int, typ string) {
+	e.t.Helper()
+	before := e.storeState()
+	last, _ := e.st.LastEventSeq(e.ctx)
+	c, body := e.importFile(adm, req)
+	if c != code || problemType(body) != typ {
+		e.t.Fatalf("%s: %d %s, want %d %s", name, c, body, code, typ)
+	}
+	if after := e.storeState(); len(after) != len(before) || after["app-db"] != before["app-db"] {
+		e.t.Fatalf("%s: the store changed: %v → %v", name, before, after)
+	}
+	evs, _ := e.st.EventsAfter(e.ctx, last, 100)
+	for _, ev := range evs {
+		if strings.HasPrefix(ev.Type, "secret.") {
+			e.t.Fatalf("%s: a refused import emitted %s", name, ev.Type)
+		}
+	}
+}
+
+// D-158 test 1: the head moves during the observe, or a target is
+// offline: 409, nothing written, for a created and a replaced secret.
+func TestImportLateRefusals(t *testing.T) {
+	e, adm := exportEnv(t, "file-value")
+	_, _, file := e.export(adm, exportPass)
+	touch := strings.Replace(file, "cores: 2", "cores: 3", 1)
+	a := e.agents["web1"]
+	for _, mode := range []string{"created", "replaced"} {
+		req := map[string]any{"content": touch, "passphrase": exportPass}
+		if mode == "created" {
+			e.sec.SetUsage(nil)
+			e.sec.Delete(e.ctx, "app-db")
+		} else {
+			adm.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": "live-value"})
+			req["overwrite"] = []string{"app-db"}
+		}
+		a.OnCommand(func(c wire.CommandType) {
+			if c == wire.CommandObserve {
+				e.commitSame()
+			}
+		})
+		e.refusedImport(mode+": head moved", adm, req, 409, "plan-stale")
+		a.OnCommand(nil)
+	}
+
+	// Offline: a target whose agent never came (its Run timed out).
+	adm.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": "live-value"})
+	_, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "web2", "put": []state.Doc{appTarget("web2", "app-db")}})
+	adm.do("POST", "/api/v1/plans/"+e.planID(body)+"/approve", nil)
+	e.eng.Wait() // fails after the enroll timeout; the guest exists
+	_, _, file = e.export(adm, exportPass)
+	i := strings.Index(file, "name: web2")
+	offline := file[:i] + strings.Replace(file[i:], "cores: 2", "cores: 3", 1)
+	e.refusedImport("replaced: offline", adm, map[string]any{"content": offline, "passphrase": exportPass, "overwrite": []string{"app-db"}}, 409, "target-offline")
+	e.sec.SetUsage(nil)
+	e.sec.Delete(e.ctx, "app-db")
+	e.refusedImport("created: offline", adm, map[string]any{"content": offline, "passphrase": exportPass}, 409, "target-offline")
+}
+
+// D-158 test 2: a PUT of a bundle name during the observe is never
+// replaced silently: 409 secret-conflict, nothing written.
+func TestImportPutDuringObserve(t *testing.T) {
+	e, adm := exportEnv(t, "file-value")
+	_, _, file := e.export(adm, exportPass)
+	adm.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": "live-value"})
+	adm.do("PUT", "/api/v1/secrets/extra", map[string]string{"value": "x"}) // not in the file
+	other := e.login("admin", e.password)
+	e.agents["web1"].OnCommand(func(c wire.CommandType) {
+		if c == wire.CommandObserve {
+			other.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": "third-value"})
+		}
+	})
+	code, body := e.importFile(adm, map[string]any{"content": strings.Replace(file, "cores: 2", "cores: 3", 1),
+		"passphrase": exportPass, "overwrite": []string{"app-db"}})
+	e.agents["web1"].OnCommand(nil)
+	if code != 409 || problemType(body) != "secret-conflict" {
+		t.Fatalf("import: %d %s", code, body)
+	}
+	vals, _ := e.sec.Resolve(e.ctx, []string{"app-db"})
+	if vals["app-db"].Text != "third-value" {
+		t.Fatalf("the PUT during the observe was replaced: %q", vals["app-db"].Text)
+	}
+}
+
+// D-158 test 3: no value of a written secret is in a command body before
+// the approval: a new binding on an existing target.
+func TestImportNewBindingNotObserved(t *testing.T) {
+	src, sadm := exportEnv(t, "src-value")
+	_, _, file := src.export(sadm, exportPass)
+	dst := newEnv(t, true)
+	dadm := dst.admin()
+	dst.seed(dadm, "web1")
+	a := dst.agents["web1"]
+	skip := len(a.Bodies())
+	code, body := dst.importFile(dadm, map[string]any{"content": file, "passphrase": exportPass})
+	if code != 201 || !strings.Contains(string(body), `"human_only":["secret-binding"]`) {
+		t.Fatalf("import: %d %s", code, body)
+	}
+	if bodiesHold(a, skip, "src-value") {
+		t.Fatal("the value of a new binding reached the guest before the approval")
+	}
+	var p planShape
+	json.Unmarshal(body, &p)
+	if u, _, ok := p.resource("file:/etc/app.env"); !ok || !u {
+		t.Fatalf("plan: %s", body)
+	}
+}
+
+// D-158 test 4: a replaced secret that another target uses: that target
+// is not in the Plan, gets no command, and its pending Plan is stale.
+func TestImportReplacedOtherTarget(t *testing.T) {
+	e, adm := exportEnv(t, "file-value")
+	e.agent("web2")
+	_, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "web2", "put": []state.Doc{appTarget("web2", "app-db")}})
+	adm.do("POST", "/api/v1/plans/"+e.planID(body)+"/approve", nil)
+	e.eng.Wait()
+	e.waitGuest("web2", "file:/etc/app.env", "DB_PASSWORD=file-value\n")
+	_, _, file := e.export(adm, exportPass)
+	adm.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": "live-value"})
+	_, body = adm.do("POST", "/api/v1/plans", map[string]any{"reason": "rotate web2", "targets": []string{"web2"}})
+	pending := mustID(t, body)
+	web2 := e.agents["web2"]
+	skip := len(web2.Bodies())
+	i := strings.Index(file, "name: web1")
+	touch := file[:i] + strings.Replace(file[i:], "cores: 2", "cores: 3", 1)
+	code, body := e.importFile(adm, map[string]any{"content": touch, "passphrase": exportPass, "overwrite": []string{"app-db"}, "mode": "merge"})
+	if code != 201 || strings.Contains(string(body), `"target":"web2"`) {
+		t.Fatalf("import: %d %s", code, body)
+	}
+	if n := len(web2.Bodies()); n != skip {
+		t.Fatalf("web2 got %d commands", n-skip)
+	}
+	if p, _ := e.st.GetPlan(e.ctx, pending); p.Status != "stale" {
+		t.Fatalf("the pending Plan of web2 is %s", p.Status)
+	}
+	e.waitGuest("web2", "file:/etc/app.env", "DB_PASSWORD=file-value\n")
 }

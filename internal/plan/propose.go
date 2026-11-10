@@ -197,6 +197,15 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	// Every check passed: now an import writes its secrets (D-153), and the
 	// Plan records the versions it wrote.
 	if in.BeforeStore != nil {
+		// The head must still be the base: an import writes nothing for a
+		// Plan that would be stale at once (D-158).
+		if head, err := e.st.Head(ctx); err == nil && head.ID != baseRev {
+			return store.Plan{}, fmt.Errorf("plan: the head moved to revision %d during planning: %w", head.ID, store.ErrPlanStale)
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return store.Plan{}, err
+		} else if errors.Is(err, store.ErrNotFound) && baseRev != 0 {
+			return store.Plan{}, store.ErrPlanStale
+		}
 		notes, err := in.BeforeStore(ctx)
 		if err != nil {
 			return store.Plan{}, err

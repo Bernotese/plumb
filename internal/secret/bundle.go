@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
+	"github.com/Bernotese/plumb/internal/store"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -250,4 +252,128 @@ func hasLoneSurrogate(raw []byte) bool {
 		}
 	}
 	return false
+}
+
+// BundleDecision is what an import does with the secrets of its bundle
+// (D-095): create the missing names, replace the names in overwrite that
+// have another value, skip the equal ones. Conflicts are the names with
+// another value that overwrite does not name.
+type BundleDecision struct {
+	Create, Replace, Conflicts []string
+	// Versions are the versions of the existing names when the decision
+	// was made. WriteBundle refuses when one of them changed (D-158).
+	Versions map[string]int64
+}
+
+// Equal reports whether two decisions are the same.
+func (d BundleDecision) Equal(o BundleDecision) bool {
+	eq := func(a, b []string) bool { return strings.Join(a, "\x00") == strings.Join(b, "\x00") }
+	if len(d.Versions) != len(o.Versions) {
+		return false
+	}
+	for n, v := range d.Versions {
+		if o.Versions[n] != v {
+			return false
+		}
+	}
+	return eq(d.Create, o.Create) && eq(d.Replace, o.Replace) && eq(d.Conflicts, o.Conflicts)
+}
+
+// DecideBundle decides per name. current holds the existing values of
+// the names. The lists are sorted.
+func DecideBundle(values, current map[string]string, overwrite []string) BundleDecision {
+	names := make([]string, 0, len(values))
+	for n := range values {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	allowed := map[string]bool{}
+	for _, n := range overwrite {
+		allowed[n] = true
+	}
+	var d BundleDecision
+	for _, n := range names {
+		cur, exists := current[n]
+		switch {
+		case !exists:
+			d.Create = append(d.Create, n)
+		case cur == values[n]:
+		case allowed[n]:
+			d.Replace = append(d.Replace, n)
+		default:
+			d.Conflicts = append(d.Conflicts, n)
+		}
+	}
+	return d
+}
+
+// ErrBundleChanged is returned by WriteBundle when the decision is not
+// the expected one any more: someone changed a secret meanwhile.
+var ErrBundleChanged = errors.New("secret: a secret of the bundle changed since the import checked it")
+
+// Current returns the values and versions of the named secrets that exist.
+func (s *Store) Current(ctx context.Context, names []string) (map[string]string, map[string]int64, error) {
+	have, err := s.Versions(ctx, names)
+	if err != nil {
+		return nil, nil, err
+	}
+	var existing []string
+	for _, n := range names {
+		if _, ok := have[n]; ok {
+			existing = append(existing, n)
+		}
+	}
+	vals, err := s.Resolve(ctx, existing)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make(map[string]string, len(vals))
+	versions := make(map[string]int64, len(vals))
+	for n, v := range vals {
+		out[n], versions[n] = v.Text, v.Version
+	}
+	return out, versions, nil
+}
+
+// WriteBundle writes the creates and replaces of want in one transaction.
+// Inside it, it decides again on the rows as they are now; when that
+// decision is not want, it writes nothing and returns ErrBundleChanged
+// (D-158).
+func (s *Store) WriteBundle(ctx context.Context, values map[string]string, overwrite []string, want BundleDecision, by string) error {
+	names := make([]string, 0, len(values))
+	for n := range values {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return s.st.PutSecretsTx(ctx, names, by, func(rows []store.SecretRow) ([]store.SecretWrite, error) {
+		current := map[string]string{}
+		for _, r := range rows {
+			// Another write since the check (a PUT by another person):
+			// never replace it silently (D-158).
+			if r.Version != want.Versions[r.Name] {
+				return nil, ErrBundleChanged
+			}
+			v, err := s.open(r)
+			if err != nil {
+				return nil, err
+			}
+			current[r.Name] = v
+		}
+		if len(rows) != len(want.Versions) {
+			return nil, ErrBundleChanged // a name was deleted since the check
+		}
+		got := DecideBundle(values, current, overwrite)
+		got.Versions = want.Versions
+		for k := range current {
+			delete(current, k)
+		}
+		if !got.Equal(want) {
+			return nil, ErrBundleChanged
+		}
+		var writes []store.SecretWrite
+		for _, n := range append(append([]string{}, want.Create...), want.Replace...) {
+			writes = append(writes, store.SecretWrite{Name: n, Seal: s.seal(n, values[n])})
+		}
+		return writes, nil
+	})
 }
