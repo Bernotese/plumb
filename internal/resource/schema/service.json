@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/service.json",
+  "title": "service",
+  "description": "A systemd service. Key: name.",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9@_.:][A-Za-z0-9@_.:-]*$",
+      "description": "Unit name, with or without .service."
+    },
+    "state": {
+      "enum": [
+        "running",
+        "stopped"
+      ],
+      "default": "running"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Start at boot."
+    },
+    "restart_on": {
+      "type": "array",
+      "uniqueItems": true,
+      "default": [],
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z_]+:.+$"
+      },
+      "description": "Resource ids on the same target. When one of them changes, the service restarts after it (risk disruptive)."
+    }
+  }
+}

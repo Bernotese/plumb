@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/doc/target.json",
+  "title": "Target",
+  "description": "A managed guest: its Proxmox settings and its Blocks.",
+  "type": "object",
+  "required": [
+    "kind",
+    "name",
+    "spec"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "Target"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+      "description": "Unique per kind. Lower case letters, digits, '-' and '.'."
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "type",
+        "image",
+        "guest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "vm",
+            "lxc"
+          ]
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+          "description": "Name of an Image document."
+        },
+        "guest": {
+          "type": "object",
+          "required": [
+            "cores",
+            "memory",
+            "disk",
+            "bridge"
+          ],
+          "additionalProperties": false,
+          "description": "Proxmox settings (resource guest:config).",
+          "properties": {
+            "cores": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256
+            },
+            "memory": {
+              "type": "integer",
+              "minimum": 256,
+              "description": "MiB."
+            },
+            "disk": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "GiB. Create-only in the first slice."
+            },
+            "bridge": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,14}$",
+              "description": "Proxmox bridge, for example vmbr0."
+            },
+            "ip": {
+              "type": "string",
+              "default": "dhcp",
+              "pattern": "^(dhcp|(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([0-9]|[12][0-9]|3[0-2]))$",
+              "description": "dhcp or an IPv4 address in CIDR form. Create-only."
+            },
+            "gateway": {
+              "type": "string",
+              "pattern": "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$",
+              "description": "IPv4 gateway for a static ip. Create-only."
+            },
+            "user": {
+              "type": "string",
+              "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+              "default": "plumb",
+              "description": "Bootstrap user that cloud-init creates. Create-only."
+            },
+            "ssh_keys": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string",
+                "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$"
+              },
+              "description": "Public keys of the bootstrap user, without options. Create-only."
+            }
+          },
+          "dependentSchemas": {
+            "gateway": {
+              "required": [
+                "ip"
+              ],
+              "properties": {
+                "ip": {
+                  "not": {
+                    "const": "dhcp"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "use"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "use": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+                "description": "Name of a Block document."
+              },
+              "params": {
+                "type": "object",
+                "default": {}
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+                "description": "Id of this use of the Block. Default: the Block name. Two uses of the same Block need different ids. It names the order group of the rendered resources."
+              }
+            }
+          },
+          "description": "Blocks of the target. The same Block can be used more than once, with different ids and parameters."
+        },
+        "overrides": {
+          "type": "object",
+          "default": {},
+          "propertyNames": {
+            "pattern": "^[a-z_]+:.+$"
+          },
+          "additionalProperties": {
+            "type": "object"
+          },
+          "description": "Resource id \u2192 attributes that replace the rendered ones. Written by Accept and by raw mode."
+        }
+      }
+    }
+  }
+}

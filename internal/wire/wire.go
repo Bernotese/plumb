@@ -1,0 +1,192 @@
+// Package wire holds the types that the controller and the agent share:
+// resources, changes, risk classes and the messages of the agent protocol
+// (docs/ARCHITECTURE.md §3 and §5). It has no logic besides small helpers
+// for ids and risk order, and it imports no other Plumb package.
+package wire
+
+import "strings"
+
+// Risk is the risk class of one change (ARCHITECTURE §4).
+type Risk string
+
+const (
+	RiskRead        Risk = "read"        // nothing changes
+	RiskReversible  Risk = "reversible"  // can be undone without loss
+	RiskDisruptive  Risk = "disruptive"  // restart or short outage
+	RiskDestructive Risk = "destructive" // data loss is possible
+)
+
+// riskOrder lists the classes from lowest to highest.
+var riskOrder = []Risk{RiskRead, RiskReversible, RiskDisruptive, RiskDestructive}
+
+// Valid reports whether r is one of the four risk classes.
+func (r Risk) Valid() bool { return r.level() >= 0 }
+
+// Exceeds reports whether r is a higher risk than limit.
+// An invalid risk exceeds every limit, so unknown values fail closed.
+func (r Risk) Exceeds(limit Risk) bool {
+	if !r.Valid() || !limit.Valid() {
+		return true
+	}
+	return r.level() > limit.level()
+}
+
+// MaxRisk returns the highest risk of the changes, or RiskRead for none.
+func MaxRisk(changes []Change) Risk {
+	highest := RiskRead
+	for _, c := range changes {
+		if c.Risk.Exceeds(highest) {
+			highest = c.Risk
+		}
+	}
+	return highest
+}
+
+func (r Risk) level() int {
+	for i, known := range riskOrder {
+		if r == known {
+			return i
+		}
+	}
+	return -1
+}
+
+// Resource is one rendered resource of a target. The controller renders
+// Blocks into a flat list of these and the agent applies them.
+type Resource struct {
+	// ID is "type:key", for example "file:/etc/motd". It is unique per target.
+	ID string `json:"id"`
+	// Type is the resource type, for example "file".
+	Type string `json:"type"`
+	// Block is the id of the Block use that rendered the resource: the "id"
+	// of the entry in the Target, which defaults to the Block name. Two uses
+	// of the same Block need different ids. Resources with the same Block
+	// apply in the listed order; different Blocks apply in parallel.
+	Block string `json:"block"`
+	// Attrs are the desired attributes. The JSON Schema of the type defines them.
+	Attrs map[string]any `json:"attrs"`
+	// Sensitive names the attributes whose value came from a secret.
+	// The agent never reports a value or a hash for them (D-037); see Redact.
+	Sensitive []string `json:"sensitive,omitempty"`
+}
+
+// Kind is the kind of a target.
+type Kind string
+
+const (
+	KindVM  Kind = "vm"
+	KindLXC Kind = "lxc"
+)
+
+// Change is one difference between the observed and the desired state of
+// one attribute. It has the same meaning and the same JSON form in agent
+// reports, Plans, run steps, Issues and the public API:
+// From is what the guest has now, To is the desired state.
+type Change struct {
+	Attr string `json:"attr"`
+	// From is the observed value and To the desired value. A missing value
+	// means "not there". Both are always missing for a sensitive attribute.
+	From any `json:"from,omitempty"`
+	To   any `json:"to,omitempty"`
+	// Sensitive marks a change of a secret value. The entry itself says
+	// "changed"; no value and no hash of it leaves the guest (D-037).
+	Sensitive bool `json:"sensitive,omitempty"`
+	Risk      Risk `json:"risk"`
+}
+
+// Redact enforces the sensitive rule on changes that come from outside the
+// controller. It returns a copy in which every change that is marked
+// sensitive, or whose attribute is in the sensitive list, has no From and
+// no To. The controller must call it on every agent report before it
+// stores or forwards the changes: agent reports are untrusted input.
+func Redact(sensitive []string, changes []Change) []Change {
+	if changes == nil {
+		return nil
+	}
+	out := make([]Change, len(changes))
+	for i, c := range changes {
+		if c.Sensitive || contains(sensitive, c.Attr) {
+			c = Change{Attr: c.Attr, Sensitive: true, Risk: c.Risk}
+		}
+		out[i] = c
+	}
+	return out
+}
+
+// Action says what a set of changes does to one resource.
+type Action string
+
+const (
+	ActionNone    Action = ""        // no change
+	ActionCreate  Action = "create"  // the resource does not exist yet
+	ActionUpdate  Action = "update"  // the resource exists and changes
+	ActionDelete  Action = "delete"  // the resource goes away
+	ActionRestart Action = "restart" // nothing changes besides a restart
+)
+
+// Attribute and values that every resource uses to say whether it exists.
+// A resource that is not on the guest is observed as state "absent".
+const (
+	AttrState    = "state"
+	StateAbsent  = "absent"
+	StatePresent = "present"
+)
+
+// ActionOf derives the action of one resource from its changes. This is the
+// only rule; Plans, run steps and the API use it.
+//
+//   - no changes: ActionNone
+//   - a "state" change from "absent" (or from nothing): ActionCreate
+//   - a "state" change to "absent": ActionDelete
+//   - only "restart" changes: ActionRestart
+//   - everything else: ActionUpdate
+func ActionOf(changes []Change) Action {
+	if len(changes) == 0 {
+		return ActionNone
+	}
+	onlyRestart := true
+	for _, c := range changes {
+		if c.Attr == AttrState {
+			if c.To == StateAbsent {
+				return ActionDelete
+			}
+			if c.From == nil || c.From == StateAbsent {
+				return ActionCreate
+			}
+		}
+		if c.Attr != AttrRestart {
+			onlyRestart = false
+		}
+	}
+	if onlyRestart {
+		return ActionRestart
+	}
+	return ActionUpdate
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// AttrRestart is the attribute of the change that the agent adds to a
+// service when one of its restart_on resources changed (D-036).
+const AttrRestart = "restart"
+
+// GuestConfigID is the id of the resource that holds the Proxmox settings
+// of a target. The driver handles it, not the agent.
+const GuestConfigID = "guest:config"
+
+// ID builds a resource id from a type and a key.
+func ID(typ, key string) string { return typ + ":" + key }
+
+// SplitID splits a resource id into type and key.
+// ok is false when the id has no type or no key.
+func SplitID(id string) (typ, key string, ok bool) {
+	typ, key, found := strings.Cut(id, ":")
+	return typ, key, found && typ != "" && key != ""
+}

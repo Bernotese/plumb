@@ -1,7 +1,7 @@
 # Architecture
 
 Plumb is one controller service plus one small agent in every guest. This file is the contract for all agents.
-Reasons for each choice: `docs/DECISIONS.md` D-018 … D-041. Terms: `docs/BRIEF.md` §3. Proxmox facts were checked against the PVE 9.2 API schema.
+Reasons for each choice: `docs/DECISIONS.md` D-018 … D-049. Terms: `docs/BRIEF.md` §3. Proxmox facts were checked against the PVE 9.2 API schema.
 
 ## 1. Overview
 ```
@@ -22,7 +22,7 @@ Reasons for each choice: `docs/DECISIONS.md` D-018 … D-041. Terms: `docs/BRIEF
 ## 2. Components (`internal/<package>`)
 | Package | Job | May import (plus `wire`) |
 |---|---|---|
-| `api` | HTTP handlers, sessions, API tokens, SSE, static UI | `plan`, `issue`, `state`, `secret`, `event` |
+| `api` | HTTP handlers, sessions, API tokens, SSE, static UI | `plan`, `issue`, `state`, `secret`, `event`, `store` |
 | `plan` | Proposal → Plan → approval → Revision → Run. Risk classes | `state`, `link`, `driver`, `secret`, `event`, `store` |
 | `issue` | Drift intake, issues, resolve actions, ignore rules | `plan`, `state`, `event`, `store` |
 | `state` | Documents, JSON Schema validation, Block rendering, revision diff, export/import | `resource` (schemas), `store` |
@@ -47,14 +47,15 @@ type Driver interface {              // internal/driver – runs in the controll
     FetchImage(ctx, ImageSpec) (ImageRef, error)       // download, verify, make template
     Create(ctx, GuestSpec, Bootstrap) (GuestID, error) // clone, set the enrollment token, start
     Observe(ctx, GuestID) (GuestState, error)          // config, config digest, power, IPs
-    Diff(desired GuestSpec, observed GuestState) []Change // pure; sets the risk of each change
-    Update(ctx, GuestID, []Change) error; Power(ctx, GuestID, Action) error; Delete(ctx, GuestID) error
+    Diff(desired GuestSpec, observed GuestState) ([]Change, error) // pure; sets the risk; error for a create-only change
+    Update(ctx, GuestID, []Change, *Bootstrap) error // Bootstrap only for re-enrollment; a token is never in a Change
+    Power(ctx, GuestID, PowerAction) error; Delete(ctx, GuestID) error
 }
 ```
 
 ## 3. Data model (D-021, D-026, D-027)
 - The State is a set of **documents**: `kind`, `name`, `spec`. Kinds: `Image`, `Block`, `Target`, `Rule` (later).
-- Documents are YAML in the export and JSON in the database. JSON Schema 2020-12 is the only schema language. It validates documents and defines Block parameters. The UI builds forms from it.
+- Documents are YAML in the export and JSON in the database. JSON Schema 2020-12 is the only schema language. It validates documents and defines Block parameters. The UI builds forms from it. The schema files in `internal/` are the only source; the OpenAPI file refers to them (D-043).
 - A **Revision** is an immutable, numbered set of documents. Documents are stored once by content hash, so unchanged documents are shared. The newest revision is the desired state.
 ```yaml
 kind: Block                          # blocks/deploy-user.yaml
@@ -75,10 +76,10 @@ spec:
 ```
 - The controller **renders** each Target to a flat resource list. A resource id is `type:key` (for example `file:/etc/motd`). Two resources with the same id on one target are an error.
 - Block values are Go `text/template` strings over the parameters. Rendering has a time limit and a size limit. Conditions, loops, Block includes and typed values come only when a real Block needs them (§10).
-- Order: resources of one Block apply in the listed order. Different Blocks apply in parallel. Package-manager operations share one lock per guest.
+- Order: resources of one Block apply in the listed order. Different Blocks apply in parallel. Package-manager operations share one lock per guest. A Block use has an `id` (default: the Block name); two uses of one Block need different ids (D-048).
 - Restart: `service` has `restart_on: [resource ids]`. When a listed resource changes, the agent adds a `restart` change (risk `disruptive`) to the service and applies it after them. The Plan shows this change.
 - Each resource type states its target kinds (`vm`, `lxc`). The Proxmox settings of a target are one resource, `guest:config`. The driver handles it, not the agent. So plans and issues have one shape for both levels.
-- Tables: `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `agent`, `enroll_token`, `event`, `secret`, `user`, `session`, `api_token`.
+- Tables of the first slice (migration 0001): `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `issue_comment`, `binding` (document → driver id), `agent`, `enroll_token`, `event`, `user`, `session`, `api_token`. The table `secret` comes with the secret store, in its own migration (§10).
 
 ## 4. Change flow and API (D-022, D-023)
 1. A client sends a **proposal**: documents to put or delete, and a reason.
@@ -88,6 +89,8 @@ spec:
 - A Plan is stale when the head revision moved. A stale Plan cannot be approved. The agent observes again at apply time. It refuses a change with a higher risk than the approved Plan.
 - Rollback, import and "Accept"/"Revert" on an issue all create a Plan. There is no second path.
 - Risk classes: `read`, `reversible`, `disruptive`, `destructive`. The risk of a Plan is its highest change.
+- One vocabulary in the database, the agent protocol and the API (D-045). Ids of revisions, Plans, Runs and Issues are integers. Plan: `pending`, `approved`, `stale`. Run: `running`, `succeeded`, `failed`. Step: `pending`, `running`, `unchanged`, `applied`, `failed`, `refused`, `skipped`. Issue: `open`, `resolving`, `resolved`. A principal is `user:<name>`, `token:<id>`, `agent:<target>` or `system`.
+- A change is `{attr, from, to, risk}`: `from` is the guest now, `to` is the desired state. A sensitive change is `{attr, sensitive, risk}`. The action of a resource (`create`, `update`, `delete`, `restart`) is derived from its changes by one rule, `wire.ActionOf` (D-047).
 
 | Endpoint (`/api/v1`) | Use |
 |---|---|
@@ -96,7 +99,7 @@ spec:
 | `POST /plans`, `GET /plans/{id}`, `POST /plans/{id}/approve` | Propose, read, approve |
 | `GET /runs/{id}` | Result per target and resource |
 | `GET /revisions`, `GET /revisions/{n}/diff`, `POST /revisions/{n}/rollback` | History. Rollback returns a Plan |
-| `GET /issues`, `POST /issues/{id}/resolve`, `POST /issues/{id}/comments` | Actions: `accept`, `revert`, `ignore_once`, `ignore_rule` |
+| `GET /issues`, `POST /issues/{id}/resolve`, `POST /issues/{id}/comments` | Actions: `accept`, `revert`. Later: `ignore_once`, `ignore_rule` (D-044) |
 | `GET /events?since=<seq>` | Server-sent events, resumable |
 | `GET/POST/DELETE /tokens`, `PUT /secrets/{name}`, `GET /export`, `POST /import` | Admin |
 
@@ -129,12 +132,12 @@ Contract: `api/openapi.yaml` (OpenAPI 3.1, written first). Errors are `applicati
 
 ## 7. Security (D-030 … D-032)
 - **Trust boundaries:** client ↔ controller, controller ↔ Proxmox, controller ↔ agent, guest ↔ guest. The controller is the root of trust: it has root in every managed guest. It has no root on the Proxmox host and no host directory.
-- **Agents:** a credential is valid for one target only. Agent reports are untrusted input: size limits, schema check, escaped in the UI. An agent accepts commands only over the pinned TLS link.
+- **Agents:** a credential is valid for one target only. Agent reports are untrusted input: size limits, schema check, escaped in the UI. The controller removes all values from a reported sensitive change before it stores it (`wire.Redact`). An agent accepts commands only over the pinned TLS link.
 - **Enrollment token:** it is visible in the guest config (`VM.Audit`) and to root in the guest until the next restart. This is acceptable: single use, 15 minutes.
 - **Proxmox token:** user `plumb@pve`, token with privilege separation, custom role `Plumb`. Scope: pool `plumb` (`VM.Allocate`, `VM.Audit`, `VM.Clone`, `VM.Config.*`, `VM.PowerMgmt`); disk storage (`Datastore.AllocateSpace`, `Datastore.Audit`); image storage (`Datastore.AllocateTemplate`, `Datastore.Audit`); snippet storage `plumb-snippets` (`Datastore.Audit` only, content `snippets` only); one bridge (`SDN.Use`); the node (`Sys.Audit`, `Sys.AccessNetwork`). No `Sys.Modify`, no `Permissions.Modify`, no `Pool.Allocate`, no console, no guest-agent rights. The controller LXC is not in the pool, so Plumb cannot change itself or foreign guests. TLS to Proxmox trusts the `pve-root-ca.pem` of the host (the installer copies it) or the system roots.
 - **Secrets:** AES-256-GCM. The API can write secrets but never read them. Documents hold references (`secret: name`). An attribute with a secret value is `sensitive`: the agent compares it locally and reports only "changed" or "not changed", so Plans, Issues, events and the database never hold the value or a hash of it. "Accept" is not offered for it. The agent stores its desired list with mode 0600. The master key is a file on its own volume with `backup=0`, so a backup of the LXC holds the database without the key. A restore needs the recovery key. The Plumb CA key is in the normal backup; a new CA needs a new snippet (`install.sh --snippet-only`) and re-enrollment of every agent. The export holds secrets only when the user gives a passphrase.
 - **Humans:** local users, argon2id, session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`), origin check, login rate limit, forced password change at first login.
-- **API token tiers:** `read` < `plan` (propose, comment) < `apply` (approve up to the `max_risk` of the token, at most `disruptive`) < `admin`. Only a human session approves `destructive` Plans and manages tokens, secrets and import.
+- **API token tiers:** `read` < `plan` (propose, comment) < `apply` (approve up to the `max_risk` of the token, at most `disruptive`). `admin` is the tier of a human session; no token has it (D-046). Only a human session approves `destructive` Plans and manages tokens, secrets and import.
 - **Warning:** an `apply` token is root-equivalent on the guests (a `file`, `user` or `service` change can give root). The tiers limit data loss, not privilege. The `command` resource is always `destructive`, so only a human approves it. Every Plan marks it "cannot detect drift".
 - **Installer:** runs once as root on the host. It creates role, user, token, pool, the snippet storage with the static snippet, and the LXC. It verifies the tarball checksum and stores the token only inside the LXC.
 
@@ -154,7 +157,7 @@ Only the real-host level needs Proxmox. It is not part of CI. **The user must pr
 - Layout: `cmd/plumb`, `cmd/plumb-agent` (flags only) · `internal/<package>` (§2, tests next to the code) · `api/openapi.yaml` · `blocks/*.yaml` (embedded) · `web/` (`web/dist` is embedded) · `install/install.sh` · `test/` (guest and real-host harness).
 - Go: `gofmt`, `go vet`, `staticcheck`, `CGO_ENABLED=0`, `log/slog`, wrapped errors, `context` first, table tests. No `util` package.
 - Go dependencies (a new one needs a decision line): `modernc.org/sqlite`, `go.yaml.in/yaml`, `santhosh-tekuri/jsonschema`, `golang.org/x/crypto`, `golang.org/x/sys`. No web framework, no ORM, no Proxmox SDK.
-- Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types. Web dependencies (same rule): `svelte`, `vite`, `typescript`, `openapi-typescript`, `vitest`, `@playwright/test`, and the lint tools.
+- Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types. Web dependencies (same rule): `svelte`, `vite`, `typescript`, `openapi-typescript`, `vitest`, `@playwright/test`. Build and lint tools are free as `devDependencies` (D-042).
 - Run: `make build` (UI + both binaries) · `make test` · `make lint` · `make test-guest` · `make test-pve` · `bin/plumb serve --dev` (fake driver only, simulated agents, seeded data, plain HTTP with a cookie without `Secure`; for development and screenshots only).
 
 ## 10. Roadmap after the first slice (names only)
