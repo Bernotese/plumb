@@ -253,16 +253,19 @@
                 </div>
               {:else}
                 <div class="row">
-                  <button class="btn" type="button" onclick={() => startReplace(s)}
-                    >Replace<span class="sr-only"> {s.name}</span></button
+                  <button
+                    class="btn"
+                    type="button"
+                    aria-label="Replace {s.name}"
+                    onclick={() => startReplace(s)}>Replace</button
                   >
                   <button
                     class="btn"
                     type="button"
                     disabled={s.used_by.length > 0}
                     aria-describedby={s.used_by.length ? `in-use-${s.name}` : undefined}
-                    onclick={() => askDelete(s.name)}
-                    >Delete<span class="sr-only"> {s.name}</span></button
+                    aria-label="Delete {s.name}"
+                    onclick={() => askDelete(s.name)}>Delete</button
                   >
                 </div>
                 {#if s.used_by.length}

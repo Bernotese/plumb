@@ -74,8 +74,8 @@
       fileError = "The file is larger than 8 MiB. Plumb does not accept it.";
       return;
     }
-    fileName = f.name;
     content = await f.text();
+    fileName = f.name;
   }
 
   async function doImport(e: SubmitEvent) {
@@ -98,8 +98,9 @@
     } catch (err) {
       const p = err instanceof ApiError ? err.problem : undefined;
       if (p?.type === "urn:plumb:problem:secret-conflict" && p.secrets?.length) {
-        conflicts = p.secrets;
-        overwrite = overwrite.filter((n) => p.secrets?.includes(n));
+        // The server names only the conflicts not in `overwrite`: keep the
+        // ticked names of the last answer in the list, still ticked.
+        conflicts = [...new Set([...overwrite, ...p.secrets])].sort();
       } else if (p?.status === 422 && p.secrets?.length) {
         missing = p.secrets;
       } else {

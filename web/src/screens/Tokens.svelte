@@ -218,8 +218,11 @@
               {:else}
                 <div class="row">
                   <Badge tone="ok" label="Active" />
-                  <button class="btn" type="button" onclick={() => askRevoke(t.id)}
-                    >Revoke<span class="sr-only"> {t.name}</span></button
+                  <button
+                    class="btn"
+                    type="button"
+                    aria-label="Revoke {t.name}"
+                    onclick={() => askRevoke(t.id)}>Revoke</button
                   >
                 </div>
               {/if}
