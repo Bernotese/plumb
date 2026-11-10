@@ -243,7 +243,7 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 		ts.wake = make(chan struct{})
 	}
 	l.mu.Unlock()
-	l.emit(ctx, "agent.token_created", target, "system", map[string]any{"expires_at": expires.UTC()})
+	l.emit(ctx, "target.status", target, "system", map[string]any{"agent": "token_created", "expires_at": expires.UTC()})
 	return token, expires, nil
 }
 
@@ -358,8 +358,8 @@ func (l *Link) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	ts.outstanding = map[string]bool{}
 	ts.agentID = agent.ID
 	l.mu.Unlock()
-	l.emit(r.Context(), "agent.enrolled", agent.Target, "agent:"+agent.Target,
-		map[string]any{"agent_id": agent.ID, "hostname": agent.Hostname, "version": agent.Version})
+	l.emit(r.Context(), "target.status", agent.Target, "agent:"+agent.Target,
+		map[string]any{"agent": "enrolled", "agent_id": agent.ID, "hostname": agent.Hostname, "version": agent.Version})
 	writeJSON(w, http.StatusOK, wire.EnrollResponse{AgentID: agent.ID, Credential: agent.ID + "." + cred})
 }
 

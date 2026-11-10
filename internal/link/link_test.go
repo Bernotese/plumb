@@ -263,7 +263,7 @@ func TestEnrollTokenRules(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	if !strings.Contains(strings.Join(types, ","), "agent.enrolled") {
+	if !strings.Contains(strings.Join(types, ","), "target.status") {
 		t.Errorf("events = %v", types)
 	}
 }
