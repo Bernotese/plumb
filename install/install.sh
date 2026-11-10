@@ -445,8 +445,8 @@ lxc_ip() {
 		echo "LXC-IP"
 		return 0
 	fi
-	local ip i
-	for i in $(seq 1 60); do
+	local ip
+	for _ in $(seq 1 60); do
 		ip=$({ query pct exec "$LXC_ID" -- hostname -I 2>/dev/null || true; } | awk '{print $1}')
 		[[ -n $ip ]] && {
 			echo "$ip"
@@ -487,6 +487,8 @@ EOF
 	run pct exec "$LXC_ID" -- chown plumb:plumb /etc/plumb/plumb.env
 }
 
+# The unit keeps ${PLUMB_HOSTS} for systemd to expand from the env file.
+# shellcheck disable=SC2016
 readonly UNIT='[Unit]
 Description=Plumb controller
 After=network-online.target
@@ -527,7 +529,7 @@ setup_lxc() {
 
 # fetch_plumb_ca copies the CA that plumb made at its first start.
 fetch_plumb_ca() {
-	local out=$1 i
+	local out=$1
 	if [[ $DRY_RUN == 1 ]]; then
 		run pct pull "$LXC_ID" /var/lib/plumb/link/ca.crt "$out"
 		cat >"$out" <<'EOF'
@@ -537,7 +539,7 @@ DRYRUNPLACEHOLDERNOTAREALCERTIFICATE
 EOF
 		return 0
 	fi
-	for i in $(seq 1 60); do
+	for _ in $(seq 1 60); do
 		if query pct exec "$LXC_ID" -- test -s /var/lib/plumb/link/ca.crt; then
 			pct pull "$LXC_ID" /var/lib/plumb/link/ca.crt "$out"
 			return 0

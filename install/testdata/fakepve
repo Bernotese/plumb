@@ -13,7 +13,7 @@ list() { # list PREFIX KEY: JSON list of {KEY: name} for files PREFIX.*
 		[[ -e $f ]] || continue
 		[[ $first == 1 ]] || printf ','
 		first=0
-		printf '{"%s":"%s"}' "$2" "${f##*/$1.}"
+		printf '{"%s":"%s"}' "$2" "${f##*/"$1".}"
 	done
 	printf ']\n'
 }
