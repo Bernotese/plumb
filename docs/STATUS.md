@@ -10,15 +10,17 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-011 API, auth, events | pl-backend | in progress |
+| T-011 API, auth, events | pl-backend | PR #17: QA + review running |
+| T-012 Proxmox VM driver | pl-backend | offline part in progress (httptest fake); real-host part **blocked: test host** |
 | T-021 flow test with the real agent | pl-codex-qa | waits for T-018 |
+| T-022 agent: 4xx on drift flush | pl-codex-fix | waits for T-018 |
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
 | T-005 resources | pl-frontend | PR #8: static review approve (ea35c1e); merge after the first real guest run. **Blocked: Docker access** |
-| T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): fixes + D-075 pushed (0b05b5b), re-review running |
+| T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): static review approve (29aa0a4); merge after #8 and the first real guest run. **Blocked: Docker access** |
 | T-006 web UI slice (mock API) | pl-frontend | in progress |
 | T-014, T-015 | see cards | later waves |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
-| T-013 installer → T-012 Proxmox driver → real-host part of T-015 | pl-backend | **blocked: test host (D-041)** |
+| T-013 installer, real-host part of T-012 and T-015 | pl-backend | **blocked: test host (D-041)** |
 
 ## Done
 - 2026-11-10 · Team setup, auto mode, GitHub remote, model split.
