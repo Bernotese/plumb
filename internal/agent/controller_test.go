@@ -272,13 +272,22 @@ type runner struct {
 	calls     [][]string
 	onRestart func()
 	onShow    func() // runs before "systemctl show" answers
+	// onUnit runs before every systemctl call answers, with the verb and
+	// the unit (the last argument). It may block on ctx; an error is the
+	// result of the call.
+	onUnit func(ctx context.Context, verb, unit string) error
 }
 
-func (r *runner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *runner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, append([]string{name}, args...))
-	hook, show := r.onRestart, r.onShow
+	hook, show, unit := r.onRestart, r.onShow, r.onUnit
 	r.mu.Unlock()
+	if name == "systemctl" && len(args) > 0 && unit != nil {
+		if err := unit(ctx, args[0], args[len(args)-1]); err != nil {
+			return nil, err
+		}
+	}
 	if name == "systemctl" && len(args) > 0 {
 		switch args[0] {
 		case "show":
