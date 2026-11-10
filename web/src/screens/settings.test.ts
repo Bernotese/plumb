@@ -3,6 +3,7 @@
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockApi } from "../lib/mock/mock";
+import { ApiError } from "../lib/api";
 import type { PlumbApi } from "../lib/client";
 import type { Session } from "../lib/types";
 import ExportImport from "./ExportImport.svelte";
@@ -151,6 +152,47 @@ describe("Tokens", () => {
     flushSync();
     expect(document.querySelector("#bearer-value")).toBeNull();
     expect(document.body.innerHTML).not.toContain(bearer);
+    expect(document.activeElement?.id).toBe("token-name");
+    // A second render must not restore a closed bearer panel.
+    type("#token-name", "Another bot");
+    expect(document.querySelector("#bearer-value")).toBeNull();
+    expect(JSON.stringify(await api.listTokens())).not.toContain(bearer);
+  });
+
+  it.each([422, 403])("shows a create-token %s inside the form", async (status) => {
+    const api = adminApi();
+    vi.spyOn(api, "createToken").mockRejectedValue(
+      new ApiError({
+        type: "about:blank",
+        status,
+        title: "Creation refused",
+        detail: "Check your access or name.",
+        ...(status === 422 ? { errors: [{ pointer: "/name", message: "Name refused." }] } : {}),
+      }),
+    );
+    show(Tokens, { api });
+    await until(() => rows().length === 2);
+    type("#token-name", "CI");
+    button("Create token")?.click();
+    const alert = await until(() => document.querySelector('form [role="alert"]'));
+    expect(alert.textContent).toContain("Check your access or name.");
+    if (status === 422) expect(alert.textContent).toContain("/name: Name refused.");
+  });
+
+  // QA-035-1: keep the unmet field-error requirement executable until fixed.
+  it.fails("associates a server 422 with the token name field", async () => {
+    show(Tokens, { api: adminApi() });
+    await until(() => rows().length === 2);
+    type("#token-name", "   ");
+    button("Create token")?.click();
+    await until(() => text().includes("Use 1 to 100 characters."));
+    const input = el<HTMLInputElement>("#token-name");
+    const described = (input.getAttribute("aria-describedby") ?? "")
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent)
+      .join(" ");
+    expect(described).toContain("Use 1 to 100 characters.");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
   });
 
   it("revokes only after a confirmation", async () => {
@@ -211,8 +253,37 @@ describe("Secrets", () => {
     expect(put).toHaveBeenCalledWith("smtp", "s3cret value");
     expect(el<HTMLInputElement>("#secret-value").value).toBe("");
     expect(document.body.innerHTML).not.toContain("s3cret value");
+    button("Replace smtp")?.click();
+    flushSync();
+    expect(el<HTMLInputElement>("#secret-value").value).toBe("");
+    expect(JSON.stringify(await api.listSecrets())).not.toContain("s3cret value");
     // No plan offer: nobody uses the new secret.
     expect(button(/^Plan the change/)).toBeUndefined();
+  });
+
+  it("forgets a rejected secret in both field modes and requires re-entry", async () => {
+    const api = adminApi();
+    const put = vi.spyOn(api, "putSecret").mockRejectedValue(
+      new ApiError({
+        type: "about:blank",
+        status: 422,
+        title: "Rejected secret",
+        errors: [{ pointer: "/value", message: "Value refused." }],
+      }),
+    );
+    show(Secrets, { api });
+    await until(() => rows().length === 2);
+    type("#secret-name", "smtp");
+    type("#secret-value", "must-not-survive");
+    button("Save secret")?.click();
+    await until(() => text().includes("Value refused."));
+    expect(put).toHaveBeenCalledWith("smtp", "must-not-survive");
+    expect(el<HTMLInputElement>("#secret-value").value).toBe("");
+    el<HTMLInputElement>('input[type="checkbox"]').click();
+    flushSync();
+    expect(el<HTMLTextAreaElement>("#secret-value").value).toBe("");
+    expect(document.body.innerHTML).not.toContain("must-not-survive");
+    expect(button("Save secret")?.disabled).toBe(true);
   });
 
   it("switches to a multi-line field for keys", async () => {
@@ -224,6 +295,22 @@ describe("Secrets", () => {
     const area = el<HTMLTextAreaElement>("textarea#secret-value");
     expect(area.getAttribute("autocomplete")).toBe("off");
     expect(area.getAttribute("spellcheck")).toBe("false");
+  });
+
+  it.fails("associates a server 422 with the secret value field (QA-035-1)", async () => {
+    show(Secrets, { api: adminApi() });
+    await until(() => rows().length === 2);
+    type("#secret-name", "smtp");
+    type("#secret-value", "x".repeat(65537));
+    button("Save secret")?.click();
+    await until(() => text().includes("Use 1 to 65536 bytes."));
+    const input = el<HTMLInputElement>("#secret-value");
+    const described = (input.getAttribute("aria-describedby") ?? "")
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent)
+      .join(" ");
+    expect(described).toContain("Use 1 to 65536 bytes.");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
   });
 
   it("after a replace of a used secret offers to plan its targets", async () => {
@@ -319,6 +406,7 @@ describe("Export and import", () => {
     const file = await api.exportState("long enough passphrase");
     await api.putSecret("app-db", "changed since the export");
     await api.putSecret("deploy-key", "changed too");
+    const before = await api.listSecrets();
     show(ExportImport, { api, save: vi.fn() });
     pickFile(file);
     await until(() => text().includes("Selected:"));
@@ -331,6 +419,9 @@ describe("Export and import", () => {
       ["app-db", false],
       ["deploy-key", false],
     ]);
+    expect(imp.mock.calls[0]?.[0].overwrite).toBeUndefined();
+    expect(location.hash).not.toMatch(/^#\/plans\//);
+    expect(await api.listSecrets()).toEqual(before);
     boxes[0]?.click();
     flushSync();
     button("Import again")?.click();
