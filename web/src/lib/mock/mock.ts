@@ -103,7 +103,9 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
       if (!type || !rawAttrs) continue;
       const attrs: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rawAttrs)) attrs[k] = renderValue(v, params);
-      out.push({ id: `${type}:${String(attrs[keyAttr[type] ?? "name"])}`, type, attrs });
+      const id = `${type}:${String(attrs[keyAttr[type] ?? "name"])}`;
+      // Target overrides replace rendered attributes ("Accept", raw mode, state: absent).
+      out.push({ id, type, attrs: { ...attrs, ...(spec.overrides?.[id] ?? {}) } });
     }
   }
   return out;
@@ -160,6 +162,17 @@ export function planTarget(
   const updated = new Set<string>();
   for (const r of after) {
     const prev = before.get(r.id);
+    // An explicit state: absent removes the resource on the guest (D-065).
+    if (r.attrs["state"] === "absent") {
+      if (prev?.attrs["state"] !== "absent") {
+        out.push(
+          resourcePlan(r.id, "delete", [
+            { attr: "state", from: "present", to: "absent", risk: "destructive" },
+          ]),
+        );
+      }
+      continue;
+    }
     if (!prev) {
       const changes: Change[] = [
         { attr: "state", from: "absent", to: "present", risk: "reversible" },
@@ -187,16 +200,8 @@ export function planTarget(
       out.push(resourcePlan(r.id, "restart", [{ attr: "restart", risk: "disruptive" }]));
     }
   }
-  const nextIds = new Set(after.map((r) => r.id));
-  for (const id of before.keys()) {
-    if (!nextIds.has(id)) {
-      out.push(
-        resourcePlan(id, "delete", [
-          { attr: "state", from: "present", to: "absent", risk: "destructive" },
-        ]),
-      );
-    }
-  }
+  // A resource that is no longer desired is no longer managed: it is not
+  // deleted on the guest (D-065), so it gets no plan entry.
   return out;
 }
 
