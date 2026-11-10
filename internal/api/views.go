@@ -152,8 +152,11 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 				unverified++
 			}
 		}
-		if unverified > 0 {
+		switch {
+		case unverified > 0 && tp.Guest == "create":
 			v.Warnings = append(v.Warnings, fmt.Sprintf("%s is a new target: %d resources are unverified until the first boot.", tp.Target, unverified))
+		case unverified > 0:
+			v.Warnings = append(v.Warnings, fmt.Sprintf("%s: %d resources get a new secret and are not observed before the approval (D-156).", tp.Target, unverified))
 		}
 		v.Targets = append(v.Targets, tv)
 	}

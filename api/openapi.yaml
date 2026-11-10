@@ -2358,9 +2358,10 @@ components:
         unverified:
           type: boolean
           description: |
-            A resource of a new target. Nobody could observe it, so `changes` is empty, except
-            one `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
-            verified at the first apply after the first boot (D-066).
+            A resource of a new target, or a resource of an existing target that gets a new secret
+            binding (D-156). Nobody observed it, so `changes` is empty, except one
+            `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
+            verified at the first apply (D-066, D-075).
 
     RunStatus:
       type: string

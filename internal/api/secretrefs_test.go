@@ -400,3 +400,144 @@ func TestSecretMaskedInAgentErrors(t *testing.T) {
 		})
 	}
 }
+
+// appServiceBlock is appBlock plus a service that restarts on the file
+// with the secret.
+func appServiceBlock() state.Doc {
+	d := appBlock("/etc/app.env")
+	var spec map[string]any
+	json.Unmarshal(d.Spec, &spec)
+	spec["resources"] = append(spec["resources"].([]any),
+		map[string]any{"service": map[string]any{"name": "app", "restart_on": []any{"file:/etc/app.env"}}})
+	d.Spec, _ = json.Marshal(spec)
+	return d
+}
+
+// planBodiesHold reports whether any command body after the first skip
+// ones holds the value.
+func bodiesHold(a interface{ Bodies() [][]byte }, skip int, value string) bool {
+	for _, b := range a.Bodies()[skip:] {
+		if bytes.Contains(b, []byte(value)) {
+			return true
+		}
+	}
+	return false
+}
+
+type planShape struct {
+	ID        int64
+	HumanOnly []string `json:"human_only"`
+	Targets   []struct {
+		Target    string
+		Resources []struct {
+			Resource   string
+			Unverified bool
+			Changes    []wire.Change
+		}
+	}
+}
+
+func (p planShape) resource(id string) (unverified, restart, found bool) {
+	for _, t := range p.Targets {
+		for _, r := range t.Resources {
+			if r.Resource == id {
+				for _, c := range r.Changes {
+					restart = restart || c.Attr == wire.AttrRestart
+				}
+				return r.Unverified, restart, true
+			}
+		}
+	}
+	return false, false, false
+}
+
+// D-156: before the approval, no command carries the value of a new
+// binding to the guest.
+func TestSecretNewBindingNotObserved(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	a := e.agents["web1"]
+	adm.do("PUT", "/api/v1/secrets/x", map[string]string{"value": "new-binding-canary"})
+	adm.do("PUT", "/api/v1/secrets/y", map[string]string{"value": "other-name-canary"})
+	planTok := e.token(TierPlan, "")
+	propose := func(c *client, docs ...state.Doc) planShape {
+		t.Helper()
+		code, body := c.do("POST", "/api/v1/plans", map[string]any{"reason": "bind", "put": docs})
+		if code != 201 {
+			t.Fatalf("plan: %d %s", code, body)
+		}
+		var p planShape
+		json.Unmarshal(body, &p)
+		return p
+	}
+
+	// 1. An existing online target gets a secret: the resource is left out
+	// of the planning observe and planned as unverified.
+	skip := len(a.Bodies())
+	p := propose(planTok, appBlock("/etc/app.env"), appTarget("web1", "x"))
+	if bodiesHold(a, skip, "new-binding-canary") {
+		t.Fatal("a command before the approval carried the value of a new binding")
+	}
+	if u, _, ok := p.resource("file:/etc/app.env"); !ok || !u || len(p.HumanOnly) != 1 || p.HumanOnly[0] != "secret-binding" {
+		t.Fatalf("plan: %+v", p)
+	}
+	if u, _, ok := p.resource("file:/etc/other.env"); !ok || u {
+		t.Fatalf("the plain file is observed: %+v", p)
+	}
+	if c, b := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); c != 202 {
+		t.Fatalf("approve: %d %s", c, b)
+	}
+	e.eng.Wait()
+	e.waitGuest("web1", "file:/etc/app.env", "DB_PASSWORD=new-binding-canary\n")
+
+	// 2. Another secret name on the same resource is a new binding too.
+	skip = len(a.Bodies())
+	p = propose(planTok, appTarget("web1", "y"))
+	if bodiesHold(a, skip, "other-name-canary") {
+		t.Fatal("a command before the approval carried the value of another secret name")
+	}
+	if u, _, ok := p.resource("file:/etc/app.env"); !ok || !u || len(p.HumanOnly) != 1 {
+		t.Fatalf("other name: %+v", p)
+	}
+	adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil)
+
+	// 4. A rotation over the existing binding is observed with the value
+	// (the known limit of D-156) and is not human-only.
+	adm.do("PUT", "/api/v1/secrets/x", map[string]string{"value": "rotated-canary"})
+	skip = len(a.Bodies())
+	code, body := planTok.do("POST", "/api/v1/plans", map[string]any{"reason": "rotate", "targets": []string{"web1"}})
+	p = planShape{}
+	json.Unmarshal(body, &p)
+	if code != 201 || len(p.HumanOnly) != 0 || !bodiesHold(a, skip, "rotated-canary") {
+		t.Fatalf("rotation: %d %s", code, body)
+	}
+	if u, _, ok := p.resource("file:/etc/app.env"); !ok || u {
+		t.Fatalf("rotation is not unverified: %+v", p)
+	}
+}
+
+// D-156 point 4: a service that restarts on a left-out resource gets a
+// planned restart, so the apply does not refuse it.
+func TestSecretNewBindingRestart(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	adm.do("PUT", "/api/v1/secrets/x", map[string]string{"value": "restart-canary"})
+	code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "bind", "put": []state.Doc{appServiceBlock(), appTarget("web1", "x")}})
+	var p planShape
+	json.Unmarshal(body, &p)
+	if _, restart, ok := p.resource("service:app"); code != 201 || !ok || !restart {
+		t.Fatalf("no planned restart: %d %s", code, body)
+	}
+	if c, b := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); c != 202 {
+		t.Fatalf("approve: %d %s", c, b)
+	}
+	e.eng.Wait()
+	e.waitGuest("web1", "file:/etc/app.env", "DB_PASSWORD=restart-canary\n")
+	run, _ := e.st.LastRunOfTarget(e.ctx, "web1")
+	if run.Status != "succeeded" {
+		steps, _ := e.st.Steps(e.ctx, run.ID)
+		t.Fatalf("run %s: %+v", run.Status, steps)
+	}
+}

@@ -163,15 +163,17 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			plans[i], errs[i] = e.planTarget(ctx, next, t, contains(in.Proposal.Reenroll, t))
-			if errs[i] == nil {
-				// The rule reads the renders, not the origin (D-099).
-				before, err := renderOrNil(base, t)
-				after, err2 := renderOrNil(next, t)
-				if errs[i] = errors.Join(err, err2); errs[i] == nil {
-					binding[i] = newBinding(before, after)
-				}
+			// The rule reads the renders, not the origin (D-099). The same
+			// result keeps the value of a new binding out of the planning
+			// observe (D-156).
+			before, err := renderOrNil(base, t)
+			after, err2 := renderOrNil(next, t)
+			if errs[i] = errors.Join(err, err2); errs[i] != nil {
+				return
 			}
+			fresh := newBindings(before, after)
+			binding[i] = len(fresh) > 0
+			plans[i], errs[i] = e.planTarget(ctx, next, t, contains(in.Proposal.Reenroll, t), fresh)
 		}()
 	}
 	wg.Wait()
@@ -222,7 +224,9 @@ func union(a, b []string) []string {
 }
 
 // planTarget observes one target and computes its changes.
-func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string, reenroll bool) (TargetPlan, error) {
+// fresh are the resources with a new secret binding (D-156): they are not
+// observed before the approval.
+func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
 	tp := TargetPlan{Target: target}
 	r, err := renderOrNil(next, target)
 	if err != nil {
@@ -316,11 +320,26 @@ func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string,
 	}
 	// The observe body is the one place in planning with clear values;
 	// the versions it used are the versions of the Plan (D-089).
-	body, used, err := e.withSecrets(ctx, r.Resources, nil)
+	// A resource with a new secret binding is left out: no value goes to
+	// a resource that did not have it before a human approved (D-156).
+	var watched, left []wire.Resource
+	for _, res := range r.Resources {
+		if fresh[res.ID] {
+			left = append(left, res)
+		} else {
+			watched = append(watched, res)
+		}
+	}
+	body, used, err := e.withSecrets(ctx, watched, nil)
 	if err != nil {
 		return tp, &ProposalError{Target: target, Msg: "the secrets of the target cannot be read: " + err.Error(), Err: err}
 	}
 	tp.Secrets = used
+	if len(left) > 0 {
+		if err := e.planUnobserved(ctx, &tp, r, left); err != nil {
+			return tp, err
+		}
+	}
 	rep, err := e.command(ctx, target, wire.CommandObserve, wire.ObserveBody{Resources: body}, e.cfg.ObserveTimeout, nil)
 	if err != nil {
 		return tp, &ProposalError{Target: target, Msg: "observe failed: " + err.Error(), Err: err}
@@ -335,6 +354,7 @@ func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string,
 			return tp, &ProposalError{Target: target, Msg: fmt.Sprintf("observe of %s failed: %s", it.Resource, it.Output)}
 		}
 	}
+	plannedRestarts(&tp, r, left)
 	return tp, nil
 }
 
@@ -409,4 +429,91 @@ func (e *Engine) guestSpec(ctx context.Context, target string, r *state.Rendered
 		return spec, err
 	}
 	return spec, nil
+}
+
+// planUnobserved plans the resources that the planning observe left out
+// (D-156) as a new target plans its resources (D-066, D-133): create,
+// unverified, disruptive, one sensitive change per sensitive attribute.
+// Their secrets get the current versions (D-138).
+func (e *Engine) planUnobserved(ctx context.Context, tp *TargetPlan, r *state.Rendered, left []wire.Resource) error {
+	names := map[string]bool{}
+	for _, s := range tp.Secrets {
+		names[s.Name] = true
+	}
+	var add []string
+	for _, res := range left {
+		rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: wire.RiskDisruptive, Unverified: true}
+		for _, attr := range res.Sensitive {
+			rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: wire.RiskDisruptive})
+		}
+		tp.Resources = append(tp.Resources, rc)
+		for _, n := range state.ResourceSecrets(res) {
+			if !names[n] {
+				names[n] = true
+				add = append(add, n)
+			}
+		}
+	}
+	if len(add) == 0 {
+		return nil
+	}
+	have, err := e.versions(ctx, add)
+	if err != nil {
+		return err
+	}
+	for _, n := range add {
+		tp.Secrets = append(tp.Secrets, PlannedSecret{Name: n, Version: have[n]})
+	}
+	sort.Slice(tp.Secrets, func(i, j int) bool { return tp.Secrets[i].Name < tp.Secrets[j].Name })
+	return nil
+}
+
+// plannedRestarts adds a restart change (disruptive) to every service
+// whose restart_on names a resource that was not observed: the agent adds
+// that change at apply (D-036), and the apply refuses what the Plan does
+// not show (D-075, D-156).
+func plannedRestarts(tp *TargetPlan, r *state.Rendered, left []wire.Resource) {
+	if len(left) == 0 {
+		return
+	}
+	gone := map[string]bool{}
+	for _, res := range left {
+		gone[res.ID] = true
+	}
+	restart := wire.Change{Attr: wire.AttrRestart, Risk: wire.RiskDisruptive}
+	for _, res := range r.Resources {
+		if gone[res.ID] {
+			continue
+		}
+		list, _ := res.Attrs["restart_on"].([]any)
+		needs := false
+		for _, v := range list {
+			if id, _ := v.(string); gone[id] {
+				needs = true
+			}
+		}
+		if !needs {
+			continue
+		}
+		found := false
+		for i := range tp.Resources {
+			rc := &tp.Resources[i]
+			if rc.Resource != res.ID {
+				continue
+			}
+			found = true
+			has := false
+			for _, c := range rc.Changes {
+				has = has || c.Attr == wire.AttrRestart
+			}
+			if !has {
+				rc.Changes = append(rc.Changes, restart)
+				rc.Action, rc.Risk = wire.ActionOf(rc.Changes), wire.MaxRisk(rc.Changes)
+			}
+		}
+		if !found {
+			cs := []wire.Change{restart}
+			tp.Resources = append(tp.Resources, ResourceChange{Resource: res.ID, Action: wire.ActionOf(cs), Changes: cs, Risk: wire.RiskDisruptive})
+		}
+	}
 }
