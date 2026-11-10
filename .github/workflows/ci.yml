@@ -40,7 +40,7 @@ jobs:
       - name: Interrupt guest run cleans up
         run: |
           set +e
-          timeout --preserve-status -s INT -k 60 25 bash test/guest/run.sh
+          timeout --foreground --preserve-status -s INT -k 60 25 bash test/guest/run.sh
           status=$?
           set -e
           echo "interrupt exit status: $status"
