@@ -18,7 +18,6 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 | T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): static review approve (29aa0a4); merge after #8 and the first real guest run. **Blocked: Docker access** |
 | T-006 web UI slice (mock API) | pl-frontend | PR #19: review fixes pushed (dbf2ceb); QA found 3 more (PR #24), fix by pl-frontend; then re-review |
 | T-014 UI on the real API | pl-frontend | branch pushed, no code yet; after the T-006 fixes |
-| T-023 dev login + demo data (D-080) | pl-backend | PR #23: review approve; QA fixes by pl-codex-qa (sync user, /dev/ 404 guard), then delta review |
 | T-015 slice acceptance | pl-codex-qa | after T-021 |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
 | T-013 minimal installer | pl-backend | offline part in progress (branch at 20c19df: install.sh draft with dry-run). Real-host part **blocked: test host** |
@@ -33,6 +32,7 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 - 2026-11-10 · T-009: agent link, event stream, fake driver, race step in CI, decisions D-060 … D-064 (PR #11).
 - 2026-11-10 · T-010: plan/approve/apply engine, issues, crash recovery, D-065 … D-069, D-075 (PR #14).
 - 2026-11-10 · T-011: HTTP API, sessions, token tiers, SSE, embedded UI + agent binary, serve --dev, D-070 … D-074 (PR #17).
+- 2026-11-10 · T-023: dev login + demo data for screenshots, dev only, D-080 (PR #23).
 
 ## Open for the user
 - Restart `pl-codex-fix` (Codex session error after `/new`: "permission profile cannot be safely represented by the legacy app-server sandbox policy").
