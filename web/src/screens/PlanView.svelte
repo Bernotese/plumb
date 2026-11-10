@@ -100,7 +100,15 @@
       </dd>
       {#if plan.origin !== "proposal"}
         <dt>Origin</dt>
-        <dd>{originText[plan.origin] ?? plan.origin}</dd>
+        <dd>
+          {#if plan.origin === "rollback" && plan.rollback_to}
+            Rollback to <a href={href({ name: "revision", id: plan.rollback_to })}
+              >revision {plan.rollback_to}</a
+            >
+          {:else}
+            {originText[plan.origin] ?? plan.origin}
+          {/if}
+        </dd>
       {/if}
       {#if plan.issue_id}
         <dt>Issue</dt>

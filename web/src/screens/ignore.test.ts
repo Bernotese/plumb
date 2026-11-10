@@ -119,6 +119,19 @@ describe("PlanView", () => {
     expect(document.body.innerHTML).not.toContain("");
   });
 
+  it("names the revision of a rollback plan (D-131)", async () => {
+    const api = adminApi();
+    const plan = await api.rollbackRevision(6, "Back to 6.");
+    show(PlanView, { api, id: plan.id });
+    const link = await until(() =>
+      document.querySelector<HTMLAnchorElement>('dd a[href="#/revisions/6"]'),
+    );
+    expect(link.textContent).toBe("revision 6");
+    expect(link.closest("dd")?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Rollback to revision 6",
+    );
+  });
+
   it("marks a change that a rule ignores", async () => {
     const api = adminApi();
     // The example rule ignore-web1-motd covers the content of file:/etc/motd on web1.
