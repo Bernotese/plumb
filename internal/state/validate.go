@@ -318,6 +318,7 @@ type Set struct {
 	images  map[string]imageSpec
 	blocks  map[string]*block
 	targets map[string]*targetSpec
+	rules   map[string]Rule
 	limits  Limits
 	// invalid holds documents that are in the input but have errors, so
 	// a reference to them is "invalid", not "does not exist".
@@ -359,6 +360,7 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 		images:  map[string]imageSpec{},
 		blocks:  map[string]*block{},
 		targets: map[string]*targetSpec{},
+		rules:   map[string]Rule{},
 		limits:  lim,
 		invalid: map[[2]string]bool{},
 	}
@@ -413,6 +415,17 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 			var spec targetSpec
 			_ = decode(canon.Spec, &spec)
 			s.targets[d.Name] = &spec
+		case KindRule:
+			r := Rule{Name: d.Name}
+			_ = decode(canon.Spec, &r)
+			s.rules[d.Name] = r
+		}
+	}
+	// A Rule names an existing Target or "*" (D-092).
+	for _, name := range sortedKeys(s.rules) {
+		if r := s.rules[name]; r.Target != RuleAllTargets && s.targets[r.Target] == nil {
+			errs = append(errs, &Error{Kind: KindRule, Name: name, Path: "/spec/target",
+				Msg: fmt.Sprintf("Target %q %s", r.Target, s.missing(KindTarget, r.Target))})
 		}
 	}
 	sort.Slice(s.docs, func(i, j int) bool {

@@ -22,10 +22,11 @@ const (
 	KindImage  = "Image"
 	KindBlock  = "Block"
 	KindTarget = "Target"
+	KindRule   = "Rule" // drift rule (D-092)
 )
 
 // Kinds lists all document kinds.
-var Kinds = []string{KindImage, KindBlock, KindTarget}
+var Kinds = []string{KindImage, KindBlock, KindTarget, KindRule}
 
 // Doc is one document of the state. Kind and Name identify it.
 // Spec is validated against the schema of the kind.
@@ -43,6 +44,7 @@ var schemaFiles = map[string]string{
 	KindImage:  "schema/image.json",
 	KindBlock:  "schema/block.json",
 	KindTarget: "schema/target.json",
+	KindRule:   "schema/rule.json",
 }
 
 // Schema returns the JSON Schema (2020-12) of a whole document of the kind.

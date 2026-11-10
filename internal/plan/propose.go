@@ -165,6 +165,12 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		return store.Plan{}, err
 	}
 
+	markIgnored(next.Rules(), plans)
+	humanOnly, err := humanOnlyReasons(base, in.Proposal)
+	if err != nil {
+		return store.Plan{}, err
+	}
+
 	risk := wire.RiskRead
 	for _, tp := range plans {
 		if r := tp.risk(); r.Exceeds(risk) {
@@ -174,7 +180,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	proposal, _ := json.Marshal(in.Proposal)
 	changes, _ := json.Marshal(plans)
 	p, err := e.st.CreatePlan(ctx, store.Plan{
-		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, RollbackTo: in.RollbackTo, Proposal: proposal,
+		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, RollbackTo: in.RollbackTo, HumanOnly: humanOnly, Proposal: proposal,
 		Changes: changes, Risk: string(risk), Reason: in.Reason, Author: in.Author,
 	})
 	if err != nil {
