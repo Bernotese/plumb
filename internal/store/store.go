@@ -1,17 +1,173 @@
 // Package store is the only package that talks to SQLite
-// (docs/ARCHITECTURE.md §2, D-020). This file has only the embedded
-// migrations; the behaviour comes with later cards.
+// (docs/ARCHITECTURE.md §2, D-020). It opens the database, runs the
+// migrations and has typed methods for the tables. It knows nothing about
+// the meaning of documents; package state does.
 package store
 
-import "embed"
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/url"
+	"regexp"
+	"sort"
+	"strconv"
+	"time"
 
-// Rules for the code that opens the database (T-004):
-//   - Run "PRAGMA foreign_keys = ON" on every connection. SQLite has it off
-//     by default, and the schema relies on it.
-//   - Use WAL mode and a busy timeout.
-//
+	_ "modernc.org/sqlite" // database/sql driver "sqlite"
+)
+
 // Migrations holds the forward-only migration files, named
-// migrations/NNNN_name.sql. They run in file-name order, each exactly once.
+// migrations/NNNN_name.sql. NNNN counts from 0001 without gaps. They run in
+// file-name order, each exactly once; PRAGMA user_version holds the number
+// of the last applied migration.
 //
 //go:embed migrations/*.sql
 var Migrations embed.FS
+
+// ErrNotFound is returned when a row does not exist.
+var ErrNotFound = errors.New("store: not found")
+
+// Store is an open Plumb database.
+type Store struct {
+	db *sql.DB
+	// Now returns the current time. Tests replace it.
+	Now func() time.Time
+}
+
+// Open opens (or creates) the database file at path and runs all pending
+// migrations. Every connection has foreign keys on (the schema relies on
+// them), WAL mode and a busy timeout. Write transactions start with
+// BEGIN IMMEDIATE, so two writers wait for each other instead of failing
+// on a lock upgrade.
+func Open(ctx context.Context, path string) (*Store, error) {
+	q := url.Values{}
+	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "journal_mode(WAL)")
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "synchronous(NORMAL)")
+	q.Set("_txlock", "immediate")
+	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	s := &Store{db: db, Now: time.Now}
+	if err := s.check(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.migrate(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// Close closes the database.
+func (s *Store) Close() error { return s.db.Close() }
+
+// check makes sure that the connection settings took effect.
+func (s *Store) check(ctx context.Context) error {
+	var fk int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	if fk != 1 {
+		return errors.New("store: foreign keys are off")
+	}
+	var mode string
+	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	if mode != "wal" {
+		return fmt.Errorf("store: journal mode is %q, want wal", mode)
+	}
+	return nil
+}
+
+var migrationName = regexp.MustCompile(`^migrations/(\d{4})_[a-z0-9_]+\.sql$`)
+
+type migration struct {
+	version int
+	name    string
+	body    string
+}
+
+// migrations returns the embedded migrations in order. The numbers must be
+// 1, 2, 3, … without gaps.
+func migrations() ([]migration, error) {
+	names, err := fs.Glob(Migrations, "migrations/*.sql")
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	var out []migration
+	for i, name := range names {
+		m := migrationName.FindStringSubmatch(name)
+		if m == nil {
+			return nil, fmt.Errorf("store: bad migration name %s", name)
+		}
+		v, _ := strconv.Atoi(m[1])
+		if v != i+1 {
+			return nil, fmt.Errorf("store: migration %s has number %d, want %d", name, v, i+1)
+		}
+		body, err := Migrations.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, migration{version: v, name: name, body: string(body)})
+	}
+	return out, nil
+}
+
+// migrate applies every migration above the user_version of the database.
+// Each migration and its version bump run in one transaction.
+func (s *Store) migrate(ctx context.Context) error {
+	all, err := migrations()
+	if err != nil {
+		return err
+	}
+	var current int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	if current > len(all) {
+		return fmt.Errorf("store: database has schema version %d, this program knows only %d", current, len(all))
+	}
+	for _, m := range all[current:] {
+		err := s.tx(ctx, func(tx *sql.Tx) error {
+			if _, err := tx.ExecContext(ctx, m.body); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", m.version))
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("store: migration %s: %w", m.name, err)
+		}
+	}
+	return nil
+}
+
+// tx runs fn in a write transaction and commits when fn returns nil.
+func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// timeFormat is the text form of all times in the database (UTC RFC 3339).
+const timeFormat = time.RFC3339Nano
+
+func (s *Store) now() string { return s.Now().UTC().Format(timeFormat) }
+
+func parseTime(v string) (time.Time, error) { return time.Parse(timeFormat, v) }

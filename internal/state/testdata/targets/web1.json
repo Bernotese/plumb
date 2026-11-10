@@ -1,0 +1,15 @@
+{
+  "kind": "Target",
+  "name": "web1",
+  "spec": {
+    "type": "vm",
+    "image": "ubuntu-26.04",
+    "guest": {"cores": 2, "memory": 2048.0, "disk": 20, "bridge": "vmbr0"},
+    "blocks": [
+      {"use": "deploy-user", "params": {"ssh_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake me@host"}},
+      {"use": "nginx", "params": {"server_name": "web1.lan", "port": 8080, "aliases": ["www.lan", "web.lan"]}},
+      {"use": "motd", "params": {"text": "web1 <prod> & co", "loud": true}}
+    ],
+    "overrides": {"file:/etc/motd": {"mode": "0600"}}
+  }
+}
