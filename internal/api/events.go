@@ -36,12 +36,23 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, p *principal) {
 		}
 		after = last
 	}
+	if s.testHookStream != nil {
+		s.testHookStream()
+	}
 	release, ok := s.openStream(p.name, cancel)
 	if !ok {
 		tooMany(w, 10*time.Second)
 		return
 	}
 	defer release()
+	// The principal can end between authenticate and openStream. Check it
+	// again after the stream is registered: a revoke writes the database
+	// first and then ends the registered streams under streamMu, so either
+	// this check sees the revoke or the revoke sees this stream.
+	if !s.stillValid(ctx, p) {
+		problem(w, http.StatusUnauthorized, "unauthenticated", "Authentication required", "")
+		return
+	}
 	rc := http.NewResponseController(w)
 	rc.SetWriteDeadline(time.Time{}) // a stream has no write timeout
 	h := w.Header()
