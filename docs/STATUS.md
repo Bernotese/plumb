@@ -15,7 +15,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **blocked: test host**. Follow-up: key volume + `plumb key init` (D-086), see card |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
-| T-044 order between Block uses (`after`), then `nginx-site` | pl-architect plans | backlog; changes the agent, needs a user go |
+| T-044 order between Block uses (`after`), then `nginx-site` | pl-architect plans | planning (user go for the plan: 2026-11-10); no feature code before the user approves the plan |
 
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
 
@@ -61,7 +61,10 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - D-131 Plan.rollback_to in the contract (PR #44); closed schemas (PR #46).
 - T-026: QA crash recovery test ported to main (PR #31); stale PR #16 closed.
 
+## Dev VM notes
+- `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
+
 ## Open for the user
-- Optional (no longer required): Docker access for `jannes` on the dev VM, for faster local guest runs: `sudo usermod -aG docker jannes` and `sudo setfacl -m u:jannes:rw /var/run/docker.sock`.
+- Approve the T-044 plan when pl-architect has it (the card changes the agent).
 - Provide the Proxmox test host (fully updated PVE 9.2: qemu-server ≥ 9.2.11, libpve-storage-perl ≥ 9.1.13; needs: ARCHITECTURE §8).
 - Optional: delete old temp dirs `/tmp/plumb-e2e-*` on the dev VM.

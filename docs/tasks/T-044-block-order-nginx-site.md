@@ -1,7 +1,7 @@
 # T-044 – Order between Block uses (`after`), then `nginx-site`
 
 - **Owner:** pl-architect (plan first), then tbd   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
-- **Size:** M   · **Depends on:** T-020 on `main`   · **State:** backlog; needs a plan and a user go, because it changes the agent
+- **Size:** M   · **Depends on:** T-020 on `main`   · **State:** planning (user go for the plan: 2026-11-10); the plan needs the user's approval before any feature code, because it changes the agent
 
 ## Goal
 A Block use can depend on another Block use of the same Target, so a Block such as `nginx-site` applies clean in the first Run on a new Target.
