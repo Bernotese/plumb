@@ -68,6 +68,13 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 - Codex agents run with `--approve-for-me` (workspace-write sandbox + automatic review). Same allow/forbid rules in `~/.codex/rules/default.rules`.
 - If an action is blocked and you think it is needed, report it to `pl-lead`; do not work around the block.
 
+## Test host (Proxmox)
+- Address and login: `~/.config/plump/testhost.env` on the dev VM (`ssh "$PLUMB_TEST_PVE_SSH"`). The repo is public: never commit the address, host keys, tokens or passwords, and keep them out of PRs, logs and reports.
+- Only the agent that `pl-lead` names in a card works on the host, one agent at a time. Do only what the card lists.
+- Installer: `--dry-run` first. Send the result to `pl-lead` and wait for the go before a real run.
+- Never change the network config, the SSH config, `authorized_keys`, the root password or the storages `local` and `local-lvm`. Never reboot or upgrade the host without `pl-lead`. Never touch other machines in that network.
+- Guests and objects that a test makes stay in the Plumb pool and are removed at the end. Secrets made on the host (API tokens) go to a 0600 file outside the repo.
+
 ## Tools on this machine
 - `codex-usage [--route|--json]` – Codex limit status and routing.
 - `browser-shot <url> <out.png> [--full] [--dark] [--width N --height N] [--click CSS]` – real headless Chromium screenshot (runs in VM `mobtest`; use host URL `http://10.0.0.50:<port>`). Use it for every UI review.

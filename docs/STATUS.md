@@ -6,16 +6,16 @@ Product: **Plumb** – self-hosted infrastructure controller for a Proxmox homel
 ## Phase
 First slice: one VM, from an image, configured by the agent, drift as an issue. Secret store is not part of the slice.
 Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --dev --dev-demo` (simulated agents, no Proxmox).
-The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI of `main` and are green (Debian 13, Ubuntu 26.04). The whole agent track of slice 1 is on `main` (#5, #8, #13, #21, #27). **Slice 1 is accepted without Proxmox** (T-015, PR #67: HTTP API + real agent). The agent side is proven as root in real Debian 13 and Ubuntu 26.04 guests in CI (resources, the whole agent loop, secret masking in real tool output). Open: everything on the real host. Backlog: T-044 (order between Block uses, then `nginx-site`). **The Proxmox track is blocked on the test host.** **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
+The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI of `main` and are green (Debian 13, Ubuntu 26.04). The whole agent track of slice 1 is on `main` (#5, #8, #13, #21, #27). **Slice 1 is accepted without Proxmox** (T-015, PR #67: HTTP API + real agent). The agent side is proven as root in real Debian 13 and Ubuntu 26.04 guests in CI (resources, the whole agent loop, secret masking in real tool output). Open: everything on the real host. Backlog: T-044 (order between Block uses, then `nginx-site`). **The Proxmox test host is up (2026-11-10) but needs a package update before the Proxmox track starts.** **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
 
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-015 slice acceptance, real-host part | pl-codex-qa | **blocked: test host** (the part without Proxmox is merged, PR #67) |
-| T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **blocked: test host** |
-| T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **blocked: test host**. Follow-up: key volume + `plumb key init` (D-086), see card |
-| T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
-| T-044 order between Block uses (`after`), then `nginx-site` | pl-architect plans | planning (user go for the plan: 2026-11-10); no feature code before the user approves the plan |
+| T-015 slice acceptance, real-host part | pl-codex-qa | **waits: test host update** (the part without Proxmox is merged, PR #67) |
+| T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **waits: test host update** |
+| T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **waits: test host update**. Follow-up: key volume + `plumb key init` (D-086), see card |
+| T-038 LXC targets, T-039 image builds | tbd | design only. **Waits: test host update** |
+| T-044 order between Block uses (`after`), `restarts`, `nginx-site` | see child cards | **plan approved by the user** (D-176, PR #77). T-046 contract (pl-architect) runs; then T-047 state + plan, T-048 agent, T-049 web in parallel; T-050 Block; T-051 QA |
 
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
 
@@ -65,6 +65,5 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Approve the T-044 plan when pl-architect has it (the card changes the agent).
-- Provide the Proxmox test host (fully updated PVE 9.2: qemu-server ≥ 9.2.11, libpve-storage-perl ≥ 9.1.13; needs: ARCHITECTURE §8).
+- The Proxmox test host `pve-dev` is up since 2026-11-10 (address: `~/.config/plump/testhost.env` on the dev VM, not in the repo). It is a fresh PVE 9.2.2 install and **not updated**: qemu-server 9.1.15 (need ≥ 9.2.11), libpve-storage-perl 9.1.5 (need ≥ 9.1.13); the package lists of the Proxmox repository were never fetched. Decision for the user: who runs `apt update && apt full-upgrade` and the reboot.
 - Optional: delete old temp dirs `/tmp/plumb-e2e-*` on the dev VM.
