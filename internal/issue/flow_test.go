@@ -247,7 +247,7 @@ loop:
 			break loop
 		}
 	}
-	for _, k := range []string{"plan.created", "plan.approved", "run.started", "step.running", "step.applied", "step.failed", "run.finished"} {
+	for _, k := range []string{"plan.created", "plan.approved", "run.started", "run.step", "target.status", "run.finished"} {
 		if !kinds[k] {
 			t.Errorf("no %s event; have %v", k, kinds)
 		}

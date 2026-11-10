@@ -50,6 +50,11 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 		names[i] = tp.Target
 	}
 	if err := e.reserve(names); err != nil {
+		// A second approval of the same Plan meets the first one's
+		// reservation; say what it really is (review T-010 n2).
+		if again, gerr := e.st.GetPlan(ctx, planID); gerr == nil && again.Status != store.PlanPending {
+			return store.Run{}, fmt.Errorf("plan: plan %d is %s: %w", planID, again.Status, store.ErrPlanNotPending)
+		}
 		return store.Run{}, err
 	}
 	started := false
@@ -202,8 +207,8 @@ func (s *stepper) set(ctx context.Context, resource string, status wire.Status, 
 		s.final[resource] = true
 	}
 	// The event has no values: changes stay in the step (D-047).
-	s.e.emit(ctx, "step."+string(status), fmt.Sprintf("run:%d", s.run.ID), "system",
-		map[string]any{"target": s.target, "resource": resource, "action": wire.ActionOf(changes)})
+	s.e.emit(ctx, "run.step", fmt.Sprintf("run:%d", s.run.ID), "system",
+		map[string]any{"target": s.target, "resource": resource, "status": status, "action": wire.ActionOf(changes)})
 }
 
 // failRest marks every step that did not finish as failed.
@@ -234,6 +239,19 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		s.add(ctx, wire.GuestConfigID)
 	}
 	reenroll := tp.Guest == "reenroll"
+	// Every path that keeps the target ends with the watch list of the new
+	// revision, also when the Run fails early (review T-010 n1): a hello
+	// during the Run was skipped, so the agent would watch the old list.
+	watched := false
+	if r != nil {
+		defer func() {
+			if !watched {
+				if _, err := e.cfg.Agents.Send(tp.Target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources}); err != nil {
+					e.log.Error("watch", "target", tp.Target, "err", err)
+				}
+			}
+		}()
+	}
 	if r != nil && !reenroll { // a re-enrollment applies no resource (D-075)
 		for _, res := range r.Resources {
 			s.add(ctx, res.ID)
@@ -265,17 +283,18 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 
 	// 2. Wait for the agent.
 	if newAgent || !e.cfg.Agents.Online(tp.Target) {
-		e.emit(ctx, "target.waiting", "target:"+tp.Target, "system", map[string]any{"run": run.ID})
+		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"phase": "enrolling", "run": run.ID})
 		if err := e.waitOnline(ctx, tp.Target); err != nil {
 			s.failRest(ctx, err.Error())
 			return false
 		}
-		e.emit(ctx, "target.online", "target:"+tp.Target, "system", map[string]any{"run": run.ID})
+		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"agent": "online", "run": run.ID})
 	}
 
 	// A re-enrollment only gives the new agent its watch list. What
 	// differs becomes an Issue through the drift report (D-075).
 	if reenroll {
+		watched = true
 		if _, err := e.cfg.Agents.Send(tp.Target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources}); err != nil {
 			e.log.Error("watch", "target", tp.Target, "err", err)
 			return false
@@ -304,10 +323,7 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	} else {
 		s.failRest(ctx, "the agent did not report this resource")
 	}
-	// 4. The agent watches the new desired list for drift.
-	if _, err := e.cfg.Agents.Send(tp.Target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources}); err != nil {
-		e.log.Error("watch", "target", tp.Target, "err", err)
-	}
+	// 4. The agent watches the new desired list for drift (the deferred send).
 	return s.ok
 }
 
@@ -449,7 +465,9 @@ func (e *Engine) fetchImage(ctx context.Context, name string) error {
 }
 
 // Recover closes what a controller crash left open. Call it once at
-// start, before agents connect and before the guest poll. A Run in the
+// start, before the link, the API and the guest poll start (review T-010
+// n3): it skips only Runs that this process already committed, so a call
+// while approvals happen could fail a Run that is just starting. A Run in the
 // database with status running has no goroutine after a restart: its
 // unfinished steps fail, the Run fails, and OnPlanDone opens its Issues
 // again. There is no automatic resend (D-067); the user plans again.
@@ -529,4 +547,17 @@ func planned(tp TargetPlan) []wire.Planned {
 		out = append(out, wire.Planned{Resource: rc.Resource, Changes: rc.Changes, Unverified: rc.Unverified})
 	}
 	return out
+}
+
+// Discard drops a pending Plan: it becomes stale, and the Issues that it
+// would resolve are open again (review T-010 m5).
+func (e *Engine) Discard(ctx context.Context, planID int64, principal string) error {
+	if err := e.st.DiscardPlan(ctx, planID); err != nil {
+		return err
+	}
+	e.emit(ctx, "plan.stale", fmt.Sprintf("plan:%d", planID), principal, map[string]any{"discarded": true})
+	if e.cfg.OnPlanDone != nil {
+		e.cfg.OnPlanDone(ctx, planID, false)
+	}
+	return nil
 }

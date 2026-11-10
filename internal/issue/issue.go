@@ -135,7 +135,7 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, principal strin
 	if err := s.st.SetIssueResolving(ctx, id, p.ID); err != nil {
 		return store.Plan{}, err
 	}
-	s.emit(ctx, "issue.resolving", id, principal, map[string]any{"action": action, "plan": p.ID})
+	s.emit(ctx, "issue.updated", id, principal, map[string]any{"status": store.IssueResolving, "action": action, "plan": p.ID})
 	if action == ActionRevert {
 		s.attachCovered(ctx, iss.Target, id, p, principal)
 	}
@@ -167,7 +167,7 @@ func (s *Service) attachCovered(ctx context.Context, target string, primary int6
 			continue
 		}
 		if s.st.SetIssueResolving(ctx, other.ID, p.ID) == nil {
-			s.emit(ctx, "issue.resolving", other.ID, principal, map[string]any{"action": ActionRevert, "plan": p.ID})
+			s.emit(ctx, "issue.updated", other.ID, principal, map[string]any{"status": store.IssueResolving, "action": ActionRevert, "plan": p.ID})
 		}
 	}
 }
@@ -244,7 +244,7 @@ func (s *Service) PlanDone(ctx context.Context, planID int64, ok bool) {
 				s.emit(ctx, "issue.resolved", iss.ID, p.ApprovedBy, map[string]any{"resolution": p.Origin, "plan": planID})
 			}
 		} else if err := s.st.ReopenIssue(ctx, iss.ID); err == nil {
-			s.emit(ctx, "issue.reopened", iss.ID, "system", map[string]any{"plan": planID})
+			s.emit(ctx, "issue.updated", iss.ID, "system", map[string]any{"status": store.IssueOpen, "plan": planID})
 		}
 	}
 }
