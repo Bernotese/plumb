@@ -205,15 +205,16 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	var iss *issue.Service
 	lk, err := link.New(link.Config{
 		Dir: filepath.Join(f.data, "link"), Hosts: f.hosts, Store: st, Events: events, Logger: log,
-		AgentBinary: agentBinary(),
-		OnReport:    func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
-		Sensitive:   func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
+		AgentBinary:  agentBinary(),
+		OnReport:     func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
+		Sensitive:    func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
+		SecretValues: func(ctx context.Context, t string) ([]string, error) { return eng.SecretValues(ctx, t) },
 	})
 	if err != nil {
 		return err
 	}
 	eng, err = plan.New(plan.Config{
-		Store: st, Events: events, Agents: lk, Driver: drv, Logger: log,
+		Store: st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
 		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
 		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 	})
@@ -221,6 +222,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		return err
 	}
 	defer eng.Close()
+	secrets.SetUsage(eng.SecretUsage) // used_by and secret-in-use (D-108)
 	iss = issue.New(st, events, eng)
 	// Close what a crash left open. This must run before the agent
 	// listener, the API and the guest poll start (review T-010 B1, n3).

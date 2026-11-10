@@ -306,6 +306,7 @@ type blockResource struct {
 type block struct {
 	params    *jsonschema.Schema // nil: no parameters
 	props     map[string]bool    // declared parameter names
+	secrets   map[string]bool    // secret parameters: writeOnly strings (D-088)
 	defaults  map[string]any
 	resources []blockResource
 }
@@ -388,6 +389,11 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 		var inst any
 		if err := decode(body, &inst); err != nil {
 			errs = append(errs, &Error{Kind: d.Kind, Name: d.Name, Msg: err.Error()})
+			continue
+		}
+		if p := checkNoMarkChars(inst, ""); p != "" {
+			errs = append(errs, &Error{Kind: d.Kind, Name: d.Name, Path: p,
+				Msg: "the characters U+E000 and U+E001 are reserved for secret markers and cannot be in a document"})
 			continue
 		}
 		if err := docSchema.Validate(inst); err != nil {
@@ -476,7 +482,7 @@ func parseBlock(name string, spec json.RawMessage) (*block, Errors) {
 		return &Error{Kind: KindBlock, Name: name, Path: path, Msg: fmt.Sprintf(format, args...)}
 	}
 	var errs Errors
-	b := &block{props: map[string]bool{}, defaults: map[string]any{}}
+	b := &block{props: map[string]bool{}, secrets: map[string]bool{}, defaults: map[string]any{}}
 	if raw.Params != nil {
 		var p struct {
 			Properties map[string]json.RawMessage `json:"properties"`
@@ -485,6 +491,9 @@ func parseBlock(name string, spec json.RawMessage) (*block, Errors) {
 		for prop := range p.Properties {
 			b.props[prop] = true
 		}
+		var serrs Errors
+		raw.Params, serrs = secretParams(name, raw.Params, b.secrets)
+		errs = append(errs, serrs...)
 		var err error
 		if b.defaults, err = defaultsOf(p.Properties); err != nil {
 			errs = append(errs, errf("/spec/params", "bad default: %v", err))
@@ -579,6 +588,17 @@ func (s *Set) checkTarget(name string) Errors {
 	} else if img.Type != t.Type {
 		errs = append(errs, errf("/spec/image", "Image %q is for %s, the Target is %s", t.Image, img.Type, t.Type))
 	}
+	// guest and overrides never hold a reference, at any depth (D-088).
+	if at := findRef(t.Guest, "/spec/guest"); at != "" {
+		errs = append(errs, errf(at, "guest settings cannot hold a secret reference (D-088)"))
+	}
+	for id, attrs := range t.Overrides {
+		for attr, v := range attrs {
+			if at := findRef(v, ptr("/spec/overrides", id, attr)); at != "" {
+				errs = append(errs, errf(at, "an override cannot hold a secret reference (D-088)"))
+			}
+		}
+	}
 	ids := map[string]int{}
 	for i, use := range t.Blocks {
 		path := ptr("/spec/blocks", i)
@@ -599,12 +619,30 @@ func (s *Set) checkTarget(name string) Errors {
 				unknown = append(unknown, p)
 			}
 		}
+		refErrs := len(errs)
+		for _, p := range sortedKeys(use.Params) {
+			name, isRef := refName(use.Params[p])
+			ppath := ptr(path+"/params", p)
+			switch {
+			case b.secrets[p] && !isRef:
+				errs = append(errs, errf(ppath, "parameter %q of Block %q is a secret parameter: its value must be {secret: <name>}, never a literal", p, use.Use))
+			case b.secrets[p] && name == "":
+				errs = append(errs, errf(ppath, "a secret reference is {secret: <name>} with a secret name and nothing else"))
+			case !b.secrets[p] && isRef:
+				errs = append(errs, errf(ppath, "parameter %q of Block %q takes no secret reference; only a parameter with type string and writeOnly: true does", p, use.Use))
+			case !b.secrets[p]:
+				// No reference inside a list or object either (D-088, D-139).
+				if at := findRef(use.Params[p], ppath); at != "" {
+					errs = append(errs, errf(at, "a secret reference must be the whole value of a secret parameter (type string, writeOnly: true); it cannot be inside a list or an object"))
+				}
+			}
+		}
 		sort.Strings(unknown)
 		for _, p := range unknown {
 			errs = append(errs, errf(ptr(path+"/params", p), "Block %q has no parameter %q", use.Use, p))
 		}
-		if len(unknown) > 0 || b.params == nil {
-			continue
+		if len(unknown) > 0 || b.params == nil || len(errs) > refErrs {
+			continue // one error per mistake: no second schema error for it
 		}
 		params := withDefaults(use.Params, b.defaults)
 		if err := b.params.Validate(params); err != nil {

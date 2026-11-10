@@ -100,8 +100,9 @@ type resourcePlanView struct {
 }
 
 type targetPlanView struct {
-	Target    string             `json:"target"`
-	Resources []resourcePlanView `json:"resources"`
+	Target    string               `json:"target"`
+	Secrets   []plan.PlannedSecret `json:"secrets,omitempty"`
+	Resources []resourcePlanView   `json:"resources"`
 }
 
 type planView struct {
@@ -138,7 +139,7 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		return v, err
 	}
 	for _, tp := range targets {
-		tv := targetPlanView{Target: tp.Target, Resources: []resourcePlanView{}}
+		tv := targetPlanView{Target: tp.Target, Secrets: tp.Secrets, Resources: []resourcePlanView{}}
 		unverified := 0
 		for _, rc := range tp.Resources {
 			action := rc.Action
@@ -151,13 +152,16 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 				unverified++
 			}
 		}
-		if unverified > 0 {
+		switch {
+		case unverified > 0 && tp.Guest == "create":
 			v.Warnings = append(v.Warnings, fmt.Sprintf("%s is a new target: %d resources are unverified until the first boot.", tp.Target, unverified))
+		case unverified > 0:
+			v.Warnings = append(v.Warnings, fmt.Sprintf("%s: %d resources get a new secret and are not observed before the approval (D-156).", tp.Target, unverified))
 		}
 		v.Targets = append(v.Targets, tv)
 	}
 	if p.Status == store.PlanStale {
-		v.Warnings = append(v.Warnings, "The head revision moved. Propose again.")
+		v.Warnings = append(v.Warnings, "The head revision moved or a secret changed. Propose again.")
 	}
 	return v, nil
 }

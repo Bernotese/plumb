@@ -285,3 +285,23 @@ func info(m store.SecretMeta, usage map[string]Usage) Info {
 	sort.Strings(used)
 	return Info{Name: m.Name, Version: m.Version, UpdatedBy: m.UpdatedBy, UpdatedAt: m.UpdatedAt, UsedBy: used}
 }
+
+// Versions returns the current version of each named secret that exists.
+// It reads no ciphertext.
+func (s *Store) Versions(ctx context.Context, names []string) (map[string]int64, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	metas, err := s.st.SecretMetas(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int64{}
+	for _, m := range metas {
+		if want[m.Name] {
+			out[m.Name] = m.Version
+		}
+	}
+	return out, nil
+}

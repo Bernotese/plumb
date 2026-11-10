@@ -407,6 +407,17 @@ func (s *Store) DiscardPlan(ctx context.Context, id int64) error {
 	return nil
 }
 
+// MarkPlanStale marks one pending Plan stale. ok is false when the Plan
+// was not pending.
+func (s *Store) MarkPlanStale(ctx context.Context, id int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE plan SET status = 'stale' WHERE id = ? AND status = 'pending'`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
 func humanOnlyJSON(reasons []string) string {
 	if len(reasons) == 0 {
 		return "[]"

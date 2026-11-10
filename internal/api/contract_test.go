@@ -268,6 +268,11 @@ func TestContract(t *testing.T) {
 	call(adm, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", []byte(`{"value": nope}`))           // 400
 	call(readTok, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", map[string]string{"value": "x"}) // 403
 	call(adm, "PUT", "/api/v1/secrets/other", "/secrets/{name}", map[string]string{"value": "x"})
+	// A Plan with a secret reference (T-029): secrets, a sensitive change, human_only.
+	withSecret := call(adm, "POST", "/api/v1/plans", "/plans", map[string]any{"reason": "secret", "put": []state.Doc{appBlock("/etc/app.env"), appTarget("web9", "app-db")}})
+	call(adm, "GET", "/api/v1/plans/"+id(withSecret), "/plans/{id}", nil)
+	call(adm, "DELETE", "/api/v1/plans/"+id(withSecret), "/plans/{id}", nil)
+	call(adm, "POST", "/api/v1/plans", "/plans", map[string]any{"reason": "missing", "put": []state.Doc{appBlock("/etc/app.env"), appTarget("web9", "nope")}}) // 422
 	call(readTok, "GET", "/api/v1/secrets", "/secrets", nil)
 	call(adm, "GET", "/api/v1/secrets?limit=1", "/secrets", nil)
 	e.sec.SetUsage(func(context.Context) (map[string]secret.Usage, error) {

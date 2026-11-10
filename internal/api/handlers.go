@@ -34,11 +34,19 @@ func badQuery(w http.ResponseWriter, err error) {
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	var pe *plan.ProposalError
 	var se state.Errors
+	var ms *plan.MissingSecretsError
 	switch {
+	case errors.As(err, &ms):
+		var fe []fieldError
+		for _, e := range ms.Errors {
+			fe = append(fe, fieldError{Pointer: e.Path, Message: fmt.Sprintf("%s %q: %s", e.Kind, e.Name, e.Msg)})
+		}
+		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
+			Detail: "The proposal refers to secrets that do not exist.", Errors: fe, Secrets: ms.Names})
 	case errors.Is(err, store.ErrNotFound):
 		problem(w, http.StatusNotFound, "not-found", "Not found", "")
 	case errors.Is(err, store.ErrPlanStale):
-		problem(w, http.StatusConflict, "plan-stale", "Plan is stale", "The head revision moved. Propose again.")
+		problem(w, http.StatusConflict, "plan-stale", "Plan is stale", "The head revision moved or a secret of the Plan changed. Propose again.")
 	case errors.Is(err, store.ErrPlanNotPending):
 		problem(w, http.StatusConflict, "plan-not-pending", "Plan is not pending", "The Plan is approved or stale already.")
 	case errors.Is(err, store.ErrIssueChanged):
@@ -322,9 +330,10 @@ func (s *Server) headTarget(ctx context.Context, name string) (store.DocRow, err
 }
 
 type proposalRequest struct {
-	Reason string        `json:"reason"`
-	Put    []state.Doc   `json:"put"`
-	Delete []plan.DocKey `json:"delete"`
+	Reason  string        `json:"reason"`
+	Put     []state.Doc   `json:"put"`
+	Delete  []plan.DocKey `json:"delete"`
+	Targets []string      `json:"targets"` // plan also without a document change (D-090)
 }
 
 func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -337,15 +346,20 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal
 			Errors: []fieldError{{"/reason", "A reason of 1 to 2000 characters is required."}}})
 		return
 	}
-	if len(req.Put)+len(req.Delete) == 0 {
+	if len(req.Put)+len(req.Delete)+len(req.Targets) == 0 {
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
 			Errors: []fieldError{{"/put", "The proposal changes nothing."}}})
 		return
 	}
-	pl, err := s.cfg.Plans.Propose(r.Context(), plan.Input{Proposal: plan.Proposal{Put: req.Put, Delete: req.Delete},
+	pl, err := s.cfg.Plans.Propose(r.Context(), plan.Input{Proposal: plan.Proposal{Put: req.Put, Delete: req.Delete, Targets: req.Targets},
 		Reason: req.Reason, Author: p.name})
 	var se state.Errors
-	if errors.As(err, &se) {
+	var ms *plan.MissingSecretsError
+	detail, missing := "The documents are not valid.", []string(nil)
+	if errors.As(err, &ms) {
+		se, detail, missing = ms.Errors, "The proposal refers to secrets that do not exist.", ms.Names
+	}
+	if ms != nil || errors.As(err, &se) {
 		// Point the field errors at the request body.
 		var fe []fieldError
 		for _, e := range se {
@@ -358,7 +372,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal
 			fe = append(fe, fieldError{Pointer: ptr, Message: fmt.Sprintf("%s %q: %s", e.Kind, e.Name, e.Msg)})
 		}
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed",
-			Status: http.StatusUnprocessableEntity, Detail: "The documents are not valid.", Errors: fe})
+			Status: http.StatusUnprocessableEntity, Detail: detail, Errors: fe, Secrets: missing})
 		return
 	}
 	if err != nil {
