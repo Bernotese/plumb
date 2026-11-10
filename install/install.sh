@@ -414,30 +414,51 @@ ensure_image_storage() {
 		IMAGES_MADE=1
 	elif [[ -n $(state_get image_dir) ]]; then
 		IMAGES_MADE=1 # made by an earlier run of this script
+	elif images_like_ours; then
+		# An earlier run made it and stopped before it wrote the state file
+		# (test host, T-013 step 3). It is exactly what this script makes, so
+		# it is adopted: --remove then removes the storage entry, and never
+		# a file in it (rmdir only).
+		say "Storage plumb-images ($IMAGE_DIR, content import) exists without a state entry; it is exactly what install.sh makes, so it is adopted."
+		IMAGES_MADE=1
+	else
+		say "Storage plumb-images exists, but not as install.sh makes it; it is used and --remove keeps it."
 	fi
+}
+
+# images_like_ours reports whether plumb-images is exactly the storage that
+# ensure_image_storage makes: type dir, path IMAGE_DIR, content import, not
+# shared.
+images_like_ours() {
+	local cfg
+	cfg=$(query pvesh get /storage/plumb-images --output-format json 2>/dev/null) || return 1
+	[[ $cfg =~ \"type\"\ *:\ *\"dir\" ]] &&
+		[[ $cfg =~ \"path\"\ *:\ *\"([^\"]*)\" && ${BASH_REMATCH[1]} == "$IMAGE_DIR" ]] &&
+		[[ $cfg =~ \"content\"\ *:\ *\"import\" ]] &&
+		! [[ $cfg =~ \"shared\"\ *:\ *\"?1 ]]
 }
 
 # json_rows runs a perl filter over JSON on stdin (perl is on every PVE host).
 json_rows() { perl -MJSON::PP -e 'my $d = decode_json(join "", <STDIN>); '"$1" "${@:2}"; }
 
-# acl_entries prints "path ugid role type" for every ACL of the Plumb user
+# acl_entries prints "path ugid role type propagate" for every ACL of the Plumb user
 # and token.
 acl_entries() {
 	# shellcheck disable=SC2016 # perl code
 	query pveum acl list --output-format json |
 		json_rows 'for my $e (@$d) { next unless $e->{ugid} eq $ARGV[0] || $e->{ugid} eq $ARGV[1];
-			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type}\n" }' "$PVE_USER" "$PVE_USER!$TOKEN_NAME"
+			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type} ", ($e->{propagate} ? 1 : 0), "\n" }' "$PVE_USER" "$PVE_USER!$TOKEN_NAME"
 }
 
 # stray_acls prints the ACLs of the Plumb user and token that are not in
 # the plan, for example the single role of D-032 from an older install
 # (review T-013 #4).
 stray_acls() {
-	local path ugid role type planned r acls
+	local path ugid role type propagate planned r acls
 	# Read the list first: a failing pveum or perl stops the run here
 	# instead of looking like "no old rights" (review T-013 n1).
 	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER; nothing was changed"
-	while read -r path ugid role type; do
+	while read -r path ugid role type propagate; do
 		[[ -n $path ]] || continue
 		planned=0
 		for r in "${ROLE_NAMES[@]}"; do
@@ -477,13 +498,19 @@ remove_stray_acls() {
 # (host item 6: --privs must replace, not append).
 check_role() {
 	[[ $DRY_RUN == 1 ]] && return 0
-	local have want
+	role_exact "$1" || die "role $1 has the rights [$ROLE_HAVE], want [${ROLE_WANT% }]; fix it with pveum, then run again"
+}
+
+# role_exact reports whether a role has exactly its planned rights. It only
+# reads, so it runs in --dry-run too. It sets ROLE_HAVE and ROLE_WANT.
+ROLE_HAVE="" ROLE_WANT=""
+role_exact() {
 	# shellcheck disable=SC2016 # perl code
-	have=$(query pveum role list --output-format json |
+	ROLE_HAVE=$(query pveum role list --output-format json |
 		json_rows 'for my $e (@$d) { next unless $e->{roleid} eq $ARGV[0]; my $p = $e->{privs}; $p = join ",", @$p if ref $p;
 			print join(" ", sort split /[, ]+/, $p), "\n" }' "$1")
-	want=$(tr ' ' '\n' <<<"${ROLE_PRIVS[$1]}" | LC_ALL=C sort | tr '\n' ' ')
-	[[ "$have " == "$want" ]] || die "role $1 has the rights [$have], want [${want% }]; fix it with pveum, then run again"
+	ROLE_WANT=$(tr ' ' '\n' <<<"${ROLE_PRIVS[$1]}" | LC_ALL=C sort | tr '\n' ' ')
+	[[ "$ROLE_HAVE " == "$ROLE_WANT" ]]
 }
 
 ensure_pool_user_roles() {
@@ -494,7 +521,8 @@ ensure_pool_user_roles() {
 	roles=$(query pveum role list --output-format json)
 	for role in "${ROLE_NAMES[@]}"; do
 		if json_has roleid "$role" <<<"$roles"; then
-			run pveum role modify "$role" --privs "${ROLE_PRIVS[$role]// /,}" # replaces: exactly these
+			# An exact role is kept, so a repair run lists only what is missing.
+			role_exact "$role" || run pveum role modify "$role" --privs "${ROLE_PRIVS[$role]// /,}" # replaces: exactly these
 		else
 			run pveum role add "$role" --privs "${ROLE_PRIVS[$role]// /,}"
 		fi
@@ -510,12 +538,17 @@ ensure_pool_user_roles() {
 # not exist yet ("no such token"; test host, T-013 step 3), and a replaced
 # token has lost the ACLs of the old one.
 ensure_acls() {
-	local role
+	local role acls
+	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER"
 	for role in "${ROLE_NAMES[@]}"; do
-		local propagate=0
+		local propagate=0 path
 		[[ $role == PlumbGuests ]] && propagate=1 # pool members inherit
-		run pveum acl modify "$(role_path "$role")" --users "$PVE_USER" --roles "$role" --propagate "$propagate"
-		run pveum acl modify "$(role_path "$role")" --tokens "$PVE_USER!$TOKEN_NAME" --roles "$role" --propagate "$propagate"
+		path=$(role_path "$role")
+		# An ACL that exists as planned is kept (repair run).
+		grep -qxF "$path $PVE_USER $role user $propagate" <<<"$acls" ||
+			run pveum acl modify "$path" --users "$PVE_USER" --roles "$role" --propagate "$propagate"
+		grep -qxF "$path $PVE_USER!$TOKEN_NAME $role token $propagate" <<<"$acls" ||
+			run pveum acl modify "$path" --tokens "$PVE_USER!$TOKEN_NAME" --roles "$role" --propagate "$propagate"
 	done
 	remove_stray_acls
 }
@@ -551,17 +584,33 @@ state_get() {
 	sed -n "s/^$1=//p" "$STATE_FILE" | head -n1
 }
 
+# state_put writes the state file. It runs after each object that --remove
+# must know, so a run that stops halfway leaves a state that names what it
+# made (T-013 step 3). It writes nothing when the state did not change.
+STATE_WRITTEN=""
 state_put() {
+	# image_dir is set only when this script made plumb-images, so
+	# --remove never removes a storage that existed before (review n3).
+	local images="" lxc content
+	[[ $IMAGES_MADE == 1 ]] && images=$IMAGE_DIR
+	# lxc_id names only a container that this script made or checked as its
+	# own; an id from --lxc-id is not written before that.
+	if [[ $LXC_OURS == 1 ]]; then
+		lxc=$LXC_ID
+	else
+		lxc=$(state_get lxc_id)
+	fi
+	content=$(printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s' "$lxc" "$POOL" "$SNIPPET_STORAGE" "$SNIPPET_DIR" "$images")
+	if [[ $content == "$STATE_WRITTEN" ]] || { [[ -f $STATE_FILE ]] && [[ $content == "$(cat "$STATE_FILE")" ]]; }; then
+		return 0
+	fi
 	run install -d -o root -g root -m 0700 "$(dirname "$STATE_FILE")"
 	local tmp
 	new_tmp tmp
-	# image_dir is set only when this script made plumb-images, so
-	# --remove never removes a storage that existed before (review n3).
-	local images=""
-	[[ $IMAGES_MADE == 1 ]] && images=$IMAGE_DIR
-	printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\n' "$LXC_ID" "$POOL" "$SNIPPET_STORAGE" "$SNIPPET_DIR" "$images" >"$tmp"
+	printf '%s\n' "$content" >"$tmp"
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"
+	STATE_WRITTEN=$content
 }
 
 # --- the Plumb LXC (D-006, D-083) ---
@@ -621,6 +670,7 @@ ensure_lxc() {
 		ours)
 			say "LXC $LXC_ID exists; it is kept."
 			LXC_NEW=0
+			LXC_OURS=1
 			return 0
 			;;
 		foreign)
@@ -643,6 +693,7 @@ ensure_lxc() {
 		--description "$LXC_MARKER Plumb controller, made by install.sh"
 	run pct start "$LXC_ID"
 	LXC_NEW=1
+	LXC_OURS=1
 }
 
 lxc_ip() {
@@ -846,12 +897,15 @@ do_install() {
 	confirm "Continue?" || die "stopped; nothing was changed"
 
 	ensure_image_storage
+	state_put # --remove must know plumb-images even if a later step fails
 	ensure_pool_user_roles
 	ensure_snippet_storage
+	state_put
 	[[ -n $LXC_ID ]] || LXC_ID=$(state_get lxc_id)
 	ensure_token
 	ensure_acls
 	ensure_lxc
+	state_put
 	local ip ca
 	ip=$(lxc_ip)
 	setup_lxc "$host" "$ip"
@@ -976,6 +1030,7 @@ main() {
 
 NODE=""
 LXC_NEW=0
+LXC_OURS=0
 IMAGES_MADE=0
 STRAY_ACLS=""
 main "$@"

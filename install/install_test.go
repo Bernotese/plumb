@@ -501,6 +501,9 @@ func TestOldRights(t *testing.T) {
 	if strings.Contains(string(acl), "/ plumb@pve Plumb") {
 		t.Errorf("the old right stays:\n%s", acl)
 	}
+	// A role with an extra right is modified; a PVE that appends instead of
+	// replacing leaves the extra right, and the install stops.
+	os.WriteFile(filepath.Join(h.state, "role.PlumbNode"), []byte("Sys.AccessNetwork,Sys.Modify\n"), 0o644)
 	code, _, errOut = h.run([]string{"PLUMB_INSTALL_ASSUME_ROOT=1", "FAKE_ROLE_APPEND=1"}, "--yes", "--plumb-binary", h.plumb)
 	if code == 0 || !strings.Contains(errOut, "has the rights") {
 		t.Errorf("appended role: %d %q", code, errOut)

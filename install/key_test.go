@@ -216,3 +216,129 @@ func TestTokenBeforeACLs(t *testing.T) {
 		t.Errorf("token add at %d, first acl modify at %d", token, acl)
 	}
 }
+
+// seedHalfInstalled makes the state of the test host after the first real
+// run stopped at the token ACL (T-013 step 3b): plumb-images, pool, roles,
+// user and one user ACL, but no token, no LXC and no state file.
+func seedHalfInstalled(t *testing.T, h *host, imagesPath string) {
+	t.Helper()
+	files := map[string]string{
+		"storage.plumb-images": "",
+		"type.plumb-images":    "dir\n",
+		"content.plumb-images": "import\n",
+		"path.plumb-images":    imagesPath + "\n",
+		"pool.plumb":           "",
+		"user.plumb@pve":       "",
+		"acl":                  "/pool/plumb plumb@pve PlumbGuests user 1\n",
+	}
+	for name, privs := range map[string]string{
+		"PlumbGuests":   "VM.Allocate,VM.Audit,VM.Clone,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.PowerMgmt,Pool.Audit",
+		"PlumbDisk":     "Datastore.AllocateSpace,Datastore.Audit",
+		"PlumbImages":   "Datastore.AllocateTemplate,Datastore.Audit",
+		"PlumbSnippets": "Datastore.AllocateSpace",
+		"PlumbBridge":   "SDN.Use",
+		"PlumbNode":     "Sys.AccessNetwork",
+	} {
+		files["role."+name] = privs + "\n"
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(h.state, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(h.images(), "import"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The dry run on the half-installed host lists only what is missing, and
+// the real run repairs it and adopts plumb-images, so --remove removes it.
+func TestRepairHalfInstalledHost(t *testing.T) {
+	h := newHost(t)
+	seedHalfInstalled(t, h, h.images())
+	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("dry run: %d %s %s", code, out, errOut)
+	}
+	for _, c := range h.calls() {
+		if mutating.MatchString(c) {
+			t.Errorf("dry run changed the host: %s", c)
+		}
+	}
+	for _, gone := range []string{"+ pvesm add dir plumb-images", "+ install -d -o root -g root -m 0755 " + h.images(),
+		"+ pveum pool add", "+ pveum role", "+ pveum user add", "+ pveum acl modify /pool/plumb --users"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("dry run lists %q, which exists", gone)
+		}
+	}
+	for _, want := range []string{"exists without a state entry; it is exactly what install.sh makes, so it is adopted",
+		"+ pveum user token add plumb@pve plumb", `+ pveum acl modify /pool/plumb --tokens plumb@pve\!plumb`,
+		"+ pveum acl modify /storage/local-lvm --users plumb@pve", "+ pvesm add dir plumb-snippets", "+ pct create 105"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry run does not list %q", want)
+		}
+	}
+	// Two writes: after the storages, and after the LXC (its id). The last
+	// state_put has nothing new and writes nothing.
+	if n := strings.Count(out, "/install.state"); n != 2 {
+		t.Errorf("dry run writes the state file %d times, want 2", n)
+	}
+
+	code, out, errOut = h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("repair: %d %s %s", code, out, errOut)
+	}
+	st, _ := os.ReadFile(h.stateF)
+	if !strings.Contains(string(st), "image_dir="+h.images()+"\n") || !strings.Contains(string(st), "lxc_id=105\n") {
+		t.Errorf("state after the repair:\n%s", st)
+	}
+	h.resetCalls()
+	if code, out, errOut := h.run(asRoot, "--remove", "--yes"); code != 0 {
+		t.Fatalf("remove: %d %s %s", code, out, errOut)
+	}
+	if index(h.calls(), "pvesm remove plumb-images") < 0 {
+		t.Error("--remove kept the adopted plumb-images")
+	}
+}
+
+// A plumb-images that differs from what install.sh makes is used, not
+// adopted: --remove keeps it.
+func TestForeignImagesNotAdopted(t *testing.T) {
+	h := newHost(t)
+	seedHalfInstalled(t, h, "/srv/someone-elses-images")
+	code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("install: %d %s %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "not as install.sh makes it") {
+		t.Errorf("no note on the foreign storage:\n%s", out)
+	}
+	h.resetCalls()
+	h.run(asRoot, "--remove", "--yes")
+	if index(h.calls(), "pvesm remove plumb-images") >= 0 {
+		t.Error("--remove removed a storage that install.sh did not make")
+	}
+}
+
+// A run that stops halfway has already written the state, so --remove
+// removes what it made (T-013 step 3b, minor 5).
+func TestStoppedRunLeavesState(t *testing.T) {
+	h := newHost(t)
+	code, _, _ := h.run(append(asRoot, "FAKE_FAIL=pveum user token add"), "--yes", "--plumb-binary", h.plumb)
+	if code == 0 {
+		t.Fatal("the run did not stop")
+	}
+	st, err := os.ReadFile(h.stateF)
+	if err != nil || !strings.Contains(string(st), "image_dir="+h.images()+"\n") || !strings.Contains(string(st), "lxc_id=\n") {
+		t.Fatalf("state after the stop: %v\n%s", err, st)
+	}
+	h.resetCalls()
+	if code, out, errOut := h.run(asRoot, "--remove", "--yes"); code != 0 {
+		t.Fatalf("remove: %d %s %s", code, out, errOut)
+	}
+	for _, want := range []string{"pvesm remove plumb-images", "pvesm remove plumb-snippets", "pveum user delete plumb@pve", "pveum pool delete plumb"} {
+		if index(h.calls(), want) < 0 {
+			t.Errorf("--remove after a stopped run did not run %q", want)
+		}
+	}
+}

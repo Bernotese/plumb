@@ -5,6 +5,11 @@ set -u
 name=$(basename "$0")
 st=$FAKE_STATE
 printf '%s %s\n' "$name" "$*" >>"$st/calls"
+# FAKE_FAIL: a call that starts with this text fails (a run that stops halfway).
+if [[ -n ${FAKE_FAIL:-} && "$name $*" == "$FAKE_FAIL"* ]]; then
+	echo "fakepve: $FAKE_FAIL failed" >&2
+	exit 1
+fi
 has() { [[ -e $st/$1 ]]; }
 list() { # list PREFIX KEY: JSON list of {KEY: name} for files PREFIX.*
 	local first=1 f
@@ -86,13 +91,14 @@ pveum)
 	"user add") touch "$st/user.$3" ;;
 	"user delete") rm -f "$st/user.$3" ;;
 	"acl modify" | "acl delete")
-		op=$2 path=$3 ugid="" role="" type=""
+		op=$2 path=$3 ugid="" role="" type="" prop=1
 		set -- "${@:4}"
 		while [[ $# -gt 0 ]]; do
 			case $1 in
 			--users) ugid=$2 type=user ;;
 			--tokens) ugid=$2 type=token ;;
 			--roles) role=$2 ;;
+			--propagate) prop=$2 ;;
 			esac
 			shift 2
 		done
@@ -106,9 +112,10 @@ pveum)
 			exit 255
 		fi
 		touch "$st/acl"
-		grep -vxF "$path $ugid $role $type" "$st/acl" >"$st/acl.new" || true
+		# One entry per path, ugid and role; the propagate flag is kept.
+		awk -v p="$path" -v u="$ugid" -v r="$role" -v t="$type" '!($1 == p && $2 == u && $3 == r && $4 == t)' "$st/acl" >"$st/acl.new"
 		mv "$st/acl.new" "$st/acl"
-		if [[ $op == modify ]]; then echo "$path $ugid $role $type" >>"$st/acl"; fi
+		if [[ $op == modify ]]; then echo "$path $ugid $role $type $prop" >>"$st/acl"; fi
 		;;
 	"acl list")
 		[[ ${FAKE_ACL_FAIL:-0} == 1 ]] && exit 1
@@ -119,11 +126,11 @@ pveum)
 		fi
 		first=1
 		printf '['
-		while read -r path ugid role type; do
+		while read -r path ugid role type prop; do
 			[[ -n $path ]] || continue
 			[[ $first == 1 ]] || printf ','
 			first=0
-			printf '{"path":"%s","ugid":"%s","roleid":"%s","type":"%s","propagate":1}' "$path" "$ugid" "$role" "$type"
+			printf '{"path":"%s","ugid":"%s","roleid":"%s","type":"%s","propagate":%s}' "$path" "$ugid" "$role" "$type" "${prop:-1}"
 		done <"$st/acl"
 		printf ']\n'
 		;;
@@ -146,13 +153,15 @@ pvesm)
 	add)
 		id=$3
 		touch "$st/storage.$id"
+		echo "$2" >"$st/type.$id"
 		while [[ $# -gt 0 ]]; do
 			if [[ $1 == --content ]]; then echo "$2" >"$st/content.$id"; fi
+			if [[ $1 == --path ]]; then echo "$2" >"$st/path.$id"; fi
 			shift
 		done
 		;;
 	set) echo "${*:2}" >>"$st/storage-set" ;;
-	remove) rm -f "$st/storage.$2" "$st/content.$2" ;;
+	remove) rm -f "$st/storage.$2" "$st/content.$2" "$st/type.$2" "$st/path.$2" ;;
 	list) # pvesm list STORAGE --vmid ID: volumes left in $st/vol.*
 		for f in "$st"/vol.*; do
 			[[ -e $f ]] && cat "$f"
@@ -165,7 +174,11 @@ pvesh)
 	case "$2" in
 	/storage/*)
 		id=${2#/storage/}
-		if [[ -e $st/content.$id ]]; then
+		if [[ -e $st/type.$id ]]; then
+			# Like Proxmox: content, path, shared and type of a dir storage.
+			printf '{"content":"%s","path":"%s","shared":0,"storage":"%s","type":"%s"}\n' \
+				"$(cat "$st/content.$id")" "$(cat "$st/path.$id")" "$id" "$(cat "$st/type.$id")"
+		elif [[ -e $st/content.$id ]]; then
 			printf '{"content":"%s"}\n' "$(cat "$st/content.$id")"
 		elif [[ $id == local-lvm ]]; then
 			echo '{"content":"images,rootdir"}'
