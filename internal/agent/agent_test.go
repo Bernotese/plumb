@@ -289,6 +289,10 @@ func TestPlanOrder(t *testing.T) {
 		{"later in the same block", []wire.Resource{svc("a", "s", "file:/x"), f("a", "/x")}, "cycle"},
 		{"cross-block cycle", []wire.Resource{svc("a", "s1", "file:/y"), f("a", "/x"), svc("b", "s2", "file:/x"), f("b", "/y")}, "cycle"},
 		{"duplicate id", []wire.Resource{f("a", "/x"), f("b", "/x")}, "twice"},
+		{"unknown after id", []wire.Resource{withAfter(f("a", "/x"), "file:/nope")}, "not in the resource list"},
+		{"after cycle", []wire.Resource{withAfter(f("a", "/x"), "file:/y"), withAfter(f("b", "/y"), "file:/x")}, "cycle"},
+		{"after and restart_on cycle", []wire.Resource{withAfter(f("a", "/x"), "service:s"), svc("b", "s", "file:/x")}, "cycle"},
+		{"after a later resource of the same use", []wire.Resource{withAfter(f("a", "/x"), "file:/y"), f("a", "/y")}, "cycle"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
