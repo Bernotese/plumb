@@ -81,3 +81,27 @@ func TestDevSafety(t *testing.T) {
 		t.Error("dev on an unmarked database")
 	}
 }
+
+// D-080: --dev-demo needs --dev, and the dev mode marker still refuses a
+// production data directory.
+func TestDevDemoGuards(t *testing.T) {
+	if _, err := parseServe([]string{"--dev-demo"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "--dev-demo needs --dev") {
+		t.Errorf("--dev-demo alone: %v", err)
+	}
+	var out, errOut bytes.Buffer
+	if code := serve(context.Background(), []string{"--dev-demo"}, &out, &errOut); code != 2 {
+		t.Errorf("serve --dev-demo: %d", code)
+	}
+	prod := t.TempDir()
+	if err := checkMode(prod, false); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	code := serve(context.Background(), []string{"--dev", "--dev-demo", "--data", prod, "--listen", "127.0.0.1:0", "--agent-listen", "127.0.0.1:0"}, &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "production data directory") {
+		t.Errorf("dev demo on a production directory: %d %q", code, errOut.String())
+	}
+	if strings.Contains(out.String(), "dev login") {
+		t.Error("a refused start printed a login link")
+	}
+}
