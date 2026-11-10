@@ -165,9 +165,21 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// timeFormat is the text form of all times in the database (UTC RFC 3339).
-const timeFormat = time.RFC3339Nano
+// timeFormat is the text form of all times in the database: UTC RFC 3339
+// with a fixed number of fraction digits, so that text order is time order
+// and SQL can compare times as text.
+const timeFormat = "2006-01-02T15:04:05.000000000Z"
 
-func (s *Store) now() string { return s.Now().UTC().Format(timeFormat) }
+func (s *Store) now() string { return formatTime(s.Now()) }
 
-func parseTime(v string) (time.Time, error) { return time.Parse(timeFormat, v) }
+func formatTime(t time.Time) string { return t.UTC().Format(timeFormat) }
+
+func parseTime(v string) (time.Time, error) { return time.Parse(time.RFC3339Nano, v) }
+
+// nullTime parses a nullable time column.
+func nullTime(v sql.NullString) (time.Time, error) {
+	if !v.Valid {
+		return time.Time{}, nil
+	}
+	return parseTime(v.String)
+}
