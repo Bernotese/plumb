@@ -51,7 +51,7 @@ func (s stateDir) ensure() error {
 	return nil
 }
 
-func (s stateDir) cleanDesiredTemps() error {
+func (s stateDir) cleanStaleTemps() error {
 	if err := s.ensure(); err != nil {
 		return err
 	}
@@ -60,7 +60,8 @@ func (s stateDir) cleanDesiredTemps() error {
 		return err
 	}
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), ".desired.json-") {
+		name := entry.Name()
+		if !strings.HasPrefix(name, ".desired.json-") && !strings.HasPrefix(name, ".credential-") {
 			continue
 		}
 		info, err := entry.Info() // Info does not follow symlinks.
@@ -68,7 +69,7 @@ func (s stateDir) cleanDesiredTemps() error {
 			return err
 		}
 		if info.Mode().IsRegular() {
-			if err := os.Remove(s.path(entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := os.Remove(s.path(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
 		}

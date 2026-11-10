@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -185,7 +187,7 @@ func TestStateDirRules(t *testing.T) {
 	}
 }
 
-func TestCleanDesiredTemps(t *testing.T) {
+func TestCleanStaleTemps(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -195,18 +197,57 @@ func TestCleanDesiredTemps(t *testing.T) {
 	if err := os.WriteFile(tmp, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	credTmp := s.path(".credential-crash")
+	if err := os.WriteFile(credTmp, []byte("bearer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{desiredFile, ".desired.jsonx"} {
+		if err := os.WriteFile(s.path(name), []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirEntry := s.path(".desired.json-dir")
+	if err := os.Mkdir(dirEntry, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	link := s.path(".desired.json-link")
 	if err := os.Symlink("outside", link); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.cleanDesiredTemps(); err != nil {
+	if err := s.cleanStaleTemps(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
-		t.Fatalf("temp file remains: %v", err)
+	for _, path := range []string{tmp, credTmp} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("temp file remains at %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{s.path(desiredFile), s.path(".desired.jsonx"), dirEntry} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("entry removed at %s: %v", path, err)
+		}
 	}
 	if _, err := os.Lstat(link); err != nil {
 		t.Fatalf("symlink removed: %v", err)
+	}
+}
+
+func TestNewContinuesWhenTempCleanupFails(t *testing.T) {
+	ca := newCA(t)
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	a, err := New(Options{Config: Config{URL: "https://127.0.0.1:8444", CA: ca.pem, StateDir: dir}, Root: t.TempDir(), Runner: &runner{}, Log: slog.New(slog.NewTextHandler(&logs, nil))})
+	if err != nil {
+		t.Fatalf("New stopped on cleanup error: %v", err)
+	}
+	if !strings.Contains(logs.String(), "could not clean stale agent state temp files") {
+		t.Fatalf("cleanup warning missing: %s", logs.String())
+	}
+	if err := a.state.saveDesired(nil); err == nil {
+		t.Fatal("write succeeded despite invalid state dir")
 	}
 }
 
