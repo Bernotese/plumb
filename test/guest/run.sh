@@ -70,7 +70,7 @@ for distro in \
   docker rm -f "$name" >/dev/null
 done
 cleanup
-if [[ -n $(docker ps -aq --filter "name=$run_id") || -n $(docker images -q "plumb-guest-*-$run_id") ]]; then
+if [[ -n $(docker ps -aq --filter "name=plumb-guest-.*-${run_id}$") || -n $(docker images -q "plumb-guest-*-$run_id") ]]; then
   echo "guest containers or images remain after cleanup" >&2
   exit 1
 fi
