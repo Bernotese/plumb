@@ -15,8 +15,8 @@ info:
       issue actions `accept` and `revert` also return a Plan.
 
     Authentication (`components.securitySchemes`):
-    - `session`: cookie of a human user (`POST /session`). Calls that change data must send an
-      `Origin` header that matches the server.
+    - `session`: cookie of a human user (`POST /session`). Every call that changes data must send
+      an `Origin` header that matches the server. This includes `POST /session` (login CSRF).
     - `token`: API token as bearer. The roles listed for `token` on an operation are the
       **minimum tier**. Tiers are ordered `read` < `plan` < `apply` < `admin`.
     - An operation that lists only `session` is for humans only.
@@ -77,7 +77,8 @@ paths:
       summary: Log in a human user
       description: |
         Sets the `plumb_session` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`). Failed logins
-        are rate limited per user and per client address.
+        are rate limited per user and per client address. The request must send an `Origin`
+        header that matches the server, else 403 `origin-mismatch` (login CSRF).
       security: []
       requestBody:
         required: true
@@ -103,6 +104,7 @@ paths:
                 expires_at: "2026-11-11T08:00:00Z"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
     delete:
       tags: [session]
@@ -390,10 +392,13 @@ paths:
                     resources:
                       - resource: "guest:config"
                         action: update
-                        risk: disruptive
+                        risk: reversible
                         changes:
                           - { attr: enroll_token, sensitive: true, changed: true }
-                          - { attr: power, from: running, to: restarted }
+                      - resource: "guest:config"
+                        action: restart
+                        risk: disruptive
+                        changes: []
                 warnings: []
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -404,6 +409,7 @@ paths:
       tags: [plans]
       operationId: listPlans
       summary: List plans, newest first
+      description: Items are full Plans, the same as `GET /plans/{id}`.
       parameters:
         - name: state
           in: query
@@ -434,7 +440,14 @@ paths:
                     base_revision: 6
                     revision: 7
                     run_id: run_01JC8Z4M1V
-                    targets: []
+                    targets:
+                      - target: web1
+                        resources:
+                          - resource: "file:/etc/motd"
+                            action: create
+                            risk: reversible
+                            changes:
+                              - { attr: content, from: null, to: "Hello from Plumb\n" }
                     warnings: []
                 next: cGxhbl8wMUpDOFozSzdR
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -501,7 +514,7 @@ paths:
         "422": { $ref: "#/components/responses/Unprocessable" }
   /plans/{id}:
     parameters:
-      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/PlanId"
     get:
       tags: [plans]
       operationId: getPlan
@@ -535,7 +548,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /plans/{id}/approve:
     parameters:
-      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/PlanId"
     post:
       tags: [plans]
       operationId: approvePlan
@@ -589,6 +602,7 @@ paths:
       tags: [runs]
       operationId: listRuns
       summary: List runs, newest first
+      description: Items are full Runs, the same as `GET /runs/{id}`.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -613,13 +627,22 @@ paths:
                     started_at: "2026-11-10T09:00:03Z"
                     finished_at: "2026-11-10T09:00:09Z"
                     approved_by: { kind: human, name: admin }
-                    targets: []
+                    targets:
+                      - target: web1
+                        state: succeeded
+                        steps:
+                          - resource: "file:/etc/motd"
+                            action: create
+                            state: done
+                            error: null
+                            started_at: "2026-11-10T09:00:05Z"
+                            finished_at: "2026-11-10T09:00:05Z"
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /runs/{id}:
     parameters:
-      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/RunId"
     get:
       tags: [runs]
       operationId: getRun
@@ -706,7 +729,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
   /issues/{id}:
     parameters:
-      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/IssueId"
     get:
       tags: [issues]
       operationId: getIssue
@@ -741,7 +764,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /issues/{id}/resolve:
     parameters:
-      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/IssueId"
     post:
       tags: [issues]
       operationId: resolveIssue
@@ -792,7 +815,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
   /issues/{id}/comments:
     parameters:
-      - $ref: "#/components/parameters/Id"
+      - $ref: "#/components/parameters/IssueId"
     post:
       tags: [issues]
       operationId: commentIssue
@@ -869,8 +892,8 @@ components:
       in: cookie
       name: plumb_session
       description: |
-        Human session (`POST /session`). `HttpOnly`, `Secure`, `SameSite=Strict`. Calls that
-        change data must send a matching `Origin` header. Only a session approves `destructive`
+        Human session (`POST /session`). `HttpOnly`, `Secure`, `SameSite=Strict`. Every call
+        that changes data, login included, must send a matching `Origin` header. Only a session approves `destructive`
         Plans and manages tokens, secrets and import.
     token:
       type: http
@@ -894,13 +917,27 @@ components:
       description: Document name.
       schema: { $ref: "#/components/schemas/Name" }
       example: web1
-    Id:
+    PlanId:
       name: id
       in: path
       required: true
-      description: Object id.
+      description: Plan id.
       schema: { $ref: "#/components/schemas/Id" }
       example: plan_01JC8Z3K7Q
+    RunId:
+      name: id
+      in: path
+      required: true
+      description: Run id.
+      schema: { $ref: "#/components/schemas/Id" }
+      example: run_01JC8Z4M1V
+    IssueId:
+      name: id
+      in: path
+      required: true
+      description: Issue id.
+      schema: { $ref: "#/components/schemas/Id" }
+      example: iss_01JC9B7D2E
     Limit:
       name: limit
       in: query
@@ -936,8 +973,9 @@ components:
             status: 401
     Forbidden:
       description: |
-        The principal lacks the tier or risk limit, the call needs a human session, the origin
-        check failed, or a password change is required.
+        The principal lacks the tier or risk limit (`forbidden`, `risk-too-high`), the call needs
+        a human session (`human-required`), the origin check failed (`origin-mismatch`), or a
+        password change is required (`password-change-required`).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -1080,7 +1118,7 @@ components:
       type: object
       required: [current_password, new_password]
       properties:
-        current_password: { type: string, maxLength: 1024, format: password }
+        current_password: { type: string, minLength: 1, maxLength: 1024, format: password }
         new_password: { type: string, minLength: 12, maxLength: 1024, format: password }
 
     DocumentKind:

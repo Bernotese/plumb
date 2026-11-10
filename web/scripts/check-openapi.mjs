@@ -70,6 +70,20 @@ const walkSchema = (schema, where) => {
     else if (value && typeof value === "object") walkSchema(value, `${where}.${key}`);
   }
 };
+const checkParams = (params, where) => {
+  for (const raw of params ?? []) {
+    const param = deref(raw);
+    // Header names follow HTTP conventions (for example Last-Event-ID).
+    if (param && param.in !== "header" && !SNAKE.test(param.name)) {
+      errors.push(`${where}: ${param.in} parameter "${param.name}" is not snake_case`);
+    }
+  }
+};
+for (const [path, item] of Object.entries(spec.paths ?? {})) {
+  checkParams(item.parameters, path);
+  for (const method of METHODS)
+    checkParams(item[method]?.parameters, `${method.toUpperCase()} ${path}`);
+}
 walkSchema(spec.components?.schemas, "components.schemas");
 walkSchema(spec.paths, "paths");
 
