@@ -13,7 +13,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 |---|---|---|
 | T-015 slice acceptance, real-host part | pl-codex-qa | **test host ready** (the part without Proxmox is merged, PR #67) |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **test host ready** |
-| T-013 minimal installer | pl-backend | draft PR #26: approved incl. T-052; three dry runs on the test host changed nothing. **Waits for the user**: the real install is run by a person on a terminal (review condition: the recovery key must not reach an agent). Then pl-backend checks the host items |
+| T-013 minimal installer | pl-backend | draft PR #26: approved incl. T-052; three dry runs on the test host changed nothing. **Real install running**: pl-backend runs it on the test host (D-180: user decision, test host only), then checks the host items |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 | T-044 order between Block uses (`after`), `restarts`, `nginx-site` | see child cards | plan approved (D-176); contract merged (T-046, PR #78); web merged (T-049, PR #81 holds #79; one review fix open at pl-codex-fix: index keys in the `after` / `restart_by` lists, not reachable until T-047 is on main). Running: T-047 state + plan (pl-architect), T-048 agent (pl-backend). Then T-050 Block, T-051 QA |
 | T-052 installer: key volume + `plumb key init`, static LXC address | pl-backend | done on the T-013 branch, approved by pl-reviewer (PR #26, 9556b32) |
@@ -66,4 +66,4 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Run the real installer on the test host (command: T-013 report, sent by pl-lead on 2026-11-11). Write down the recovery key and the admin password; tell pl-lead "done" without them.
+- Nothing now. (D-180, 2026-11-11: on the test host an agent runs the real installer; the user does not need to.)
