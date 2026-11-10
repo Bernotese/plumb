@@ -541,3 +541,55 @@ func TestSecretNewBindingRestart(t *testing.T) {
 		t.Fatalf("run %s: %+v", run.Status, steps)
 	}
 }
+
+// D-156, D-160: the service is in place and does not differ. Only the
+// controller can plan its restart, because the agent did not get the
+// resource that causes it. The Plan shows the restart alone, and the
+// apply does not refuse it.
+func TestSecretNewBindingRestartOfUnchangedService(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	adm.do("PUT", "/api/v1/secrets/x", map[string]string{"value": "first-canary"})
+	adm.do("PUT", "/api/v1/secrets/y", map[string]string{"value": "second-canary"})
+	apply := func(reason string, docs ...state.Doc) planShape {
+		t.Helper()
+		code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": reason, "put": docs})
+		var p planShape
+		json.Unmarshal(body, &p)
+		if code != 201 {
+			t.Fatalf("%s: %d %s", reason, code, body)
+		}
+		if c, b := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); c != 202 {
+			t.Fatalf("%s approve: %d %s", reason, c, b)
+		}
+		e.eng.Wait()
+		return p
+	}
+	apply("bind x", appServiceBlock(), appTarget("web1", "x"))
+	e.waitGuest("web1", "file:/etc/app.env", "DB_PASSWORD=first-canary\n")
+
+	p := apply("bind y", appTarget("web1", "y"))
+	if u, _, ok := p.resource("file:/etc/app.env"); !ok || !u {
+		t.Fatalf("the file with the new binding is not unverified: %+v", p)
+	}
+	for _, tp := range p.Targets {
+		for _, r := range tp.Resources {
+			if r.Resource != "service:app" {
+				continue
+			}
+			if len(r.Changes) != 1 || r.Changes[0].Attr != wire.AttrRestart || r.Changes[0].Risk != wire.RiskDisruptive || r.Unverified {
+				t.Fatalf("service:app must show one disruptive restart: %+v", r)
+			}
+		}
+	}
+	if _, restart, ok := p.resource("service:app"); !ok || !restart {
+		t.Fatalf("no planned restart for the unchanged service: %+v", p)
+	}
+	e.waitGuest("web1", "file:/etc/app.env", "DB_PASSWORD=second-canary\n")
+	run, _ := e.st.LastRunOfTarget(e.ctx, "web1")
+	if run.Status != "succeeded" {
+		steps, _ := e.st.Steps(e.ctx, run.ID)
+		t.Fatalf("run %s: %+v", run.Status, steps)
+	}
+}

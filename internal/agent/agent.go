@@ -119,6 +119,9 @@ func New(opt Options) (*Agent, error) {
 		listChanged: make(chan struct{}, 1),
 		applyDone:   make(chan []string, 64),
 	}
+	if err := a.state.cleanStaleTemps(); err != nil {
+		a.log.Warn("could not clean stale agent state temp files", "error", err)
+	}
 	if a.cred, err = a.state.credential(); err != nil {
 		return nil, fmt.Errorf("read credential: %w", err)
 	}

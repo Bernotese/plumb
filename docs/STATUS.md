@@ -6,24 +6,23 @@ Product: **Plumb** – self-hosted infrastructure controller for a Proxmox homel
 ## Phase
 First slice: one VM, from an image, configured by the agent, drift as an issue. Secret store is not part of the slice.
 Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --dev --dev-demo` (simulated agents, no Proxmox).
-**Slice 1 is blocked on two user actions (see below).** **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
+The agent track (PR #5, #8, #13, #21, #27) runs its real guest tests in GitHub Actions; Docker on the dev VM is no longer required. **The Proxmox track is blocked on the test host.** **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
 
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-007 guest test harness | pl-codex-qa | PR #5: static approve; merge after the first real run. **Blocked: Docker access** |
-| T-005 resources | pl-frontend | PR #8: static approve (fd7c9e6); merge after the first real guest run. **Blocked: Docker access** |
-| T-018 agent loop + drift | pl-frontend | PR #13: static approve (5e5f86d); merge after #8. **Blocked: Docker access** |
-| T-021 flow test with the real agent | pl-codex-qa | draft PR #21: approved; merges after #8, #13 |
-| T-022 agent: 4xx on drift flush | pl-backend | draft PR #27: approved; merges (squash) after #8, #13 |
+| T-007 guest test harness | pl-codex-qa | PR #5: static approve. **Running:** the real guest run in CI (the job `make test-guest` runs on a GitHub runner with Docker; its first run failed on an Ubuntu mirror error). Then the reviewer's checklist, then merge |
+| T-005 resources | pl-frontend | PR #8: static approve (7847c68, in line with main); merge after the first real guest run. Waits for the real guest run in CI (#5 first) |
+| T-018 agent loop + drift | pl-frontend | PR #13: static approve (7d280a8, in line with main, incl. temp file cleanup from PR #64); merge after #8. Waits for the real guest run in CI (#5 first) |
+| T-021 flow test with the real agent | pl-codex-qa | draft PR #21 (2bafdd9): approved, with slice 2 cases; merges after #8, #13 (merge main again then) |
+| T-022 agent: 4xx on drift flush | pl-backend | draft PR #27 (51c80d0): approved; merges (squash) after #8, #13 (merge main again then) |
 | T-015 slice acceptance (HTTP) | pl-codex-qa | waits for T-018 on main; real-host part waits for the test host |
-| T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
-| T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
+| T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **blocked: test host** |
+| T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **blocked: test host**. Follow-up: key volume + `plumb key init` (D-086), see card |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
-| T-041 realign the waiting slice 1 PRs | owners | #8, #13, #20, #21, #26, #27 in line, CI green. Open: PR #63 (D-159, D-160) merge; PR #64 agent temp file cleanup (review), then into #13 |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
 
-Merge order when Docker works: #5 (real run, digest pins) → #8 → #13 → #21, #27 → T-015.
+Merge order when the guest job is green in CI: #5 (real run, digest pins) → #8 → #13 → #21, #27 → T-015.
 All six waiting PRs are in line with `main` again (T-041, 2026-11-10). For the Docker guest run, add: a canary where the real agent puts a secret into Output/Error through real `systemctl` output (review note on PR #21).
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
 
@@ -47,6 +46,7 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-028: secret store (PR #37), D-102 … D-109, D-130.
 - T-035 mock part: settings UI (PR #45).
 - T-034, T-035 e2e on the real API (PR #51).
+- T-041: all waiting slice 1 PRs in line with main; real agent checked against slice 2; D-159, D-160 (PR #63); agent temp file cleanup (PR #64 into #13).
 - T-037: slice 2 acceptance and secret leak hunt (PR #59, #61).
 - T-036, T-035 e2e on the real API (PR #60, #62).
 - T-033: export/import, encrypted secret bundle, D-150 … D-155, D-158 (PR #56).
@@ -59,6 +59,6 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-026: QA crash recovery test ported to main (PR #31); stale PR #16 closed.
 
 ## Open for the user
-- Give `jannes` Docker access on the dev VM: `sudo usermod -aG docker jannes` and `sudo setfacl -m u:jannes:rw /var/run/docker.sock`.
+- Optional (no longer required): Docker access for `jannes` on the dev VM, for faster local guest runs: `sudo usermod -aG docker jannes` and `sudo setfacl -m u:jannes:rw /var/run/docker.sock`.
 - Provide the Proxmox test host (fully updated PVE 9.2: qemu-server ≥ 9.2.11, libpve-storage-perl ≥ 9.1.13; needs: ARCHITECTURE §8).
 - Optional: delete old temp dirs `/tmp/plumb-e2e-*` on the dev VM.
