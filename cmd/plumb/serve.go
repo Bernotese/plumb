@@ -213,7 +213,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		return err
 	}
 	eng, err = plan.New(plan.Config{
-		Store: st, Events: events, Agents: lk, Driver: drv, Logger: log,
+		Store: st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
 		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
 		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 	})
@@ -221,6 +221,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		return err
 	}
 	defer eng.Close()
+	secrets.SetUsage(eng.SecretUsage) // used_by and secret-in-use (D-108)
 	iss = issue.New(st, events, eng)
 	// Close what a crash left open. This must run before the agent
 	// listener, the API and the guest poll start (review T-010 B1, n3).

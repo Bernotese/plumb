@@ -334,7 +334,12 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal
 	pl, err := s.cfg.Plans.Propose(r.Context(), plan.Input{Proposal: plan.Proposal{Put: req.Put, Delete: req.Delete, Targets: req.Targets},
 		Reason: req.Reason, Author: p.name})
 	var se state.Errors
-	if errors.As(err, &se) {
+	var ms *plan.MissingSecretsError
+	detail, missing := "The documents are not valid.", []string(nil)
+	if errors.As(err, &ms) {
+		se, detail, missing = ms.Errors, "The proposal refers to secrets that do not exist.", ms.Names
+	}
+	if ms != nil || errors.As(err, &se) {
 		// Point the field errors at the request body.
 		var fe []fieldError
 		for _, e := range se {
@@ -347,7 +352,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal
 			fe = append(fe, fieldError{Pointer: ptr, Message: fmt.Sprintf("%s %q: %s", e.Kind, e.Name, e.Msg)})
 		}
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed",
-			Status: http.StatusUnprocessableEntity, Detail: "The documents are not valid.", Errors: fe})
+			Status: http.StatusUnprocessableEntity, Detail: detail, Errors: fe, Secrets: missing})
 		return
 	}
 	if err != nil {

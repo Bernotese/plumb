@@ -32,6 +32,10 @@ var fastPasswords = PasswordParams{Time: 1, Memory: 64, Threads: 1}
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+// envLog is the logger of the next newEnv (link, plan and API). A test
+// that scans the log sets it first; no test of this package is parallel.
+var envLog = quiet
+
 // env is a whole controller with the API in front.
 type env struct {
 	t      *testing.T
@@ -44,6 +48,7 @@ type env struct {
 	iss    *issue.Service
 	sec    *secret.Store
 	srv    *Server
+	dir    string // data directory: plumb.db and link/
 	h      http.Handler
 	agents map[string]*linktest.Agent
 
@@ -57,20 +62,24 @@ func newEnv(t *testing.T, dev bool) *env {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
+	log := envLog
 	st, err := store.Open(ctx, filepath.Join(dir, "plumb.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, ctx: ctx, st: st, events: event.New(st), drv: fake.New(), agents: map[string]*linktest.Agent{}}
+	e := &env{t: t, ctx: ctx, dir: dir, st: st, events: event.New(st), drv: fake.New(), agents: map[string]*linktest.Agent{}}
 	var eng *plan.Engine
 	var iss *issue.Service
-	e.link, err = link.New(link.Config{Dir: filepath.Join(dir, "link"), Store: st, Events: e.events, Logger: quiet,
+	if e.sec, err = secret.Open(ctx, st, secret.NewKey()); err != nil {
+		t.Fatal(err)
+	}
+	e.link, err = link.New(link.Config{Dir: filepath.Join(dir, "link"), Store: st, Events: e.events, Logger: log,
 		OnReport:  func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
 		Sensitive: func(ctx context.Context, tg, id string) ([]string, bool, error) { return eng.Sensitive(ctx, tg, id) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, err = plan.New(plan.Config{Store: st, Events: e.events, Agents: e.link, Driver: e.drv, Logger: quiet,
+	eng, err = plan.New(plan.Config{Store: st, Events: e.events, Agents: e.link, Driver: e.drv, Secrets: e.sec, Logger: log,
 		OnDrift:        func(ctx context.Context, tg string, rep wire.Report) error { return iss.Intake(ctx, tg, rep) },
 		OnPlanDone:     func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 		ObserveTimeout: 5 * time.Second, EnrollTimeout: 5 * time.Second, ApplyTimeout: 5 * time.Second})
@@ -78,16 +87,14 @@ func newEnv(t *testing.T, dev bool) *env {
 		t.Fatal(err)
 	}
 	iss = issue.New(st, e.events, eng)
+	e.sec.SetUsage(eng.SecretUsage)
 	e.eng, e.iss = eng, iss
 	e.password, _, err = BootstrapAdmin(ctx, st, fastPasswords)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.sec, err = secret.Open(ctx, st, secret.NewKey()); err != nil {
-		t.Fatal(err)
-	}
 	e.srv = New(Config{Store: st, Events: e.events, Plans: eng, Issues: iss, Secrets: e.sec, Dev: dev, PasswordParams: fastPasswords,
-		KeepAlive: 50 * time.Millisecond, Logger: quiet})
+		KeepAlive: 50 * time.Millisecond, Logger: log})
 	e.h = e.srv.Handler()
 	t.Cleanup(func() {
 		cancel()

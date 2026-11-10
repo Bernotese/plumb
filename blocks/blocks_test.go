@@ -134,7 +134,7 @@ func TestBlocks(t *testing.T) {
 					sample[name] = def
 				}
 			}
-			fixtures := map[string]map[string]any{"deploy-user": {"ssh_key": "ssh-ed25519 AAAA"}}
+			fixtures := map[string]map[string]any{"deploy-user": {"ssh_key": "ssh-ed25519 AAAA"}, "app-env": {"password": "x"}}
 			required, _ := paramSchema["required"].([]any)
 			for _, value := range required {
 				name := value.(string)

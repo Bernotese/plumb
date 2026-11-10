@@ -30,6 +30,10 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if err != nil {
 		return store.Run{}, err
 	}
+	if p.Status == store.PlanStale {
+		// Stale is a kind of "not pending"; the API answers plan-stale.
+		return store.Run{}, fmt.Errorf("plan: plan %d: %w (%w)", planID, ErrStale, store.ErrPlanNotPending)
+	}
 	if p.Status != store.PlanPending {
 		return store.Run{}, fmt.Errorf("plan: plan %d is %s: %w", planID, p.Status, store.ErrPlanNotPending)
 	}
