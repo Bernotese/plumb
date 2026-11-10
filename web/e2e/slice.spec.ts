@@ -42,6 +42,9 @@ test("create target → plan → run → issue → revert", async ({ page }) => 
   await expect(page.getByRole("heading", { name: /^Run \d+$/ })).toBeVisible();
   const guestRow = page.getByRole("row", { name: /guest:config/ });
   await expect(guestRow).toContainText("applied");
+  // The new guest enrolls (simulated agent, T-024) and the whole run succeeds.
+  await expect(page.getByText(/Run status:\s*succeeded/)).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByRole("row", { name: /file:\/etc\/motd/ })).toContainText("applied");
 
   // The demo drift issue: revert it.
   await page.getByRole("link", { name: "Issues", exact: true }).click();
