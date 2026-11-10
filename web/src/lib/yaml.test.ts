@@ -90,3 +90,32 @@ describe("toYaml", () => {
     expect(toYaml({})).toBe("{}\n");
   });
 });
+
+describe("YAML QA escaping", () => {
+  it.each([
+    'say "hello"',
+    "it's fine",
+    "a: b # comment",
+    "\\tmp\\file",
+    "tab\there",
+    "nul\0end",
+    "😀 <>&",
+    "---",
+    "[a, b]",
+  ])("preserves %j in keys and values", (value) => {
+    expect(toYaml({ [value]: value })).toBe(`${JSON.stringify(value)}: ${JSON.stringify(value)}\n`);
+  });
+
+  it.each(["\n", "\n\n", " \n\t", "\tfirst\nnext"])(
+    "quotes whitespace-only or indented content %j",
+    (value) => {
+      expect(toYaml({ content: value })).toBe(`content: ${JSON.stringify(value)}\n`);
+    },
+  );
+
+  it("preserves nested multiline text and trailing newlines", () => {
+    expect(toYaml({ items: [{ content: "a\n  b\n\n" }] })).toBe(
+      "items:\n  - content: |+\n      a\n        b\n\n",
+    );
+  });
+});

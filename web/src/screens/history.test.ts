@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Screen tests of T-034 on the mock: history list, revision diff, rollback.
 import { flushSync, mount, unmount } from "svelte";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockApi, type MockApi } from "../lib/mock/mock";
 import type { TargetDoc } from "../lib/types";
 import History from "./History.svelte";
@@ -169,5 +169,117 @@ describe("RevisionView", () => {
     show(RevisionView, { api, id: 99 });
     const alert = await until(() => document.querySelector('[role="alert"]'));
     expect(alert.textContent).toContain("Revision 99 does not exist.");
+  });
+});
+
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error("Missing test element");
+  return value;
+}
+
+describe("History QA edges", () => {
+  it("ends on an exact page boundary without duplicate revisions", async () => {
+    const api = createMockApi({ signedIn: true });
+    const list = vi.spyOn(api, "listRevisions");
+    show(History, { api, pageSize: 1 });
+    await until(() => rows().length === 1);
+    for (const count of [2, 3]) {
+      required(button("Load older revisions")).click();
+      await until(() => rows().length === count);
+    }
+    expect(rows().map((r) => r?.match(/Revision \d+/)?.[0])).toEqual([
+      "Revision 7",
+      "Revision 6",
+      "Revision 5",
+    ]);
+    expect(list.mock.calls.filter(([cursor]) => cursor !== undefined)).toEqual([
+      ["6", 1],
+      ["5", 1],
+    ]);
+    expect(button("Load older revisions")).toBeUndefined();
+  });
+
+  it("shows an empty history without a paging button", async () => {
+    const api = createMockApi({ signedIn: true });
+    vi.spyOn(api, "listRevisions").mockResolvedValue({ items: [], next: null });
+    show(History, { api });
+    await until(() => text().includes("No revisions yet."));
+    expect(rows()).toEqual([]);
+    expect(button("Load older revisions")).toBeUndefined();
+  });
+
+  it("keeps loaded rows after a paging failure and retries the same cursor", async () => {
+    const api = createMockApi({ signedIn: true });
+    const list = vi.spyOn(api, "listRevisions");
+    show(History, { api, pageSize: 2 });
+    await until(() => rows().length === 2);
+    list.mockRejectedValueOnce(new Error("Paging failed"));
+    required(button("Load older revisions")).click();
+    await until(() => document.querySelector('[role="alert"]'));
+    expect(rows()).toHaveLength(2);
+    required(button("Load older revisions")).click();
+    await until(() => rows().length === 3);
+    expect(list.mock.calls.slice(-2)).toEqual([
+      ["5", 2],
+      ["5", 2],
+    ]);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("renders removed documents with minus signs and keyboard focus", async () => {
+    const api = createMockApi({ signedIn: true });
+    const reversed = await api.diffRevision(6, 7);
+    vi.spyOn(api, "diffRevision").mockResolvedValue(reversed);
+    show(RevisionView, { api, id: 6 });
+    await until(() => document.querySelectorAll("section.doc").length === 2);
+    const removed = required(
+      [...document.querySelectorAll("section.doc")].find((d) =>
+        d.querySelector("h3")?.textContent?.includes("Removed"),
+      ),
+    );
+    expect(removed.querySelector("h3")?.textContent).toContain("Block motd");
+    expect(removed.querySelectorAll("tr.add")).toHaveLength(0);
+    expect(removed.querySelectorAll("tr.del").length).toBeGreaterThan(0);
+    expect(removed.querySelector("tr.del .text")?.textContent).toContain("−Removed: ");
+    const region = required(removed.querySelector<HTMLElement>('[role="region"]'));
+    region.focus();
+    expect(document.activeElement).toBe(region);
+  });
+
+  it("compares the first stored revision with the empty state", async () => {
+    const api = createMockApi({ signedIn: true });
+    show(RevisionView, { api, id: 5 });
+    await until(() => text().includes("Compared with the empty state."));
+    expect(document.querySelectorAll("section.doc").length).toBeGreaterThan(0);
+    expect(document.querySelectorAll("tr.del")).toHaveLength(0);
+    expect(document.querySelectorAll("tr.add").length).toBeGreaterThan(0);
+  });
+
+  it("shows an empty diff without document tables", async () => {
+    const api = createMockApi({ signedIn: true });
+    const empty = await api.diffRevision(7, 7);
+    vi.spyOn(api, "diffRevision").mockResolvedValue(empty);
+    show(RevisionView, { api, id: 7 });
+    await until(() => text().includes("same documents as the one before"));
+    expect(document.querySelector("section.doc")).toBeNull();
+    expect(text()).toContain("0 added, 0 changed, 0 removed documents");
+  });
+
+  it("rejects whitespace-only reasons even on direct form submission", async () => {
+    const api = createMockApi({ signedIn: true });
+    const rollback = vi.spyOn(api, "rollbackRevision");
+    show(RevisionView, { api, id: 6 });
+    await until(() => button("Roll back to this revision"));
+    const reason = required(document.querySelector<HTMLTextAreaElement>("#rollback-reason"));
+    reason.value = " \n\t ";
+    reason.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    expect(button("Roll back to this revision")?.disabled).toBe(true);
+    required(document.querySelector("form")).dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    expect(rollback).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(reason);
+    expect(location.hash).toBe("");
   });
 });
