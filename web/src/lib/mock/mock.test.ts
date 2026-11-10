@@ -187,7 +187,7 @@ describe("rendering", () => {
     ]);
   });
 
-  it("deletes the resources of a removed Block", () => {
+  it("stops managing removed Block resources without deleting them (D-065)", () => {
     const base = {
       type: "vm" as const,
       image: "i",
@@ -198,13 +198,23 @@ describe("rendering", () => {
       { ...base, blocks: [] },
       blocks,
     );
-    expect(plan).toEqual([
-      {
+    expect(plan).toEqual([]);
+  });
+
+  it("shows an explicit state: absent as a destructive delete", () => {
+    const old: TargetDoc["spec"] = {
+      type: "vm",
+      image: "i",
+      guest: { cores: 1, memory: 256, disk: 1, bridge: "b" },
+      blocks: [{ use: "motd" }],
+    };
+    const next = { ...old, overrides: { "file:/etc/motd": { state: "absent" } } };
+    expect(planTarget(old, next, blocks)).toContainEqual(
+      expect.objectContaining({
         resource: "file:/etc/motd",
         action: "delete",
         risk: "destructive",
-        changes: [{ attr: "state", from: "present", to: "absent", risk: "destructive" }],
-      },
-    ]);
+      }),
+    );
   });
 });
