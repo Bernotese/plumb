@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+run_id=${GUEST_RUN_ID:-$$}
+if [[ ! "$run_id" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+  echo "GUEST_RUN_ID must be numeric with an optional numeric attempt suffix" >&2
+  exit 2
+fi
 tmp=$(mktemp -d)
 containers=()
 images=()
@@ -24,7 +29,6 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-run_id=${GUEST_RUN_ID:-$$}
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/guest.test" ./test/guest
 CGO_ENABLED=0 GOOS=linux go test -c -o "$tmp/resource.test" ./internal/resource
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/agent.test" ./internal/agent
@@ -46,7 +50,8 @@ for distro in \
   if [[ "$settings" != "private 1" ]]; then echo "unexpected container settings: $settings" >&2; exit 1; fi
   ready=false
   for ((attempt=0; attempt<60; attempt++)); do
-    state=$(docker exec "$name" systemctl is-system-running 2>/dev/null || true)
+    run_test systemctl is-system-running >"$tmp/systemd-state" 2>/dev/null || true
+    state=$(<"$tmp/systemd-state")
     if [[ "$state" == running || "$state" == degraded ]]; then ready=true; break; fi
     sleep 1
   done
@@ -56,7 +61,7 @@ for distro in \
     exit 1
   fi
   echo "$distro systemd state: $state"
-  if [[ "$state" == degraded ]]; then docker exec "$name" systemctl --failed --no-legend; fi
+  if [[ "$state" == degraded ]]; then run_test systemctl --failed --no-legend; fi
   run_test /tests/guest.test -test.v -test.timeout=5m "$@"
   # TestSymlinkRules includes the hard-link cases.
   run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
@@ -65,7 +70,7 @@ for distro in \
   docker rm -f "$name" >/dev/null
 done
 cleanup
-if [[ -n $(docker ps -aq --filter name=plumb-guest-) || -n $(docker images -q "plumb-guest-*-$run_id") ]]; then
+if [[ -n $(docker ps -aq --filter "name=plumb-guest-.*-${run_id}$") || -n $(docker images -q "plumb-guest-*-$run_id") ]]; then
   echo "guest containers or images remain after cleanup" >&2
   exit 1
 fi
