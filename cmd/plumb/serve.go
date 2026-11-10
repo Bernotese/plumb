@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -32,6 +34,7 @@ import (
 
 type serveFlags struct {
 	dev         bool
+	devDemo     bool
 	plainHTTP   bool
 	driver      string
 	data        string
@@ -48,6 +51,7 @@ func parseServe(args []string, stderr io.Writer) (serveFlags, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&f.dev, "dev", false, "development mode: fake driver, simulated agents, seeded data, plain HTTP (D-039)")
+	fs.BoolVar(&f.devDemo, "dev-demo", false, "with --dev: demo data and a one-time dev login link for screenshots (D-080)")
 	fs.BoolVar(&f.plainHTTP, "plain-http", false, "serve the API without TLS (only with --dev)")
 	fs.StringVar(&f.driver, "driver", "", "hypervisor driver: proxmox, or fake (only with --dev); default proxmox, with --dev fake")
 	fs.StringVar(&f.data, "data", "", "data directory (default /var/lib/plumb; with --dev a new temp directory)")
@@ -88,6 +92,8 @@ func parseServe(args []string, stderr io.Writer) (serveFlags, error) {
 	// D-039: dev mode never touches a real host; without dev, no plain HTTP
 	// and no fake driver.
 	switch {
+	case f.devDemo && !f.dev:
+		return f, fmt.Errorf("--dev-demo needs --dev")
 	case f.dev && f.driver != "fake":
 		return f, fmt.Errorf("--dev uses the fake driver only; it never talks to a real Proxmox host")
 	case !f.dev && f.plainHTTP:
@@ -190,7 +196,18 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	} else {
 		log.Warn("the web UI is not built into this binary (run make build)")
 	}
-	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, UI: ui, Dev: f.dev, Logger: log})
+	// The dev login token (D-080): 256 random bits, new at every start,
+	// in memory only. It is printed once below.
+	var devToken string
+	if f.devDemo {
+		// Create the login user before printing its URL, even on a seeded store.
+		// "!" is not a password hash; only the dev login route can log it in.
+		if _, err := st.CreateUser(ctx, store.User{Name: api.DevUser, PasswordHash: "!"}); err != nil && !errors.Is(err, store.ErrExists) {
+			return err
+		}
+		devToken = randomToken()
+	}
+	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
 
 	errc := make(chan error, 2)
 	go func() { errc <- lk.Serve(ctx, f.agentListen) }()
@@ -229,6 +246,9 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS13})
 	}
 	fmt.Fprintf(stdout, "Plumb listens on %s://%s (agents: %s, data: %s)\n", scheme, ln.Addr(), f.agentListen, f.data)
+	if devToken != "" {
+		fmt.Fprintf(stdout, "dev login: %s://%s/dev/login?token=%s&next=/\n", scheme, ln.Addr(), devToken)
+	}
 	go func() {
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -237,7 +257,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	}()
 	if f.dev {
 		go func() {
-			if err := seedDev(ctx, st, eng, lk, drv.(*fake.Driver), log); err != nil && ctx.Err() == nil {
+			if err := seedDev(ctx, st, eng, lk, drv.(*fake.Driver), f.devDemo, log); err != nil && ctx.Err() == nil {
 				log.Error("dev seed", "err", err)
 			}
 		}()
@@ -297,4 +317,13 @@ func loopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// randomToken returns 256 random bits as base64url.
+func randomToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
