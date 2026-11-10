@@ -11,10 +11,10 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| Real guest run, after-the-fact check | pl-reviewer | running: checklist of PR #5 and the 'verify in a real guest' notes of #8, #13 against CI run 42859409175 (green on Debian 13 and Ubuntu 26.04) |
-| T-021 flow test with the real agent | pl-codex-qa | PR #21: approved; merge of main running, then merge |
-| T-022 agent: 4xx on drift flush | pl-backend | PR #27: approved; merge of main running, then merge |
-| T-015 slice acceptance (HTTP) | pl-codex-qa | next, after #21 and #27; real-host part waits for the test host |
+| Guest harness follow-ups from the run review (`docs/tasks/T-007.run-review.md`) | pl-codex-fix (1–3), pl-codex-qa (4–6) | 1–3 running; 4–6 after PR #21 |
+| T-042 agent loop on a real guest | pl-codex-qa | after PR #21 and the follow-ups 4–6 |
+| T-021 flow test with the real agent | pl-codex-qa | PR #21: the last merge dropped the approved slice 2 cases; pl-codex-qa restores them, then merge |
+| T-015 slice acceptance (HTTP) | pl-codex-qa | after #21; real-host part waits for the test host |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **blocked: test host**. Follow-up: key volume + `plumb key init` (D-086), see card |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
@@ -44,6 +44,8 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-028: secret store (PR #37), D-102 … D-109, D-130.
 - T-035 mock part: settings UI (PR #45).
 - T-034, T-035 e2e on the real API (PR #51).
+- T-022: agent drift flush survives a permanent 4xx (PR #27).
+- Review of the first real guest run (PR #65): harness, resources as root proven; gaps listed.
 - T-005 resources (PR #8), T-007 guest harness (PR #5), T-018 agent loop + drift (PR #13): merged by the user; D-054, D-055.
 - T-041: all waiting slice 1 PRs in line with main; real agent checked against slice 2; D-159, D-160 (PR #63); agent temp file cleanup (PR #64 into #13).
 - T-037: slice 2 acceptance and secret leak hunt (PR #59, #61).
