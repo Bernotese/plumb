@@ -2,7 +2,7 @@ package resource
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -82,11 +82,13 @@ func (s *symlink) Observe(_ context.Context) (State, error) {
 
 // Diff compares the target. A new link and a new target are reversible.
 // Removing a link and replacing a node that is not a link are destructive.
+// With state absent, a node that is not a link means the link is absent:
+// no change, because Apply removes only symlinks.
 func (s *symlink) Diff(observed State) []wire.Change {
 	present := observed[wire.AttrState] == wire.StatePresent
 	kind, _ := observed[attrKind].(string)
 	if s.a.State == wire.StateAbsent {
-		if present {
+		if present && kind == "" {
 			return s.finish([]wire.Change{change(wire.AttrState, wire.StatePresent, wire.StateAbsent, wire.RiskDestructive)})
 		}
 		return nil
@@ -130,13 +132,10 @@ func (s *symlink) Apply(_ context.Context, changes []wire.Change) error {
 		return err
 	}
 	if s.a.State == wire.StateAbsent {
-		switch kind {
-		case "":
-			return nil
-		case "symlink":
-			return unix.Unlinkat(dfd, name, 0)
+		if kind == "symlink" {
+			return removeLinkAt(dfd, name, s.a.Path)
 		}
-		return fmt.Errorf("%s is a %s, not a symlink; Plumb removes only symlinks", s.a.Path, kind)
+		return nil // nothing or not a link: the link is absent (Diff agrees)
 	}
 	switch kind {
 	case "symlink":
@@ -150,7 +149,7 @@ func (s *symlink) Apply(_ context.Context, changes []wire.Change) error {
 	default:
 		return fmt.Errorf("%s is a %s; Plumb replaces only a symlink or a regular file with a symlink", s.a.Path, kind)
 	}
-	return symlinkAt(dfd, name, s.a.Path, s.a.Target)
+	return symlinkAt(dfd, name, s.a.Path, s.a.Target, kind)
 }
 
 // Watch returns the link path.
@@ -192,20 +191,118 @@ func readLinkAt(dirfd int, name, p string) (kind, target string, err error) {
 	return "symlink", string(buf[:n]), nil
 }
 
-// symlinkAt makes dirfd/name a symlink to target: symlinkat under a temp
-// name in the same directory, then renameat over name.
-func symlinkAt(dirfd int, name, p, target string) error {
-	suffix := make([]byte, 8)
-	if _, err := rand.Read(suffix); err != nil {
+// tempLinkName is the temp name of the link name in its directory. It is
+// fixed per name, so the next Apply removes a link that a crash left
+// between symlinkat and renameat; one path is one resource (D-054), so no
+// other apply uses the same temp name. Like every Plumb temp name it starts
+// with a dot, which include globs such as "sites-enabled/*" skip.
+func tempLinkName(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return ".plumb-link-" + hex.EncodeToString(sum[:8])
+}
+
+// Leaf races (D-163). Apply checks the node on the path and then changes
+// it, so a writer of the directory could swap the node in between. Each
+// change is made so that the kernel acts on the node that was checked, or
+// the node that is moved aside is checked after the move and put back:
+//   - over nothing: renameat2(RENAME_NOREPLACE), EEXIST → "plan again";
+//   - over a link or a planned file: renameat2(RENAME_EXCHANGE), then the
+//     old node (now under the temp name) must have the checked kind, else
+//     it is exchanged back;
+//   - remove: the link is renamed to the temp name (RENAME_NOREPLACE) and
+//     removed only when it is still a symlink, else it is renamed back.
+// So a node that was swapped in is never removed; at worst it stays under
+// the temp name when a second swap blocks the undo, and Apply then names it.
+
+// prepTemp removes a stale temp link of name (a crash between two steps);
+// any other node under the temp name is an error and stays.
+func prepTemp(dirfd int, tmp, p string) error {
+	kind, _, err := readLinkAt(dirfd, tmp, p)
+	switch {
+	case err != nil:
+		return err
+	case kind == "symlink":
+		if err := unix.Unlinkat(dirfd, tmp, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("remove stale temp link of %s: %w", p, err)
+		}
+	case kind != "":
+		return fmt.Errorf("temp name %s next to %s is a %s; check and remove it", tmp, p, kind)
+	}
+	return nil
+}
+
+// symlinkAt makes dirfd/name a symlink to target. was is the kind that
+// Apply checked on name: "" (nothing), "symlink" or "file".
+func symlinkAt(dirfd int, name, p, target, was string) error {
+	tmp := tempLinkName(name)
+	if err := prepTemp(dirfd, tmp, p); err != nil {
 		return err
 	}
-	tmp := ".plumb-" + hex.EncodeToString(suffix)
 	if err := unix.Symlinkat(target, dirfd, tmp); err != nil {
 		return fmt.Errorf("create link %s: %w", p, err)
 	}
-	if err := unix.Renameat(dirfd, tmp, dirfd, name); err != nil {
+	if was == "" {
+		if err := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_NOREPLACE); err != nil {
+			_ = unix.Unlinkat(dirfd, tmp, 0)
+			if errors.Is(err, unix.EEXIST) {
+				return fmt.Errorf("%s changed while it was applied; plan again", p)
+			}
+			return fmt.Errorf("create link %s: %w", p, err)
+		}
+		return unix.Fsync(dirfd)
+	}
+	if err := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_EXCHANGE); err != nil {
 		_ = unix.Unlinkat(dirfd, tmp, 0)
-		return fmt.Errorf("create link %s: %w", p, err)
+		if errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("%s changed while it was applied; plan again", p)
+		}
+		return fmt.Errorf("replace link %s: %w", p, err)
+	}
+	// The old node is now under tmp: it must be what Apply checked.
+	if err := removeIfKind(dirfd, tmp, name, p, was); err != nil {
+		return err
 	}
 	return unix.Fsync(dirfd)
+}
+
+// removeLinkAt removes the symlink dirfd/name: it moves the node aside and
+// removes it only when it is still a symlink.
+func removeLinkAt(dirfd int, name, p string) error {
+	tmp := tempLinkName(name)
+	if err := prepTemp(dirfd, tmp, p); err != nil {
+		return err
+	}
+	if err := unix.Renameat2(dirfd, name, dirfd, tmp, unix.RENAME_NOREPLACE); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil // gone already
+		}
+		return fmt.Errorf("remove link %s: %w", p, err)
+	}
+	if kind, _, err := readLinkAt(dirfd, tmp, p); err != nil || kind != "symlink" {
+		if uerr := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_NOREPLACE); uerr != nil {
+			return fmt.Errorf("%s changed while it was removed; the new node is kept as %s", p, tmp)
+		}
+		return fmt.Errorf("%s changed while it was removed; plan again", p)
+	}
+	if err := unix.Unlinkat(dirfd, tmp, 0); err != nil {
+		return fmt.Errorf("remove link %s: %w", p, err)
+	}
+	return unix.Fsync(dirfd)
+}
+
+// removeIfKind removes dirfd/tmp, the old node after an exchange, when it
+// has the kind want. Otherwise it exchanges it back with name.
+func removeIfKind(dirfd int, tmp, name, p, want string) error {
+	kind, _, err := readLinkAt(dirfd, tmp, p)
+	if err == nil && kind == want {
+		if err := unix.Unlinkat(dirfd, tmp, 0); err != nil {
+			return fmt.Errorf("remove old node of %s: %w", p, err)
+		}
+		return nil
+	}
+	if uerr := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_EXCHANGE); uerr != nil {
+		return fmt.Errorf("%s changed while it was applied; the old node is kept as %s", p, tmp)
+	}
+	_ = unix.Unlinkat(dirfd, tmp, 0) // our new link, back under tmp
+	return fmt.Errorf("%s changed while it was applied; plan again", p)
 }

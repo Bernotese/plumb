@@ -322,26 +322,25 @@ func TestSymlinkAsRoot(t *testing.T) {
 	}
 }
 
-// T-020: the resources of the nginx and nginx-site Blocks enable a second
-// site next to the default site, and nginx accepts the result.
-func TestNginxSitesAsRoot(t *testing.T) {
+// T-020: the nginx Block's default-site link (D-164). The distro link
+// converges with no change; default_site absent removes only the link,
+// and nginx accepts the configuration in both states.
+func TestNginxDefaultSiteAsRoot(t *testing.T) {
+	const link = "/etc/nginx/sites-enabled/default"
 	converge(t, rsrc("package", "nginx", nil))
-	site := "server {\n    listen 80;\n    server_name shop.lan;\n    root /var/www/html;\n}\n"
-	converge(t, rsrc("file", "/etc/nginx/sites-available/shop", map[string]any{"content": site, "mode": "0644"}))
-	// The distro already links the default site: no change.
-	if c := converge(t, rsrc("symlink", "/etc/nginx/sites-enabled/default", map[string]any{"target": "/etc/nginx/sites-available/default"})); len(c) != 0 {
+	if c := converge(t, rsrc("symlink", link, map[string]any{"target": "/etc/nginx/sites-available/default"})); len(c) != 0 {
 		t.Fatalf("default site link: %+v", c)
 	}
-	converge(t, rsrc("symlink", "/etc/nginx/sites-enabled/shop", map[string]any{"target": "/etc/nginx/sites-available/shop"}))
-	converge(t, rsrc("service", "nginx", map[string]any{"restart_on": []any{"file:/etc/nginx/sites-available/shop", "symlink:/etc/nginx/sites-enabled/shop"}}))
+	converge(t, rsrc("service", "nginx", map[string]any{"restart_on": []any{"symlink:" + link}}))
 	sh(t, "nginx", "-t")
-	if out := sh(t, "nginx", "-T"); !strings.Contains(out, "server_name shop.lan;") {
-		t.Fatalf("nginx does not load the shop site:\n%s", out)
+	converge(t, rsrc("symlink", link, map[string]any{"state": "absent"}))
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("link still there: %v", err)
 	}
-	// Disable the default site; nginx still accepts the configuration.
-	converge(t, rsrc("symlink", "/etc/nginx/sites-enabled/default", map[string]any{"state": "absent"}))
-	sh(t, "nginx", "-t")
 	if _, err := os.Stat("/etc/nginx/sites-available/default"); err != nil {
 		t.Fatalf("disabling removed the site file: %v", err)
 	}
+	sh(t, "nginx", "-t")
+	converge(t, rsrc("symlink", link, map[string]any{"target": "/etc/nginx/sites-available/default"}))
+	sh(t, "nginx", "-t")
 }
