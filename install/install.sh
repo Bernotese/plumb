@@ -574,16 +574,21 @@ lxc_has_env() {
 		query pct exec "$LXC_ID" -- test -s /etc/plumb/plumb.env >/dev/null 2>&1
 }
 
-# lxc_template sets TEMPLATE to the newest Debian 13 template, and
-# downloads it through Proxmox's own template list when it is missing.
+# lxc_template sets TEMPLATE to the newest Debian 13 template for the host's
+# architecture, and downloads it through Proxmox's own template list when it
+# is missing. The list has one entry per architecture (amd64, arm64), and
+# "arm64" sorts after "amd64", so the filter on the architecture is required.
 TEMPLATE=""
 lxc_template() {
-	local name
-	name=$({ query pveam list "$TEMPLATE_STORAGE" || true; } | awk '/debian-13-standard_/ {sub(/.*vztmpl\//, "", $1); print $1}' | sort -V | tail -n1)
+	local name arch re
+	arch=$(query dpkg --print-architecture)
+	[[ $arch =~ ^[a-z0-9]+$ ]] || die "cannot read the host architecture: $arch"
+	re="debian-13-standard_.*_${arch}\\.tar\\."
+	name=$({ query pveam list "$TEMPLATE_STORAGE" || true; } | awk -v re="$re" '$1 ~ re {sub(/.*vztmpl\//, "", $1); print $1}' | sort -V | tail -n1)
 	if [[ -z $name ]]; then
 		run pveam update
-		name=$(query pveam available --section system | awk '/debian-13-standard_/ {print $2}' | sort -V | tail -n1)
-		[[ -n $name ]] || die "no debian-13-standard template in the Proxmox template list"
+		name=$(query pveam available --section system | awk -v re="$re" '$2 ~ re {print $2}' | sort -V | tail -n1)
+		[[ -n $name ]] || die "no debian-13-standard template for $arch in the Proxmox template list"
 		run pveam download "$TEMPLATE_STORAGE" "$name"
 	fi
 	TEMPLATE="$TEMPLATE_STORAGE:vztmpl/$name"

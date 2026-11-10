@@ -26,7 +26,11 @@ dpkg-query)
 	*) exit 1 ;;
 	esac
 	;;
-dpkg) # dpkg --compare-versions A ge B
+dpkg) # dpkg --print-architecture | dpkg --compare-versions A ge B
+	if [[ $1 == --print-architecture ]]; then
+		echo amd64
+		exit 0
+	fi
 	[[ $(printf '%s\n%s\n' "$2" "$4" | sort -V | head -n1) == "$4" ]]
 	;;
 hostname) echo pve1 ;;
@@ -166,8 +170,15 @@ pvesh)
 	;;
 pveam)
 	case $1 in
-	list) has tmpl && echo "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst 128.00MB" ;;
-	available) printf 'system          debian-12-standard_12.7-1_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_amd64.tar.zst\n' ;;
+	list)
+		if has tmpl; then
+			# The real list holds every architecture that was downloaded.
+			echo "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst 128.00MB"
+			echo "local:vztmpl/debian-13-standard_13.1-2_arm64.tar.zst 121.00MB"
+		fi
+		;;
+	# The real list has one entry per architecture; arm64 sorts after amd64.
+	available) printf 'system          debian-12-standard_12.7-1_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_arm64.tar.zst\n' ;;
 	update) ;;
 	download) touch "$st/tmpl" ;;
 	esac
