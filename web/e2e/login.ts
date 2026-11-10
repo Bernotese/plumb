@@ -5,10 +5,16 @@ import { expect, type Page } from "@playwright/test";
 // that runs alone does the change itself.
 export const NEW_PASSWORD = "e2e-new-password-1234";
 
-export async function login(page: Page): Promise<void> {
-  const first = process.env["PLUMB_E2E_PASSWORD"] ?? "";
+export async function login(
+  page: Page,
+  server: { base: string; password: string } = {
+    base: "/",
+    password: process.env["PLUMB_E2E_PASSWORD"] ?? "",
+  },
+): Promise<void> {
+  const first = server.password;
   expect(first).not.toBe("");
-  await page.goto("/");
+  await page.goto(server.base);
   for (const password of [NEW_PASSWORD, first]) {
     await page.getByLabel("User name").fill("admin");
     await page.getByLabel("Password", { exact: true }).fill(password);

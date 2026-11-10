@@ -175,6 +175,13 @@
             first boot, within the approved risk.
           </p>
         {:else}
+          {#if r.unverified}
+            <p class="muted">
+              Not observed before the approval: this resource gets a new secret (or a value that the
+              import writes), so Plumb does not send the value before you approve. The agent
+              observes it at the apply, within the approved risk.
+            </p>
+          {/if}
           <ChangeTable
             changes={r.changes}
             caption="Changes of {r.resource}"

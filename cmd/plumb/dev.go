@@ -226,11 +226,30 @@ func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.L
 			}
 		}
 	}
-	// An open drift Issue: someone edits the motd of web2.
+	// Two more drift Issues for the ignore actions (T-036 e2e): someone
+	// edits the nginx site of web1 and removes its nginx package. They are
+	// on web1 because a revert plans the whole target, and the e2e reverts
+	// the motd Issue of web2 (the newest Issue).
+	web1 := agents.get("web1")
+	if web1 == nil {
+		return fmt.Errorf("dev demo: web1 has no agent")
+	}
+	site := web1.Guest("file:/etc/nginx/sites-enabled/default")
+	if site == nil {
+		return fmt.Errorf("dev demo: web1 has no nginx site")
+	}
+	site["content"] = "server { listen 8080; }\n"
+	if err := web1.Change(ctx, "file:/etc/nginx/sites-enabled/default", site); err != nil {
+		return err
+	}
+	if err := web1.Change(ctx, "package:nginx", nil); err != nil {
+		return err
+	}
 	web2 := agents.get("web2")
 	if web2 == nil {
 		return fmt.Errorf("dev demo: web2 has no agent")
 	}
+	// An open drift Issue: someone edits the motd of web2.
 	if err := web2.Change(ctx, "file:/etc/motd", map[string]any{
 		"path": "/etc/motd", "content": "Edited by hand\n", "mode": "0644", "owner": "root", "group": "root"}); err != nil {
 		return err
