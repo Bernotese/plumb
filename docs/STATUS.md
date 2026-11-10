@@ -11,7 +11,7 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section.
 | Card | Owner | State |
 |---|---|---|
 | T-003 Go scaffold + contracts | pl-architect | in progress (wave 0) |
-| T-017 OpenAPI + web skeleton | pl-frontend | in progress (wave 0), merge after T-003 |
+| T-017 OpenAPI + web skeleton | pl-frontend | PR #2 open, in review; Makefile lines + QA after T-003 merge |
 | T-004 state/store → T-009 link/events/fake driver | pl-backend | waits for T-003 |
 | T-005 resources → T-018 agent loop | pl-frontend | waits for T-003, T-017 |
 | T-007 guest test harness | pl-codex-qa | waits for T-003 |
