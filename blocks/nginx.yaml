@@ -2,7 +2,7 @@ kind: Block
 name: nginx
 spec:
   title: Nginx web server
-  description: Install Nginx and overwrite the distro default site. Changes restart Nginx (not reload).
+  description: Install Nginx and overwrite the distro default site. Set default_site to absent to disable it. Add more sites with the nginx-site Block. Changes restart Nginx (not reload).
   params:
     type: object
     properties:
@@ -12,6 +12,12 @@ spec:
         default: _
         pattern: "^[A-Za-z0-9*_.-]+( [A-Za-z0-9*_.-]+)*$"
         maxLength: 253
+      default_site:
+        type: string
+        title: Default site
+        description: present enables the default site, absent disables it (removes the link in sites-enabled).
+        enum: [present, absent]
+        default: present
   resources:
     - package:
         name: nginx
@@ -30,9 +36,14 @@ spec:
         mode: "0644"
         owner: root
         group: root
+    - symlink:
+        path: /etc/nginx/sites-enabled/default
+        target: /etc/nginx/sites-available/default
+        state: "{{ .default_site }}"
     - service:
         name: nginx
         state: running
         enabled: true
         restart_on:
           - file:/etc/nginx/sites-available/default
+          - symlink:/etc/nginx/sites-enabled/default

@@ -29,7 +29,7 @@ func compile(t *testing.T, typ Type) *jsonschema.Schema {
 }
 
 func TestTypeTable(t *testing.T) {
-	want := []string{"directory", "file", "package", "service", "user"}
+	want := []string{"directory", "file", "package", "service", "symlink", "user"}
 	if got := Names(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
@@ -102,6 +102,14 @@ func TestSchemas(t *testing.T) {
 		{"user", `{"name":"-x"}`, false},
 		{"user", `{"name":"deploy","ssh_keys":["command=\"x\" ` + key + `"]}`, false}, // no key options
 		{"user", `{"name":"deploy","password":"x"}`, false},                           // no passwords in the slice
+		{"symlink", `{"path":"/etc/nginx/sites-enabled/app","target":"../sites-available/app"}`, true},
+		{"symlink", `{"path":"/usr/local/bin/tool","target":"/opt/tool/bin/tool","state":"present"}`, true},
+		{"symlink", `{"path":"/etc/nginx/sites-enabled/app","state":"absent"}`, true},
+		{"symlink", `{"path":"/etc/nginx/sites-enabled/app"}`, false},       // present needs a target
+		{"symlink", `{"path":"/etc/x","target":""}`, false},                 // empty target
+		{"symlink", `{"path":"/etc/x","target":"a\u0000b"}`, false},         // NUL in target
+		{"symlink", `{"path":"/etc/../x","target":"y"}`, false},             // no ".." in the path
+		{"symlink", `{"path":"/etc/x","target":"y","owner":"root"}`, false}, // unknown attribute
 	}
 	schemas := map[string]*jsonschema.Schema{}
 	for _, tt := range tests {
