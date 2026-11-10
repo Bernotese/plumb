@@ -50,6 +50,10 @@ type Proposal struct {
 	// Reenroll lists targets that get a new enrollment token and a
 	// restart (D-038). Their agents may be offline.
 	Reenroll []string `json:"reenroll,omitempty"`
+	// Notes are warnings of the Plan that come from its origin, for
+	// example the secrets that an import wrote (D-095). They stay with the
+	// stored proposal, also when the Plan is dropped.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // Input is a request to plan.

@@ -43,6 +43,12 @@ var ErrSecretChanged = errors.New("a secret changed or is gone since the Plan")
 // checkSecrets returns a MissingSecretsError for the references of the
 // targets that do not exist, or nil.
 func (e *Engine) checkSecrets(ctx context.Context, set *state.Set, targets []string) error {
+	return e.checkSecretsPresent(ctx, set, targets, nil)
+}
+
+// checkSecretsPresent is checkSecrets with names that count as existing
+// (the secrets that an import creates).
+func (e *Engine) checkSecretsPresent(ctx context.Context, set *state.Set, targets, present []string) error {
 	var refs []state.SecretRef
 	owner := map[int]string{}
 	for _, t := range targets {
@@ -61,6 +67,9 @@ func (e *Engine) checkSecrets(ctx context.Context, set *state.Set, targets []str
 	have, err := e.versions(ctx, names)
 	if err != nil {
 		return err
+	}
+	for _, n := range present {
+		have[n] = 0
 	}
 	missing := map[string]bool{}
 	var errs state.Errors
