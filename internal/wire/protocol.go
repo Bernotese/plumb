@@ -56,12 +56,23 @@ type ObserveBody struct {
 	Resources []Resource `json:"resources"`
 }
 
-// ApplyBody asks the agent to converge the resources of an approved Plan.
-// The agent observes again and refuses every change above MaxRisk.
+// ApplyBody asks the agent to apply the approved Plan on one target.
+// The agent observes again. It changes a resource only as far as Planned
+// allows (D-075), and never above MaxRisk.
 type ApplyBody struct {
-	PlanID    int64      `json:"plan_id"` // Plan, Run and Issue ids are integers everywhere
-	Resources []Resource `json:"resources"`
+	PlanID    int64      `json:"plan_id"`   // Plan, Run and Issue ids are integers everywhere
+	Resources []Resource `json:"resources"` // the full desired list of the target
+	Planned   []Planned  `json:"planned"`   // what the approved Plan shows for this target
 	MaxRisk   Risk       `json:"max_risk"`
+}
+
+// Planned is the approved change of one resource.
+type Planned struct {
+	Resource string   `json:"resource"`
+	Changes  []Change `json:"changes,omitempty"`
+	// Unverified: nobody observed the resource (new target, D-066).
+	// Only MaxRisk limits it.
+	Unverified bool `json:"unverified,omitempty"`
 }
 
 // WatchBody sets the full desired list of the target. The agent stores it
@@ -108,7 +119,7 @@ const (
 	StatusRunning   Status = "running"   // progress: apply started
 	StatusApplied   Status = "applied"   // apply made the Changes
 	StatusFailed    Status = "failed"    // apply or observe failed, see Output
-	StatusRefused   Status = "refused"   // a change is above max_risk; nothing was applied
+	StatusRefused   Status = "refused"   // the difference is not in the approved Plan, or a change is above max_risk; nothing of this resource was applied
 	StatusSkipped   Status = "skipped"   // an earlier resource of the same Block failed
 )
 

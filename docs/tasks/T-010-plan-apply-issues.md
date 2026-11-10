@@ -32,5 +32,14 @@ A proposal becomes a Plan, an approved Plan becomes a Revision and a Run, and dr
 
 ## Plan (architect, optional)
 
+## Notes
+- From the T-009 review (nit 9): a command that link dequeued but could not deliver is lost. The Run fails its steps after the apply timeout; the user plans again (D-067).
+
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-backend/T-010-plan-apply-issues` · tests: `make lint test build` → pass locally; `-race` runs in CI.
+- plan: Propose (touched targets only, D-065; new target unverified, D-066; create-only refused), Approve (check func, one-tx stale check + revision + run), Run (targets in parallel, guest step, wait, apply, watch; events per step, D-067), re-enroll (D-069), CheckGuests/PollGuests, `Sensitive` from the head render.
+- issue: Intake (one Issue per target+resource, gone), Resolve revert/accept (D-068), PlanDone.
+- store: plans, runs, steps, issues, bindings; ApprovePlan in one transaction.
+- Tests use driver/fake + the real link + `link/linktest` (a fake agent that speaks the wire protocol): create → approve → apply → drift → revert, accept, gone, offline, create-only, stale, failed target, restart change, re-enroll after token expiry, guest drift, no secret in DB/events also after a controller restart.
+- Review fixes: `Engine.Recover` at start (B1); D-075 controller side, re-enroll = watch only (B2; wire commit 56e0a68 for T-018); targets reserved per Run, `ErrTargetBusy` (M1); m1–m4; no watch on `hello` while a Run works on the target. QA PR #16 merged; step writes survive a cancel.
+- **Waits for T-018:** the same flow test with the real agent code (`internal/agent`) instead of `linktest`; `Resource.Sensitive` lists come with the secret store, so the head-revision source of D-062 is tested only with empty lists.
