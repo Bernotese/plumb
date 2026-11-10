@@ -26,22 +26,24 @@ Plumb has a reviewed architecture that respects D-001 … D-017, and a first set
 - Detailed design of later features (image rebuild schedule, Compose block, MCP, backups). Name them in a roadmap list only.
 
 ## Plan (architect, optional)
-First slice = cards T-003 … T-015, all "proposed". Cards in one wave can run in parallel.
+First slice = cards T-003 … T-015, T-017, T-018, all "proposed". (T-016 is the rework card.) One row = one agent works top to bottom.
 
-| Wave | Cards | Needs |
-|---|---|---|
-| 0 | T-003 scaffold + contracts | T-002 verdict + user approval |
-| 1 | T-004 state/store · T-005 agent/resources · T-006 UI (mock API) · T-007 guest harness · T-008 starter blocks · T-009 link/events/fake driver · T-012 Proxmox VM driver | T-003 only |
-| 2 | T-010 plan/apply/issues · T-013 minimal installer | T-004 + T-005 + T-009 · T-012 |
-| 3 | T-011 API/auth/events | T-010 |
-| 4 | T-014 UI on the real API · T-015 slice acceptance | T-006 + T-011 · T-014 (+ T-012, T-013 for the real host) |
+| Agent | Wave 0 | Wave 1 | Wave 2 | Wave 3 |
+|---|---|---|---|---|
+| pl-architect | T-003 Go scaffold + contracts | review of T-017 contract | – | – |
+| pl-frontend | T-017 OpenAPI + web skeleton | T-005 resources → T-018 agent loop | T-006 UI (mock API) | T-014 UI on the real API |
+| pl-backend | – | T-004 state/store → T-009 link/events/fake driver | T-010 plan/apply/issues → T-011 API/auth | host track |
+| pl-codex-qa | – | T-007 guest harness | tests for merged cards | T-015 slice acceptance |
+| pl-codex-fix | – | T-008 starter blocks | review findings | review findings |
+| pl-reviewer | – | reviews only | reviews only | reviews only |
 
-- Backend is the bottleneck: T-004, T-009, T-010, T-011, T-012, T-013 are backend cards. T-005 goes to `pl-reviewer` as fallback implementer; `pl-architect` reviews it.
-- T-012 and T-013 need the Proxmox test host (ARCHITECTURE §8, question 1). All other cards need no Proxmox.
-- Facts to verify on the real host (in T-012/T-013): `cicustom` and LXC `env` work with the restricted token; `hookscript` stays root-only; `download-url` works with `Sys.AccessNetwork`.
+- Critical path: T-003 → (T-004 → T-009) and (T-005 → T-018) → T-010 → T-011 → T-014 / T-015. Both wave-1 chains have about the same length.
+- `pl-frontend` writes the guest side (T-005, T-018) because the UI is not on the critical path before T-011. `pl-backend` writes the controller side. Both code against the T-003 contracts.
+- Host track (not on the critical path, needs the Proxmox test host): T-013 installer → T-012 Proxmox driver → real-host part of T-015. Owner `pl-backend` after T-011. If the host exists earlier, `pl-lead` can give T-013 (M) to a free Claude agent.
+- Facts to verify on the real host (T-013, T-012): `cicustom vendor=` and `smbios1 serial=` work with the restricted token; the token cannot write snippets; `hookscript` stays root-only; `download-url` works with `Sys.AccessNetwork`; `import-from` works from the image storage; reboot after enrollment works; LXC `env` works with the token (later, LXC card).
 
 ## Result (owner, max 8 lines)
 T-001 done · branch `pl-architect/T-001-architecture` · tests: none (docs only; no code allowed)
-- `docs/ARCHITECTURE.md` (§1–11), decisions D-018 … D-035, cards T-003 … T-015 (proposed).
+- `docs/ARCHITECTURE.md` (§1–11), decisions D-018 … D-039, cards T-003 … T-015, T-017, T-018 (proposed). Reworked in T-016.
 - Proxmox facts checked against the public PVE 9.2 API schema, not against a real host.
 - Five questions for the user are in ARCHITECTURE §11. Question 1 (test host) blocks T-012/T-013.

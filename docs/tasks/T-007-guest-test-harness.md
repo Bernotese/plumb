@@ -1,7 +1,7 @@
 # T-007 – Guest test harness
 
 - **Owner:** pl-codex-qa   · **Reviewer:** pl-reviewer   · **QA:** –
-- **Size:** S (Codex)   · **Depends on:** T-003   · **Parallel with:** T-004 … T-006, T-008, T-009, T-012
+- **Size:** S (Codex)   · **Depends on:** T-003   · **Parallel with:** T-004, T-005, T-008
 - **Status:** proposed (do not start before the user approves the architecture)
 
 ## Goal

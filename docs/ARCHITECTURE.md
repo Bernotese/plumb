@@ -20,22 +20,22 @@ Reasons for each choice: `docs/DECISIONS.md` D-018 … D-035. Terms: `docs/BRIEF
 - Storage: SQLite in WAL mode, pure-Go driver, plain SQL, forward-only migrations (D-020).
 
 ## 2. Components (`internal/<package>`)
-| Package | Job |
-|---|---|
-| `state` | Documents, JSON Schema validation, Block rendering, revision diff, export/import |
-| `store` | SQLite access and migrations. The only package that imports `database/sql` |
-| `plan` | Proposal → Plan → approval → Revision → Run. Risk classes |
-| `issue` | Drift intake, issues, resolve actions, ignore rules |
-| `link` | Agent listener, Plumb CA, enrollment, command queue |
-| `driver` | `Driver` interface. `driver/proxmox` (own thin REST client) and `driver/fake` (D-029) |
-| `secret` | Encrypted secret store |
-| `event` | Append-only event log and subscriptions |
-| `api` | HTTP handlers, sessions, API tokens, SSE, static UI |
-| `resource` | `Resource` interface, one file per type, one JSON Schema per type |
-| `agent` | Agent loop: enroll, poll, apply, watch |
-| `wire` | Message types shared by controller and agent |
+| Package | Job | May import (plus `wire`) |
+|---|---|---|
+| `api` | HTTP handlers, sessions, API tokens, SSE, static UI | `plan`, `issue`, `state`, `secret`, `event` |
+| `plan` | Proposal → Plan → approval → Revision → Run. Risk classes | `state`, `link`, `driver`, `secret`, `event`, `store` |
+| `issue` | Drift intake, issues, resolve actions, ignore rules | `plan`, `state`, `event`, `store` |
+| `state` | Documents, JSON Schema validation, Block rendering, revision diff, export/import | `resource` (schemas), `store` |
+| `link` | Agent listener, Plumb CA, enrollment, command queue | `event`, `store` |
+| `driver` | `Driver` interface. `driver/proxmox` (own thin REST client) and `driver/fake` (D-029) | – |
+| `secret` | Encrypted secret store | `store` |
+| `event` | Append-only event log and subscriptions | `store` |
+| `store` | SQLite access and migrations. The only package that imports `database/sql` | – |
+| `resource` | `Resource` interface, one file per type, one JSON Schema per type | – |
+| `agent` | Agent loop: enroll, poll, apply, watch | `resource` |
+| `wire` | Message types shared by controller and agent | – |
 
-Import rule: `api → plan, issue → state, link, driver → store, event`. `agent → resource, wire`. `resource` and `wire` import no controller package. Only `driver/proxmox` talks to Proxmox.
+There are two seams (D-005): `Driver` for Proxmox in the controller, `Resource` for the guest in the agent. Only `driver/proxmox` talks to Proxmox.
 ```go
 type Resource interface {            // internal/resource – runs in the agent
     Observe(ctx) (State, error)      // read the real state
@@ -45,8 +45,9 @@ type Resource interface {            // internal/resource – runs in the agent
 }
 type Driver interface {              // internal/driver – runs in the controller
     FetchImage(ctx, ImageSpec) (ImageRef, error)       // download, verify, make template
-    Create(ctx, GuestSpec, Bootstrap) (GuestID, error) // clone + enrollment data
+    Create(ctx, GuestSpec, Bootstrap) (GuestID, error) // clone, set the enrollment token, start
     Observe(ctx, GuestID) (GuestState, error)          // config, config digest, power, IPs
+    Diff(desired GuestSpec, observed GuestState) []Change // pure; sets the risk of each change
     Update(ctx, GuestID, []Change) error; Power(ctx, GuestID, Action) error; Delete(ctx, GuestID) error
 }
 ```
@@ -73,8 +74,9 @@ spec:
   overrides: {}                      # resource id → attributes. Used by "Accept" and raw mode
 ```
 - The controller **renders** each Target to a flat resource list. A resource id is `type:key` (for example `file:/etc/motd`). Two resources with the same id on one target are an error.
-- A field that is exactly one `{{ .x }}` keeps the type of the parameter. Per resource: `when` (condition) and `each` (loop). A Block can include Blocks with `uses`.
-- Order: resources of one Block apply in the listed order. Different Blocks apply in parallel. A Block can name `after: [block]`.
+- Block values are Go `text/template` strings over the parameters. Rendering has a time limit and a size limit. Conditions, loops, Block includes and typed values come only when a real Block needs them (§10).
+- Order: resources of one Block apply in the listed order. Different Blocks apply in parallel. Package-manager operations share one lock per guest.
+- Restart: `service` has `restart_on: [resource ids]`. When a listed resource changes, the agent adds a `restart` change (risk `disruptive`) to the service and applies it after them. The Plan shows this change.
 - Each resource type states its target kinds (`vm`, `lxc`). The Proxmox settings of a target are one resource, `guest:config`. The driver handles it, not the agent. So plans and issues have one shape for both levels.
 - Tables: `doc`, `revision`, `revision_doc`, `plan`, `run`, `run_step`, `issue`, `agent`, `enroll_token`, `event`, `secret`, `user`, `session`, `api_token`.
 
@@ -106,30 +108,35 @@ Contract: `api/openapi.yaml` (OpenAPI 3.1, written first). Errors are `applicati
 | `POST /enroll` `{token, hostname, version}` → `{agent_id, credential}` | Once per agent |
 | `GET /poll?wait=30` → `204` or `{id, type, body}` | Long poll. Types: `observe`, `apply`, `watch`, `update`, `seal` |
 | `POST /report` `{type, command_id, items[]}` | Types: `result`, `progress`, `drift`, `hello` |
-| `GET /binary` | Agent binary for install and update (with SHA-256) |
+| `GET /binary` | Agent binary for install and update. The pinned TLS link protects it |
 
 - The agent always dials out. A guest needs no open port. A target is online when it polled in the last 90 s.
 - Port 8444 uses a certificate from the **Plumb CA** (made at first start). Agents pin this CA. Port 8443 can use any certificate.
 - Enrollment token: random 256 bit, bound to one target, single use, valid 15 minutes, stored as a hash.
-- **VM:** Proxmox cloud-init sets network and bootstrap user. One vendor-data snippet (`cicustom vendor=`) holds CA, URL, token and the install command. The controller writes the snippet to a directory that the installer mounts into its LXC. The Proxmox API cannot upload snippets.
+- **VM:** Proxmox cloud-init sets network and bootstrap user. `cicustom vendor=` points to one static snippet. The installer writes it once: root-owned, the same for all VMs, never deleted. It holds the CA, the URL and the install command, and no secret. The controller cannot write snippets and has no host mount. The token is the SMBIOS serial of the VM (`smbios1`). The agent reads it from `/sys/class/dmi/id/product_serial` (root only).
+- After enrollment the agent disables cloud-init (`/etc/cloud/cloud-init.disabled`). So a later change of the cloud-init data cannot run first-boot steps again.
 - **LXC:** the agent is in the template. The controller sets the token with the `env` option of the container before the first start. The agent reads it from `/proc/1/environ`. The controller then removes the option.
 - After enrollment the agent sends a per-agent credential (random 256 bit, file mode 0600, stored as a hash) on every call. `seal` deletes it.
+- Re-enrollment (token expired, credential lost): `POST /api/v1/targets/{name}/reenroll` creates a Plan. It sets a new token and restarts the guest (risk `disruptive`).
 
 ## 6. Drift (D-028)
 - The same agent binary and the same mechanism run in VMs and LXCs. The agent keeps the desired resource list on disk, so it also checks while the controller is away.
-- Fast path: inotify on the parent directory of every `Watch()` path. This includes `/var/lib/dpkg/status` (packages), `/etc/passwd`, `/etc/group` and unit directories. After a 2 s debounce the agent observes only the affected resources.
+- Fast path: inotify on the parent directory of every `Watch()` path. This includes `/var/lib/dpkg/status` (packages), `/etc/passwd`, `/etc/group` and unit directories. After a 2 s debounce the agent observes only the affected resources. The agent ignores events from its own apply and observes again after it.
 - Slow path: a full check every 15 minutes. It covers what has no file event: service state, sysctl, firewall rules. Strictness is part of `Diff` (for example package `present` or `exact`), so the agent sends no noise.
 - LXC differences: an unprivileged container cannot change kernel settings. `sysctl` (non-namespaced keys) and kernel modules are VM-only. Proxmox owns hostname and network of a container, so they belong to `guest:config`. Enrollment differs (§5).
 - Proxmox level: the controller reads each guest config every 60 s. It compares only managed keys, and only when the config digest changed.
 - A drift report opens one Issue per target and resource. Plumb never reverts or accepts by itself. "Accept" writes an override into the Target (new revision).
 
 ## 7. Security (D-030 … D-032)
-- **Trust boundaries:** client ↔ controller, controller ↔ Proxmox, controller ↔ agent, guest ↔ guest. The controller is the root of trust: it has root in every managed guest. It has no root on the Proxmox host.
+- **Trust boundaries:** client ↔ controller, controller ↔ Proxmox, controller ↔ agent, guest ↔ guest. The controller is the root of trust: it has root in every managed guest. It has no root on the Proxmox host and no host directory.
 - **Agents:** a credential is valid for one target only. Agent reports are untrusted input: size limits, schema check, escaped in the UI. An agent accepts commands only over the pinned TLS link.
-- **Proxmox token:** user `plumb@pve`, token with privilege separation, custom role `Plumb`. Scope: pool `plumb` (`VM.Allocate`, `VM.Audit`, `VM.Clone`, `VM.Config.*`, `VM.PowerMgmt`), the chosen storages (`Datastore.AllocateSpace`, `Datastore.AllocateTemplate`, `Datastore.Audit`), the chosen bridge (`SDN.Use`), the node (`Sys.Audit`, `Sys.AccessNetwork`). No `Sys.Modify`, no `Permissions.Modify`, no console, no guest-agent rights. The controller LXC is not in the pool, so Plumb cannot change itself or foreign guests.
-- **Secrets:** AES-256-GCM. The master key is a file outside the database (mode 0600). The API can write secrets but never read them. Documents hold references (`secret: name`). Diffs, logs and events mask them. The export holds secrets only when the user gives a passphrase.
-- **Humans:** local users, argon2id, session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`), origin check, login rate limit. **API token tiers:** `read` < `plan` (propose, comment) < `apply` (approve up to the `max_risk` of the token, at most `disruptive`) < `admin`. Only a human session approves `destructive` Plans and manages tokens, secrets and import.
-- **`command` resource:** always at least `disruptive`, marked "cannot detect drift" in every Plan. **Installer:** runs once as root on the host. It creates role, user, token, pool, snippet directory and the LXC. It verifies the tarball checksum and stores the token only inside the LXC.
+- **Enrollment token:** it is visible in the guest config (`VM.Audit`) and to root in the guest until the next restart. This is acceptable: single use, 15 minutes.
+- **Proxmox token:** user `plumb@pve`, token with privilege separation, custom role `Plumb`. Scope: pool `plumb` (`VM.Allocate`, `VM.Audit`, `VM.Clone`, `VM.Config.*`, `VM.PowerMgmt`); disk storage (`Datastore.AllocateSpace`, `Datastore.Audit`); image storage (`Datastore.AllocateTemplate`, `Datastore.Audit`); snippet storage `plumb-snippets` (`Datastore.Audit` only, content `snippets` only); one bridge (`SDN.Use`); the node (`Sys.Audit`, `Sys.AccessNetwork`). No `Sys.Modify`, no `Permissions.Modify`, no `Pool.Allocate`, no console, no guest-agent rights. The controller LXC is not in the pool, so Plumb cannot change itself or foreign guests. TLS to Proxmox trusts the `pve-root-ca.pem` of the host (the installer copies it) or the system roots.
+- **Secrets:** AES-256-GCM. The API can write secrets but never read them. Documents hold references (`secret: name`). An attribute with a secret value is `sensitive`: the agent reports only a hash of it, so Plans, Issues and events never hold the value. "Accept" is not offered for it. The agent stores its desired list with mode 0600. The master key is a file on its own volume with `backup=0`, so a backup of the LXC holds the database without the key. A restore needs the recovery key. The export holds secrets only when the user gives a passphrase.
+- **Humans:** local users, argon2id, session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`), origin check, login rate limit, forced password change at first login.
+- **API token tiers:** `read` < `plan` (propose, comment) < `apply` (approve up to the `max_risk` of the token, at most `disruptive`) < `admin`. Only a human session approves `destructive` Plans and manages tokens, secrets and import.
+- **Warning:** an `apply` token is root-equivalent on the guests (a `file`, `user` or `service` change can give root). The tiers limit data loss, not privilege. The `command` resource is always `destructive`, so only a human approves it. Every Plan marks it "cannot detect drift".
+- **Installer:** runs once as root on the host. It creates role, user, token, pool, the snippet storage with the static snippet, and the LXC. It verifies the tarball checksum and stores the token only inside the LXC.
 
 ## 8. Test strategy (D-034)
 | Level | How | Needs |
@@ -139,23 +146,24 @@ Contract: `api/openapi.yaml` (OpenAPI 3.1, written first). Errors are `applicati
 | Slice | Real controller + `driver/fake` + in-process agent: create, apply, drift, issue | `make test` |
 | Proxmox client | Replay of recorded API answers (`testdata/pve`, tokens removed) | `make test` |
 | UI | Vitest for components, Playwright against `plumb serve --dev`, `browser-shot` in every UI PR | Node |
-| Real host | Installer, token scope, image import, cloud-init snippet, clone, enrollment, guest drift | `make test-pve` |
+| Real host | Installer, token scope (negative checks), image import, snippet, clone, enrollment, reboot, guest drift | `make test-pve` |
 
-Only the real-host level needs Proxmox. It is not part of CI. The suite runs inside the Plumb LXC on the test host, because the snippet directory exists only there. **The user must provide:** a test host with Proxmox VE ≥ 9.1 (a nested VM is fine); root SSH for the one-time install; a storage with ≥ 30 GB; a bridge with DHCP or 5 free addresses; internet access from the host; permission to create and delete guests in pool `plumb-test`, VMID 9000–9099; a route from the dev VM to the host.
+Only the real-host level needs Proxmox. It is not part of CI. **The user must provide:** a test host with Proxmox VE ≥ 9.1 (a nested VM is fine); root SSH for the one-time install; a storage with ≥ 30 GB; a bridge with DHCP or 5 free addresses; internet access from the host; permission to create and delete guests in pool `plumb-test`, VMID 9000–9099; a route from the dev VM to the host.
 
 ## 9. Conventions, layout, how to run (D-033, D-035)
 - Layout: `cmd/plumb`, `cmd/plumb-agent` (flags only) · `internal/<package>` (§2, tests next to the code) · `api/openapi.yaml` · `blocks/*.yaml` (embedded) · `web/` (`web/dist` is embedded) · `install/install.sh` · `test/` (guest and real-host harness).
 - Go: `gofmt`, `go vet`, `staticcheck`, `CGO_ENABLED=0`, `log/slog`, wrapped errors, `context` first, table tests. No `util` package.
 - Go dependencies (a new one needs a decision line): `modernc.org/sqlite`, `go.yaml.in/yaml`, `santhosh-tekuri/jsonschema`, `golang.org/x/crypto`, `golang.org/x/sys`. No web framework, no ORM, no Proxmox SDK.
-- Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types.
-- Run: `make build` (UI + both binaries) · `make test` · `make lint` · `make test-guest` · `make test-pve` · `bin/plumb serve --dev` (fake driver, simulated agents, plain HTTP, seeded data; for development and screenshots only).
+- Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types. Web dependencies (same rule): `svelte`, `vite`, `typescript`, `openapi-typescript`, `vitest`, `@playwright/test`, and the lint tools.
+- Run: `make build` (UI + both binaries) · `make test` · `make lint` · `make test-guest` · `make test-pve` · `bin/plumb serve --dev` (fake driver only, simulated agents, seeded data, plain HTTP with a cookie without `Secure`; for development and screenshots only).
 
 ## 10. Roadmap after the first slice (names only)
-Secret store UI · LXC targets · image builds with Blocks, seal, retention, schedule · full installer · export/import and backups · more resources · Docker Compose block · Block editor · ignore rules · API token UI · agent self-update · repair fallback (SSH) · MCP · AI help on issues.
+Secret store UI · LXC targets · image builds with Blocks, seal, retention, schedule · full installer · export/import and backups · more resources · `command` resource · template features (`when`, `each`, `uses`, `after`, typed values) · signed image checksums · Docker Compose block · Block editor · ignore rules · API token UI · agent self-update · repair fallback (SSH) · MCP · AI help on issues.
 
 ## 11. Open questions for the user (with recommendation)
+The decisions behind questions 2, 4 and 5 are marked "pending" in `docs/DECISIONS.md`.
 1. **Test host:** can you provide a Proxmox test host (§8)? Recommendation: a nested PVE VM used only for tests. Without it, the Proxmox driver and the installer stay untested.
 2. **Proxmox version:** is "PVE 9.1 or newer only" acceptable? Recommendation: yes. LXC enrollment needs the `env` option.
 3. **Exposure:** is the UI reachable only from the LAN? Recommendation: yes, with a certificate from the Plumb CA. A custom certificate comes later.
-4. **Master key:** a file inside the Plumb LXC (recommended; the installer prints a recovery key once), or a passphrase at every start?
+4. **Master key:** a key file on a volume that backups skip, plus a recovery key that the installer prints once (recommended), or a passphrase at every start?
 5. **UI stack:** Svelte 5 (recommended, less code) or React (more widely known)? Both fit the architecture.

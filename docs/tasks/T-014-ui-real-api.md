@@ -1,7 +1,7 @@
 # T-014 – UI on the real API
 
 - **Owner:** pl-frontend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
-- **Size:** M   · **Depends on:** T-006, T-011   · **Parallel with:** –
+- **Size:** M   · **Depends on:** T-006, T-011   · **Parallel with:** T-015
 - **Status:** proposed (do not start before the user approves the architecture)
 
 ## Goal
@@ -14,7 +14,7 @@ The UI works against the real controller.
 
 ## Acceptance criteria
 - [ ] Every screen of T-006 uses `/api/v1` of `plumb serve --dev`. The mock stays only in component tests.
-- [ ] Login, logout and an expired session work. The UI never stores a password or token in `localStorage`.
+- [ ] Login, forced password change, logout and an expired session work. The UI never stores a password or token in `localStorage`.
 - [ ] Live progress and the issue inbox update from the event stream without reload. A lost stream reconnects.
 - [ ] API errors show the problem title and detail.
 - [ ] The PR has `browser-shot` screenshots: create target → plan → run → issue → revert.
