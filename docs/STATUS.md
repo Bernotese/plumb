@@ -20,7 +20,7 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
 | T-025 slice 2 plan | pl-architect | merged (PR #32), reviewed. **Waits for user approval** and 4 answers (questions in the T-025 card) |
-| T-027 slice 2 API contract | pl-architect | draft PR allowed now; merge only after user approval |
+| T-027 slice 2 API contract | pl-architect | draft PR #33 (c0796e6): approved by pl-reviewer, CI green. **Merge only after user approval of T-025** |
 | T-028 … T-037 slice 2 part A (secrets, tokens, revisions, ignore, export/import, UI, QA) | see cards | wait for user approval and T-027 |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
