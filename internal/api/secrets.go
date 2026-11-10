@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -99,7 +99,7 @@ func secretBody(w http.ResponseWriter, r *http.Request) (string, bool) {
 	}
 	// encoding/json silently replaces invalid UTF-8 and lone surrogates
 	// with U+FFFD. A value must arrive exactly as sent, so refuse both.
-	if !utf8.Valid(raw) || strings.Count(*req.Value, "�") > replacementsSent(raw) || !secret.ValidValue(*req.Value) {
+	if !utf8.Valid(raw) || hasLoneSurrogateEscape(raw) || !secret.ValidValue(*req.Value) {
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
 			Detail: "value must be UTF-8 text of 1 to 65536 bytes.", Errors: []fieldError{{Pointer: "/value", Message: "UTF-8 text of 1 to 65536 bytes"}}})
 		return "", false
@@ -107,10 +107,38 @@ func secretBody(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return *req.Value, true
 }
 
-// replacementsSent counts the U+FFFD characters that the client really
-// sent: literal or as the escape �.
-func replacementsSent(raw []byte) int {
-	return bytes.Count(raw, []byte("�")) + bytes.Count(bytes.ToLower(raw), []byte(`�`))
+// encoding/json accepts lone surrogate escapes and replaces them with U+FFFD.
+func hasLoneSurrogateEscape(raw []byte) bool {
+	for i := 0; i+1 < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if raw[i+1] == '\\' {
+			i++
+			continue
+		}
+		if raw[i+1] != 'u' || i+6 > len(raw) {
+			continue
+		}
+		code, err := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
+		if err != nil {
+			continue
+		}
+		if code >= 0xDC00 && code <= 0xDFFF {
+			return true
+		}
+		if code >= 0xD800 && code <= 0xDBFF {
+			if i+12 > len(raw) || raw[i+6] != '\\' || raw[i+7] != 'u' {
+				return true
+			}
+			low, err := strconv.ParseUint(string(raw[i+8:i+12]), 16, 16)
+			if err != nil || low < 0xDC00 || low > 0xDFFF {
+				return true
+			}
+			i += 11
+		}
+	}
+	return false
 }
 
 func (s *Server) putSecret(w http.ResponseWriter, r *http.Request, p *principal) {
