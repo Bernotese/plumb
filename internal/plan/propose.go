@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 
@@ -156,6 +157,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	}
 	plans := make([]TargetPlan, len(names))
 	errs := make([]error, len(names))
+	binding := make([]bool, len(names)) // a resource gets a new secret (D-099)
 	var wg sync.WaitGroup
 	for i, t := range names {
 		wg.Add(1)
@@ -167,13 +169,22 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 				before, err := renderOrNil(base, t)
 				after, err2 := renderOrNil(next, t)
 				if errs[i] = errors.Join(err, err2); errs[i] == nil {
-					plans[i].SecretBinding = newBinding(before, after)
+					binding[i] = newBinding(before, after)
 				}
 			}
 		}()
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
+		return store.Plan{}, err
+	}
+
+	markIgnored(next.Rules(), plans)
+	humanOnly, err := humanOnlyReasons(base, in.Proposal)
+	if slices.Contains(binding, true) {
+		humanOnly = append(humanOnly, HumanOnlySecretBinding)
+	}
+	if err != nil {
 		return store.Plan{}, err
 	}
 
@@ -186,7 +197,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	proposal, _ := json.Marshal(in.Proposal)
 	changes, _ := json.Marshal(plans)
 	p, err := e.st.CreatePlan(ctx, store.Plan{
-		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, RollbackTo: in.RollbackTo, Proposal: proposal,
+		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, RollbackTo: in.RollbackTo, HumanOnly: humanOnly, Proposal: proposal,
 		Changes: changes, Risk: string(risk), Reason: in.Reason, Author: in.Author,
 	})
 	if err != nil {

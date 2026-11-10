@@ -25,9 +25,6 @@ type PlannedSecret struct {
 	Version int64  `json:"version"`
 }
 
-// HumanOnly reasons (D-099).
-const HumanSecretBinding = "secret-binding"
-
 // MissingSecretsError is returned by Propose when a touched target refers
 // to a secret that does not exist (422 with the pointers).
 type MissingSecretsError struct {
@@ -42,20 +39,6 @@ func (e *MissingSecretsError) Error() string {
 // ErrSecretChanged is wrapped when a Run meets a secret with another
 // version than planned, or a missing one.
 var ErrSecretChanged = errors.New("a secret changed or is gone since the Plan")
-
-// HumanOnly returns the reasons why only a human session may approve p.
-func HumanOnly(p store.Plan) []string {
-	var targets []TargetPlan
-	if json.Unmarshal(p.Changes, &targets) != nil {
-		return nil
-	}
-	for _, tp := range targets {
-		if tp.SecretBinding {
-			return []string{HumanSecretBinding}
-		}
-	}
-	return nil
-}
 
 // checkSecrets returns a MissingSecretsError for the references of the
 // targets that do not exist, or nil.

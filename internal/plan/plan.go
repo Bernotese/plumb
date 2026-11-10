@@ -77,9 +77,6 @@ type TargetPlan struct {
 	// Secrets are the secrets of the desired state of this target, with
 	// the versions that the Plan was made with (D-089).
 	Secrets []PlannedSecret `json:"secrets,omitempty"`
-	// SecretBinding: a resource gets a secret that it did not get in the
-	// render of the base revision, so only a human approves (D-099).
-	SecretBinding bool `json:"secret_binding,omitempty"`
 }
 
 // ResourceChange is the planned change of one resource.

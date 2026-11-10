@@ -162,7 +162,7 @@ func stableNames(v any, names map[string]bool) {
 	}
 }
 
-func sortedKeys(m map[string]bool) []string {
+func sortedNames(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
@@ -176,7 +176,7 @@ func sortedKeys(m map[string]bool) []string {
 func ResourceSecrets(r wire.Resource) []string {
 	names := map[string]bool{}
 	stableNames(r.Attrs, names)
-	return sortedKeys(names)
+	return sortedNames(names)
 }
 
 // SecretNames returns the names of all secrets in a render, sorted.
@@ -185,7 +185,7 @@ func SecretNames(r *Rendered) []string {
 	for _, res := range r.All() {
 		stableNames(res.Attrs, names)
 	}
-	return sortedKeys(names)
+	return sortedNames(names)
 }
 
 // WithSecrets returns a deep copy of the resources with every marker

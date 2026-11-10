@@ -45,4 +45,4 @@ A Block parameter can take a secret. The value reaches the agent and nothing els
 - plan: `secrets.go` (resolve only for observe/apply/watch bodies, versions, stale, missing → 422, usage hook, `SecretChanged`).
 - api: views (`secrets`, `human_only`), approve check, `Proposal.targets`, 422 `secrets`. Slice, leaky agent, human-only (incl. rollback), version tests in `secretrefs_test.go`.
 - Starter Block `blocks/app-env.yaml`.
-- Open: move `secret-binding` onto T-032's stored `Plan.human_only` before merge (D-134).
+- `secret-binding` is in T-032's stored `Plan.human_only` (D-134); this branch merges `pl-reviewer/T-032-ignore-actions` and goes after T-032.

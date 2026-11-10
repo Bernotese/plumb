@@ -95,6 +95,9 @@ type Change struct {
 	// "changed"; no value and no hash of it leaves the guest (D-037).
 	Sensitive bool `json:"sensitive,omitempty"`
 	Risk      Risk `json:"risk"`
+	// Ignored is set only by the controller, in a Plan: a Rule ignores this
+	// drift (D-092). The Plan still applies it. An agent never sets it.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // Redact enforces the sensitive rule on changes that come from outside the
@@ -111,6 +114,7 @@ func Redact(sensitive []string, changes []Change) []Change {
 		if c.Sensitive || contains(sensitive, c.Attr) {
 			c = Change{Attr: c.Attr, Sensitive: true, Risk: c.Risk}
 		}
+		c.Ignored = false // only the controller marks a change as ignored (D-092)
 		out[i] = c
 	}
 	return out

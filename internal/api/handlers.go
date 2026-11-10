@@ -453,10 +453,11 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request, p *principa
 		if p.human() {
 			return nil
 		}
-		// Only a human approves a Plan that gives a secret to a new place (D-099).
-		if reasons := plan.HumanOnly(pl); len(reasons) > 0 {
+		// D-099: a Plan that changes a Rule (or binds a secret) is for a
+		// human approver only, whatever its risk.
+		if len(pl.HumanOnly) > 0 {
 			return &riskError{"human-required", "Human session required",
-				"This Plan is human-only (" + strings.Join(reasons, ", ") + "); no token can approve it."}
+				fmt.Sprintf("Only a human session can approve this Plan (%s).", strings.Join(pl.HumanOnly, ", "))}
 		}
 		risk := wire.Risk(pl.Risk)
 		if risk == wire.RiskDestructive {
