@@ -6,7 +6,7 @@ Product: **Plumb** – self-hosted infrastructure controller for a Proxmox homel
 ## Phase
 First slice: one VM, from an image, configured by the agent, drift as an issue. Secret store is not part of the slice.
 Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --dev --dev-demo` (simulated agents, no Proxmox).
-**The team is blocked on two user actions (see below).**
+**Slice 1 is blocked on two user actions (see below).** Meanwhile the team plans slice 2 (T-025).
 
 ## Tasks
 | Card | Owner | State |
@@ -19,6 +19,8 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-015 slice acceptance (HTTP) | pl-codex-qa | waits for T-018 on main; real-host part waits for the test host |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
+| T-025 slice 2 plan | pl-architect | running. Then review (pl-reviewer), then user approval. No feature code before that |
+| T-026 port lost QA crash test (PR #16) | pl-codex-qa | running |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
 
 Merge order when Docker works: #5 (real run, digest pins) → #8 → #13 → #21, #27 → T-015.
