@@ -298,3 +298,23 @@ func TestDevKey(t *testing.T) {
 		t.Fatalf("wrong key: %v", err)
 	}
 }
+
+// Review nit 4: a key file on the file system of the database gives a
+// warning at start; one on the key volume does not.
+func TestServeWarnsKeyOnDatabaseFS(t *testing.T) {
+	data := t.TempDir()
+	os.Mkdir(filepath.Join(data, "key"), 0o700)
+	secret.WriteKeyFile(defaultKeyFile(data), secret.NewKey())
+	var out, errOut bytes.Buffer
+	serve(context.Background(), []string{"--data", data}, &out, &errOut)
+	if !strings.Contains(errOut.String(), "backups hold it") {
+		t.Errorf("no warning: %q", errOut.String())
+	}
+	keyFile := filepath.Join(otherFS(t), "master.key")
+	secret.WriteKeyFile(keyFile, secret.NewKey())
+	errOut.Reset()
+	serve(context.Background(), []string{"--data", t.TempDir(), "--key-file", keyFile}, &out, &errOut)
+	if strings.Contains(errOut.String(), "backups hold it") {
+		t.Errorf("warning for a key on its own file system: %q", errOut.String())
+	}
+}
