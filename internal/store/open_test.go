@@ -118,6 +118,11 @@ func TestCommitRevision(t *testing.T) {
 	if err != nil || len(list) != 2 || list[0].ID != 2 {
 		t.Errorf("Revisions = %+v, %v", list, err)
 	}
+	for _, limit := range []int{0, -1} {
+		if list, _ := s.Revisions(ctx, 0, limit); len(list) != 1 || list[0].ID != 2 {
+			t.Errorf("Revisions with limit %d = %+v, want only the head", limit, list)
+		}
+	}
 	if list, _ := s.Revisions(ctx, 2, 10); len(list) != 1 || list[0].ID != 1 {
 		t.Errorf("Revisions before 2 = %+v", list)
 	}

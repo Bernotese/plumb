@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,19 @@ func TestValidateReferences(t *testing.T) {
 		wantErr(t, fixture(doc(KindBlock, "bad", `{"params":{"type":"object","properties":{"n":{"type":"integer","default":"x"}}},"resources":[{"file":{"path":"/x"}}]}`)),
 			"/spec/params/properties/n/default", "integer")
 	})
+	t.Run("use of an invalid block", func(t *testing.T) {
+		bad := doc(KindBlock, "bad", `{"resources":[{"file":{"path":"/x","content":"{{ print 1 }}"}}]}`)
+		docs := fixture(bad, target(`"blocks":[{"use":"bad"}]`))
+		wantErr(t, docs, "/spec/blocks/0/use", `Block "bad" is invalid (see its own errors)`)
+		_, err := Validate(docs)
+		if strings.Contains(err.Error(), "does not exist") {
+			t.Errorf("an invalid Block is reported as missing:\n%v", err)
+		}
+	})
+	t.Run("invalid image", func(t *testing.T) {
+		docs := []Doc{doc(KindImage, "img", `{"type":"vm","url":"http://x","sha256":"0"}`), target(`"blocks":[]`)}
+		wantErr(t, docs, "/spec/image", `Image "img" is invalid`)
+	})
 	t.Run("duplicate document", func(t *testing.T) {
 		wantErr(t, fixture(doc(KindBlock, "motd", motdB)), "", "twice")
 	})
@@ -273,6 +287,24 @@ func TestTemplateSandbox(t *testing.T) {
 	blk := doc(KindBlock, "typo", `{"params":{"type":"object","properties":{"text":{"type":"string","default":"a"}}},"resources":[{"file":{"path":"/x","content":"{{ .txt }}"}}]}`)
 	wantErr(t, fixture(blk, target(`"blocks":[{"use":"typo"}]`)), "/spec/blocks/0", "txt")
 
+	// Numbers have no methods in templates (D-050: never through float64).
+	num := doc(KindBlock, "num", `{"params":{"type":"object","properties":{"n":{"type":"number","default":2048.0}}},"resources":[{"file":{"path":"/x","content":"{{ .n.Float64 }}"}}]}`)
+	wantErr(t, fixture(num, target(`"blocks":[{"use":"num"}]`)), "/spec/blocks/0", "Float64")
+	for _, tmpl := range []string{`{{ .n.String }}`, `{{ $x := .n }}{{ $x.Int64 }}`, `{{ (index . "n").Float64 }}`, `{{ .s.Len }}`} {
+		m := doc(KindBlock, "num", `{"params":{"type":"object","properties":{"n":{"type":"number","default":1},"s":{"type":"string","default":"a"}}},"resources":[{"file":{"path":"/x","content":`+mustJSON(tmpl)+`}}]}`)
+		if _, err := Validate(fixture(m, target(`"blocks":[{"use":"num"}]`))); err == nil {
+			t.Errorf("%s: a method call on data must fail", tmpl)
+		}
+	}
+	numOK := doc(KindBlock, "num", `{"params":{"type":"object","properties":{"n":{"type":"number","default":2048.0},"l":{"type":"array","default":[1.50,2]}}},"resources":[{"file":{"path":"/x","content":"{{ .n }} {{ join \",\" .l }}"}}]}`)
+	set0, err := Validate(fixture(numOK, target(`"blocks":[{"use":"num"}]`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := set0.Render("t1"); r.Resources[0].Attrs["content"] != "2048 1.5,2" {
+		t.Errorf("numbers print in canonical form: %q", r.Resources[0].Attrs["content"])
+	}
+
 	// The allowed functions work.
 	fn := doc(KindBlock, "fn", `{"params":{"type":"object","properties":{"l":{"type":"array","default":["a","b"]},"s":{"type":"string","default":" Hi "}}},"resources":[{"file":{"path":"/x","content":`+
 		mustJSON(`{{ join "," .l }}|{{ upper (trim .s) }}|{{ replace "a" "b" "aa" }}|{{ default "d" "" }}|{{ len .l }}|{{ if eq (index .l 0) "a" }}y{{ end }}`)+`}}]}`)
@@ -332,4 +364,64 @@ func TestRenderLimits(t *testing.T) {
 	if err := renderLoop(t, `{{ range 1001 }}x{{ end }}`, Limits{Timeout: time.Second, MaxOutput: 1000}); !errors.Is(err, ErrRenderLimit) {
 		t.Fatalf("1001 bytes must not fit: %v", err)
 	}
+}
+
+// targets returns n Targets t00…, each using one Block.
+func manyTargets(n int, block string) []Doc {
+	var out []Doc
+	for i := 0; i < n; i++ {
+		out = append(out, doc(KindTarget, fmt.Sprintf("t%02d", i), `{"type":"vm","image":"img",`+guest+`,"blocks":[{"use":"`+block+`"}]}`))
+	}
+	return out
+}
+
+func countErrors(err error, target error) (n, all int) {
+	var es Errors
+	errors.As(err, &es)
+	for _, e := range es {
+		if errors.Is(e, target) {
+			n++
+		}
+	}
+	return n, len(es)
+}
+
+// D-052: the cost of one Validate does not grow with the number of Targets.
+func TestTotalRenderBudget(t *testing.T) {
+	t.Run("time", func(t *testing.T) {
+		slow := doc(KindBlock, "slow", `{"resources":[{"file":{"path":"/x","content":"{{ range 1000000000000 }}{{ end }}"}}]}`)
+		lim := Limits{Timeout: 200 * time.Millisecond, TotalTimeout: 300 * time.Millisecond}
+		start := time.Now()
+		_, err := ValidateWithLimits(fixture(append([]Doc{slow}, manyTargets(10, "slow")...)...), lim)
+		took := time.Since(start)
+		if n, _ := countErrors(err, ErrTotalBudget); n != 1 {
+			t.Fatalf("want exactly one total budget error, got %d:\n%v", n, err)
+		}
+		if !strings.Contains(err.Error(), "total render budget exceeded") {
+			t.Errorf("message does not name the total budget: %v", err)
+		}
+		if took < 250*time.Millisecond || took > time.Second {
+			t.Errorf("Validate took %v, want about 300ms", took)
+		}
+	})
+	t.Run("output", func(t *testing.T) {
+		// Each Target writes 992 bytes, just below its own limit of 1000.
+		big := doc(KindBlock, "big", `{"resources":[{"file":{"path":"/x","content":"{{ range 990 }}x{{ end }}"}}]}`)
+		lim := Limits{MaxOutput: 1000, TotalOutput: 3500}
+		_, err := ValidateWithLimits(fixture(append([]Doc{big}, manyTargets(10, "big")...)...), lim)
+		n, all := countErrors(err, ErrTotalBudget)
+		if n != 1 || all != 1 {
+			t.Fatalf("want one total budget error and nothing else, got %d of %d:\n%v", n, all, err)
+		}
+		if errors.Is(err, ErrRenderLimit) {
+			t.Errorf("a total budget error must not be a per-render limit error: %v", err)
+		}
+		if !strings.Contains(err.Error(), `"t03"`) {
+			t.Errorf("the fourth Target should hit the total: %v", err)
+		}
+		// Three Targets fit.
+		if _, err := ValidateWithLimits(fixture(append([]Doc{big}, manyTargets(3, "big")...)...), lim); err != nil {
+			t.Errorf("three Targets must fit: %v", err)
+		}
+	})
 }

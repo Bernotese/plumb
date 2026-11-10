@@ -319,10 +319,21 @@ type Set struct {
 	blocks  map[string]*block
 	targets map[string]*targetSpec
 	limits  Limits
+	// invalid holds documents that are in the input but have errors, so
+	// a reference to them is "invalid", not "does not exist".
+	invalid map[[2]string]bool
 }
 
 // Docs returns the documents of the set, ordered by kind and name.
-func (s *Set) Docs() []Doc { return append([]Doc(nil), s.docs...) }
+// Each Spec is a copy, so a caller cannot change the validated Set.
+func (s *Set) Docs() []Doc {
+	out := make([]Doc, len(s.docs))
+	for i, d := range s.docs {
+		d.Spec = append(json.RawMessage(nil), d.Spec...)
+		out[i] = d
+	}
+	return out
+}
 
 // Targets returns the names of all Targets, sorted.
 func (s *Set) Targets() []string {
@@ -340,13 +351,16 @@ func Validate(docs []Doc) (*Set, error) { return ValidateWithLimits(docs, Defaul
 
 // ValidateWithLimits is Validate with explicit render limits. The Set
 // keeps them for its Render calls.
+// A zero field of lim takes its value from DefaultLimits.
 func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
+	lim = lim.withDefaults()
 	sch := mustSchemas()
 	s := &Set{
 		images:  map[string]imageSpec{},
 		blocks:  map[string]*block{},
 		targets: map[string]*targetSpec{},
 		limits:  lim,
+		invalid: map[[2]string]bool{},
 	}
 	var errs Errors
 	seen := map[[2]string]bool{}
@@ -357,6 +371,7 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 			continue
 		}
 		seen[key] = true
+		s.invalid[key] = true // cleared below when the document is accepted
 		docSchema, ok := sch.docs[d.Kind]
 		if !ok {
 			errs = append(errs, &Error{Kind: d.Kind, Name: d.Name, Path: "/kind", Msg: "unknown document kind"})
@@ -379,18 +394,21 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 		}
 		var canon Doc
 		_ = json.Unmarshal(body, &canon)
+		if d.Kind == KindBlock {
+			b, berrs := parseBlock(d.Name, canon.Spec)
+			if len(berrs) > 0 {
+				errs = append(errs, berrs...)
+				continue
+			}
+			s.blocks[d.Name] = b
+		}
+		delete(s.invalid, key)
 		s.docs = append(s.docs, canon)
 		switch d.Kind {
 		case KindImage:
 			var spec imageSpec
 			_ = decode(canon.Spec, &spec)
 			s.images[d.Name] = spec
-		case KindBlock:
-			b, berrs := parseBlock(d.Name, canon.Spec)
-			errs = append(errs, berrs...)
-			if b != nil {
-				s.blocks[d.Name] = b
-			}
 		case KindTarget:
 			var spec targetSpec
 			_ = decode(canon.Spec, &spec)
@@ -403,17 +421,27 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 		}
 		return s.docs[i].Name < s.docs[j].Name
 	})
+	// One total budget for all Targets (D-052): the cost of a save or a
+	// load must not grow without bound with the number of Targets.
+	total := newTotal(lim)
 	for _, name := range s.Targets() {
 		if terrs := s.checkTarget(name); len(terrs) > 0 {
 			errs = append(errs, terrs...)
 			continue
 		}
-		if _, err := s.Render(name); err != nil {
+		if err := total.exhausted(); err != nil {
+			errs = append(errs, &Error{Kind: KindTarget, Name: name, Msg: err.Error(), Err: err})
+			break
+		}
+		if _, err := s.render(name, total); err != nil {
 			var es Errors
 			if errors.As(err, &es) {
 				errs = append(errs, es...)
 			} else {
 				errs = append(errs, &Error{Kind: KindTarget, Name: name, Msg: err.Error()})
+			}
+			if errors.Is(err, ErrTotalBudget) {
+				break // one error, not one per remaining Target
 			}
 		}
 	}
@@ -534,7 +562,7 @@ func (s *Set) checkTarget(name string) Errors {
 	}
 	var errs Errors
 	if img, ok := s.images[t.Image]; !ok {
-		errs = append(errs, errf("/spec/image", "Image %q does not exist", t.Image))
+		errs = append(errs, errf("/spec/image", "Image %q %s", t.Image, s.missing(KindImage, t.Image)))
 	} else if img.Type != t.Type {
 		errs = append(errs, errf("/spec/image", "Image %q is for %s, the Target is %s", t.Image, img.Type, t.Type))
 	}
@@ -549,7 +577,7 @@ func (s *Set) checkTarget(name string) Errors {
 		}
 		b, ok := s.blocks[use.Use]
 		if !ok {
-			errs = append(errs, errf(path+"/use", "Block %q does not exist", use.Use))
+			errs = append(errs, errf(path+"/use", "Block %q %s", use.Use, s.missing(KindBlock, use.Use)))
 			continue
 		}
 		var unknown []string
@@ -571,4 +599,12 @@ func (s *Set) checkTarget(name string) Errors {
 		}
 	}
 	return errs
+}
+
+// missing explains why a referenced document is not usable.
+func (s *Set) missing(kind, name string) string {
+	if s.invalid[[2]string{kind, name}] {
+		return "is invalid (see its own errors)"
+	}
+	return "does not exist"
 }

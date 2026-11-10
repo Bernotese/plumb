@@ -91,3 +91,44 @@ func TestCommitLoadDiff(t *testing.T) {
 		t.Error("commit of a nil set must fail")
 	}
 }
+
+// T-003 re-review criterion, end to end: a new spelling of the same number
+// is no document change in the store.
+func TestCommitNumberSpellingIsNoChange(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	commit := func(memory string) int64 {
+		t.Helper()
+		set, err := Validate([]Doc{
+			doc(KindImage, "img", image),
+			doc(KindTarget, "t1", `{"type":"vm","image":"img","guest":{"cores":1,"memory":`+memory+`,"disk":4,"bridge":"vmbr0"}}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := Commit(ctx, st, set, CommitInfo{Author: "system", Reason: memory})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.ID
+	}
+	r1 := commit("2048")
+	before, _ := st.RevisionDocs(ctx, r1)
+	r2 := commit("2048.0")
+	r3 := commit("2.048e3")
+	for _, r := range []int64{r2, r3} {
+		diff, err := st.Diff(ctx, r1, r)
+		if err != nil || len(diff) != 0 {
+			t.Errorf("Diff(%d, %d) = %+v, %v; want no change", r1, r, diff, err)
+		}
+		after, _ := st.RevisionDocs(ctx, r)
+		for i := range before {
+			if after[i].Hash != before[i].Hash {
+				t.Errorf("revision %d: %s %s got a new doc row", r, after[i].Kind, after[i].Name)
+			}
+		}
+	}
+	if d, _ := st.Diff(ctx, 0, r3); len(d) != 2 {
+		t.Errorf("sanity: Diff(0, r3) = %+v", d)
+	}
+}
