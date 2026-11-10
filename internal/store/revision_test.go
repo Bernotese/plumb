@@ -1,6 +1,12 @@
 package store
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"modernc.org/sqlite"
+	"modernc.org/sqlite/lib"
+)
 
 // Revisions share unchanged documents, but deleting either side must not
 // leave a revision with a dangling document reference (ARCHITECTURE §3).
@@ -18,20 +24,25 @@ func TestRevisionDocumentSharing(t *testing.T) {
 		}
 	}
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM revision_doc JOIN doc USING (hash)`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM doc`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Fatalf("shared document appears in %d revisions, want 2", count)
+	if count != 1 {
+		t.Fatalf("stored %d documents, want one shared document", count)
 	}
-	for _, query := range []string{
-		`DELETE FROM doc WHERE hash = 'shared'`,
-		`DELETE FROM revision WHERE id = 1`,
-		`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (1, 'Block', 'motd', 'shared')`,
-		`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (999, 'Block', 'motd', 'shared')`,
+	for _, tt := range []struct {
+		query string
+		want  int
+	}{
+		{`DELETE FROM doc WHERE hash = 'shared'`, sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY},
+		{`DELETE FROM revision WHERE id = 1`, sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY},
+		{`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (1, 'Block', 'motd', 'shared')`, sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY},
+		{`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (999, 'Block', 'motd', 'shared')`, sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY},
 	} {
-		if _, err := db.Exec(query); err == nil {
-			t.Errorf("expected constraint failure: %s", query)
+		_, err := db.Exec(tt.query)
+		var constraint *sqlite.Error
+		if !errors.As(err, &constraint) || constraint.Code() != tt.want {
+			t.Errorf("%s: got %v, want SQLite error code %d", tt.query, err, tt.want)
 		}
 	}
 }
