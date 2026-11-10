@@ -21,3 +21,25 @@ export type RunStep = S["RunStep"];
 export type Issue = S["Issue"];
 export type IssueAction = S["IssueAction"];
 export type PlumbEvent = S["Event"];
+export type StateDocument = S["Document"];
+export type DocumentRef = S["DocumentRef"];
+export type RevisionInfo = S["RevisionInfo"];
+export type RevisionDiff = S["RevisionDiff"];
+export type DocumentChange = S["DocumentChange"];
+/** One page of a list answer (`Page` with typed items). */
+export interface PageOf<T> {
+  items: T[];
+  next: string | null;
+}
+export type Token = S["Token"];
+export type TokenRequest = S["TokenRequest"];
+export type TokenCreated = S["TokenCreated"];
+export type Tier = S["Tier"];
+export type SecretInfo = S["SecretInfo"];
+export type ImportRequest = S["ImportRequest"];
+export type RuleView = S["RuleView"];
+export type RuleDoc = S["Rule"];
+export type ResolveRequest = S["ResolveRequest"];
+export type RuleScope = NonNullable<ResolveRequest["rule"]>;
+export type IgnoredDrift = S["IgnoredDrift"];
+export type TargetPlan = S["TargetPlan"];

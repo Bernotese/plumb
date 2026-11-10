@@ -1,0 +1,31 @@
+kind: Block
+name: app-env
+spec:
+  title: Application environment file
+  description: Write an environment file for an application. The password comes from a secret; Plumb never shows it.
+  params:
+    type: object
+    required:
+      - password
+    properties:
+      path:
+        type: string
+        title: File path
+        default: /etc/app.env
+        pattern: "^/[^ ]+$"
+      user:
+        type: string
+        title: Database user
+        default: app
+        pattern: "^[A-Za-z0-9_.-]{1,64}$"
+      password:
+        type: string
+        title: Database password (a secret)
+        writeOnly: true
+  resources:
+    - file:
+        path: "{{ .path }}"
+        content: "APP_USER={{ .user }}\nAPP_PASSWORD={{ .password }}\n"
+        mode: "0600"
+        owner: root
+        group: root
