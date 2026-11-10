@@ -14,13 +14,15 @@ Rules for every agent in this repo. Keep this file short; details live in `docs/
 ## Team (herdr workspace `plump`)
 | Agent | Model | Role | Typical work |
 |---|---|---|---|
-| `pl-lead` (tab ◆ Lead) | Claude | Orchestrator, only one who talks to the user | Task cards, routing, merges, STATUS |
-| `pl-architect` | Claude | Architecture + planning | ADRs, API/data contracts, task breakdown, scaffolding, research |
-| `pl-frontend` | Claude | Frontend engineer | UI, state, styling, accessibility – large features |
-| `pl-backend` | Claude | Backend engineer | API, DB, auth, jobs, infra – large features |
-| `pl-reviewer` | Claude | Review + security | Diff review, threat model, OWASP, secrets, deps; fallback implementer |
-| `pl-codex-qa` | Codex | QA | Tests (unit/e2e), bug repro, CI, acceptance checks |
-| `pl-codex-fix` | Codex | Fixer | Small targeted fixes, lint/type errors, refactors, `audit` scans, review findings |
+| `pl-lead` (tab ◆ Lead) | Claude Fable 5.2 (high) | Orchestrator, only one who talks to the user | Task cards, routing, merges, STATUS |
+| `pl-architect` | Claude Fable 5.2 (high) | Architecture + planning | ADRs, API/data contracts, task breakdown, scaffolding, research |
+| `pl-frontend` | Claude Opus 5.5 | Frontend engineer | UI, state, styling, accessibility – large features |
+| `pl-backend` | Claude Opus 5.5 | Backend engineer | API, DB, auth, jobs, infra – large features |
+| `pl-reviewer` | Claude Opus 5.5 | Review + security | Diff review, threat model, OWASP, secrets, deps; fallback implementer |
+| `pl-codex-qa` | Codex GPT-6.1-Sol (medium) | QA | Tests (unit/e2e), bug repro, CI, acceptance checks |
+| `pl-codex-fix` | Codex GPT-6-Luna (medium) | Fixer | Small targeted fixes, lint/type errors, refactors, `audit` scans, review findings |
+
+Model rationale: Fable (strongest, most expensive) only where decisions are made and output is small (lead, architect). Opus does the bulk output. Codex: Sol for test quality, Luna for cheap small fixes to save the Codex limit. If a fix is not trivial for Luna, route it to `pl-reviewer` or the implementer instead.
 
 ### Model split (budget rule)
 - The user has the large Claude plan. **Claude agents take the output-heavy work**: features, multi-file changes, plans, reviews.
