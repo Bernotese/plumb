@@ -6,14 +6,14 @@ Product: **Plumb** – self-hosted infrastructure controller for a Proxmox homel
 ## Phase
 First slice: one VM, from an image, configured by the agent, drift as an issue. Secret store is not part of the slice.
 Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --dev --dev-demo` (simulated agents, no Proxmox).
-The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI of `main` and are green (Debian 13, Ubuntu 26.04). The whole agent track of slice 1 is on `main` (#5, #8, #13, #21, #27). Open: T-015 acceptance, guest test follow-ups, T-042. **The Proxmox track is blocked on the test host.** **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
+The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI of `main` and are green (Debian 13, Ubuntu 26.04). The whole agent track of slice 1 is on `main` (#5, #8, #13, #21, #27). **Slice 1 is accepted without Proxmox** (T-015, PR #67: HTTP API + real agent). Open: guest test follow-ups, T-042, and everything on the real host. **The Proxmox track is blocked on the test host.** **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
 
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| Guest harness follow-ups from the run review (`docs/tasks/T-007.run-review.md`) | pl-codex-fix (1–3), pl-codex-qa (4–6) | 1–3 running; 4–6 after T-015 |
-| T-042 agent loop on a real guest | pl-codex-qa | after T-015 and the follow-ups 4–6 |
-| T-015 slice acceptance (HTTP) | pl-codex-qa | running: the part without Proxmox. Real-host part **blocked: test host** |
+| Guest harness follow-ups from the run review (`docs/tasks/T-007.run-review.md`) | pl-codex-fix (1–3), pl-codex-qa (4–6) | PR #66 (1–3): one must in work, then merge. PR #68 (4–6): CI running |
+| T-042 agent loop on a real guest | pl-codex-qa | after PR #68 |
+| T-015 slice acceptance, real-host part | pl-codex-qa | **blocked: test host** (the part without Proxmox is merged, PR #67) |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **blocked: test host**. Follow-up: key volume + `plumb key init` (D-086), see card |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
@@ -43,6 +43,7 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-028: secret store (PR #37), D-102 … D-109, D-130.
 - T-035 mock part: settings UI (PR #45).
 - T-034, T-035 e2e on the real API (PR #51).
+- T-015 part without Proxmox: slice 1 acceptance over HTTP with the real agent (PR #67).
 - T-021: flow test with the real agent, incl. slice 2 cases (PR #21).
 - T-022: agent drift flush survives a permanent 4xx (PR #27).
 - Review of the first real guest run (PR #65): harness, resources as root proven; gaps listed.
