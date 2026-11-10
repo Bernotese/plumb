@@ -79,8 +79,19 @@
     }
     busy = true;
     const sent = newValue;
-    newValue = ""; // never kept after the request
+    newValue = ""; // never kept after the request starts
     try {
+      // A new secret must not replace a live value (review #48 must): check
+      // a fresh list first. Replacing is the job of Settings → Secrets.
+      secrets = await api.listSecrets();
+      if (secrets.some((s) => s.name === newName)) {
+        own = {
+          "/name":
+            "A secret with this name exists. Choose it in the list. To replace its value, use Settings → Secrets.",
+        };
+        document.getElementById(`${id}-new-name`)?.focus();
+        return;
+      }
       const info = await api.putSecret(newName, sent);
       await load();
       value = info.name;

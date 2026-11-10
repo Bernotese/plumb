@@ -61,6 +61,9 @@ interface ObjectSchema {
 }
 
 function kindOf(p: Prop): FieldKind {
+  // A secret parameter wins over every other widget, also over an enum (QA T-036 F1).
+  const t = Array.isArray(p.type) ? p.type.find((x) => x !== "null") : p.type;
+  if (t === "string" && p.writeOnly === true) return "secret";
   if (Array.isArray(p.enum) && p.enum.every((e) => typeof e === "string")) return "enum";
   const type = Array.isArray(p.type) ? p.type.find((t) => t !== "null") : p.type;
   switch (type) {

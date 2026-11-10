@@ -142,6 +142,21 @@ describe("secret parameters (D-088)", () => {
   it("a writeOnly string is a secret field", () => {
     expect(fields.map((f) => f.kind)).toEqual(["secret", "secret", "text"]);
   });
+  it("writeOnly wins over an enum and never saves a literal (QA T-036 F1)", () => {
+    const f = fieldsOf({
+      properties: {
+        password: {
+          type: "string",
+          writeOnly: true,
+          enum: ["literal-example"],
+          default: "literal-example",
+        },
+      },
+    });
+    expect(f[0]?.kind).toBe("secret");
+    expect(initialValues(f)).toEqual({ password: "" });
+    expect(toParams(f, { password: "app-db" })).toEqual({ password: { secret: "app-db" } });
+  });
   it("reads a stored reference and never a literal or default", () => {
     expect(initialValues(fields, { db_password: { secret: "app-db" } })).toEqual({
       db_password: "app-db",

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import type { Issue, IssueAction } from "../lib/types";
@@ -34,7 +35,15 @@
     issue?.actions.includes("ignore_once") || issue?.actions.includes("ignore_rule"),
   );
 
+  let confirmIgnore = $state(false);
+  async function askIgnore() {
+    confirmIgnore = true;
+    await tick();
+    document.getElementById("ignore-confirm")?.focus();
+  }
+
   async function ignoreOnce() {
+    confirmIgnore = false;
     busy = true;
     actionError = null;
     try {
@@ -153,13 +162,35 @@
         <h3>Ignore</h3>
         {#if issue.actions.includes("ignore_once")}
           <div class="option">
-            <button class="btn" type="button" disabled={busy} onclick={ignoreOnce}>
-              Ignore once
-            </button>
-            <p class="muted">
-              Resolves this issue now, without a plan. The guest keeps its value until the next
-              apply. A new, different drift opens a new issue.
-            </p>
+            {#if confirmIgnore}
+              <div class="confirm" role="group" aria-labelledby="ignore-q">
+                <p id="ignore-q">
+                  <strong>Ignore this drift?</strong> The issue is resolved at once and no screen can
+                  undo it. The same drift opens no new issue until the resource matches again or a run
+                  applies it.
+                </p>
+                <div class="row">
+                  <button
+                    id="ignore-confirm"
+                    class="btn"
+                    type="button"
+                    disabled={busy}
+                    onclick={ignoreOnce}>Ignore this drift</button
+                  >
+                  <button class="btn" type="button" onclick={() => (confirmIgnore = false)}
+                    >Cancel</button
+                  >
+                </div>
+              </div>
+            {:else}
+              <button class="btn" type="button" disabled={busy} onclick={askIgnore}>
+                Ignore once
+              </button>
+              <p class="muted">
+                Resolves this issue now, without a plan. The guest keeps its value until the next
+                apply. A new, different drift opens a new issue.
+              </p>
+            {/if}
           </div>
         {/if}
         {#if issue.actions.includes("ignore_rule")}
@@ -222,6 +253,9 @@
   }
   .option p {
     margin: var(--space-1) 0 0;
+  }
+  .confirm p {
+    margin: 0 0 var(--space-2);
   }
   .choices {
     display: flex;
