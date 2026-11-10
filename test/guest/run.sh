@@ -3,8 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 tmp=$(mktemp -d)
 containers=()
+images=()
 cleanup() {
   for name in "${containers[@]}"; do docker rm -f "$name" >/dev/null 2>&1 || true; done
+  for image in "${images[@]}"; do docker rmi "$image" >/dev/null 2>&1 || true; done
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -15,6 +17,7 @@ CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/guest.test" ./test/gues
 for distro in debian:13 ubuntu:26.04; do
   image="plumb-guest-${distro//:/-}-$$"
   name="$image"
+  images+=("$image")
   docker build --build-arg "DISTRO=$distro" -t "$image" test/guest
   containers+=("$name")
   # Privileged mode gives systemd a writable private cgroup on cgroup v2.

@@ -30,6 +30,6 @@ Tests: `go test ./...`, `make lint-go`, `bash -n test/guest/run.sh`, `git diff -
 `make test-guest` compiles the guest binary, then fails on Docker socket access.
 Guest runs on both distributions, test failure propagation, and container cleanup remain pending.
 Docker access needs user action; no permission workaround attempted.
-Review fixes: private cgroup namespace, no host cgroup mount, Docker-only smoke-test guard,
-HUP cleanup, unique image tags, executable runner, and privilege/cache comments.
+Review fixes: private cgroups, no host cgroup mount, Docker-only guard fails loudly on the host.
+Cleanup removes containers and per-run image tags; HUP trap, executable runner, comments added.
 Pending: base-image digest pins and real guest/failure/interrupt/cleanup checks after Docker access.
