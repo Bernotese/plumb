@@ -57,7 +57,7 @@ func TestBootstrapAndLogin(t *testing.T) {
 	}
 	var ck *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == sessionCookie {
+		if c.Name == e.srv.cookieName() {
 			ck = c
 		}
 	}

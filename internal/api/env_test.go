@@ -151,7 +151,7 @@ func (e *env) login(user, password string) *client {
 		return nil
 	}
 	for _, ck := range rec.Result().Cookies() {
-		if ck.Name == sessionCookie {
+		if ck.Name == e.srv.cookieName() {
 			c.cookie = ck
 		}
 	}

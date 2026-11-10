@@ -206,3 +206,25 @@ func TestDiscardPlan(t *testing.T) {
 		t.Errorf("discard twice: %d %s", code, body)
 	}
 }
+
+// streamCookie opens a stream with a session cookie.
+func (e *env) streamCookie(base string, c *client) *sse {
+	e.t.Helper()
+	req, _ := http.NewRequestWithContext(e.ctx, "GET", base+"/api/v1/events", nil)
+	req.AddCookie(c.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(func() { resp.Body.Close() })
+	if resp.StatusCode != 200 {
+		e.t.Fatalf("stream: %d", resp.StatusCode)
+	}
+	return &sse{resp: resp, sc: bufio.NewScanner(resp.Body)}
+}
+
+func httpGet(e *env, url, bearer string) (*http.Response, error) {
+	req, _ := http.NewRequestWithContext(e.ctx, "GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	return http.DefaultClient.Do(req)
+}

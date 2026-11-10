@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/event"
@@ -44,14 +45,31 @@ type Config struct {
 
 // Server is the API.
 type Server struct {
-	cfg     Config
-	st      *store.Store
-	log     *slog.Logger
-	now     func() time.Time
-	logins  *failLimiter // per user and per client
-	bearers *failLimiter // bad bearer tokens per client
-	dummy   string       // a password hash for unknown users (same work)
+	cfg Config
+	st  *store.Store
+	log *slog.Logger
+	now func() time.Time
+	// Failed logins (review T-011 M1): 5/min per user and client, 20/min
+	// per client, and 100/min per known user. Nobody can lock out the real
+	// user from another client by guessing at 5/min.
+	loginPair *failLimiter
+	loginIP   *failLimiter
+	loginUser *failLimiter
+	bearers   *failLimiter // bad bearer tokens per client
+	dummy     string       // a password hash for unknown users (same work)
+	// hashSlots bounds concurrent argon2id work (64 MiB each, review M2).
+	hashSlots chan struct{}
+
+	streamMu sync.Mutex
+	streams  map[string]int // open event streams per principal (review m2)
 }
+
+// Limits of expensive or long-lived work.
+const (
+	hashSlotCount       = 4
+	maxStreamsPerCaller = 8
+	maxStreams          = 64
+)
 
 // New returns the server.
 func New(cfg Config) *Server {
@@ -72,9 +90,13 @@ func New(cfg Config) *Server {
 	}
 	return &Server{
 		cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now,
-		logins:  newFailLimiter(cfg.Now, 5, time.Minute),
-		bearers: newFailLimiter(cfg.Now, 20, time.Minute),
-		dummy:   HashPassword(randomText(16), cfg.PasswordParams),
+		loginPair: newFailLimiter(cfg.Now, 5, time.Minute),
+		loginIP:   newFailLimiter(cfg.Now, 20, time.Minute),
+		loginUser: newFailLimiter(cfg.Now, 100, time.Minute),
+		bearers:   newFailLimiter(cfg.Now, 20, time.Minute),
+		dummy:     HashPassword(randomText(16), cfg.PasswordParams),
+		hashSlots: make(chan struct{}, hashSlotCount),
+		streams:   map[string]int{},
 	}
 }
 
@@ -100,7 +122,32 @@ type access struct {
 	duringReset bool   // allowed while the password must change (the /session operations)
 }
 
-const sessionCookie = "plumb_session"
+// The session cookie. Outside --dev it has the __Host- prefix, so the
+// browser itself enforces Secure, Path=/ and no Domain (review T-011 n1).
+const (
+	sessionCookie    = "plumb_session"
+	sessionCookieTLS = "__Host-plumb_session"
+)
+
+func (s *Server) cookieName() string {
+	if s.cfg.Dev {
+		return sessionCookie
+	}
+	return sessionCookieTLS
+}
+
+// withHashSlot runs fn in one of the few argon2id slots. ok is false when
+// all slots are busy; the caller answers 429 at once.
+func (s *Server) withHashSlot(fn func()) (ok bool) {
+	select {
+	case s.hashSlots <- struct{}{}:
+		defer func() { <-s.hashSlots }()
+		fn()
+		return true
+	default:
+		return false
+	}
+}
 
 type handlerFunc func(w http.ResponseWriter, r *http.Request, p *principal)
 
@@ -248,7 +295,7 @@ func (s *Server) authenticate(r *http.Request) (*principal, error) {
 		s.st.TouchToken(ctx, tok.ID)
 		return &principal{name: "token:" + tok.ID, tier: tok.Tier, maxRisk: wire.Risk(tok.MaxRisk), token: &tok}, nil
 	}
-	c, err := r.Cookie(sessionCookie)
+	c, err := r.Cookie(s.cookieName())
 	if err != nil || c.Value == "" || len(c.Value) > 256 {
 		return nil, nil
 	}

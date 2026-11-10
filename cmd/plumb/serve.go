@@ -51,8 +51,8 @@ func parseServe(args []string, stderr io.Writer) (serveFlags, error) {
 	fs.BoolVar(&f.plainHTTP, "plain-http", false, "serve the API without TLS (only with --dev)")
 	fs.StringVar(&f.driver, "driver", "", "hypervisor driver: proxmox, or fake (only with --dev); default proxmox, with --dev fake")
 	fs.StringVar(&f.data, "data", "", "data directory (default /var/lib/plumb; with --dev a new temp directory)")
-	fs.StringVar(&f.listen, "listen", ":8443", "API and UI address")
-	fs.StringVar(&f.agentListen, "agent-listen", ":8444", "agent listener address (always TLS)")
+	fs.StringVar(&f.listen, "listen", "", "API and UI address (default :8443; with --dev 127.0.0.1:8443)")
+	fs.StringVar(&f.agentListen, "agent-listen", "", "agent listener address, always TLS (default :8444; with --dev 127.0.0.1:8444)")
 	hosts := fs.String("hosts", "localhost,127.0.0.1", "comma-separated host names and IPs for the certificates")
 	if err := fs.Parse(args); err != nil {
 		return f, errUsage
@@ -70,6 +70,20 @@ func parseServe(args []string, stderr io.Writer) (serveFlags, error) {
 	}
 	if f.dev {
 		f.plainHTTP = true
+	}
+	// Dev mode is plain HTTP with a cookie without Secure: it stays on
+	// loopback unless the user names another address (review T-011 m3).
+	if f.listen == "" {
+		f.listen = ":8443"
+		if f.dev {
+			f.listen = "127.0.0.1:8443"
+		}
+	}
+	if f.agentListen == "" {
+		f.agentListen = ":8444"
+		if f.dev {
+			f.agentListen = "127.0.0.1:8444"
+		}
 	}
 	// D-039: dev mode never touches a real host; without dev, no plain HTTP
 	// and no fake driver.
@@ -125,6 +139,12 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	}
 	if err := os.MkdirAll(f.data, 0o700); err != nil {
 		return err
+	}
+	if err := checkMode(f.data, f.dev); err != nil {
+		return err
+	}
+	if f.dev && !loopback(f.listen) {
+		log.Warn("dev mode listens on a non-loopback address: plain HTTP, cookie without Secure, simulated guests", "listen", f.listen)
 	}
 	st, err := store.Open(ctx, filepath.Join(f.data, "plumb.db"))
 	if err != nil {
@@ -234,4 +254,47 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	case <-ctx.Done():
 		return nil
 	}
+}
+
+// modeFile marks a data directory as dev or production. A dev server never
+// opens a production database: the fake driver would change it (review
+// T-011 m3).
+const modeFile = "mode"
+
+func checkMode(dir string, dev bool) error {
+	want := "production"
+	if dev {
+		want = "dev"
+	}
+	path := filepath.Join(dir, modeFile)
+	got, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(filepath.Join(dir, "plumb.db")); err == nil {
+			// An old directory without a marker: never assume it is dev.
+			if dev {
+				return fmt.Errorf("%s has a database but no mode marker; --dev uses only its own data directories", dir)
+			}
+		}
+		return os.WriteFile(path, []byte(want+"\n"), 0o600)
+	}
+	if err != nil {
+		return err
+	}
+	if have := strings.TrimSpace(string(got)); have != want {
+		return fmt.Errorf("%s is a %s data directory; this server runs in %s mode", dir, have, want)
+	}
+	return nil
+}
+
+// loopback reports whether a listen address binds to loopback only.
+func loopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
