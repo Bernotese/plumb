@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Bernotese/plumb/internal/secret"
 )
 
 // D-039: --dev never touches a real host; without --dev, no plain HTTP
@@ -41,7 +43,12 @@ func TestServeFlags(t *testing.T) {
 	// Without --dev the controller refuses to start until the Proxmox
 	// driver exists (T-012); it never falls back to the fake.
 	var out, errOut bytes.Buffer
-	if code := serve(context.Background(), []string{"--data", t.TempDir()}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "Proxmox driver") {
+	keyed := t.TempDir()
+	os.Mkdir(filepath.Join(keyed, "key"), 0o700)
+	if err := secret.WriteKeyFile(defaultKeyFile(keyed), secret.NewKey()); err != nil {
+		t.Fatal(err)
+	}
+	if code := serve(context.Background(), []string{"--data", keyed}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "Proxmox driver") {
 		t.Errorf("serve without --dev: %d %q", code, errOut.String())
 	}
 	if code := serve(context.Background(), []string{"--dev", "--driver", "proxmox"}, &out, &errOut); code != 2 {

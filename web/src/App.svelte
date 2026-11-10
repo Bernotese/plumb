@@ -1,24 +1,29 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { PlumbApi } from "./lib/client";
+  import { createHttpApi } from "./lib/http";
   import { go, href, isRouteHash, parse, type Route } from "./lib/router";
   import { applyTheme, loadTheme, type Theme } from "./lib/theme";
   import type { Session } from "./lib/types";
+  import History from "./screens/History.svelte";
   import ChangePassword from "./screens/ChangePassword.svelte";
   import IssueView from "./screens/IssueView.svelte";
   import Issues from "./screens/Issues.svelte";
   import Login from "./screens/Login.svelte";
   import PlanView from "./screens/PlanView.svelte";
+  import Settings from "./screens/Settings.svelte";
+  import Rules from "./screens/Rules.svelte";
+  import RevisionView from "./screens/RevisionView.svelte";
   import RunView from "./screens/RunView.svelte";
   import TargetForm from "./screens/TargetForm.svelte";
   import Targets from "./screens/Targets.svelte";
 
-  // The API. The HTTP client comes with T-014. Until then only a mock build
-  // (VITE_PLUMB_MOCK=1, `npm run dev:mock` / `npm run build:mock`) has one.
-  // In every other build the condition is a constant false, so Rollup drops
-  // the mock, its example data and its demo login (checked by
-  // scripts/check-dist.mjs after `npm run build`).
-  async function loadApi(): Promise<{ api: PlumbApi; hint?: string; banner?: string } | null> {
+  // The API: /api/v1 of the controller (T-014). A mock build
+  // (VITE_PLUMB_MOCK=1, `npm run dev:mock`, development only) uses the
+  // mock instead. In every other build that condition is a constant false,
+  // so Rollup drops the mock, its example data and its demo login (checked
+  // by scripts/check-dist.mjs after `npm run build`).
+  async function loadApi(): Promise<{ api: PlumbApi; hint?: string; banner?: string }> {
     if (import.meta.env.VITE_PLUMB_MOCK === "1") {
       const mock = await import("./lib/mock/mock");
       // "?as=admin" starts signed in, "?as=first-login" at the forced
@@ -30,13 +35,20 @@
         banner: mock.MOCK_BANNER,
       };
     }
-    return null;
+    return { api: createHttpApi({ onUnauthorized: sessionLost }) };
+  }
+
+  /** A call answered 401: the session expired or was ended elsewhere. */
+  function sessionLost() {
+    if (!session) return;
+    session = null;
+    notice = "Your session has ended. Log in again.";
   }
 
   let api = $state<PlumbApi | null>(null);
   let loginHint = $state<string | undefined>();
   let banner = $state<string | undefined>();
-  let unavailable = $state(false);
+  let notice = $state<string | undefined>();
 
   let route = $state<Route>(parse(location.hash));
   let session = $state<Session | null>(null);
@@ -47,11 +59,6 @@
 
   $effect(() => {
     void loadApi().then((loaded) => {
-      if (!loaded) {
-        unavailable = true;
-        ready = true;
-        return;
-      }
       api = loaded.api;
       loginHint = loaded.hint;
       banner = loaded.banner;
@@ -77,7 +84,6 @@
   // Which screen to show: login and the forced password change come first.
   const screen = $derived.by(() => {
     if (!ready) return "loading";
-    if (unavailable) return "unavailable";
     if (!session) return "login";
     if (session.must_change_password) return "password";
     return "app";
@@ -85,6 +91,7 @@
 
   function onLogin(s: Session) {
     session = s;
+    notice = undefined;
     void tick().then(() => document.getElementById("page-title")?.focus());
     if (!s.must_change_password && (route.name === "login" || route.name === "password"))
       go({ name: "targets" });
@@ -96,8 +103,13 @@
   }
 
   async function logout() {
-    await api?.logout();
+    try {
+      await api?.logout();
+    } catch {
+      // the session may be gone already; the user is logged out either way
+    }
     session = null;
+    notice = undefined;
     go({ name: "login" });
   }
 
@@ -121,7 +133,17 @@
         href={href({ name: "targets" })}
         aria-current={navCurrent(["targets", "target-new", "target-edit"])}>Targets</a
       >
-      <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue"])}>Issues</a>
+      <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue", "rules"])}
+        >Issues</a
+      >
+      <a href={href({ name: "history" })} aria-current={navCurrent(["history", "revision"])}
+        >History</a
+      >
+      {#if session?.tier === "admin"}
+        <a href={href({ name: "settings", tab: "tokens" })} aria-current={navCurrent(["settings"])}
+          >Settings</a
+        >
+      {/if}
     </nav>
   {/if}
   <div class="tools">
@@ -142,11 +164,10 @@
 <main id="main" tabindex="-1">
   {#if screen === "loading"}
     <p class="muted" aria-live="polite">Loading…</p>
-  {:else if screen === "unavailable" || !api}
-    <h1 id="page-title" tabindex="-1">Plumb</h1>
-    <p class="banner info">The API client is not available in this build yet (T-014).</p>
+  {:else if !api}
+    <p class="muted" aria-live="polite">Loading…</p>
   {:else if screen === "login"}
-    <Login {api} onlogin={onLogin} hint={loginHint} />
+    <Login {api} onlogin={onLogin} hint={loginHint} {notice} />
   {:else if screen === "password"}
     <ChangePassword {api} ondone={onPasswordChanged} />
   {:else if route.name === "targets" || route.name === "login" || route.name === "password"}
@@ -163,6 +184,14 @@
     <Issues {api} />
   {:else if route.name === "issue"}
     {#key route.id}<IssueView {api} id={route.id} />{/key}
+  {:else if route.name === "rules"}
+    <Rules {api} />
+  {:else if route.name === "history"}
+    <History {api} />
+  {:else if route.name === "revision"}
+    {#key route.id}<RevisionView {api} id={route.id} />{/key}
+  {:else if route.name === "settings"}
+    {#if session}<Settings {api} {session} tab={route.tab} />{/if}
   {:else}
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p>
@@ -222,6 +251,7 @@
   }
   .user {
     color: var(--color-text-muted);
+    white-space: nowrap;
   }
   .demo {
     margin: 0;

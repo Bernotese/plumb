@@ -100,14 +100,16 @@ type resourcePlanView struct {
 }
 
 type targetPlanView struct {
-	Target    string             `json:"target"`
-	Resources []resourcePlanView `json:"resources"`
+	Target    string               `json:"target"`
+	Secrets   []plan.PlannedSecret `json:"secrets,omitempty"`
+	Resources []resourcePlanView   `json:"resources"`
 }
 
 type planView struct {
 	ID           int64            `json:"id"`
 	Origin       string           `json:"origin"`
 	IssueID      *int64           `json:"issue_id"`
+	RollbackTo   *int64           `json:"rollback_to"`
 	Status       string           `json:"status"`
 	Risk         string           `json:"risk"`
 	Reason       string           `json:"reason"`
@@ -118,14 +120,22 @@ type planView struct {
 	ApprovedAt   *time.Time       `json:"approved_at"`
 	Revision     *int64           `json:"revision"`
 	RunID        *int64           `json:"run_id"`
+	HumanOnly    []string         `json:"human_only"`
 	Targets      []targetPlanView `json:"targets"`
 	Warnings     []string         `json:"warnings"`
 }
 
 func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
-	v := planView{ID: p.ID, Origin: p.Origin, IssueID: nullID(p.IssueID), Status: p.Status, Risk: p.Risk,
+	v := planView{ID: p.ID, Origin: p.Origin, IssueID: nullID(p.IssueID), RollbackTo: nullID(p.RollbackTo), Status: p.Status, Risk: p.Risk,
 		Reason: p.Reason, Author: p.Author, CreatedAt: p.CreatedAt.UTC(), BaseRevision: nullID(p.BaseRevision),
-		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), Targets: []targetPlanView{}, Warnings: []string{}}
+		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), HumanOnly: append([]string{}, p.HumanOnly...), Targets: []targetPlanView{}, Warnings: []string{}}
+	// Warnings of the origin, for example the secrets an import wrote (D-095).
+	var prop struct {
+		Notes []string `json:"notes"`
+	}
+	if json.Unmarshal(p.Proposal, &prop) == nil {
+		v.Warnings = append(v.Warnings, prop.Notes...)
+	}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {
 		v.RunID, v.Revision = &run.ID, &run.RevisionID
 	} else if err != store.ErrNotFound {
@@ -136,7 +146,7 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		return v, err
 	}
 	for _, tp := range targets {
-		tv := targetPlanView{Target: tp.Target, Resources: []resourcePlanView{}}
+		tv := targetPlanView{Target: tp.Target, Secrets: tp.Secrets, Resources: []resourcePlanView{}}
 		unverified := 0
 		for _, rc := range tp.Resources {
 			action := rc.Action
@@ -149,13 +159,16 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 				unverified++
 			}
 		}
-		if unverified > 0 {
+		switch {
+		case unverified > 0 && tp.Guest == "create":
 			v.Warnings = append(v.Warnings, fmt.Sprintf("%s is a new target: %d resources are unverified until the first boot.", tp.Target, unverified))
+		case unverified > 0:
+			v.Warnings = append(v.Warnings, fmt.Sprintf("%s: %d resources are not observed before the approval: they get a new secret, or a value that the import writes (D-156, D-158).", tp.Target, unverified))
 		}
 		v.Targets = append(v.Targets, tv)
 	}
 	if p.Status == store.PlanStale {
-		v.Warnings = append(v.Warnings, "The head revision moved. Propose again.")
+		v.Warnings = append(v.Warnings, "The head revision moved or a secret changed. Propose again.")
 	}
 	return v, nil
 }
@@ -275,6 +288,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		if accept {
 			v.Actions = append([]string{"accept"}, v.Actions...)
 		}
+		// The list does not depend on the caller; the server checks who
+		// may ignore (D-091, D-092).
+		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
 	}
 	if i.Status == store.IssueResolved {
 		v.Resolution = &resolutionView{Action: i.Resolution, By: i.ResolvedBy, At: i.ResolvedAt.UTC()}

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import type { PlumbApi } from "../lib/client";
   import type { Field, Values } from "../lib/schemaForm";
+  import SecretPicker from "./SecretPicker.svelte";
   import StringList from "./StringList.svelte";
 
   let {
@@ -9,6 +11,7 @@
     prefix,
     readonly = [],
     readonlyHint = "Cannot change after create.",
+    api,
   }: {
     fields: Field[];
     values: Values;
@@ -16,19 +19,24 @@
     prefix: string;
     readonly?: readonly string[];
     readonlyHint?: string;
+    /** Needed for secret parameters (secret picker). */
+    api?: PlumbApi;
   } = $props();
 
   const fid = (f: Field) => `${prefix}-${f.name}`;
   const ro = (f: Field) => readonly.includes(f.name);
   // The read-only hint is left out when the description already says it.
   function hintText(f: Field): string {
-    const d = f.description ?? "";
+    const d =
+      f.kind === "secret"
+        ? `${f.description ?? ""} Plumb saves only the secret name, never the value.`.trim()
+        : (f.description ?? "");
     if (!ro(f) || /create-only/i.test(d)) return d;
     return `${readonlyHint} ${d}`.trim();
   }
   function describe(f: Field): string | undefined {
     const ids = [];
-    if (f.description || ro(f)) ids.push(`${fid(f)}-hint`);
+    if (f.description || ro(f) || f.kind === "secret") ids.push(`${fid(f)}-hint`);
     if (errors[f.name]) ids.push(`${fid(f)}-error`);
     return ids.length ? ids.join(" ") : undefined;
   }
@@ -36,7 +44,10 @@
 
 <div class="grid">
   {#each fields as f (f.name)}
-    <div class="field" class:wide={f.kind === "textarea" || f.kind === "list"}>
+    <div
+      class="field"
+      class:wide={f.kind === "textarea" || f.kind === "list" || f.kind === "secret"}
+    >
       {#if f.kind === "boolean"}
         <label class="check">
           <input
@@ -63,10 +74,23 @@
           invalid={!!errors[f.name]}
         />
       {:else}
-        <label for={fid(f)}>
+        <label for={f.kind === "secret" && !api ? undefined : fid(f)}>
           {f.label}{#if f.required}<span aria-hidden="true"> *</span>{/if}
         </label>
-        {#if f.kind === "enum"}
+        {#if f.kind === "secret"}
+          {#if api}
+            <SecretPicker
+              {api}
+              id={fid(f)}
+              bind:value={values[f.name] as string}
+              required={f.required}
+              invalid={!!errors[f.name]}
+              describedby={describe(f)}
+            />
+          {:else}
+            <p class="muted" id={fid(f)}>A secret parameter needs the secret picker.</p>
+          {/if}
+        {:else if f.kind === "enum"}
           <select
             id={fid(f)}
             bind:value={values[f.name]}
@@ -105,7 +129,7 @@
           />
         {/if}
       {/if}
-      {#if f.description || ro(f)}
+      {#if f.description || ro(f) || f.kind === "secret"}
         <span class="hint" id="{fid(f)}-hint">{hintText(f)}</span>
       {/if}
       {#if errors[f.name]}

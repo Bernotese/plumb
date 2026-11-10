@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -117,7 +118,7 @@ func CreateToken(ctx context.Context, st *store.Store, name, tier string, maxRis
 		return "", store.Token{}, fmt.Errorf("%w: an apply token needs max_risk reversible or disruptive, not %q", ErrBadToken, maxRisk)
 	case tier != TierApply && maxRisk != "":
 		return "", store.Token{}, fmt.Errorf("%w: only an apply token has a max_risk", ErrBadToken)
-	case name == "" || len(name) > 100:
+	case strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 100:
 		return "", store.Token{}, fmt.Errorf("%w: name", ErrBadToken)
 	}
 	id := "tok_" + hex.EncodeToString(randomBytes(8))
