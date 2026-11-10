@@ -361,3 +361,50 @@ func TestKeyFile(t *testing.T) {
 		t.Fatal("purpose keys are not separate")
 	}
 }
+
+// Scan physical SQLite files, including the WAL and pages left by replacement
+// and deletion. Checking only the current ciphertext column misses those paths.
+func TestSecretAbsentFromDatabaseFiles(t *testing.T) {
+	e := newEnv(t)
+	values := []string{"qa-original-value-7a9f4d62", "qa-replacement-value-5b8e3c10"}
+	var seq int
+	var schema, path string
+	if err := e.db.QueryRowContext(e.ctx, `PRAGMA database_list`).Scan(&seq, &schema, &path); err != nil {
+		t.Fatal(err)
+	}
+	scan := func() {
+		t.Helper()
+		files, err := filepath.Glob(path + "*")
+		if err != nil || len(files) == 0 {
+			t.Fatalf("database files: %v", err)
+		}
+		for _, file := range files {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range values {
+				if bytes.Contains(b, []byte(value)) {
+					t.Errorf("clear value in %s", filepath.Base(file))
+				}
+			}
+		}
+	}
+	e.put("qa-db", values[0])
+	scan()
+	e.put("qa-db", values[1])
+	scan()
+	if err := e.s.Delete(e.ctx, "qa-db"); err != nil {
+		t.Fatal(err)
+	}
+	scan()
+	e.exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	scan()
+	if err := e.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scan()
+}

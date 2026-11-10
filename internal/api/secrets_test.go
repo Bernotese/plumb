@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -208,5 +209,46 @@ func TestSecretNeedsPasswordChange(t *testing.T) {
 	first := e.login("admin", e.password)
 	if code, body := first.do("PUT", "/api/v1/secrets/a", map[string]string{"value": "x"}); code != 403 || problemType(body) != "password-change-required" {
 		t.Fatalf("put: %d %s", code, body)
+	}
+}
+
+func TestSecretFailureDoesNotLeak(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	var logs bytes.Buffer
+	e.srv.log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	before, err := e.st.LastEventSeq(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.sec.SetUsage(func(context.Context) (map[string]secret.Usage, error) {
+		return nil, errors.New("qa usage lookup unavailable")
+	})
+	code, body := adm.do("PUT", "/api/v1/secrets/failure", map[string]string{"value": testValue})
+	if code != 500 || problemType(body) != "internal" {
+		t.Fatalf("put: %d %s", code, body)
+	}
+	if !strings.Contains(logs.String(), "qa usage lookup unavailable") {
+		t.Fatal("error path did not log")
+	}
+	for _, response := range e.seen {
+		if bytes.Contains(response, []byte(testValue)) {
+			t.Fatal("value in response")
+		}
+	}
+	if strings.Contains(logs.String(), testValue) {
+		t.Fatal("value in error log")
+	}
+	events, err := e.st.EventsAfter(e.ctx, before, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("failed put emitted %d events", len(events))
+	}
+	e.sec.SetUsage(nil)
+	list, err := e.sec.List(e.ctx)
+	if err != nil || len(list) != 0 {
+		t.Fatalf("failed put persisted metadata: %v", err)
 	}
 }
