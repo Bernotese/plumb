@@ -17,6 +17,7 @@
 #   PLUMB_INSTALL_ASSUME_ROOT=1   skip the root check (fake commands only)
 #   PLUMB_INSTALL_PVE_CA=FILE     the host CA file instead of /etc/pve/pve-root-ca.pem
 #   PLUMB_INSTALL_STATE=FILE      the state file instead of /etc/plumb/install.state
+#   PLUMB_INSTALL_LXC_DIR=DIR     the lxc run directory instead of /var/lib/lxc
 #   PLUMB_INSTALL_ASSUME_TTY=1    skip the terminal check before plumb key init
 #                                 (plumb key init itself still refuses a non-terminal)
 set -euo pipefail
@@ -54,6 +55,7 @@ YES=0
 SNIPPET_DIR_SET=0
 PVE_CA=${PLUMB_INSTALL_PVE_CA:-/etc/pve/pve-root-ca.pem}
 STATE_FILE=${PLUMB_INSTALL_STATE:-/etc/plumb/install.state}
+LXC_DIR=${PLUMB_INSTALL_LXC_DIR:-/var/lib/lxc}
 
 # The key volume (D-086, D-102, D-177): its own volume with backup=0, so the
 # master key is never in a backup of the LXC. plumb key init never creates
@@ -673,7 +675,7 @@ ensure_lxc() {
 			LXC_OURS=1
 			# A run that stopped after pct create left it stopped (review S1).
 			if [[ $(query pct status "$LXC_ID" 2>/dev/null) == *stopped* ]]; then
-				run pct start "$LXC_ID"
+				(umask 022 && run pct start "$LXC_ID")
 			fi
 			return 0
 			;;
@@ -688,19 +690,29 @@ ensure_lxc() {
 	local net="name=eth0,bridge=$BRIDGE,ip=$LXC_IP"
 	[[ -n $LXC_GW ]] && net+=",gw=$LXC_GW"
 	lxc_template
+	# A pct create that failed can leave $LXC_DIR/<id>/rootfs (empty, mode
+	# 0700) behind, and the next pct create with the same id fails on it.
+	# Only empty directories of an id without a container are removed.
+	if [[ -d $LXC_DIR/$LXC_ID ]]; then
+		run rmdir -- "$LXC_DIR/$LXC_ID/rootfs" "$LXC_DIR/$LXC_ID" 2>/dev/null ||
+			die "$LXC_DIR/$LXC_ID exists and is not empty, but container $LXC_ID does not exist; check it by hand"
+	fi
 	# Unprivileged, no host mount, not in the Plumb pool (ARCHITECTURE §7).
 	# mp0 is a new volume on the disk storage (not a host path) with
 	# backup=0: the key volume (D-177).
-	run pct create "$LXC_ID" "$TEMPLATE" --hostname "$LXC_HOSTNAME" --unprivileged 1 --features nesting=1 \
+	# umask 022: the uid-mapped root of an unprivileged container must enter
+	# the rootfs directory that pct makes; with the umask 077 of this script
+	# the extraction fails ("rootfs: Permission denied", test host, T-013).
+	(umask 022 && run pct create "$LXC_ID" "$TEMPLATE" --hostname "$LXC_HOSTNAME" --unprivileged 1 --features nesting=1 \
 		--cores 2 --memory 1024 --swap 512 --rootfs "$DISK_STORAGE:8" \
 		--mp0 "$DISK_STORAGE:$KEY_VOLUME_GB,mp=$KEY_DIR,backup=0" --net0 "$net" --onboot 1 --ostype debian \
-		--description "$LXC_MARKER Plumb controller, made by install.sh"
+		--description "$LXC_MARKER Plumb controller, made by install.sh")
 	# The state names the LXC before anything else can fail, so a failed
 	# start never leads to a second LXC on the next run (review S1).
 	LXC_NEW=1
 	LXC_OURS=1
 	state_put
-	run pct start "$LXC_ID"
+	(umask 022 && run pct start "$LXC_ID")
 }
 
 lxc_ip() {

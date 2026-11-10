@@ -62,6 +62,7 @@ func newHost(t *testing.T) *host {
 		"FAKE_SECRET="+fakeSecret,
 		"PLUMB_INSTALL_PVE_CA="+h.pveCA,
 		"PLUMB_INSTALL_STATE="+h.stateF,
+		"PLUMB_INSTALL_LXC_DIR="+filepath.Join(dir, "lxc"),
 		// The tests have no terminal; the fake plumb key init does not check.
 		// TestKeyInitNeedsTerminal sets it back to 0.
 		"PLUMB_INSTALL_ASSUME_TTY=1",

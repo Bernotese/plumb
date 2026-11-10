@@ -219,6 +219,12 @@ pct)
 		;;
 	create)
 		id=$2
+		umask >"$st/create-umask"
+		if [[ $(umask) != 0022 ]]; then
+			# Like Proxmox: tar as the mapped root cannot enter a 0700 rootfs.
+			echo "tar: /var/lib/lxc/$id/rootfs: Cannot open: Permission denied" >&2
+			exit 2
+		fi
 		shift 2
 		host="" desc="" mp=""
 		while [[ $# -gt 0 ]]; do

@@ -372,3 +372,33 @@ func TestFailedStartKeepsOneLXC(t *testing.T) {
 		t.Error("a running LXC was started again")
 	}
 }
+
+// A pct create that failed left an empty /var/lib/lxc/<id>/rootfs (0700)
+// on the test host. The next run removes it; a directory with files stays
+// and the run stops before pct create.
+func TestStaleLXCDir(t *testing.T) {
+	for _, withFile := range []bool{false, true} {
+		h := newHost(t)
+		lxcDir := filepath.Join(filepath.Dir(h.state), "lxc", "105")
+		if err := os.MkdirAll(filepath.Join(lxcDir, "rootfs"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if withFile {
+			os.WriteFile(filepath.Join(lxcDir, "rootfs", "data"), []byte("x"), 0o600)
+		}
+		code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+		_, err := os.Stat(lxcDir)
+		if !withFile {
+			if code != 0 || err == nil {
+				t.Errorf("empty stale dir: %d, still there: %v\n%s %s", code, err == nil, out, errOut)
+			}
+			continue
+		}
+		if code == 0 || !strings.Contains(errOut, "is not empty") || err != nil {
+			t.Errorf("stale dir with a file: %d %q, removed: %v", code, errOut, err != nil)
+		}
+		if index(h.calls(), "pct create") >= 0 {
+			t.Error("pct create ran over a stale directory with files")
+		}
+	}
+}
