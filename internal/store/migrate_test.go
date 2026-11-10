@@ -284,7 +284,7 @@ func TestMigrateIssueIgnore(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE issue SET status = 'open', plan_id = NULL WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.IgnoreIssue(ctx, 1, "user:admin", json.RawMessage(`[]`)); err != nil {
+	if _, err := s.IgnoreIssue(ctx, 1, "user:admin", json.RawMessage(`[]`), json.RawMessage(`[]`)); err != nil {
 		t.Fatalf("ignore: %v", err)
 	}
 	if _, err := s.IgnoredOnce(ctx, "web1", "file:/etc/motd"); err != nil {
