@@ -20,6 +20,7 @@ Plumb can store documents as revisions and can render a Target into the flat res
 - [ ] Commit: a revision stores documents by content hash (`state.Canonical` and `state.Hash` from T-003; never another form). Unchanged documents are shared. Revisions are never changed.
 - [ ] `Diff(a, b)` lists added, changed and removed documents between two revisions.
 - [ ] Tests: `go test ./internal/state/... ./internal/store/...` passes. Golden tests render at least three Blocks from `testdata`.
+- [ ] From the T-003 re-review: `state.Canonical` must not produce a spurious doc change for number text vs. integer (e.g. `2048.0` vs `2048`). Validate the canonical form and add a test.
 
 ## Out of scope
 - `when`, `each`, `uses`, `after`, typed values (ARCHITECTURE §10).
