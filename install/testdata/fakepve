@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Fake Proxmox commands for install_test.go. One script, many names. It logs
+# every call to $FAKE_STATE/calls and keeps a tiny state in $FAKE_STATE.
+set -u
+name=$(basename "$0")
+st=$FAKE_STATE
+printf '%s %s\n' "$name" "$*" >>"$st/calls"
+has() { [[ -e $st/$1 ]]; }
+list() { # list PREFIX KEY: JSON list of {KEY: name} for files PREFIX.*
+	local first=1 f
+	printf '['
+	for f in "$st/$1".*; do
+		[[ -e $f ]] || continue
+		[[ $first == 1 ]] || printf ','
+		first=0
+		printf '{"%s":"%s"}' "$2" "${f##*/$1.}"
+	done
+	printf ']\n'
+}
+case $name in
+pveversion) echo "pve-manager/${FAKE_PVE_VERSION:-9.1.2}/0123456789abcdef (running kernel: 6.14.8-2-pve)" ;;
+hostname) echo pve1 ;;
+ip) echo "5: vmbr0    inet 192.168.1.5/24 brd 192.168.1.255 scope global vmbr0\\       valid_lft forever preferred_lft forever" ;;
+install)
+	args=()
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+		-o | -g) shift ;;
+		*) args+=("$1") ;;
+		esac
+		shift
+	done
+	exec /usr/bin/install "${args[@]}"
+	;;
+pveum)
+	case "$1 $2" in
+	"pool list") list pool poolid ;;
+	"pool add") touch "$st/pool.$3" ;;
+	"pool delete") rm -f "$st/pool.$3" ;;
+	"role list") list role roleid ;;
+	"role add" | "role modify") echo "$5" >"$st/role.$3" ;;
+	"role delete") rm -f "$st/role.$3" ;;
+	"user list") list user userid ;;
+	"user add") touch "$st/user.$3" ;;
+	"user delete") rm -f "$st/user.$3" ;;
+	"acl modify") echo "${*:3}" >>"$st/acl" ;;
+	"user token")
+		case $3 in
+		list) list token tokenid ;;
+		add)
+			touch "$st/token.$5"
+			printf '{"full-tokenid":"%s!%s","info":{"privsep":1},"value":"%s"}\n' "$4" "$5" "$FAKE_SECRET"
+			;;
+		remove) rm -f "$st/token.$5" ;;
+		esac
+		;;
+	*) echo "fakepve: unknown pveum $*" >&2; exit 2 ;;
+	esac
+	;;
+pvesm)
+	case $1 in
+	status) has "storage.$3" ;;
+	add) touch "$st/storage.$3" ;;
+	set) echo "${*:2}" >>"$st/storage-set" ;;
+	remove) rm -f "$st/storage.$2" ;;
+	esac
+	;;
+pvesh)
+	case "$2" in
+	/storage/*) if has import; then echo '{"content":"iso,vztmpl,import"}'; else echo '{"content":"iso,vztmpl,backup"}'; fi ;;
+	/cluster/nextid) echo 105 ;;
+	/pools) echo "${FAKE_POOL_MEMBERS:-[]}" ;;
+	*) exit 1 ;;
+	esac
+	;;
+pveam)
+	case $1 in
+	list) has tmpl && echo "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst 128.00MB" ;;
+	available) printf 'system          debian-12-standard_12.7-1_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_amd64.tar.zst\n' ;;
+	update) ;;
+	download) touch "$st/tmpl" ;;
+	esac
+	;;
+pct)
+	case $1 in
+	status) has "lxc.$2" ;;
+	create) touch "$st/lxc.$2" ;;
+	start | stop) ;;
+	destroy) rm -f "$st/lxc.$2" ;;
+	push)
+		mkdir -p "$st/push"
+		dst=${4//\//_}
+		cp "$3" "$st/push/$dst"
+		echo "${*:5}" >"$st/push/$dst.opts"
+		;;
+	pull) printf -- '-----BEGIN CERTIFICATE-----\nMIIBfakePlumbCA\n-----END CERTIFICATE-----\n' >"$4" ;;
+	exec)
+		shift 3 # pct exec ID --
+		case "$*" in
+		"hostname -I") echo "192.168.1.50 fd00::50" ;;
+		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;
+		*) ;;
+		esac
+		;;
+	esac
+	;;
+*) echo "fakepve: unknown command $name" >&2; exit 2 ;;
+esac
