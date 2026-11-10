@@ -81,6 +81,26 @@ type WatchBody struct {
 	Resources []Resource `json:"resources"`
 }
 
+// BodyResources returns the resources of an observe, apply or watch body
+// (value or pointer), or nil.
+func BodyResources(body any) []Resource {
+	switch b := body.(type) {
+	case ObserveBody:
+		return b.Resources
+	case *ObserveBody:
+		return b.Resources
+	case ApplyBody:
+		return b.Resources
+	case *ApplyBody:
+		return b.Resources
+	case WatchBody:
+		return b.Resources
+	case *WatchBody:
+		return b.Resources
+	}
+	return nil
+}
+
 // ReportType names the kind of a Report.
 type ReportType string
 

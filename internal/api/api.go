@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -31,11 +33,18 @@ type Config struct {
 	Events *event.Log
 	Plans  *plan.Engine
 	Issues *issue.Service
+	// Version is the Plumb version, for the export header.
+	Version string
+	// Secrets is the encrypted secret store (required).
+	Secrets *secret.Store
 	// UI is the built web UI (index.html, assets/…). nil: no UI.
 	UI fs.FS
 	// Dev: plain HTTP. The session cookie has no Secure flag and the
 	// expected Origin scheme is http (D-039). Never on a real host.
-	Dev            bool
+	Dev bool
+	// DevLoginToken enables GET /dev/login (D-080). It counts only with
+	// Dev; on every other server the route does not exist.
+	DevLoginToken  string
 	PasswordParams PasswordParams
 	SessionTTL     time.Duration // default 12 h
 	KeepAlive      time.Duration // SSE comment interval, default 15 s
@@ -55,13 +64,17 @@ type Server struct {
 	loginPair *failLimiter
 	loginIP   *failLimiter
 	loginUser *failLimiter
-	bearers   *failLimiter // bad bearer tokens per client
-	dummy     string       // a password hash for unknown users (same work)
+	// bearers counts bad bearers per client and token id (20/min) while the
+	// key is kept; eviction can drop it, so the guaranteed bound is bearerIP.
+	bearers  *failLimiter
+	bearerIP *failLimiter // bad bearers per client, hard cap 300/min (D-157)
+	dummy    string       // a password hash for unknown users (same work)
 	// hashSlots bounds concurrent argon2id work (64 MiB each, review M2).
 	hashSlots chan struct{}
 
-	streamMu sync.Mutex
-	streams  map[string]int // open event streams per principal (review m2)
+	streamMu  sync.Mutex
+	streams   map[string]map[uint64]context.CancelFunc // open event streams per principal (review m2)
+	streamSeq uint64
 }
 
 // Limits of expensive or long-lived work.
@@ -94,9 +107,10 @@ func New(cfg Config) *Server {
 		loginIP:   newFailLimiter(cfg.Now, 20, time.Minute),
 		loginUser: newFailLimiter(cfg.Now, 100, time.Minute),
 		bearers:   newFailLimiter(cfg.Now, 20, time.Minute),
+		bearerIP:  newFailLimiter(cfg.Now, 300, time.Minute),
 		dummy:     HashPassword(randomText(16), cfg.PasswordParams),
 		hashSlots: make(chan struct{}, hashSlotCount),
-		streams:   map[string]int{},
+		streams:   map[string]map[uint64]context.CancelFunc{},
 	}
 }
 
@@ -160,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 	read, planTier, apply := access{tier: TierRead}, access{tier: TierPlan}, access{tier: TierApply}
 	self := access{tier: TierRead, duringReset: true}
 	human := access{tier: TierAdmin, sessionOnly: true, duringReset: true}
+	admin := access{tier: TierAdmin, sessionOnly: true}
 
 	route("GET /api/v1/session", self, s.getSession)
 	route("POST /api/v1/session", access{}, s.login)
@@ -170,6 +185,8 @@ func (s *Server) Handler() http.Handler {
 	route("GET /api/v1/images/{name}", read, s.getDoc("Image"))
 	route("GET /api/v1/blocks", read, s.listDocs("Block"))
 	route("GET /api/v1/blocks/{name}", read, s.getDoc("Block"))
+	route("GET /api/v1/rules", read, s.listDocs("Rule"))
+	route("GET /api/v1/rules/{name}", read, s.getDoc("Rule"))
 	route("GET /api/v1/targets", read, s.listDocs("Target"))
 	route("GET /api/v1/targets/{name}", read, s.getDoc("Target"))
 	route("POST /api/v1/targets/{name}/reenroll", planTier, s.reenroll)
@@ -188,7 +205,29 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/issues/{id}/resolve", planTier, s.resolveIssue)
 	route("POST /api/v1/issues/{id}/comments", planTier, s.commentIssue)
 
+	route("GET /api/v1/secrets", read, s.listSecrets)
+	route("PUT /api/v1/secrets/{name}", admin, s.putSecret)
+	route("DELETE /api/v1/secrets/{name}", admin, s.deleteSecret)
+
+	route("GET /api/v1/revisions", read, s.listRevisions)
+	route("GET /api/v1/revisions/{n}/diff", read, s.diffRevision)
+	route("POST /api/v1/revisions/{n}/rollback", planTier, s.rollbackRevision)
+
+	route("GET /api/v1/export", read, s.exportState)
+	route("POST /api/v1/export", admin, s.exportStateWithSecrets)
+	route("POST /api/v1/import", admin, s.importState)
+
 	route("GET /api/v1/events", read, s.events)
+
+	route("GET /api/v1/tokens", admin, s.listTokens)
+	route("POST /api/v1/tokens", admin, s.createToken)
+	route("DELETE /api/v1/tokens/{id}", admin, s.revokeToken)
+
+	if s.cfg.Dev && s.cfg.DevLoginToken != "" {
+		mux.HandleFunc("GET /dev/login", s.devLogin)
+	}
+	// Reserve dev routes so disabled endpoints cannot fall back to the SPA.
+	mux.HandleFunc("/dev/", http.NotFound)
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "not-found", "Not found", "No such API operation.")
@@ -276,20 +315,29 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 func (s *Server) authenticate(r *http.Request) (*principal, error) {
 	ctx := r.Context()
 	if auth := r.Header.Get("Authorization"); auth != "" {
-		if s.bearers.blocked(clientKey(r)) > 0 {
-			return nil, errRateLimited
-		}
 		bearer, ok := strings.CutPrefix(auth, "Bearer ")
 		id, sec, ok2 := strings.Cut(bearer, ".")
+		wellFormed := ok && ok2 && len(bearer) < 256
+		// The pair key uses the presented id, not the stored token, so a
+		// blocked id gives no oracle for which ids exist (D-157).
+		client := clientKey(r)
+		pair := client + " id:"
+		if wellFormed {
+			pair += id
+		}
+		if s.bearerIP.blocked(client) > 0 || s.bearers.blocked(pair) > 0 {
+			return nil, errRateLimited
+		}
 		want := sha256Hex("no token")
 		var tok store.Token
-		if ok && ok2 && len(bearer) < 256 {
+		if wellFormed {
 			if t, err := s.st.TokenByID(ctx, id); err == nil {
 				tok, want = t, t.Hash
 			}
 		}
 		if subtle.ConstantTimeCompare([]byte(sha256Hex(sec)), []byte(want)) != 1 || tok.ID == "" {
-			s.bearers.fail(clientKey(r))
+			s.bearers.fail(pair)
+			s.bearerIP.fail(client)
 			return nil, nil
 		}
 		s.st.TouchToken(ctx, tok.ID)
@@ -328,6 +376,10 @@ type problemBody struct {
 	Status int          `json:"status"`
 	Detail string       `json:"detail,omitempty"`
 	Errors []fieldError `json:"errors,omitempty"`
+	// secret-in-use (D-087)
+	Targets []string `json:"targets,omitempty"`
+	Plans   []int64  `json:"plans,omitempty"`
+	Secrets []string `json:"secrets,omitempty"` // missing secrets of a 422
 }
 
 func writeProblem(w http.ResponseWriter, p problemBody) {

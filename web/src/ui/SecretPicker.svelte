@@ -1,0 +1,206 @@
+<script lang="ts">
+  // A secret parameter (D-088): choose an existing secret or create one in
+  // place. The form keeps only the name; the value goes straight to
+  // PUT /secrets/{name} and is cleared right after.
+  import { tick } from "svelte";
+  import type { PlumbApi } from "../lib/client";
+  import type { SecretInfo } from "../lib/types";
+  import ProblemBox from "./ProblemBox.svelte";
+  import { describedBy, pointerErrors } from "../lib/formErrors";
+
+  let {
+    api,
+    id,
+    value = $bindable(),
+    required = false,
+    invalid = false,
+    describedby,
+  }: {
+    api: PlumbApi;
+    id: string;
+    value: string;
+    required?: boolean;
+    invalid?: boolean;
+    describedby?: string | undefined;
+  } = $props();
+
+  let secrets = $state<SecretInfo[] | null>(null);
+  let loadError = $state<unknown>(null);
+  let creating = $state(false);
+  let newName = $state("");
+  let newValue = $state("");
+  let createError = $state<unknown>(null);
+  let busy = $state(false);
+  let own = $state<Record<string, string>>({});
+  const errs: Record<string, string> = $derived({ ...pointerErrors(createError), ...own });
+
+  const NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
+  const load = () =>
+    api.listSecrets().then(
+      (s) => (secrets = s),
+      (e: unknown) => (loadError = e),
+    );
+  $effect(() => {
+    void load();
+  });
+
+  // A stored name that is not in the list (deleted or not visible) stays selectable.
+  const names = $derived.by(() => {
+    const n = (secrets ?? []).map((s) => s.name);
+    return value && !n.includes(value) ? [value, ...n] : n;
+  });
+
+  async function open() {
+    creating = true;
+    createError = null;
+    await tick();
+    document.getElementById(`${id}-new-name`)?.focus();
+  }
+
+  function close() {
+    creating = false;
+    newName = "";
+    newValue = "";
+    createError = null;
+    own = {};
+    document.getElementById(id)?.focus();
+  }
+
+  async function create() {
+    createError = null;
+    const check: Record<string, string> = {};
+    if (!NAME.test(newName))
+      check["/name"] = "Use lower-case letters, digits, dots and dashes (at most 63).";
+    if (newValue === "") check["/value"] = "Enter a value.";
+    own = check;
+    if (Object.keys(check).length) {
+      document.getElementById(check["/name"] ? `${id}-new-name` : `${id}-new-value`)?.focus();
+      return;
+    }
+    busy = true;
+    const sent = newValue;
+    newValue = ""; // never kept after the request starts
+    try {
+      // A new secret must not replace a live value (review #48 must): check
+      // a fresh list first. Replacing is the job of Settings → Secrets.
+      secrets = await api.listSecrets();
+      if (secrets.some((s) => s.name === newName)) {
+        own = {
+          "/name":
+            "A secret with this name exists. Choose it in the list. To replace its value, use Settings → Secrets.",
+        };
+        document.getElementById(`${id}-new-name`)?.focus();
+        return;
+      }
+      const info = await api.putSecret(newName, sent);
+      await load();
+      value = info.name;
+      close();
+    } catch (err) {
+      createError = err;
+    } finally {
+      busy = false;
+    }
+  }
+
+  // Enter inside the inline fields must not submit the target form.
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void create();
+    }
+  }
+</script>
+
+<div class="picker">
+  <div class="row">
+    <select
+      {id}
+      bind:value
+      {required}
+      aria-invalid={invalid}
+      aria-describedby={describedby}
+      class="grow"
+    >
+      <option value="">{secrets === null && !loadError ? "Loading…" : "(choose a secret)"}</option>
+      {#each names as n (n)}<option value={n}>{n}</option>{/each}
+    </select>
+    {#if !creating}
+      <button class="btn" type="button" onclick={open}>New secret</button>
+    {/if}
+  </div>
+  <ProblemBox error={loadError} />
+  {#if creating}
+    <div class="new" role="group" aria-labelledby="{id}-new-title">
+      <p id="{id}-new-title" class="title">New secret</p>
+      <div class="field">
+        <label for="{id}-new-name">Secret name</label>
+        <input
+          id="{id}-new-name"
+          type="text"
+          class="mono"
+          bind:value={newName}
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="63"
+          name="plumb-secret-name"
+          aria-invalid={!!errs["/name"]}
+          aria-describedby={describedBy(`${id}-new-name`, errs["/name"])}
+          onkeydown={onKey}
+        />
+        {#if errs["/name"]}<span class="error" id="{id}-new-name-error">{errs["/name"]}</span>{/if}
+        <span class="hint" id="{id}-new-name-hint"
+          >Lower-case letters, digits, dots and dashes.</span
+        >
+      </div>
+      <div class="field">
+        <label for="{id}-new-value">Secret value</label>
+        <input
+          id="{id}-new-value"
+          type="password"
+          bind:value={newValue}
+          name="plumb-secret-value"
+          autocomplete="new-password"
+          spellcheck="false"
+          aria-invalid={!!errs["/value"]}
+          aria-describedby={describedBy(`${id}-new-value`, errs["/value"])}
+          onkeydown={onKey}
+        />
+        {#if errs["/value"]}<span class="error" id="{id}-new-value-error">{errs["/value"]}</span
+          >{/if}
+        <span class="hint" id="{id}-new-value-hint"
+          >Plumb stores it encrypted and never shows it again. The target refers to it by name.</span
+        >
+      </div>
+      <ProblemBox error={createError} fields={["/name", "/value"]} />
+      <div class="row">
+        <button class="btn primary" type="button" disabled={busy} onclick={create}
+          >Create secret</button
+        >
+        <button class="btn" type="button" onclick={close}>Cancel</button>
+      </div>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .grow {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+  .new {
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface-2);
+  }
+  .title {
+    margin: 0 0 var(--space-2);
+    font-weight: 600;
+    font-size: var(--text-sm);
+  }
+  .new .field {
+    margin-bottom: var(--space-2);
+  }
+</style>

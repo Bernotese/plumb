@@ -7,16 +7,19 @@
     "node": ">=24"
   },
   "scripts": {
-    "gen": "openapi-typescript ../api/openapi.yaml --default-non-nullable=false --empty-objects-unknown --output src/lib/api.gen.ts",
+    "gen": "openapi-typescript ../api/openapi.yaml --default-non-nullable=false --empty-objects-unknown --output src/lib/api.gen.ts && node scripts/gen-examples.mjs ../api/openapi.yaml src/lib/mock/examples.gen.json",
     "check:api": "node scripts/check-openapi.mjs ../api/openapi.yaml",
     "dev": "npm run gen && vite",
-    "build": "npm run gen && vite build && touch dist/.gitkeep",
+    "build": "npm run gen && vite build && touch dist/.gitkeep && node scripts/check-dist.mjs dist",
     "test": "npm run gen && vitest run",
     "lint": "npm run check:api && npm run gen && eslint . && prettier --check . && svelte-check --fail-on-warnings",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "dev:mock": "npm run gen && VITE_PLUMB_MOCK=1 vite",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.0",
     "@redocly/openapi-core": "1.34.24",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tsconfig/svelte": "5.0.8",
@@ -24,6 +27,7 @@
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-svelte": "3.24.1",
     "globals": "17.14.0",
+    "happy-dom": "21.0.4",
     "openapi-typescript": "7.13.0",
     "prettier": "3.9.10",
     "prettier-plugin-svelte": "4.1.1",

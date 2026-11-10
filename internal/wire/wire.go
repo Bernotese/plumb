@@ -71,6 +71,10 @@ type Resource struct {
 	// Sensitive names the attributes whose value came from a secret.
 	// The agent never reports a value or a hash for them (D-037); see Redact.
 	Sensitive []string `json:"sensitive,omitempty"`
+	// SecretValues are the clear secret values inside Attrs. They never go
+	// on the wire (json "-"); the controller keeps them in memory only, to
+	// mask them in every agent output and error (D-062, T-029 QA).
+	SecretValues []string `json:"-"`
 }
 
 // Kind is the kind of a target.
@@ -95,6 +99,9 @@ type Change struct {
 	// "changed"; no value and no hash of it leaves the guest (D-037).
 	Sensitive bool `json:"sensitive,omitempty"`
 	Risk      Risk `json:"risk"`
+	// Ignored is set only by the controller, in a Plan: a Rule ignores this
+	// drift (D-092). The Plan still applies it. An agent never sets it.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // Redact enforces the sensitive rule on changes that come from outside the
@@ -111,6 +118,7 @@ func Redact(sensitive []string, changes []Change) []Change {
 		if c.Sensitive || contains(sensitive, c.Attr) {
 			c = Change{Attr: c.Attr, Sensitive: true, Risk: c.Risk}
 		}
+		c.Ignored = false // only the controller marks a change as ignored (D-092)
 		out[i] = c
 	}
 	return out

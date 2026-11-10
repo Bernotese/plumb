@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Bernotese/plumb/internal/secret"
 )
 
 // D-039: --dev never touches a real host; without --dev, no plain HTTP
@@ -41,7 +43,12 @@ func TestServeFlags(t *testing.T) {
 	// Without --dev the controller refuses to start until the Proxmox
 	// driver exists (T-012); it never falls back to the fake.
 	var out, errOut bytes.Buffer
-	if code := serve(context.Background(), []string{"--data", t.TempDir()}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "installer") {
+	keyed := t.TempDir()
+	os.Mkdir(filepath.Join(keyed, "key"), 0o700)
+	if err := secret.WriteKeyFile(defaultKeyFile(keyed), secret.NewKey()); err != nil {
+		t.Fatal(err)
+	}
+	if code := serve(context.Background(), []string{"--data", keyed}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "installer") {
 		t.Errorf("serve without --dev: %d %q", code, errOut.String())
 	}
 	if code := serve(context.Background(), []string{"--dev", "--driver", "proxmox"}, &out, &errOut); code != 2 {
@@ -79,5 +86,29 @@ func TestDevSafety(t *testing.T) {
 	os.WriteFile(filepath.Join(old, "plumb.db"), []byte("x"), 0o600)
 	if err := checkMode(old, true); err == nil {
 		t.Error("dev on an unmarked database")
+	}
+}
+
+// D-080: --dev-demo needs --dev, and the dev mode marker still refuses a
+// production data directory.
+func TestDevDemoGuards(t *testing.T) {
+	if _, err := parseServe([]string{"--dev-demo"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "--dev-demo needs --dev") {
+		t.Errorf("--dev-demo alone: %v", err)
+	}
+	var out, errOut bytes.Buffer
+	if code := serve(context.Background(), []string{"--dev-demo"}, &out, &errOut); code != 2 {
+		t.Errorf("serve --dev-demo: %d", code)
+	}
+	prod := t.TempDir()
+	if err := checkMode(prod, false); err != nil {
+		t.Fatal(err)
+	}
+	errOut.Reset()
+	code := serve(context.Background(), []string{"--dev", "--dev-demo", "--data", prod, "--listen", "127.0.0.1:0", "--agent-listen", "127.0.0.1:0"}, &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "production data directory") {
+		t.Errorf("dev demo on a production directory: %d %q", code, errOut.String())
+	}
+	if strings.Contains(out.String(), "dev login") {
+		t.Error("a refused start printed a login link")
 	}
 }
