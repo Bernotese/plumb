@@ -20,6 +20,7 @@ Five resource types can observe, diff and apply inside a Debian or Ubuntu guest.
 - [ ] For an attribute listed in `sensitive`, the resource compares locally and returns only a change with `sensitive: true` (no `from`, no `to`). A test proves that no report holds the clear value or a hash of it. A resource that is not on the guest is observed as `state: absent`. Every command gets `--` before its operands.
 - [ ] The root directory and the command runner are injected. Unit tests use a temp directory and a fake runner. No test needs root.
 - [ ] Tests: `go test ./internal/resource/...` passes. `make test-guest` passes on Debian 13 and Ubuntu 26.04.
+- [ ] From the T-003 re-review: `Item.Output` is not covered by `wire.Redact`. Add one rule in `resource.go` (no sensitive value in Output) and a test.
 
 ## Out of scope
 - The agent loop and drift (T-018).
