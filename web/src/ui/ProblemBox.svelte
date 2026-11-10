@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { ApiError } from "../lib/api";
+  import { ApiError, NetworkError } from "../lib/api";
 
   let { error }: { error: unknown } = $props();
   const p = $derived(error instanceof ApiError ? error.problem : undefined);
-  // fetch rejects with a TypeError when the server cannot be reached.
-  const network = $derived(!p && error instanceof TypeError);
+  // Only the HTTP client marks a failed fetch; any other error is a bug.
+  const network = $derived(error instanceof NetworkError);
   const text = $derived(error instanceof Error ? error.message : String(error));
 </script>
 

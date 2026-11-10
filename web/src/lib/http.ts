@@ -1,7 +1,7 @@
 // The PlumbApi over HTTP: /api/v1 of the controller (T-014). Same origin,
 // session cookie, no token or password is stored by the UI. Errors are
 // ApiError with the problem+json body.
-import { API_BASE, ApiError } from "./api";
+import { API_BASE, ApiError, NetworkError } from "./api";
 import type { PlumbApi } from "./client";
 import type { components } from "./api.gen";
 import type {
@@ -77,15 +77,20 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     body?: unknown,
     quiet401 = false,
   ): Promise<T> {
-    const res = await doFetch(API_BASE + path, {
-      method,
-      credentials: "same-origin",
-      headers:
-        body === undefined
-          ? { accept: "application/json" }
-          : { accept: "application/json", "content-type": "application/json" },
-      body: body === undefined ? null : JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await doFetch(API_BASE + path, {
+        method,
+        credentials: "same-origin",
+        headers:
+          body === undefined
+            ? { accept: "application/json" }
+            : { accept: "application/json", "content-type": "application/json" },
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+    } catch (err) {
+      throw new NetworkError(err);
+    }
     if (!res.ok) {
       const problem = await toProblem(res);
       if (res.status === 401 && !quiet401) opts.onUnauthorized?.();

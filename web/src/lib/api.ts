@@ -81,3 +81,11 @@ export async function get<P extends JsonGetPath>(
   if (!res.ok) throw new ApiError(await toProblem(res));
   return (await res.json()) as GetResult<P>;
 }
+
+/** The server could not be reached (fetch failed). Thrown only by the HTTP client. */
+export class NetworkError extends Error {
+  constructor(cause: unknown) {
+    super("The Plumb API is not reachable.", { cause });
+    this.name = "NetworkError";
+  }
+}

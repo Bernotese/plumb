@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError } from "./api";
+import { ApiError, NetworkError } from "./api";
 import { createHttpApi, type EventSourceLike } from "./http";
 import type { PlumbEvent } from "./types";
 
@@ -122,6 +122,15 @@ class FakeStream implements EventSourceLike {
     this.onerror?.(new Event("error"));
   }
 }
+
+describe("network errors", () => {
+  it("are marked as NetworkError", async () => {
+    const api = createHttpApi({
+      fetch: (() => Promise.reject(new TypeError("Failed to fetch"))) as unknown as typeof fetch,
+    });
+    await expect(api.listTargets()).rejects.toBeInstanceOf(NetworkError);
+  });
+});
 
 describe("event stream", () => {
   it("delivers named events and reconnects from the last seq", async () => {
