@@ -220,3 +220,171 @@ func slice2Scan(t *testing.T, surface string, b []byte, values []string) {
 		}
 	}
 }
+
+func TestSlice2HumanOnlyMatrix(t *testing.T) {
+	for _, kind := range []string{"new-target", "other-resource", "rule-add", "rule-change", "rule-delete"} {
+		t.Run(kind, func(t *testing.T) {
+			e := newEnv(t, true)
+			adm := e.admin()
+			tok := e.createToken(adm, map[string]any{"name": "apply", "tier": "apply", "max_risk": "disruptive"})
+			apply := &client{e: e, bearer: tok.Bearer}
+			value := "s2-" + hex.EncodeToString(randBytes(t))
+			slice2Call(t, adm, "PUT", "/secrets/app-db", map[string]string{"value": value}, 200)
+			a := e.agent("web1")
+			rule := func(attr string) state.Doc {
+				return doc(state.KindRule, "test-rule", `{"action":"ignore","target":"*","resource":"file:/etc/other.env","attrs":["`+attr+`"]}`)
+			}
+			baseline := []state.Doc{doc(state.KindImage, "ubuntu", imageSpec), appBlock("/etc/app.env"), appTarget("web1", "app-db")}
+			if kind == "rule-change" || kind == "rule-delete" {
+				baseline = append(baseline, rule("content"))
+			}
+			p := slice2Call(t, adm, "POST", "/plans", map[string]any{"reason": "baseline", "put": baseline}, 201)
+			slice2Approve(t, adm, p)
+			e.waitWatch("web1")
+			revision := func() string {
+				b := slice2Call(t, adm, "GET", "/revisions", nil, 200)
+				var list struct{ Items []struct{ ID int64 } }
+				if err := json.Unmarshal(b, &list); err != nil || len(list.Items) == 0 {
+					t.Fatal("missing revision")
+				}
+				return itoa(list.Items[0].ID)
+			}
+			base := revision()
+			proposal := map[string]any{"reason": "candidate"}
+			reason := "rule-change"
+			switch kind {
+			case "new-target":
+				e.agent("web2")
+				proposal["put"] = []state.Doc{appTarget("web2", "app-db")}
+				reason = "secret-binding"
+			case "other-resource":
+				proposal["put"] = []state.Doc{appBlock("/etc/other.env")}
+				reason = "secret-binding"
+			case "rule-add":
+				proposal["put"] = []state.Doc{rule("content")}
+			case "rule-change":
+				proposal["put"] = []state.Doc{rule("mode")}
+			case "rule-delete":
+				proposal["delete"] = []map[string]string{{"kind": "Rule", "name": "test-rule"}}
+			}
+			// Commit the candidate once to obtain a genuine rollback revision and export.
+			p = slice2Call(t, adm, "POST", "/plans", proposal, 201)
+			slice2Approve(t, adm, p)
+			desired := revision()
+			file := slice2Call(t, adm, "GET", "/export", nil, 200)
+			p = slice2Call(t, adm, "POST", "/revisions/"+base+"/rollback", map[string]string{"reason": "reset"}, 201)
+			slice2Approve(t, adm, p)
+			for _, origin := range []string{"proposal", "rollback", "import"} {
+				t.Run(origin, func(t *testing.T) {
+					skip := len(a.Bodies())
+					targetSkip := 0
+					if kind == "new-target" {
+						targetSkip = len(e.agents["web2"].Bodies())
+					}
+					switch origin {
+					case "proposal":
+						p = slice2Call(t, adm, "POST", "/plans", proposal, 201)
+					case "rollback":
+						p = slice2Call(t, adm, "POST", "/revisions/"+desired+"/rollback", map[string]string{"reason": "candidate"}, 201)
+					case "import":
+						p = slice2Call(t, adm, "POST", "/import", map[string]any{"reason": "candidate", "content": string(file)}, 201)
+					}
+					if !bytes.Contains(p, []byte(`"`+reason+`"`)) {
+						t.Fatal("missing human-only reason")
+					}
+					b := slice2Call(t, apply, "POST", "/plans/"+planIDOf(p)+"/approve", nil, 403)
+					if problemType(b) != "human-required" {
+						t.Fatal("approval did not require human")
+					}
+					// Existing bindings may be observed; a prospective destination must never get the value.
+					if kind == "new-target" && bodiesHold(e.agents["web2"], targetSkip, value) {
+						t.Fatal("new target received unapproved secret")
+					}
+					if kind == "other-resource" {
+						for i, raw := range a.Bodies()[skip:] {
+							if a.Commands()[skip+i] == "observe" {
+								slice2Scan(t, "pre-approval observe body", raw, []string{value})
+							}
+							var body struct {
+								Resources []struct {
+									ID    string
+									Attrs map[string]any
+								}
+							}
+							if err := json.Unmarshal(raw, &body); err != nil {
+								t.Fatal(err)
+							}
+							for _, r := range body.Resources {
+								if r.ID == "file:/etc/other.env" {
+									attrs, _ := json.Marshal(r.Attrs)
+									slice2Scan(t, "unapproved destination", attrs, []string{value})
+								}
+							}
+						}
+					}
+					slice2Call(t, adm, "DELETE", "/plans/"+planIDOf(p), nil, 204)
+				})
+			}
+			e.noValue(nil, value)
+		})
+	}
+}
+
+func TestSlice2TokenAndImportBoundaries(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	pt := e.createToken(adm, map[string]any{"name": "planner", "tier": "plan"})
+	at := e.createToken(adm, map[string]any{"name": "applier", "tier": "apply", "max_risk": "disruptive"})
+	planner, apply := &client{e: e, bearer: pt.Bearer}, &client{e: e, bearer: at.Bearer}
+	for _, r := range []struct {
+		method, path string
+		body         any
+	}{
+		{"PUT", "/secrets/app-db", map[string]string{"value": "denied"}},
+		{"GET", "/tokens", nil}, {"POST", "/tokens", map[string]string{"name": "denied", "tier": "read"}},
+		{"DELETE", "/tokens/" + at.Token.ID, nil},
+		{"POST", "/export", map[string]string{"passphrase": exportPass}},
+		{"POST", "/import", map[string]string{"reason": "denied", "content": "kind: Export\nformat: 1\n"}},
+	} {
+		slice2Call(t, planner, r.method, r.path, r.body, 403)
+	}
+	value := "s2-" + hex.EncodeToString(randBytes(t))
+	slice2Call(t, adm, "PUT", "/secrets/app-db", map[string]string{"value": value}, 200)
+	e.agent("web1")
+	p := slice2Call(t, adm, "POST", "/plans", map[string]any{"reason": "seed", "put": []state.Doc{doc(state.KindImage, "ubuntu", imageSpec), appBlock("/etc/app.env"), appTarget("web1", "app-db")}}, 201)
+	slice2Approve(t, adm, p)
+	e.waitWatch("web1")
+	if err := e.agents["web1"].Change(e.ctx, "file:/etc/app.env", map[string]any{"path": "/etc/app.env", "content": "manual", "mode": "0600"}); err != nil {
+		t.Fatal(err)
+	}
+	list := slice2Call(t, adm, "GET", "/issues?status=open", nil, 200)
+	var issues struct{ Items []struct{ ID int64 } }
+	if err := json.Unmarshal(list, &issues); err != nil || len(issues.Items) != 1 {
+		t.Fatal("missing sensitive issue")
+	}
+	for _, c := range []*client{planner, apply} {
+		b := slice2Call(t, c, "POST", "/issues/"+itoa(issues.Items[0].ID)+"/resolve", map[string]string{"action": "ignore_once"}, 403)
+		if problemType(b) != "human-required" {
+			t.Fatal("sensitive ignore did not require human")
+		}
+	}
+	file := slice2Call(t, adm, "POST", "/export", map[string]string{"passphrase": exportPass}, 200)
+	slice2Call(t, adm, "PUT", "/secrets/app-db", map[string]string{"value": value + "-replacement"}, 200)
+	before := qaImportDB(t, e)
+	b := slice2Call(t, adm, "POST", "/import", map[string]any{"reason": "conflict", "content": string(file), "passphrase": exportPass}, 409)
+	if problemType(b) != "secret-conflict" || before != qaImportDB(t, e) {
+		t.Fatal("conflicting import changed database or wrong error")
+	}
+	e.agent("web2")
+	p = slice2Call(t, adm, "POST", "/plans", map[string]any{"reason": "second target", "put": []state.Doc{appTarget("web2", "app-db")}}, 201)
+	slice2Approve(t, adm, p)
+	p = slice2Call(t, planner, "POST", "/revisions/1/rollback", map[string]string{"reason": "remove second target"}, 201)
+	if !bytes.Contains(p, []byte(`"risk":"destructive"`)) {
+		t.Fatal("rollback was not destructive")
+	}
+	b = slice2Call(t, apply, "POST", "/plans/"+planIDOf(p)+"/approve", nil, 403)
+	if problemType(b) != "human-required" && problemType(b) != "risk-too-high" {
+		t.Fatal("wrong destructive approval refusal")
+	}
+	e.noValue(nil, value, value+"-replacement")
+}
