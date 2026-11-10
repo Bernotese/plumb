@@ -252,28 +252,30 @@
                   </div>
                 </div>
               {:else}
-                <div class="row">
-                  <button
-                    class="btn"
-                    type="button"
-                    aria-label="Replace {s.name}"
-                    onclick={() => startReplace(s)}>Replace</button
-                  >
-                  <button
-                    class="btn"
-                    type="button"
-                    disabled={s.used_by.length > 0}
-                    aria-describedby={s.used_by.length ? `in-use-${s.name}` : undefined}
-                    aria-label="Delete {s.name}"
-                    onclick={() => askDelete(s.name)}>Delete</button
-                  >
+                <div class="actions">
+                  <div class="row">
+                    <button
+                      class="btn"
+                      type="button"
+                      aria-label="Replace {s.name}"
+                      onclick={() => startReplace(s)}>Replace</button
+                    >
+                    <button
+                      class="btn"
+                      type="button"
+                      disabled={s.used_by.length > 0}
+                      aria-describedby={s.used_by.length ? `in-use-${s.name}` : undefined}
+                      aria-label="Delete {s.name}"
+                      onclick={() => askDelete(s.name)}>Delete</button
+                    >
+                  </div>
+                  {#if s.used_by.length}
+                    <span class="why" id="in-use-{s.name}">
+                      In use by {s.used_by.length} target{s.used_by.length === 1 ? "" : "s"}. Remove
+                      the references first.
+                    </span>
+                  {/if}
                 </div>
-                {#if s.used_by.length}
-                  <span class="why" id="in-use-{s.name}">
-                    In use by {s.used_by.length} target{s.used_by.length === 1 ? "" : "s"}. Remove
-                    the references first.
-                  </span>
-                {/if}
               {/if}
             </td>
           </tr>
@@ -292,6 +294,9 @@
     display: flex;
     gap: var(--space-2);
     align-items: center;
+  }
+  .actions {
+    min-width: 0;
   }
   .why {
     display: block;

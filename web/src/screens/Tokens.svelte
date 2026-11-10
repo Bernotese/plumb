@@ -192,14 +192,18 @@
             <th scope="row">{t.name}<br /><span class="mono id">{t.id}</span></th>
             <td data-label="Tier">{t.tier}</td>
             <td data-label="Max risk">{t.max_risk ?? "–"}</td>
-            <td data-label="Created"
-              >{formatTime(t.created_at)}<br /><span class="mono id">{t.created_by}</span></td
-            >
+            <td data-label="Created">
+              <span
+                >{formatTime(t.created_at)}<br /><span class="mono id">{t.created_by}</span></span
+              >
+            </td>
             <td data-label="Last used">{t.last_used_at ? formatTime(t.last_used_at) : "Never"}</td>
             <td data-label="Status">
               {#if t.revoked_at}
-                <Badge tone="muted" label="Revoked" />
-                <span class="id">{formatTime(t.revoked_at)}</span>
+                <span>
+                  <Badge tone="muted" label="Revoked" />
+                  <span class="id">{formatTime(t.revoked_at)}</span>
+                </span>
               {:else if confirmId === t.id}
                 <div class="confirm" role="group" aria-label="Confirm revoke of {t.name}">
                   <span>Revoke "{t.name}"? It stops working at once.</span>

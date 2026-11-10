@@ -37,6 +37,14 @@ describe("scalar", () => {
   });
 });
 
+describe("scalar escapes", () => {
+  it("escapes DEL, C1 controls and line separators in quoted strings", () => {
+    expect(scalar("a\u007fb")).toBe('"a\\u007fb"');
+    expect(scalar("a\u0085b\u009f")).toBe('"a\\u0085b\\u009f"');
+    expect(scalar("a\u2028b\u2029")).toBe('"a\\u2028b\\u2029"');
+  });
+});
+
 describe("toYaml", () => {
   it("writes a document in API key order", () => {
     const doc = {
@@ -89,7 +97,7 @@ describe("toYaml", () => {
   it("quotes multi-line strings with an indented first line, blank-space lines or controls", () => {
     // QA T-034 findings 1 and 2, review finding 4.
     for (const c of ["\n  x\ny", "a\n\u0000b", "\n   \nx", "a\n \nb", "a\u0085\nb"]) {
-      expect(toYaml({ c })).toBe(`c: ${JSON.stringify(c)}\n`);
+      expect(toYaml({ c })).toBe(`c: ${scalar(c)}\n`);
     }
     // A blank first line with a plain next line is still a block.
     expect(toYaml({ c: "\nx\n" })).toBe("c: |\n\n  x\n");
