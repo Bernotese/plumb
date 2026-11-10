@@ -2,7 +2,7 @@
 
 - **Owner:** pl-frontend   · **Reviewer:** pl-reviewer (pl-architect checks the contract)   · **QA:** pl-codex-qa
 - **Size:** M   · **Depends on:** user approval; merge after T-003   · **Parallel with:** T-003
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** review (PR open; Makefile lines wait for T-003)
 
 ## Goal
 The public API contract for the slice exists, and the web app builds with generated API types.
@@ -27,4 +27,10 @@ The public API contract for the slice exists, and the web app builds with genera
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-017-openapi-web-skeleton`, PR #2. Contract follows D-043…D-048: integer ids, principal strings, wire states, `Change` = `wire.Change`, document schemas by `$ref` to `internal/state/schema/*.json` (lint validates examples against them; codegen bundles them), issue actions `accept|revert`.
+- GET of a document returns `{revision, document}` (+ `status` for targets), because the document schemas are closed.
+- `npm run check:api`: Redocly recommended-strict + own checks (every response body has an example, snake_case properties and parameters). Runs in `make lint-web`.
+- `web/`: Svelte 5 + Vite + TS 5.9, one page (Targets), typed GET client over generated `api.gen.ts` (`npm run gen`, not committed).
+- Makefile: `build-web`, `lint-web`, `test-web` filled (npm ci only when the lock file changes). CI: `actions/setup-node` v7.1.0 (SHA-pinned), Node 26.
+- Embed: Go package `web` (`FS()`, `Built()`); `web/dist/.gitkeep` is tracked (force-added; an exception line cannot re-include a file under an ignored `dist/` dir). Nothing imports `web` yet → `plumb` links the UI when T-011 serves it.
+- Tests: `make lint test build` → pass (Go tests, vitest 8, build); `bin/plumb version` OK.

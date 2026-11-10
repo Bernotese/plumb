@@ -1,0 +1,1554 @@
+openapi: 3.1.0
+info:
+  title: Plumb API
+  version: 0.1.0
+  summary: Public API of the Plumb controller.
+  description: |
+    The web UI, scripts and AI clients use only this API (ARCHITECTURE §4, D-023).
+
+    Conventions:
+    - JSON fields are `snake_case`. Times are UTC RFC 3339.
+    - The API uses the same words and ids as the database and `internal/wire` (D-045).
+      Revision, Plan, Run, Issue and comment ids are integers.
+    - Document shapes (`Image`, `Block`, `Target`) are the JSON Schemas in
+      `internal/state/schema`. This file refers to them and does not copy them (D-043).
+    - A change is `{attr, from, to, risk}`: `from` is the guest now, `to` is the desired state.
+      A missing value means "not there". A sensitive change is `{attr, sensitive, risk}`
+      without values (D-047).
+    - A principal is the string `user:<name>`, `token:<id>`, `agent:<target>` or `system`.
+    - Errors are `application/problem+json` (RFC 9457) with a `urn:plumb:problem:<code>` type.
+    - Lists return `{items, next}`. `next` is an opaque cursor; pass it as `cursor` to get the
+      next page. `next` is `null` on the last page.
+    - Every change goes through a Plan: propose (`POST /plans`), review, approve. Re-enroll and
+      the issue actions `accept` and `revert` also return a Plan.
+
+    Authentication (`components.securitySchemes`):
+    - `session`: cookie of a human user (`POST /session`). Every call that changes data must send
+      an `Origin` header that matches the server. This includes `POST /session` (login CSRF).
+    - `token`: API token as bearer. The roles listed for `token` on an operation are the
+      **minimum tier**. Token tiers are ordered `read` < `plan` < `apply` (D-046).
+    - An operation that lists only `session` is for humans only. A human session has the tier
+      `admin`.
+    - A session with `must_change_password` can only call the `/session` operations. Other calls
+      return 403 `password-change-required`.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Plumb
+servers:
+  - url: /api/v1
+    description: Same origin as the web UI (port 8443).
+security:
+  - session: []
+  - token: [read]
+tags:
+  - name: session
+    description: Human login, logout and password change.
+  - name: images
+    description: Image documents of the desired state.
+  - name: blocks
+    description: Block documents of the desired state.
+  - name: targets
+    description: Target documents plus their live status.
+  - name: plans
+    description: Proposals, plans and approval.
+  - name: runs
+    description: Execution of approved plans.
+  - name: issues
+    description: Drift issues and their resolution.
+  - name: events
+    description: Server-sent event stream.
+
+paths:
+  /session:
+    get:
+      tags: [session]
+      operationId: getSession
+      summary: Read the current principal
+      description: Works for a session and for a token. The UI uses it at start.
+      security:
+        - session: []
+        - token: [read]
+      responses:
+        "200":
+          description: The current principal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+              example:
+                principal: "user:admin"
+                must_change_password: false
+                tier: admin
+                expires_at: "2026-11-11T08:00:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [session]
+      operationId: login
+      summary: Log in a human user
+      description: |
+        Sets the `plumb_session` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`). Failed logins
+        are rate limited per user and per client address. The request must send an `Origin`
+        header that matches the server, else 403 `origin-mismatch` (login CSRF).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+            example: { username: admin, password: correct-horse-battery-staple }
+      responses:
+        "200":
+          description: Logged in. The cookie is set.
+          headers:
+            Set-Cookie:
+              description: The session cookie.
+              schema: { type: string }
+              example: plumb_session=Qm9n...; Path=/; HttpOnly; Secure; SameSite=Strict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+              example:
+                principal: "user:admin"
+                must_change_password: true
+                tier: admin
+                expires_at: "2026-11-11T08:00:00Z"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    delete:
+      tags: [session]
+      operationId: logout
+      summary: Log out
+      security:
+        - session: []
+      responses:
+        "204":
+          description: Logged out. The cookie is cleared.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /session/password:
+    put:
+      tags: [session]
+      operationId: changePassword
+      summary: Change the own password
+      description: Required after the first login. Other sessions of the user end.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+            example:
+              current_password: correct-horse-battery-staple
+              new_password: a-much-longer-new-passphrase
+      responses:
+        "204":
+          description: Password changed.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /images:
+    get:
+      tags: [images]
+      operationId: listImages
+      summary: List images
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of images from the head revision.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/ImageView" }
+              example:
+                items:
+                  - revision: 7
+                    document:
+                      kind: Image
+                      name: ubuntu-26.04
+                      spec:
+                        type: vm
+                        url: https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img
+                        sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /images/{name}:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    get:
+      tags: [images]
+      operationId: getImage
+      summary: Read one image
+      responses:
+        "200":
+          description: The image.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImageView" }
+              example:
+                revision: 7
+                document:
+                  kind: Image
+                  name: debian-13
+                  spec:
+                    title: Debian 13 (trixie)
+                    type: vm
+                    url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+                    sha256: 9a8b7c6d5e4f30211203f4e5d6c7b8a99a8b7c6d5e4f30211203f4e5d6c7b8a9
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /blocks:
+    get:
+      tags: [blocks]
+      operationId: listBlocks
+      summary: List blocks
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of blocks from the head revision.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/BlockView" }
+              example:
+                items:
+                  - revision: 7
+                    document:
+                      kind: Block
+                      name: deploy-user
+                      spec:
+                        description: A user for deployments with an SSH key.
+                        params:
+                          type: object
+                          required: [ssh_key]
+                          properties:
+                            name: { type: string, default: deploy }
+                            ssh_key: { type: string }
+                        resources:
+                          - user:
+                              name: "{{ .name }}"
+                              shell: /bin/bash
+                              ssh_keys: ["{{ .ssh_key }}"]
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /blocks/{name}:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    get:
+      tags: [blocks]
+      operationId: getBlock
+      summary: Read one block
+      responses:
+        "200":
+          description: The block.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlockView" }
+              example:
+                revision: 7
+                document:
+                  kind: Block
+                  name: motd
+                  spec:
+                    description: Message of the day.
+                    params:
+                      type: object
+                      properties:
+                        text: { type: string, default: Managed by Plumb. }
+                    resources:
+                      - file: { path: /etc/motd, content: "{{ .text }}\n", mode: "0644" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /targets:
+    get:
+      tags: [targets]
+      operationId: listTargets
+      summary: List targets with status
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of targets from the head revision, each with its live status.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/TargetView" }
+              example:
+                items:
+                  - revision: 7
+                    document:
+                      kind: Target
+                      name: web1
+                      spec:
+                        type: vm
+                        image: ubuntu-26.04
+                        guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0, ip: dhcp }
+                        blocks:
+                          - use: deploy-user
+                            params: { ssh_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOm me@laptop" }
+                          - { use: motd }
+                        overrides: {}
+                    status:
+                      phase: drifted
+                      agent: online
+                      power: running
+                      last_seen: "2026-11-10T09:14:02Z"
+                      guest_id: "9001"
+                      ips: [192.168.1.41]
+                      applied_revision: 7
+                      open_issues: 1
+                      last_run_id: 3
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /targets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    get:
+      tags: [targets]
+      operationId: getTarget
+      summary: Read one target with status
+      responses:
+        "200":
+          description: The target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TargetView" }
+              example:
+                revision: 7
+                document:
+                  kind: Target
+                  name: web1
+                  spec:
+                    type: vm
+                    image: ubuntu-26.04
+                    guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0, ip: dhcp }
+                    blocks:
+                      - { use: motd }
+                      - { use: motd, id: motd-banner, params: { text: "Second banner" } }
+                    overrides: {}
+                status:
+                  phase: ready
+                  agent: online
+                  power: running
+                  last_seen: "2026-11-10T09:14:02Z"
+                  guest_id: "9001"
+                  ips: [192.168.1.41]
+                  applied_revision: 7
+                  open_issues: 0
+                  last_run_id: 3
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /targets/{name}/reenroll:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [targets]
+      operationId: reenrollTarget
+      summary: Propose a re-enrollment
+      description: |
+        Creates a Plan that restarts the guest with a new enrollment token (risk `disruptive`,
+        D-038). The token is never a change: the driver passes it as `Bootstrap` (D-047).
+        Nothing happens until the Plan is approved.
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+            example: { reason: Agent credential lost after disk restore. }
+      responses:
+        "201":
+          description: The Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 14
+                origin: reenroll
+                issue_id: null
+                status: pending
+                risk: disruptive
+                reason: Agent credential lost after disk restore.
+                author: "user:admin"
+                created_at: "2026-11-10T09:20:00Z"
+                base_revision: 7
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                targets:
+                  - target: web1
+                    resources:
+                      - resource: "guest:config"
+                        action: restart
+                        risk: disruptive
+                        changes:
+                          - { attr: restart, risk: disruptive }
+                warnings: []
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /plans:
+    get:
+      tags: [plans]
+      operationId: listPlans
+      summary: List plans, newest first
+      description: Items are full Plans, the same as `GET /plans/{id}`.
+      parameters:
+        - name: status
+          in: query
+          description: Only plans with this status.
+          schema: { $ref: "#/components/schemas/PlanStatus" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of plans.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/Plan" }
+              example:
+                items:
+                  - id: 12
+                    origin: proposal
+                    issue_id: null
+                    status: approved
+                    risk: reversible
+                    reason: Add MOTD to web1.
+                    author: "token:tok_claude"
+                    created_at: "2026-11-10T08:58:11Z"
+                    base_revision: 6
+                    approved_by: "user:admin"
+                    approved_at: "2026-11-10T09:00:03Z"
+                    revision: 7
+                    run_id: 3
+                    targets:
+                      - target: web1
+                        resources:
+                          - resource: "file:/etc/motd"
+                            action: create
+                            risk: reversible
+                            changes:
+                              - { attr: state, from: absent, to: present, risk: reversible }
+                              - { attr: content, to: "Hello from Plumb\n", risk: reversible }
+                    warnings: []
+                next: MTE
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [plans]
+      operationId: createPlan
+      summary: Propose a change
+      description: |
+        Validates and renders the proposal, observes the affected targets and stores a Plan with
+        one entry per changed resource. A proposal that cannot be planned gets no Plan: 422 when
+        a document is invalid or changes a create-only field (`ip`, `gateway`, `user`,
+        `ssh_keys`, `disk`), 409 when the base revision moved.
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Proposal" }
+            example:
+              reason: Add MOTD to web1.
+              put:
+                - kind: Target
+                  name: web1
+                  spec:
+                    type: vm
+                    image: ubuntu-26.04
+                    guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0, ip: dhcp }
+                    blocks: [{ use: motd, params: { text: "Hello from Plumb" } }]
+                    overrides: {}
+              delete: []
+      responses:
+        "201":
+          description: The Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 12
+                origin: proposal
+                issue_id: null
+                status: pending
+                risk: reversible
+                reason: Add MOTD to web1.
+                author: "token:tok_claude"
+                created_at: "2026-11-10T08:58:11Z"
+                base_revision: 6
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                targets:
+                  - target: web1
+                    resources:
+                      - resource: "file:/etc/motd"
+                        action: create
+                        risk: reversible
+                        changes:
+                          - { attr: state, from: absent, to: present, risk: reversible }
+                          - { attr: content, to: "Hello from Plumb\n", risk: reversible }
+                          - { attr: mode, to: "0644", risk: reversible }
+                warnings: []
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /plans/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PlanId"
+    get:
+      tags: [plans]
+      operationId: getPlan
+      summary: Read one plan
+      responses:
+        "200":
+          description: The Plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 11
+                origin: proposal
+                issue_id: null
+                status: stale
+                risk: destructive
+                reason: Remove old test VM.
+                author: "user:admin"
+                created_at: "2026-11-10T08:50:40Z"
+                base_revision: 6
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                targets:
+                  - target: test9
+                    resources:
+                      - resource: "guest:config"
+                        action: delete
+                        risk: destructive
+                        changes:
+                          - { attr: state, from: present, to: absent, risk: destructive }
+                warnings: ["Head revision moved to 7. Propose again."]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /plans/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/PlanId"
+    post:
+      tags: [plans]
+      operationId: approvePlan
+      summary: Approve a plan and start its run
+      description: |
+        Commits the Revision and starts a Run. An `apply` token can approve up to its `max_risk`
+        (`reversible` or `disruptive`). Only a human session approves a `destructive` Plan. A
+        stale Plan returns 409.
+      security:
+        - session: []
+        - token: [apply]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApproveRequest" }
+            example: { comment: Looks good. }
+      responses:
+        "202":
+          description: Approved. The Run has started.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+              example:
+                id: 3
+                plan_id: 12
+                revision: 7
+                status: running
+                started_at: "2026-11-10T09:00:03Z"
+                finished_at: null
+                targets:
+                  - target: web1
+                    status: running
+                    steps:
+                      - resource: "file:/etc/motd"
+                        action: create
+                        status: pending
+                        changes:
+                          - { attr: state, from: absent, to: present, risk: reversible }
+                          - { attr: content, to: "Hello from Plumb\n", risk: reversible }
+                        output: ""
+                        started_at: null
+                        finished_at: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      summary: List runs, newest first
+      description: Items are full Runs, the same as `GET /runs/{id}`.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of runs.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/Run" }
+              example:
+                items:
+                  - id: 3
+                    plan_id: 12
+                    revision: 7
+                    status: succeeded
+                    started_at: "2026-11-10T09:00:03Z"
+                    finished_at: "2026-11-10T09:00:09Z"
+                    targets:
+                      - target: web1
+                        status: succeeded
+                        steps:
+                          - resource: "file:/etc/motd"
+                            action: create
+                            status: applied
+                            changes:
+                              - { attr: state, from: absent, to: present, risk: reversible }
+                              - { attr: content, to: "Hello from Plumb\n", risk: reversible }
+                            output: ""
+                            started_at: "2026-11-10T09:00:05Z"
+                            finished_at: "2026-11-10T09:00:05Z"
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /runs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [runs]
+      operationId: getRun
+      summary: Read one run with the result per target and resource
+      responses:
+        "200":
+          description: The Run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+              example:
+                id: 4
+                plan_id: 13
+                revision: 8
+                status: failed
+                started_at: "2026-11-10T09:30:03Z"
+                finished_at: "2026-11-10T09:30:41Z"
+                targets:
+                  - target: web1
+                    status: failed
+                    steps:
+                      - resource: "file:/etc/motd"
+                        action: null
+                        status: unchanged
+                        changes: []
+                        output: ""
+                        started_at: "2026-11-10T09:30:05Z"
+                        finished_at: "2026-11-10T09:30:05Z"
+                      - resource: "package:nginx"
+                        action: create
+                        status: failed
+                        changes:
+                          - { attr: state, from: absent, to: present, risk: reversible }
+                        output: "apt-get install nginx: exit status 100"
+                        started_at: "2026-11-10T09:30:05Z"
+                        finished_at: "2026-11-10T09:30:41Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /issues:
+    get:
+      tags: [issues]
+      operationId: listIssues
+      summary: List issues, newest first
+      parameters:
+        - name: status
+          in: query
+          description: Only issues with this status. Default is all.
+          schema: { $ref: "#/components/schemas/IssueStatus" }
+        - name: target
+          in: query
+          description: Only issues of this target.
+          schema: { $ref: "#/components/schemas/Name" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of issues.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/Issue" }
+              example:
+                items:
+                  - id: 7
+                    target: web1
+                    resource: "file:/etc/motd"
+                    status: open
+                    risk: reversible
+                    opened_at: "2026-11-10T09:10:12Z"
+                    updated_at: "2026-11-10T09:10:12Z"
+                    changes:
+                      - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
+                    actions: [accept, revert]
+                    plan_id: null
+                    resolution: null
+                    comments: []
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /issues/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    get:
+      tags: [issues]
+      operationId: getIssue
+      summary: Read one issue
+      responses:
+        "200":
+          description: The Issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+              example:
+                id: 8
+                target: web1
+                resource: "user:deploy"
+                status: open
+                risk: reversible
+                opened_at: "2026-11-10T09:12:40Z"
+                updated_at: "2026-11-10T09:13:02Z"
+                changes:
+                  - { attr: shell, from: /bin/sh, to: /bin/bash, risk: reversible }
+                  - attr: ssh_keys
+                    from: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOm me@laptop", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIXx other@host"]
+                    to: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOm me@laptop"]
+                    risk: reversible
+                actions: [accept, revert]
+                plan_id: null
+                resolution: null
+                comments:
+                  - id: 2
+                    author: "token:tok_claude"
+                    body: The shell change came from a manual chsh. Revert is safe.
+                    created_at: "2026-11-10T09:13:02Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /issues/{id}/resolve:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [issues]
+      operationId: resolveIssue
+      summary: Resolve an issue
+      description: |
+        `accept` and `revert` create a Plan; the issue is `resolving` until its Run succeeds.
+        `accept` is not offered for a sensitive change. Allowed actions are in `Issue.actions`.
+        Ignore actions come later with the `Rule` kind (D-044).
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolveRequest" }
+            example: { action: revert, reason: Undo the manual edit. }
+      responses:
+        "201":
+          description: The Plan that resolves the issue.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 15
+                origin: revert
+                issue_id: 7
+                status: pending
+                risk: reversible
+                reason: Undo the manual edit.
+                author: "user:admin"
+                created_at: "2026-11-10T09:15:00Z"
+                base_revision: 7
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                targets:
+                  - target: web1
+                    resources:
+                      - resource: "file:/etc/motd"
+                        action: update
+                        risk: reversible
+                        changes:
+                          - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
+                warnings: []
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /issues/{id}/comments:
+    parameters:
+      - $ref: "#/components/parameters/IssueId"
+    post:
+      tags: [issues]
+      operationId: commentIssue
+      summary: Add a comment to an issue
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommentRequest" }
+            example: { body: The shell change came from a manual chsh. Revert is safe. }
+      responses:
+        "201":
+          description: The new comment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+              example:
+                id: 2
+                author: "token:tok_claude"
+                body: The shell change came from a manual chsh. Revert is safe.
+                created_at: "2026-11-10T09:13:02Z"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /events:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Stream events (server-sent events)
+      description: |
+        A `text/event-stream`. Each message has `id` (the event `seq`), `event` (the type) and
+        `data` (an `Event` as JSON). Resume with `since` or the `Last-Event-ID` header. The server
+        sends a comment line every 15 s as keep-alive. Payloads never hold secret values.
+      parameters:
+        - name: since
+          in: query
+          description: Send events with a `seq` greater than this. Default is new events only.
+          schema: { type: integer, format: int64, minimum: 0 }
+          example: 1041
+        - name: Last-Event-ID
+          in: header
+          description: Same as `since`. Browsers send it on reconnect.
+          schema: { type: string }
+          example: "1041"
+      responses:
+        "200":
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "SSE frames. Each `data` line is one `Event` (components.schemas.Event) as JSON."
+              example: |
+                id: 1042
+                event: run.step
+                data: {"seq":1042,"type":"run.step","time":"2026-11-10T09:00:05Z","subject":"run:3","actor":"agent:web1","data":{"target":"web1","resource":"file:/etc/motd","status":"applied"}}
+
+                id: 1043
+                event: issue.opened
+                data: {"seq":1043,"type":"issue.opened","time":"2026-11-10T09:10:12Z","subject":"issue:7","actor":"agent:web1","data":{"target":"web1","resource":"file:/etc/motd"}}
+
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: plumb_session
+      description: |
+        Human session (`POST /session`) with tier `admin`. `HttpOnly`, `Secure`,
+        `SameSite=Strict`. Every call that changes data, login included, must send a matching
+        `Origin` header. Only a session approves `destructive` Plans and manages tokens, secrets
+        and import.
+    token:
+      type: http
+      scheme: bearer
+      description: |
+        API token. Tiers: `read` < `plan` (propose, comment, resolve) < `apply` (approve up to
+        the token's `max_risk`: `reversible` or `disruptive`). No token has `admin` (D-046). The
+        roles listed on an operation are the minimum tier. An `apply` token is root-equivalent
+        on guests.
+
+  headers:
+    Location:
+      description: URL of the created resource.
+      schema: { type: string }
+      example: /api/v1/plans/12
+
+  parameters:
+    DocName:
+      name: name
+      in: path
+      required: true
+      description: Document name.
+      schema: { $ref: "#/components/schemas/Name" }
+      example: web1
+    PlanId:
+      name: id
+      in: path
+      required: true
+      description: Plan id.
+      schema: { $ref: "#/components/schemas/Id" }
+      example: 12
+    RunId:
+      name: id
+      in: path
+      required: true
+      description: Run id.
+      schema: { $ref: "#/components/schemas/Id" }
+      example: 3
+    IssueId:
+      name: id
+      in: path
+      required: true
+      description: Issue id.
+      schema: { $ref: "#/components/schemas/Id" }
+      example: 7
+    Limit:
+      name: limit
+      in: query
+      description: Page size.
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      example: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: The `next` value of the previous page.
+      schema: { type: string, maxLength: 512 }
+      example: MTE
+
+  responses:
+    BadRequest:
+      description: The request is malformed.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:bad-request"
+            title: Bad request
+            status: 400
+            detail: "Request body is not valid JSON: unexpected end of input."
+    Unauthorized:
+      description: Not logged in, wrong credentials, or the session expired.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:unauthenticated"
+            title: Authentication required
+            status: 401
+    Forbidden:
+      description: |
+        The principal lacks the tier or risk limit (`forbidden`, `risk-too-high`), the call needs
+        a human session (`human-required`), the origin check failed (`origin-mismatch`), or a
+        password change is required (`password-change-required`).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:risk-too-high"
+            title: Risk exceeds token limit
+            status: 403
+            detail: Plan risk is destructive. Token max_risk is disruptive. A human must approve.
+    NotFound:
+      description: The object does not exist.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:not-found"
+            title: Not found
+            status: 404
+            detail: Target "web9" does not exist in the head revision.
+    Conflict:
+      description: |
+        The object is in a state that does not allow the action: a stale Plan, a moved head
+        revision, or an issue that is not open.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:plan-stale"
+            title: Plan is stale
+            status: 409
+            detail: The head revision moved from 6 to 7. Propose again.
+    Unprocessable:
+      description: The request is well-formed but fails validation.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:validation"
+            title: Validation failed
+            status: 422
+            errors:
+              - pointer: /put/0/spec/guest/disk
+                message: disk is create-only in this version. Create a new target instead.
+    TooManyRequests:
+      description: Too many failed logins.
+      headers:
+        Retry-After:
+          description: Seconds to wait.
+          schema: { type: integer }
+          example: 30
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:rate-limited"
+            title: Too many attempts
+            status: 429
+            detail: Try again in 30 seconds.
+
+  schemas:
+    Name:
+      type: string
+      description: Document name. Lowercase letters, digits, `-` and `.`.
+      pattern: "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$"
+      examples: [web1]
+    Id:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Id of a Plan, Run, Issue or comment.
+      examples: [12]
+    NullableId:
+      oneOf:
+        - $ref: "#/components/schemas/Id"
+        - type: "null"
+    Revision:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Revision number.
+    Time:
+      type: string
+      format: date-time
+      description: UTC, RFC 3339.
+      examples: ["2026-11-10T09:00:03Z"]
+    NullableTime:
+      type: [string, "null"]
+      format: date-time
+    Risk:
+      type: string
+      enum: [read, reversible, disruptive, destructive]
+      description: Risk class. The risk of a Plan is its highest change.
+    Principal:
+      type: string
+      description: Who did something (provenance).
+      pattern: "^(user|token|agent):.+$|^system$"
+      examples: ["user:admin", "token:tok_ci", "agent:web1", system]
+    NullablePrincipal:
+      oneOf:
+        - $ref: "#/components/schemas/Principal"
+        - type: "null"
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri-reference }
+        errors:
+          type: array
+          description: Field errors for 422. `pointer` is a JSON Pointer into the request body.
+          items:
+            type: object
+            required: [pointer, message]
+            properties:
+              pointer: { type: string }
+              message: { type: string }
+    Page:
+      type: object
+      required: [items, next]
+      properties:
+        items: { type: array }
+        next:
+          type: [string, "null"]
+          description: Cursor for the next page, `null` on the last page.
+
+    Session:
+      type: object
+      required: [principal, must_change_password, tier, expires_at]
+      properties:
+        principal: { $ref: "#/components/schemas/Principal" }
+        must_change_password: { type: boolean }
+        tier:
+          type: string
+          enum: [read, plan, apply, admin]
+          description: Effective tier. `admin` only for a human session; a token has the others.
+        max_risk:
+          type: string
+          enum: [reversible, disruptive]
+          description: Only for an `apply` token.
+        expires_at:
+          $ref: "#/components/schemas/NullableTime"
+          description: Session expiry. `null` for a token without expiry.
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 1, maxLength: 1024, format: password }
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, minLength: 1, maxLength: 1024, format: password }
+        new_password: { type: string, minLength: 12, maxLength: 1024, format: password }
+
+    # Documents. The shapes live in internal/state/schema (D-043): the server validates
+    # against the same files, so there is one source.
+    Image:
+      $ref: "../internal/state/schema/image.json"
+    Block:
+      $ref: "../internal/state/schema/block.json"
+    Target:
+      $ref: "../internal/state/schema/target.json"
+    Document:
+      description: A document of the State (`kind`, `name`, `spec`).
+      oneOf:
+        - $ref: "#/components/schemas/Image"
+        - $ref: "#/components/schemas/Block"
+        - $ref: "#/components/schemas/Target"
+    DocumentKind:
+      type: string
+      enum: [Image, Block, Target]
+    DocumentRef:
+      type: object
+      required: [kind, name]
+      properties:
+        kind: { $ref: "#/components/schemas/DocumentKind" }
+        name: { $ref: "#/components/schemas/Name" }
+    ImageView:
+      type: object
+      description: An Image of the head revision.
+      required: [revision, document]
+      properties:
+        revision:
+          $ref: "#/components/schemas/Revision"
+          description: The revision that last changed this document.
+        document: { $ref: "#/components/schemas/Image" }
+    BlockView:
+      type: object
+      description: A Block of the head revision.
+      required: [revision, document]
+      properties:
+        revision:
+          $ref: "#/components/schemas/Revision"
+          description: The revision that last changed this document.
+        document: { $ref: "#/components/schemas/Block" }
+    TargetView:
+      type: object
+      description: A Target of the head revision plus its live status.
+      required: [revision, document, status]
+      properties:
+        revision:
+          $ref: "#/components/schemas/Revision"
+          description: The revision that last changed this document.
+        document: { $ref: "#/components/schemas/Target" }
+        status: { $ref: "#/components/schemas/TargetStatus" }
+    TargetStatus:
+      type: object
+      description: Live status. It is not part of the desired state.
+      required: [phase, agent, power, open_issues]
+      properties:
+        phase:
+          type: string
+          enum: [pending, provisioning, enrolling, ready, applying, drifted, error]
+          description: |
+            `pending`: no guest yet. `provisioning`: the driver creates it. `enrolling`: waiting
+            for the agent. `ready`: matches the head revision. `applying`: a Run is active.
+            `drifted`: open issues. `error`: the last Run failed.
+        agent:
+          type: string
+          enum: [none, online, offline]
+          description: "`online` when the agent polled in the last 90 s."
+        power: { type: string, enum: [running, stopped, unknown] }
+        last_seen: { $ref: "#/components/schemas/NullableTime" }
+        guest_id:
+          type: [string, "null"]
+          description: Proxmox VMID.
+        ips:
+          type: array
+          items: { type: string }
+        applied_revision:
+          type: [integer, "null"]
+          description: Newest revision applied to this target.
+        open_issues: { type: integer, minimum: 0 }
+        last_run_id: { $ref: "#/components/schemas/NullableId" }
+
+    Proposal:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+        put:
+          type: array
+          items: { $ref: "#/components/schemas/Document" }
+        delete:
+          type: array
+          items: { $ref: "#/components/schemas/DocumentRef" }
+    ReasonRequest:
+      type: object
+      properties:
+        reason: { type: string, maxLength: 2000 }
+    ApproveRequest:
+      type: object
+      properties:
+        comment: { type: string, maxLength: 2000 }
+
+    Change:
+      description: |
+        One attribute change, the same as `wire.Change` (D-047). `from` is the guest now, `to`
+        is the desired state; a missing value means "not there". A sensitive change has no
+        values (D-037).
+      oneOf:
+        - type: object
+          required: [attr, risk]
+          properties:
+            attr: { type: string }
+            from: { description: The value in the guest now. Missing when not there. }
+            to: { description: The desired value. Missing when it must not be there. }
+            risk: { $ref: "#/components/schemas/Risk" }
+          additionalProperties: false
+        - type: object
+          required: [attr, sensitive, risk]
+          properties:
+            attr: { type: string }
+            sensitive: { const: true }
+            risk: { $ref: "#/components/schemas/Risk" }
+          additionalProperties: false
+    Action:
+      type: string
+      enum: [create, update, delete, restart]
+      description: Derived from the changes by `wire.ActionOf`.
+
+    PlanStatus:
+      type: string
+      enum: [pending, approved, stale]
+      description: |
+        `pending`: waits for approval. `approved`: revision committed, Run started (its status is
+        the result). `stale`: the head moved before approval.
+    Plan:
+      type: object
+      required:
+        - id
+        - origin
+        - issue_id
+        - status
+        - risk
+        - reason
+        - author
+        - created_at
+        - base_revision
+        - approved_by
+        - approved_at
+        - revision
+        - run_id
+        - targets
+        - warnings
+      properties:
+        id: { $ref: "#/components/schemas/Id" }
+        origin:
+          type: string
+          enum: [proposal, revert, accept, reenroll]
+          description: What made the Plan.
+        issue_id:
+          $ref: "#/components/schemas/NullableId"
+          description: The issue, for `revert` and `accept`.
+        status: { $ref: "#/components/schemas/PlanStatus" }
+        risk: { $ref: "#/components/schemas/Risk" }
+        reason: { type: string }
+        author: { $ref: "#/components/schemas/Principal" }
+        created_at: { $ref: "#/components/schemas/Time" }
+        base_revision:
+          type: [integer, "null"]
+          description: Head revision when the Plan was made. `null` for an empty state.
+        approved_by: { $ref: "#/components/schemas/NullablePrincipal" }
+        approved_at: { $ref: "#/components/schemas/NullableTime" }
+        revision:
+          type: [integer, "null"]
+          description: The committed revision, after approval.
+        run_id: { $ref: "#/components/schemas/NullableId" }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/TargetPlan" }
+        warnings:
+          type: array
+          description: For example "cannot detect drift" for a `command` resource.
+          items: { type: string }
+    TargetPlan:
+      type: object
+      required: [target, resources]
+      properties:
+        target: { $ref: "#/components/schemas/Name" }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/ResourcePlan" }
+    ResourcePlan:
+      type: object
+      required: [resource, action, risk, changes]
+      properties:
+        resource:
+          type: string
+          description: Resource id `type:key`. `guest:config` is the Proxmox settings.
+          examples: ["file:/etc/motd", "guest:config"]
+        action: { $ref: "#/components/schemas/Action" }
+        risk: { $ref: "#/components/schemas/Risk" }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/Change" }
+
+    RunStatus:
+      type: string
+      enum: [running, succeeded, failed]
+    StepStatus:
+      type: string
+      enum: [pending, running, unchanged, applied, failed, refused, skipped]
+      description: "`refused`: a change was above the approved risk."
+    Run:
+      type: object
+      description: A Run starts at approval. Who approved is on the Plan.
+      required: [id, plan_id, revision, status, started_at, finished_at, targets]
+      properties:
+        id: { $ref: "#/components/schemas/Id" }
+        plan_id: { $ref: "#/components/schemas/Id" }
+        revision: { $ref: "#/components/schemas/Revision" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        started_at: { $ref: "#/components/schemas/Time" }
+        finished_at: { $ref: "#/components/schemas/NullableTime" }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/TargetRun" }
+    TargetRun:
+      type: object
+      required: [target, status, steps]
+      properties:
+        target: { $ref: "#/components/schemas/Name" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/RunStep" }
+    RunStep:
+      type: object
+      required: [resource, action, status, changes, output, started_at, finished_at]
+      properties:
+        resource: { type: string }
+        action:
+          oneOf:
+            - $ref: "#/components/schemas/Action"
+            - type: "null"
+          description: "`null` when `changes` is empty (`wire.ActionNone`)."
+        status: { $ref: "#/components/schemas/StepStatus" }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/Change" }
+        output:
+          type: string
+          description: Short output of the agent or driver, `""` when empty. Untrusted; the UI escapes it.
+        started_at: { $ref: "#/components/schemas/NullableTime" }
+        finished_at: { $ref: "#/components/schemas/NullableTime" }
+
+    IssueStatus:
+      type: string
+      enum: [open, resolving, resolved]
+    IssueAction:
+      type: string
+      enum: [accept, revert]
+      description: First-slice actions (D-044). Ignore actions come with the `Rule` kind.
+    Issue:
+      type: object
+      description: |
+        Drift of one resource on one target. Drift on `guest:config` comes from Proxmox, all
+        other drift from the agent.
+      required:
+        - id
+        - target
+        - resource
+        - status
+        - risk
+        - opened_at
+        - updated_at
+        - changes
+        - actions
+        - plan_id
+        - resolution
+        - comments
+      properties:
+        id: { $ref: "#/components/schemas/Id" }
+        target: { $ref: "#/components/schemas/Name" }
+        resource: { type: string, examples: ["file:/etc/motd"] }
+        status: { $ref: "#/components/schemas/IssueStatus" }
+        risk:
+          $ref: "#/components/schemas/Risk"
+          description: Risk of a revert (the highest risk in `changes`).
+        opened_at: { $ref: "#/components/schemas/Time" }
+        updated_at: { $ref: "#/components/schemas/Time" }
+        changes:
+          type: array
+          description: "`from` = the guest now (the drift), `to` = the desired state."
+          items: { $ref: "#/components/schemas/Change" }
+        actions:
+          type: array
+          description: Actions allowed now. `accept` is missing for a sensitive change.
+          items: { $ref: "#/components/schemas/IssueAction" }
+        plan_id:
+          $ref: "#/components/schemas/NullableId"
+          description: The Plan that resolves it (`accept`, `revert`).
+        resolution:
+          oneOf:
+            - $ref: "#/components/schemas/Resolution"
+            - type: "null"
+        comments:
+          type: array
+          items: { $ref: "#/components/schemas/Comment" }
+    Resolution:
+      type: object
+      required: [action, by, at]
+      properties:
+        action:
+          type: string
+          enum: [accept, revert, gone]
+          description: "`gone`: the drift went away by itself; `by` is `system`."
+        by: { $ref: "#/components/schemas/Principal" }
+        at: { $ref: "#/components/schemas/Time" }
+    ResolveRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { $ref: "#/components/schemas/IssueAction" }
+        reason: { type: string, maxLength: 2000 }
+    Comment:
+      type: object
+      required: [id, author, body, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/Id" }
+        author: { $ref: "#/components/schemas/Principal" }
+        body: { type: string, description: Plain text. The UI escapes it. }
+        created_at: { $ref: "#/components/schemas/Time" }
+    CommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 10000 }
+
+    Event:
+      type: object
+      description: One entry of the append-only event log.
+      required: [seq, type, time, subject, actor, data]
+      properties:
+        seq: { type: integer, format: int64, minimum: 1 }
+        type:
+          type: string
+          enum:
+            - plan.created
+            - plan.approved
+            - plan.stale
+            - run.started
+            - run.step
+            - run.finished
+            - issue.opened
+            - issue.updated
+            - issue.resolved
+            - target.status
+            - revision.committed
+        time: { $ref: "#/components/schemas/Time" }
+        subject:
+          type: string
+          pattern: "^(plan|run|issue|target|revision):.+$"
+          description: "`<kind>:<id or name>`, for example `plan:12` or `target:web1`."
+          examples: ["plan:12", "target:web1"]
+        actor: { $ref: "#/components/schemas/Principal" }
+        data:
+          type: object
+          description: Small payload. Read the object for full details.
