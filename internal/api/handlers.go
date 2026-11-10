@@ -93,6 +93,15 @@ type targetStatus struct {
 	AppliedRevision *int64     `json:"applied_revision"`
 	OpenIssues      int        `json:"open_issues"`
 	LastRunID       *int64     `json:"last_run_id"`
+	// IgnoredDrift is drift that a rule dropped (D-092); missing = none.
+	IgnoredDrift []ignoredDriftView `json:"ignored_drift,omitempty"`
+}
+
+type ignoredDriftView struct {
+	Resource string    `json:"resource"`
+	Rule     string    `json:"rule"`
+	Attrs    []string  `json:"attrs"`
+	LastSeen time.Time `json:"last_seen"`
 }
 
 // headDocs returns the documents of one kind in the head revision.
@@ -156,6 +165,15 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 		return st, err
 	}
 	st.AppliedRevision = nullID(rev)
+	if s.cfg.Issues != nil {
+		dropped, err := s.cfg.Issues.IgnoredDrift(ctx, name)
+		if err != nil {
+			return st, err
+		}
+		for _, d := range dropped {
+			st.IgnoredDrift = append(st.IgnoredDrift, ignoredDriftView{Resource: d.Resource, Rule: d.Rule, Attrs: d.Attrs, LastSeen: d.LastSeen.UTC()})
+		}
+	}
 	lastFailed := false
 	if run, err := s.st.LastRunOfTarget(ctx, name); err == nil {
 		st.LastRunID = &run.ID
@@ -603,6 +621,10 @@ func (s *Server) getIssue(w http.ResponseWriter, r *http.Request, _ *principal) 
 type resolveRequest struct {
 	Action string `json:"action"`
 	Reason string `json:"reason"`
+	Rule   *struct {
+		AllTargets bool     `json:"all_targets"`
+		Attrs      []string `json:"attrs"`
+	} `json:"rule"`
 }
 
 func (s *Server) resolveIssue(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -614,20 +636,103 @@ func (s *Server) resolveIssue(w http.ResponseWriter, r *http.Request, p *princip
 	if !decode(w, r, &req, false) {
 		return
 	}
-	if (req.Action != issue.ActionAccept && req.Action != issue.ActionRevert) || len(req.Reason) > 2000 {
-		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "action must be accept or revert.")
+	switch req.Action {
+	case issue.ActionAccept, issue.ActionRevert, issue.ActionIgnoreOnce, issue.ActionIgnoreRule:
+	default:
+		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "action must be accept, revert, ignore_once or ignore_rule.")
 		return
+	}
+	if len(req.Reason) > 2000 {
+		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "reason is longer than 2000 characters.")
+		return
+	}
+	var scope issue.RuleScope
+	if req.Rule != nil {
+		if req.Action != issue.ActionIgnoreRule {
+			problem(w, http.StatusBadRequest, "bad-request", "Bad request", "rule is only for the action ignore_rule.")
+			return
+		}
+		if fe := checkRuleAttrs(req.Rule.Attrs); fe != nil {
+			writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed",
+				Status: http.StatusUnprocessableEntity, Errors: fe})
+			return
+		}
+		scope = issue.RuleScope{AllTargets: req.Rule.AllTargets, Attrs: req.Rule.Attrs}
 	}
 	if _, err := s.st.GetIssue(r.Context(), id); err != nil {
 		s.fail(w, err)
 		return
 	}
-	pl, err := s.cfg.Issues.Resolve(r.Context(), id, req.Action, p.name)
+	if req.Action == issue.ActionIgnoreOnce {
+		s.ignoreOnce(w, r, p, id)
+		return
+	}
+	pl, err := s.cfg.Issues.ResolveWithRule(r.Context(), id, req.Action, p.name, scope)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	s.writePlan(w, r, http.StatusCreated, pl)
+}
+
+// checkRuleAttrs checks the attrs of a rule scope like the Rule schema.
+func checkRuleAttrs(attrs []string) []fieldError {
+	if attrs == nil {
+		return nil
+	}
+	if len(attrs) == 0 || len(attrs) > 50 {
+		return []fieldError{{"/rule/attrs", "attrs needs 1 to 50 attributes."}}
+	}
+	seen := map[string]bool{}
+	for i, a := range attrs {
+		if a == "" || len(a) > 100 || seen[a] {
+			return []fieldError{{fmt.Sprintf("/rule/attrs/%d", i), "Each attribute is 1 to 100 characters and appears once."}}
+		}
+		seen[a] = true
+	}
+	return nil
+}
+
+// ignoreOnce resolves an Issue without a Plan (D-091). A human may; an
+// apply token only when every change is within its max_risk and none is
+// sensitive or destructive.
+func (s *Server) ignoreOnce(w http.ResponseWriter, r *http.Request, p *principal, id int64) {
+	check := func(changes []wire.Change) error {
+		if p.human() {
+			return nil
+		}
+		if p.tier != TierApply {
+			return &riskError{"human-required", "Human session required",
+				"Only a human session or an apply token can ignore drift; a plan token cannot."}
+		}
+		for _, c := range changes {
+			if c.Sensitive || c.Risk == wire.RiskDestructive {
+				return &riskError{"human-required", "Human session required",
+					fmt.Sprintf("Attribute %q is sensitive or destructive. Only a human can ignore it.", c.Attr)}
+			}
+			if c.Risk.Exceeds(p.maxRisk) {
+				return &riskError{"risk-too-high", "Risk exceeds token limit",
+					fmt.Sprintf("Attribute %q has risk %s. Token max_risk is %s.", c.Attr, c.Risk, p.maxRisk)}
+			}
+		}
+		return nil
+	}
+	iss, err := s.cfg.Issues.IgnoreOnce(r.Context(), id, p.name, check)
+	var re *riskError
+	if errors.As(err, &re) {
+		problem(w, http.StatusForbidden, re.code, re.title, re.detail)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	v, err := s.issueView(r.Context(), iss)
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 type commentRequest struct {

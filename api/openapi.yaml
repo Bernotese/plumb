@@ -987,9 +987,6 @@ paths:
         applies it. Who may call it: a human session; an `apply` token when every change of the
         Issue has a risk up to its `max_risk` and none is sensitive. Every other token gets 403
         `human-required` or `risk-too-high`.
-
-        The two ignore actions are served from T-032. Until then this server answers 400 for
-        them, and `Issue.actions` does not list them.
       security:
         - session: []
         - token: [plan]
@@ -1092,7 +1089,6 @@ paths:
     get:
       tags: [rules]
       operationId: listRules
-      x-plumb-planned: T-032
       summary: List rules
       description: |
         Rules of the head revision (D-092). A rule makes the controller drop matching drift at
@@ -1135,7 +1131,6 @@ paths:
     get:
       tags: [rules]
       operationId: getRule
-      x-plumb-planned: T-032
       summary: Read one rule
       responses:
         "200":
@@ -2360,9 +2355,10 @@ components:
         unverified:
           type: boolean
           description: |
-            A resource of a new target. Nobody could observe it, so `changes` is empty, except
-            one `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
-            verified at the first apply after the first boot (D-066).
+            A resource of a new target, or a resource of an existing target that gets a new secret
+            binding (D-156). Nobody observed it, so `changes` is empty, except one
+            `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
+            verified at the first apply (D-066, D-075).
 
     RunStatus:
       type: string

@@ -159,8 +159,11 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 				unverified++
 			}
 		}
-		if unverified > 0 {
+		switch {
+		case unverified > 0 && tp.Guest == "create":
 			v.Warnings = append(v.Warnings, fmt.Sprintf("%s is a new target: %d resources are unverified until the first boot.", tp.Target, unverified))
+		case unverified > 0:
+			v.Warnings = append(v.Warnings, fmt.Sprintf("%s: %d resources get a new secret and are not observed before the approval (D-156).", tp.Target, unverified))
 		}
 		v.Targets = append(v.Targets, tv)
 	}
@@ -285,6 +288,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		if accept {
 			v.Actions = append([]string{"accept"}, v.Actions...)
 		}
+		// The list does not depend on the caller; the server checks who
+		// may ignore (D-091, D-092).
+		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
 	}
 	if i.Status == store.IssueResolved {
 		v.Resolution = &resolutionView{Action: i.Resolution, By: i.ResolvedBy, At: i.ResolvedAt.UTC()}

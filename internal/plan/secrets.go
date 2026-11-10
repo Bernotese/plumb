@@ -163,11 +163,15 @@ func (e *Engine) withSecrets(ctx context.Context, rs []wire.Resource, planned []
 	return body, used, nil
 }
 
-// newBinding reports whether a resource of the next render gets a secret
-// that the same resource did not get in the base render (D-099).
-func newBinding(before, after *state.Rendered) bool {
+// newBindings returns the resource ids of the next render that get a
+// secret that the same resource did not get in the base render. A binding
+// is target, resource id and secret name, so another name on the same
+// resource is a new binding. The observe filter and human_only use this
+// one result (D-156, D-099).
+func newBindings(before, after *state.Rendered) map[string]bool {
+	out := map[string]bool{}
 	if after == nil {
-		return false
+		return out
 	}
 	had := map[string]map[string]bool{}
 	if before != nil {
@@ -181,11 +185,11 @@ func newBinding(before, after *state.Rendered) bool {
 	for _, r := range after.All() {
 		for _, n := range state.ResourceSecrets(r) {
 			if !had[r.ID][n] {
-				return true
+				out[r.ID] = true
 			}
 		}
 	}
-	return false
+	return out
 }
 
 // SecretUsage is the usage hook of the secret store (D-108): the targets
