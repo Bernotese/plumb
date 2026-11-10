@@ -19,12 +19,17 @@ import type {
   RevisionInfo,
   Risk,
   Run,
+  ImportRequest,
+  SecretInfo,
   Session,
   StateDocument,
+  Token,
+  TokenCreated,
   TargetDoc,
   TargetView,
 } from "../types";
 import { CREATE_ONLY, maxRisk } from "../view";
+import { toYaml } from "../yaml";
 import { example, exampleItems } from "./examples";
 
 /** Banner of a mock build. */
@@ -40,6 +45,8 @@ export interface MockOptions {
   signedIn?: boolean;
   /** Start signed in at the first login: the password change is due. */
   firstLogin?: boolean;
+  /** Start as an API token of tier `plan` (no access to the settings, T-035). */
+  token?: boolean;
 }
 
 export interface MockApi extends PlumbApi {
@@ -216,6 +223,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   if (opts.signedIn) {
     session = { ...example("login", 200), must_change_password: false };
     mustChange = false;
+  } else if (opts.token) {
+    session = {
+      principal: "token:tok_claude",
+      must_change_password: false,
+      tier: "plan",
+      expires_at: "2026-11-11T08:00:00Z",
+    };
+    mustChange = false;
   } else if (opts.firstLogin) {
     session = example("login", 200);
   }
@@ -342,6 +357,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     return out;
   }
 
+  // Tokens and secrets (T-035). The mock keeps secret values only to show
+  // conflicts on import; the API never returns them.
+  const tokens = new Map(exampleItems<Token>(example("listTokens", 200)).map((t) => [t.id, t]));
+  const secrets = new Map(
+    exampleItems<SecretInfo>(example("listSecrets", 200)).map((x) => [x.name, x]),
+  );
+  const secretValues = new Map([...secrets.keys()].map((n) => [n, `mock value of ${n}`]));
+  let secretVersion = Math.max(0, ...[...secrets.values()].map((x) => x.version));
+
   let nextPlan = Math.max(...plans.keys()) + 1;
   let nextRun = Math.max(...runs.keys()) + 1;
   let seq = 1100;
@@ -371,6 +395,20 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       );
     }
     return session;
+  }
+
+  /** Tokens, secrets and import need a human session (D-087, D-095). */
+  function human(): Session {
+    const s = auth();
+    if (s.tier !== "admin") {
+      throw problem(
+        "human-required",
+        "Human session required",
+        403,
+        "Only a person who logged in can manage tokens, secrets, export with secrets and import.",
+      );
+    }
+    return s;
   }
 
   function findPlan(id: number): Plan {
@@ -435,6 +473,98 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     run.status = "succeeded";
     run.finished_at = now();
     emit("run.finished", `run:${run.id}`, { status: run.status });
+  }
+
+  /**
+   * Import in the mock: it checks the header, the secrets and the bundle like
+   * the server (D-095), but it does not parse the documents. The Plan is the
+   * importState example with the reason and the secret warnings.
+   */
+  function importMock(req: ImportRequest): Plan {
+    const invalid = (pointer: string, message: string, extra?: Partial<Problem>) =>
+      problem("validation", "Validation failed", 422, undefined, {
+        errors: [{ pointer, message }],
+        ...extra,
+      });
+    if (!req.reason.trim()) throw invalid("/reason", "A reason is required.");
+    if (!/^kind:\s*Export\s*$/m.test(req.content) || !/^format:\s*1\s*$/m.test(req.content))
+      throw invalid("/content", "This is not a Plumb export file of format 1.");
+    let bundle: Record<string, string> | undefined;
+    const data = /kind:\s*SecretBundle[\s\S]*?\bdata:\s*"?([A-Za-z0-9+/=]+)"?/.exec(
+      req.content,
+    )?.[1];
+    if (req.passphrase && data) {
+      let parsed: { check?: string; values?: Record<string, string> } = {};
+      try {
+        parsed = JSON.parse(fromBase64(data)) as typeof parsed;
+      } catch {
+        // falls through to the passphrase error
+      }
+      if (parsed.check !== mockHash(req.passphrase) || !parsed.values)
+        throw invalid("/passphrase", "The passphrase does not open the secret bundle.");
+      bundle = parsed.values;
+    }
+    const overwrite = req.overwrite ?? [];
+    const notInBundle = overwrite.filter((n) => !bundle || !(n in bundle));
+    if (notInBundle.length)
+      throw invalid("/overwrite", `Not in the secret bundle: ${notInBundle.join(", ")}.`);
+    const conflicts = Object.entries(bundle ?? {})
+      .filter(
+        ([n, v]) => secretValues.has(n) && secretValues.get(n) !== v && !overwrite.includes(n),
+      )
+      .map(([n]) => n)
+      .sort();
+    if (conflicts.length) {
+      const e = example("importState", 409);
+      throw new ApiError({
+        ...e,
+        detail: `${conflicts.length} secret${conflicts.length === 1 ? "" : "s"} of the file differ${conflicts.length === 1 ? "s" : ""} from the stored value. Nothing was written.`,
+        secrets: conflicts,
+      });
+    }
+    const referenced = new Set(
+      [...req.content.matchAll(/\bsecret:\s*"?([a-z0-9][a-z0-9.-]*)"?/g)].map((m) => m[1] ?? ""),
+    );
+    const missing = [...referenced]
+      .filter((n) => n && !secretValues.has(n) && !(bundle && n in bundle))
+      .sort();
+    if (missing.length) {
+      throw problem(
+        "validation",
+        "Validation failed",
+        422,
+        "The file refers to secrets that do not exist.",
+        { secrets: missing },
+      );
+    }
+    const warnings: string[] = [];
+    const s = human();
+    for (const [n, v] of Object.entries(bundle ?? {})) {
+      const had = secretValues.get(n);
+      if (had === v) continue;
+      secretValues.set(n, v);
+      secrets.set(n, {
+        name: n,
+        version: ++secretVersion,
+        updated_by: s.principal,
+        updated_at: now(),
+        used_by: secrets.get(n)?.used_by ?? [],
+      });
+      warnings.push(
+        had === undefined
+          ? `Secret ${n} was created from the file. It stays when you drop this plan.`
+          : `Secret ${n} was overwritten from the file. It stays when you drop this plan.`,
+      );
+    }
+    const ex = example("importState", 201);
+    const p = newPlan({
+      origin: "import",
+      issue_id: null,
+      reason: req.reason,
+      targets: ex.targets,
+      warnings: [...ex.warnings, ...warnings],
+    });
+    return p;
   }
 
   const api: MockApi = {
@@ -506,6 +636,22 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         }
         const resources = planTarget(targets.get(t.name)?.document.spec, t.spec, blocks);
         planTargets.push({ target: t.name, resources });
+      }
+      // Targets planned without a document change (a new secret value, D-090):
+      // the mock renders no secrets, so it shows one hidden change per target.
+      for (const name of proposal.targets ?? []) {
+        if (planTargets.some((t) => t.target === name)) continue;
+        if (!targets.has(name)) {
+          throw problem("validation", "Validation failed", 422, `Target "${name}" does not exist.`);
+        }
+        planTargets.push({
+          target: name,
+          resources: [
+            resourcePlan("file:/etc/plumb/secrets", "update", [
+              { attr: "content", sensitive: true, risk: "reversible" },
+            ]),
+          ],
+        });
       }
       const p = newPlan({
         origin: "proposal",
@@ -762,6 +908,144 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       pendingDocs.set(p.id, proposal);
       return p;
     },
+    async listTokens() {
+      human();
+      return structuredClone(
+        [...tokens.values()].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+      );
+    },
+    async createToken(req) {
+      const s = human();
+      const errors: { pointer: string; message: string }[] = [];
+      if (!req.name.trim() || req.name.length > 100)
+        errors.push({ pointer: "/name", message: "Use 1 to 100 characters." });
+      if (req.tier === "apply" && !req.max_risk)
+        errors.push({ pointer: "/max_risk", message: "An apply token needs a max risk." });
+      if (req.tier !== "apply" && req.max_risk)
+        errors.push({ pointer: "/max_risk", message: "Only an apply token has a max risk." });
+      if (errors.length)
+        throw problem("validation", "Validation failed", 422, undefined, { errors });
+      const base = req.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_|_$/g, "");
+      let id = `tok_${base || "token"}`;
+      for (let i = 2; tokens.has(id); i++) id = `tok_${base}_${i}`;
+      const token: Token = {
+        id,
+        name: req.name.trim(),
+        tier: req.tier,
+        max_risk: req.tier === "apply" ? (req.max_risk ?? null) : null,
+        created_by: s.principal,
+        created_at: now(),
+        last_used_at: null,
+        revoked_at: null,
+      };
+      tokens.set(id, token);
+      emit("token.created", `token:${id}`, {});
+      const rnd = crypto.getRandomValues(new Uint8Array(16));
+      const bearer = `${id}.${[...rnd].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+      const out: TokenCreated = { token: structuredClone(token), bearer };
+      return out;
+    },
+    async revokeToken(id) {
+      human();
+      const t = tokens.get(id);
+      if (!t) throw problem("not-found", "Not found", 404, `Token ${id} does not exist.`);
+      if (!t.revoked_at) {
+        t.revoked_at = now();
+        emit("token.revoked", `token:${id}`, {});
+      }
+    },
+    async listSecrets() {
+      auth();
+      return structuredClone([...secrets.values()].sort((a, b) => a.name.localeCompare(b.name)));
+    },
+    async putSecret(name, value) {
+      const s = human();
+      if (!/^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/.test(name)) {
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [
+            {
+              pointer: "/name",
+              message: "Use lower-case letters, digits, dots and dashes (at most 63).",
+            },
+          ],
+        });
+      }
+      if (value.length === 0 || new TextEncoder().encode(value).length > 65536) {
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [{ pointer: "/value", message: "Use 1 to 65536 bytes." }],
+        });
+      }
+      const info: SecretInfo = {
+        name,
+        version: ++secretVersion,
+        updated_by: s.principal,
+        updated_at: now(),
+        used_by: secrets.get(name)?.used_by ?? [],
+      };
+      secrets.set(name, info);
+      secretValues.set(name, value);
+      emit("secret.updated", `secret:${name}`, { name });
+      return structuredClone(info);
+    },
+    async deleteSecret(name) {
+      human();
+      const info = secrets.get(name);
+      if (!info) throw problem("not-found", "Not found", 404, `Secret "${name}" does not exist.`);
+      if (info.used_by.length) {
+        throw problem(
+          "secret-in-use",
+          "Secret is in use",
+          409,
+          `Secret "${name}" is used by ${info.used_by.length} target${info.used_by.length === 1 ? "" : "s"}.`,
+          { targets: [...info.used_by], plans: [] },
+        );
+      }
+      secrets.delete(name);
+      secretValues.delete(name);
+      emit("secret.deleted", `secret:${name}`, { name });
+    },
+    async exportState(passphrase) {
+      auth();
+      if (passphrase !== undefined) {
+        human();
+        if (passphrase.length < 12) {
+          throw problem("validation", "Validation failed", 422, undefined, {
+            errors: [{ pointer: "/passphrase", message: "Use at least 12 characters." }],
+          });
+        }
+      }
+      const docs = [...findRevision(head).docs.values()].sort((a, b) =>
+        a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind),
+      );
+      const header = {
+        kind: "Export",
+        format: 1,
+        revision: head,
+        exported_at: now(),
+        version: "mock",
+        secrets: [...secrets.keys()].sort(),
+      };
+      const parts: unknown[] = [header, ...docs];
+      if (passphrase !== undefined) {
+        // Not encryption: the mock only needs to read its own bundle again.
+        const values = Object.fromEntries(secretValues);
+        parts.push({
+          kind: "SecretBundle",
+          kdf: { name: "mock" },
+          salt: "",
+          nonce: "",
+          data: toBase64(JSON.stringify({ check: mockHash(passphrase), values })),
+        });
+      }
+      return parts.map((p) => toYaml(p)).join("---\n");
+    },
+    async importState(req: ImportRequest) {
+      human();
+      return importMock(req);
+    },
     events(since, onEvent, onOpen) {
       if (since !== undefined) for (const e of log) if (e.seq > since) onEvent(e);
       listeners.add(onEvent);
@@ -774,4 +1058,22 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   };
   const pendingDocs = new Map<number, Proposal>();
   return api;
+}
+
+/** Base64 of UTF-8 text (mock bundle only). */
+function toBase64(text: string): string {
+  let bin = "";
+  for (const b of new TextEncoder().encode(text)) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+function fromBase64(b64: string): string {
+  return new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+}
+
+/** A tag for the passphrase of a mock bundle. Not a security measure. */
+function mockHash(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(16);
 }

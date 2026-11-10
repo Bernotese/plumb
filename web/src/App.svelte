@@ -11,6 +11,7 @@
   import Issues from "./screens/Issues.svelte";
   import Login from "./screens/Login.svelte";
   import PlanView from "./screens/PlanView.svelte";
+  import Settings from "./screens/Settings.svelte";
   import RevisionView from "./screens/RevisionView.svelte";
   import RunView from "./screens/RunView.svelte";
   import TargetForm from "./screens/TargetForm.svelte";
@@ -135,6 +136,11 @@
       <a href={href({ name: "history" })} aria-current={navCurrent(["history", "revision"])}
         >History</a
       >
+      {#if session?.tier === "admin"}
+        <a href={href({ name: "settings", tab: "tokens" })} aria-current={navCurrent(["settings"])}
+          >Settings</a
+        >
+      {/if}
     </nav>
   {/if}
   <div class="tools">
@@ -179,6 +185,8 @@
     <History {api} />
   {:else if route.name === "revision"}
     {#key route.id}<RevisionView {api} id={route.id} />{/key}
+  {:else if route.name === "settings"}
+    {#if session}<Settings {api} {session} tab={route.tab} />{/if}
   {:else}
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p>

@@ -13,11 +13,18 @@ const routes: Route[] = [
   { name: "issue", id: 7 },
   { name: "history" },
   { name: "revision", id: 7 },
+  { name: "settings", tab: "tokens" },
+  { name: "settings", tab: "secrets" },
+  { name: "settings", tab: "export" },
 ];
 
 describe("router", () => {
   it.each(routes)("round trip %o", (r) => {
     expect(parse(href(r))).toEqual(r);
+  });
+  it("opens the tokens tab for #/settings", () => {
+    expect(parse("#/settings")).toEqual({ name: "settings", tab: "tokens" });
+    expect(parse("#/settings/users").name).toBe("not-found");
   });
   it("defaults to the targets", () => {
     expect(parse("")).toEqual({ name: "targets" });

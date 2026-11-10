@@ -12,8 +12,13 @@ import type {
   RevisionDiff,
   RevisionInfo,
   Run,
+  SecretInfo,
   Session,
   TargetView,
+  Token,
+  TokenCreated,
+  TokenRequest,
+  ImportRequest,
 } from "./types";
 
 export interface PlumbApi {
@@ -38,6 +43,19 @@ export interface PlumbApi {
   diffRevision(n: number, from?: number): Promise<RevisionDiff>;
   /** Plans a rollback to revision `n`: a Plan with origin `rollback`. */
   rollbackRevision(n: number, reason: string): Promise<Plan>;
+  /** API tokens, newest first, revoked ones included (T-035, human session). */
+  listTokens(): Promise<Token[]>;
+  /** The answer holds the bearer once. The caller must not keep it. */
+  createToken(req: TokenRequest): Promise<TokenCreated>;
+  revokeToken(id: string): Promise<void>;
+  /** Secret metadata, sorted by name. No value ever comes back. */
+  listSecrets(): Promise<SecretInfo[]>;
+  putSecret(name: string, value: string): Promise<SecretInfo>;
+  deleteSecret(name: string): Promise<void>;
+  /** The export file (YAML text); with a passphrase it holds the encrypted secret bundle. */
+  exportState(passphrase?: string): Promise<string>;
+  /** Plans an import of an export file: a Plan with origin `import`. */
+  importState(req: ImportRequest): Promise<Plan>;
   /**
    * Subscribes to the event stream: events after `since`, or only new ones
    * when `since` is undefined. Reconnects by itself. Returns the unsubscribe
