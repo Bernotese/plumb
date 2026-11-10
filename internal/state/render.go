@@ -57,7 +57,7 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	}
 
 	bud := newBudget(s.limits, total)
-	nonce := newNonce() // markers of this render only (D-088)
+	nonce := newNonce()          // markers of this render only (D-088)
 	where := map[string]string{} // resource id → path of its origin
 	byID := map[string]*wire.Resource{}
 	for i, use := range t.Blocks {
