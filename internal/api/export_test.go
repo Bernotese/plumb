@@ -197,7 +197,11 @@ func TestImportRefuses(t *testing.T) {
 		"bad document":    {map[string]any{"content": head + "---\nkind: Target\nname: web1\nspec: {type: vm}\n"}, 422},
 		"mode":            {map[string]any{"content": file, "mode": "upsert"}, 422},
 	} {
+		beforeDB := qaImportDB(t, dst)
 		code, body := dst.importFile(dadm, c.req)
+		if qaImportDB(t, dst) != beforeDB {
+			t.Errorf("%s: refused import changed database content", name)
+		}
 		if code != c.code {
 			t.Errorf("%s: %d %s, want %d", name, code, body, c.code)
 		}
@@ -232,9 +236,13 @@ func TestImportSecretConflicts(t *testing.T) {
 	pending := dst.planID(body)
 	before, _ := dst.sec.Versions(dst.ctx, []string{"app-db", "diff"})
 
+	beforeDB := qaImportDB(t, dst)
 	code, body := dst.importFile(dadm, map[string]any{"content": file, "passphrase": exportPass, "mode": "merge"})
 	if code != 409 || problemType(body) != "secret-conflict" || !strings.Contains(string(body), `"secrets":["diff"]`) {
 		t.Fatalf("conflict: %d %s", code, body)
+	}
+	if qaImportDB(t, dst) != beforeDB {
+		t.Fatal("secret conflict changed database content")
 	}
 	if v, _ := dst.sec.Versions(dst.ctx, []string{"newone"}); len(v) != 0 {
 		t.Fatal("a conflict wrote a secret")
