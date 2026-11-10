@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +45,10 @@ func (e *env) createToken(adm *client, body map[string]any) createdToken {
 // Create → use → revoke → 401. The bearer is only in the POST answer.
 func TestTokenLifecycle(t *testing.T) {
 	e := newEnv(t, true)
+	var logs bytes.Buffer
+	e.srv.log = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	adm := e.admin()
+	createIndex := len(e.seen)
 	ct := e.createToken(adm, map[string]any{"name": "CI deploy", "tier": "apply", "max_risk": "reversible"})
 	if ct.Token.Tier != "apply" || ct.Token.MaxRisk == nil || *ct.Token.MaxRisk != "reversible" ||
 		ct.Token.CreatedBy != "user:admin" || ct.Token.RevokedAt != nil || !strings.HasPrefix(ct.Bearer, ct.Token.ID+".") {
@@ -92,13 +97,30 @@ func TestTokenLifecycle(t *testing.T) {
 	// No answer but the 201 holds the bearer; none holds the hash. The
 	// event log holds neither.
 	e.mu.Lock()
-	for _, b := range e.seen {
+	for i, b := range e.seen {
 		s := string(b)
-		if strings.Contains(s, hash) || (strings.Contains(s, secret) && !strings.Contains(s, `"bearer":`)) {
-			t.Errorf("a response leaks the token: %.120s", s)
+		if i == createIndex {
+			// Remove only the documented field, so extra leaks in the
+			// create response are also caught.
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(b, &fields); err != nil {
+				t.Fatal(err)
+			}
+			delete(fields, "bearer")
+			rest, err := json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s = string(rest)
+		}
+		if strings.Contains(s, hash) || strings.Contains(s, secret) {
+			t.Errorf("response %d leaks a token secret or hash", i)
 		}
 	}
 	e.mu.Unlock()
+	if strings.Contains(logs.String(), secret) || strings.Contains(logs.String(), hash) {
+		t.Error("server logs leak a token secret or hash")
+	}
 	types := map[string]string{}
 	sub := e.events.Subscribe(e.ctx, 0)
 	for done := false; !done; {
