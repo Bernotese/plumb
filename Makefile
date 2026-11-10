@@ -11,12 +11,17 @@ GO_FILES     = $(shell find . -name '*.go' -not -path '*/node_modules/*')
 # npm ci runs only when the lock file changed; npm writes this file on every install.
 WEB_DEPS     = web/node_modules/.package-lock.json
 
-.PHONY: build build-web test test-go test-web lint lint-go lint-web test-guest test-pve clean
+.PHONY: build check-embed build-web test test-go test-race test-web lint lint-go lint-web test-guest test-pve clean
 
 ## build: web UI and both static binaries → bin/
 build: build-web
-	$(GO_BUILD) -o bin/plumb ./cmd/plumb
 	$(GO_BUILD) -o bin/plumb-agent ./cmd/plumb-agent
+	cp bin/plumb-agent cmd/plumb/agentbin/plumb-agent
+	$(GO_BUILD) -o bin/plumb ./cmd/plumb
+
+## check-embed: the built plumb serves the UI and the agent binary of this build
+check-embed:
+	scripts/check-embed.sh bin/plumb bin/plumb-agent
 
 $(WEB_DEPS): web/package.json web/package-lock.json
 	cd web && npm ci --ignore-scripts
@@ -31,6 +36,10 @@ test: test-go test-web
 
 test-go:
 	go test ./...
+
+## test-race: Go tests with the race detector (needs cgo and a C compiler; CI runs it)
+test-race:
+	CGO_ENABLED=1 go test -race -count=1 ./...
 
 ## test-web: unit tests of the web UI (vitest)
 test-web: $(WEB_DEPS)

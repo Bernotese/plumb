@@ -31,8 +31,12 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: make lint
       - run: make test
+      - name: Race detector
+        run: make test-race
       - run: make build
       - name: Binaries print a version
         run: |
           bin/plumb version
           bin/plumb-agent version
+      - name: plumb embeds the UI and the agent
+        run: make check-embed

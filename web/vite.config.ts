@@ -14,6 +14,8 @@ export default defineConfig(({ mode }) => {
       sourcemap: false,
     },
     server: {
+      // The guest form reads internal/state/schema/target.json (one schema source, D-043).
+      fs: { allow: [".", "../internal/state/schema"] },
       proxy: {
         "/api": env["PLUMB_DEV_URL"] ?? "http://127.0.0.1:8443",
       },

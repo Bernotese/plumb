@@ -22,12 +22,16 @@ The agent can enroll, run commands from the controller and report drift.
 - [ ] The agent's own apply creates no drift report. A test applies a file and expects zero reports; then it changes the file from outside and expects one.
 - [ ] The desired list is on disk with mode 0600. The agent reports open drift again after a reconnect.
 - [ ] Tests: `go test ./internal/agent/...` passes (agent against an `httptest` controller).
+- [ ] From the T-009 re-review: status codes of the link: 401 = credential revoked (re-enroll from the token source); 429 and 503 = retry with backoff, never re-enroll. Test both.
 
 ## Out of scope
 - `update` and `seal` commands.
 - LXC enrollment.
 
 ## Plan (architect, optional)
+
+Protocol status rule: 401 means revoked credentials and triggers re-enrollment.
+429 (honor Retry-After) and 503 mean back off and retry with the current credential.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes

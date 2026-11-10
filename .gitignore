@@ -10,3 +10,6 @@ coverage/
 
 # build output
 /bin/
+
+# built by make build and embedded into plumb
+/cmd/plumb/agentbin/plumb-agent

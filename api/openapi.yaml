@@ -102,7 +102,7 @@ paths:
             Set-Cookie:
               description: The session cookie.
               schema: { type: string }
-              example: plumb_session=Qm9n...; Path=/; HttpOnly; Secure; SameSite=Strict
+              example: __Host-plumb_session=Qm9n...; Path=/; HttpOnly; Secure; SameSite=Strict
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
@@ -147,6 +147,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /images:
     get:
@@ -178,6 +179,15 @@ paths:
                         type: vm
                         url: https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img
                         sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                  - revision: 7
+                    document:
+                      kind: Image
+                      name: debian-13
+                      spec:
+                        title: Debian 13 (trixie)
+                        type: vm
+                        url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+                        sha256: 9a8b7c6d5e4f30211203f4e5d6c7b8a99a8b7c6d5e4f30211203f4e5d6c7b8a9
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -247,6 +257,46 @@ paths:
                               name: "{{ .name }}"
                               shell: /bin/bash
                               ssh_keys: ["{{ .ssh_key }}"]
+                  - revision: 7
+                    document:
+                      kind: Block
+                      name: motd
+                      spec:
+                        description: Message of the day.
+                        params:
+                          type: object
+                          properties:
+                            text: { type: string, title: Message, default: Managed by Plumb. }
+                        resources:
+                          - file: { path: /etc/motd, content: "{{ .text }}\n", mode: "0644" }
+                  - revision: 7
+                    document:
+                      kind: Block
+                      name: web-app
+                      spec:
+                        title: Web app
+                        description: An nginx site in front of an app port.
+                        params:
+                          type: object
+                          required: [server_names]
+                          properties:
+                            server_names:
+                              type: array
+                              title: Server names
+                              items: { type: string }
+                              minItems: 1
+                            port: { type: integer, title: App port, default: 8080, minimum: 1, maximum: 65535 }
+                            tls: { type: boolean, title: Serve HTTPS, default: false }
+                            log_level: { type: string, title: Log level, enum: [error, warn, info], default: warn }
+                            extra_config:
+                              type: string
+                              title: Extra nginx config
+                              contentMediaType: text/plain
+                              default: ""
+                        resources:
+                          - package: { name: nginx }
+                          - file: { path: /etc/nginx/sites-enabled/app.conf, content: "server_name {{ .server_names }};\n" }
+                          - service: { name: nginx, restart_on: ["file:/etc/nginx/sites-enabled/app.conf"] }
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -325,6 +375,66 @@ paths:
                       applied_revision: 7
                       open_issues: 1
                       last_run_id: 3
+                  - revision: 6
+                    document:
+                      kind: Target
+                      name: db1
+                      spec:
+                        type: vm
+                        image: debian-13
+                        guest: { cores: 4, memory: 8192, disk: 100, bridge: vmbr0, ip: 192.168.1.20/24 }
+                        blocks: [{ use: motd }]
+                        overrides: {}
+                    status:
+                      phase: ready
+                      agent: online
+                      power: running
+                      last_seen: "2026-11-10T09:14:05Z"
+                      guest_id: "9002"
+                      ips: [192.168.1.20]
+                      applied_revision: 6
+                      open_issues: 0
+                      last_run_id: 2
+                  - revision: 7
+                    document:
+                      kind: Target
+                      name: cache1
+                      spec:
+                        type: vm
+                        image: ubuntu-26.04
+                        guest: { cores: 1, memory: 1024, disk: 10, bridge: vmbr0, ip: dhcp }
+                        blocks: []
+                        overrides: {}
+                    status:
+                      phase: applying
+                      agent: online
+                      power: running
+                      last_seen: "2026-11-10T09:14:01Z"
+                      guest_id: "9003"
+                      ips: [192.168.1.43]
+                      applied_revision: 5
+                      open_issues: 0
+                      last_run_id: 4
+                  - revision: 5
+                    document:
+                      kind: Target
+                      name: backup1
+                      spec:
+                        type: vm
+                        image: debian-13
+                        guest: { cores: 2, memory: 2048, disk: 500, bridge: vmbr0, ip: dhcp }
+                        blocks: []
+                        overrides: {}
+                    status:
+                      phase: ready
+                      agent: offline
+                      power: stopped
+                      last_seen: "2026-11-09T22:40:00Z"
+                      guest_id: "9004"
+                      ips: []
+                      applied_revision: 5
+                      open_issues: 0
+                      last_run_id: 1
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -581,6 +691,23 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [plans]
+      operationId: discardPlan
+      summary: Drop a pending plan
+      description: |
+        The Plan becomes `stale` and is never applied. An issue that it would resolve is `open`
+        again. Only a `pending` Plan can be dropped; else 409.
+      security:
+        - session: []
+        - token: [plan]
+      responses:
+        "204":
+          description: Dropped.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /plans/{id}/approve:
     parameters:
       - $ref: "#/components/parameters/PlanId"
@@ -765,6 +892,19 @@ paths:
                     plan_id: null
                     resolution: null
                     comments: []
+                  - id: 9
+                    target: web1
+                    resource: "file:/etc/app.conf"
+                    status: open
+                    risk: reversible
+                    opened_at: "2026-11-10T09:11:30Z"
+                    updated_at: "2026-11-10T09:11:30Z"
+                    changes:
+                      - { attr: content, sensitive: true, risk: reversible }
+                    actions: [revert]
+                    plan_id: null
+                    resolution: null
+                    comments: []
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -903,6 +1043,8 @@ paths:
         A `text/event-stream`. Each message has `id` (the event `seq`), `event` (the type) and
         `data` (an `Event` as JSON). Resume with `since` or the `Last-Event-ID` header. The server
         sends a comment line every 15 s as keep-alive. Payloads never hold secret values.
+        The stream ends when the session ends or the token is revoked. A principal can hold 8
+        streams at a time; more get 429.
       parameters:
         - name: since
           in: query
@@ -931,18 +1073,21 @@ paths:
                 event: issue.opened
                 data: {"seq":1043,"type":"issue.opened","time":"2026-11-10T09:10:12Z","subject":"issue:7","actor":"agent:web1","data":{"target":"web1","resource":"file:/etc/motd"}}
 
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
 components:
   securitySchemes:
     session:
       type: apiKey
       in: cookie
-      name: plumb_session
+      name: __Host-plumb_session
       description: |
         Human session (`POST /session`) with tier `admin`. `HttpOnly`, `Secure`,
-        `SameSite=Strict`. Every call that changes data, login included, must send a matching
+        `SameSite=Strict`. In `plumb serve --dev` (plain HTTP) the cookie is `plumb_session`
+        without `Secure`. Every call that changes data, login included, must send a matching
         `Origin` header. Only a session approves `destructive` Plans and manages tokens, secrets
         and import.
     token:
@@ -1070,7 +1215,7 @@ components:
               - pointer: /put/0/spec/guest/disk
                 message: disk is create-only in this version. Create a new target instead.
     TooManyRequests:
-      description: Too many failed logins.
+      description: Too many failed logins, or too many requests of one kind at a time.
       headers:
         Retry-After:
           description: Seconds to wait.
@@ -1388,6 +1533,11 @@ components:
         changes:
           type: array
           items: { $ref: "#/components/schemas/Change" }
+        unverified:
+          type: boolean
+          description: |
+            A resource of a new target. Nobody could observe it, so `changes` is empty; it is
+            verified at the first apply after the first boot (D-066).
 
     RunStatus:
       type: string
