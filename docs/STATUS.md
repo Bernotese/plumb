@@ -6,7 +6,7 @@ Product: **Plumb** – self-hosted infrastructure controller for a Proxmox homel
 ## Phase
 First slice: one VM, from an image, configured by the agent, drift as an issue. Secret store is not part of the slice.
 Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --dev --dev-demo` (simulated agents, no Proxmox).
-**Slice 1 is blocked on two user actions (see below).** Slice 2 part A is running (ARCHITECTURE §12, D-085 … D-101). The user approved the plan on 2026-11-10. Migration merge order: 0003 T-028 → 0004 T-031 → 0005 T-032 (D-096).
+**Slice 1 is blocked on two user actions (see below).** Slice 2 part A: all backend and UI cards are on `main` (ARCHITECTURE §12, D-085 … D-158). Open: e2e for secret parameters, ignore and export/import; acceptance with leak hunt (T-037). The user approved the plan on 2026-11-10. Migration merge order: 0003 T-028 → 0004 T-031 → 0005 T-032 (D-096).
 
 ## Tasks
 | Card | Owner | State |
@@ -19,10 +19,9 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-015 slice acceptance (HTTP) | pl-codex-qa | waits for T-018 on main; real-host part waits for the test host |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
-| T-033 export/import | pl-backend | PR #56 (base main): D-158 implemented, QA PR #58 merged in; open: merge of main, re-review by pl-reviewer, CI |
 | T-036 e2e part | pl-frontend | running, against the real API |
-| export/import e2e (T-035) | pl-frontend | waits for T-033 on main |
-| T-037 slice 2 acceptance, leak hunt | pl-codex-qa | waits for T-033 on main |
+| export/import e2e (T-035) | pl-frontend | after the T-036 e2e part (T-033 is on main) |
+| T-037 slice 2 acceptance, leak hunt | pl-codex-qa | running; pl-reviewer reviews it |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
 
@@ -49,6 +48,7 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-028: secret store (PR #37), D-102 … D-109, D-130.
 - T-035 mock part: settings UI (PR #45).
 - T-034, T-035 e2e on the real API (PR #51).
+- T-033: export/import, encrypted secret bundle, D-150 … D-155, D-158 (PR #56).
 - T-029: secret references, D-132 … D-139, D-156 (PR #49).
 - T-032: ignore actions, Plan.human_only, migration 0005 (PR #53, local squash), D-145 … D-149.
 - T-040: bad-bearer limit scope (PR #55), D-157.
