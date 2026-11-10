@@ -185,6 +185,31 @@ func TestStateDirRules(t *testing.T) {
 	}
 }
 
+func TestCleanDesiredTemps(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := stateDir{dir: dir}
+	tmp := s.path(".desired.json-crash")
+	if err := os.WriteFile(tmp, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := s.path(".desired.json-link")
+	if err := os.Symlink("outside", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.cleanDesiredTemps(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Fatalf("temp file remains: %v", err)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("symlink removed: %v", err)
+	}
+}
+
 func TestRetryAfterParse(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	tests := map[string]time.Duration{

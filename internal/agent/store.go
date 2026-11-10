@@ -51,6 +51,31 @@ func (s stateDir) ensure() error {
 	return nil
 }
 
+func (s stateDir) cleanDesiredTemps() error {
+	if err := s.ensure(); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".desired.json-") {
+			continue
+		}
+		info, err := entry.Info() // Info does not follow symlinks.
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			if err := os.Remove(s.path(entry.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // write replaces a file atomically with mode 0600.
 func (s stateDir) write(name string, data []byte) error {
 	if err := s.ensure(); err != nil {
