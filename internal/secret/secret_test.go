@@ -408,3 +408,28 @@ func TestSecretAbsentFromDatabaseFiles(t *testing.T) {
 	}
 	scan()
 }
+
+// D-130 pins QA-1: a complete old row of the same name (version, nonce
+// and ciphertext) written back into the database opens with the old value
+// and the old version. This is accepted: a database restore does the same
+// on purpose, a mark in the database comes back with the backup, and who
+// can write the database can add a session and set any value anyway. The
+// old version makes a Plan of the newer version stale (D-089).
+func TestCompleteOldRowResolves(t *testing.T) {
+	for _, afterDelete := range []bool{true, false} {
+		e := newEnv(t)
+		e.put("a", "old-value")
+		old := e.row("a")
+		if afterDelete {
+			if err := e.s.Delete(e.ctx, "a"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		newer := e.put("a", "new-value")
+		e.exec(`UPDATE secret SET version = ?, nonce = ?, ciphertext = ? WHERE name = 'a'`, old.version, old.nonce, old.ct)
+		got, err := e.resolve("a")
+		if err != nil || got["a"] != (Value{Version: old.version, Text: "old-value"}) || old.version >= newer.Version {
+			t.Fatalf("afterDelete=%v: %+v %v (newer version %d)", afterDelete, got, err, newer.Version)
+		}
+	}
+}

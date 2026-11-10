@@ -238,6 +238,7 @@ func (s *Store) List(ctx context.Context) ([]Info, error) {
 // Resolve returns the clear values of the named secrets. It returns
 // *MissingError when a name does not exist and ErrCorrupt when a row does
 // not open. Only plan calls it (T-029); never log or return its result.
+// A complete old row put back opens with its old version (accepted, D-130).
 func (s *Store) Resolve(ctx context.Context, names []string) (map[string]Value, error) {
 	uniq := map[string]bool{}
 	for _, n := range names {
