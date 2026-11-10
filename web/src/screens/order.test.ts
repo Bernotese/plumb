@@ -42,6 +42,49 @@ describe("PlanView order", () => {
     expect(order).toEqual(demo.targets[0]?.resources.map((r) => r.resource));
   });
 
+  it("renders duplicate ids in after and restart_by", async () => {
+    const api = adminApi();
+    const plan = await api.getPlan(api.orderPlanId ?? 0);
+    const resources = plan.targets.flatMap((target) => target.resources);
+    const waiting = resources.find((r) => r.after?.length);
+    const restart = resources.find((r) => r.restart_by?.length);
+    const afterId = waiting?.after?.[0];
+    const restartId = restart?.restart_by?.[0];
+    if (!waiting || !afterId || !restart || !restartId) throw new Error("order plan is incomplete");
+    waiting.after = [afterId, afterId];
+    restart.restart_by = [restartId, restartId];
+    vi.spyOn(api, "getPlan").mockResolvedValue(plan);
+    show(PlanView, { api, id: plan.id });
+    await until(() => [...document.querySelectorAll("section.resource code")].length >= 4);
+
+    expect(card(waiting.resource)).toContain(`after ${afterId}, ${afterId}`);
+    expect(text(document.querySelector("section.resource.restart") ?? undefined)).toContain(
+      `restart because of ${restartId}, ${restartId}`,
+    );
+  });
+
+  it("renders HTML-looking order ids as text", async () => {
+    const api = adminApi();
+    const plan = await api.getPlan(api.orderPlanId ?? 0);
+    const resources = plan.targets.flatMap((target) => target.resources);
+    const waiting = resources.find((r) => r.after?.length);
+    const restart = resources.find((r) => r.restart_by?.length);
+    if (!waiting || !restart) throw new Error("order plan is incomplete");
+    const htmlId = "<img src=x onerror=1>";
+    waiting.after = [htmlId];
+    restart.restart_by = [htmlId];
+    vi.spyOn(api, "getPlan").mockResolvedValue(plan);
+    show(PlanView, { api, id: plan.id });
+    const htmlCodes = () =>
+      [...document.querySelectorAll("section.resource code")].filter(
+        (el) => el.textContent === htmlId,
+      );
+    await until(() => htmlCodes().length === 2);
+
+    expect(document.querySelector("section.resource code img")).toBeNull();
+    expect(htmlCodes()).toHaveLength(2);
+  });
+
   it("keeps the general text of a restart without restart_by", async () => {
     const api = adminApi();
     const plan = await api.getPlan(api.orderPlanId ?? 0);

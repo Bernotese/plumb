@@ -164,12 +164,12 @@
         </div>
         {#if r.after?.length}
           <p class="order">
-            after {#each r.after as a, j (a)}{j ? ", " : ""}<code class="mono">{a}</code>{/each}
+            after {#each r.after as a, j (j)}{j ? ", " : ""}<code class="mono">{a}</code>{/each}
           </p>
         {/if}
         {#if r.action === "restart" && r.restart_by?.length}
           <p class="order">
-            restart because of {#each r.restart_by as c, j (c)}{j ? ", " : ""}<code class="mono"
+            restart because of {#each r.restart_by as c, j (j)}{j ? ", " : ""}<code class="mono"
                 >{c}</code
               >{/each}
           </p>
