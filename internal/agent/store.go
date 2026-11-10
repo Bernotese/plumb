@@ -59,6 +59,7 @@ func (s stateDir) cleanStaleTemps() error {
 	if err != nil {
 		return err
 	}
+	var errs error // one bad file does not stop the cleanup of the others
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasPrefix(name, ".desired.json-") && !strings.HasPrefix(name, ".credential-") {
@@ -66,15 +67,16 @@ func (s stateDir) cleanStaleTemps() error {
 		}
 		info, err := entry.Info() // Info does not follow symlinks.
 		if err != nil {
-			return err
+			errs = errors.Join(errs, err)
+			continue
 		}
 		if info.Mode().IsRegular() {
 			if err := os.Remove(s.path(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
+				errs = errors.Join(errs, err)
 			}
 		}
 	}
-	return nil
+	return errs
 }
 
 // write replaces a file atomically with mode 0600.
