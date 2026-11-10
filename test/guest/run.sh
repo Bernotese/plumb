@@ -14,8 +14,11 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/guest.test" ./test/guest
-for distro in debian:13 ubuntu:26.04; do
-  image="plumb-guest-${distro//:/-}-$$"
+for distro in \
+  debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 \
+  ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c; do
+  image="plumb-guest-${distro%%@*}-$$"
+  image="${image//:/-}"
   name="$image"
   images+=("$image")
   docker build --build-arg "DISTRO=$distro" -t "$image" test/guest
