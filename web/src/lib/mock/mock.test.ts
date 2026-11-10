@@ -294,6 +294,40 @@ describe("mock order: after and restarts (T-049)", () => {
     );
   });
 
+  it("lets an empty restart_on override disable restarts from a changed site", async () => {
+    const blocks = await seeded();
+    const old = { ...base, blocks: [{ use: "nginx" }, site("a")] };
+    const next = {
+      ...old,
+      blocks: [...old.blocks, site("b")],
+      overrides: { "service:nginx": { restart_on: [] } },
+    };
+    expect(restartOn(render(next, blocks))).toEqual([]);
+    const plan = planTarget(old, next, blocks);
+    expect(plan.map((r) => r.resource)).toEqual([avail("b"), link("b")]);
+    expect(plan[0]?.after).toEqual(["package:nginx"]);
+    expect(plan.some((r) => r.restart_by)).toBe(false);
+  });
+
+  it("does not restart a service for a changed after dependency alone", async () => {
+    const blocks = await seeded();
+    const nginx = structuredClone(blocks.get("nginx"));
+    if (!nginx) throw new Error("no nginx");
+    nginx.spec.resources = [{ service: { name: "nginx", state: "running" } }];
+    nginx.spec.after = [avail("a")];
+    blocks.set("nginx", nginx);
+    const siteBlock = structuredClone(blocks.get("nginx-site"));
+    if (!siteBlock) throw new Error("no nginx-site");
+    siteBlock.spec.after = [];
+    siteBlock.spec.restarts = [];
+    blocks.set("nginx-site", siteBlock);
+    const old = { ...base, blocks: [{ use: "nginx" }, site("a")] };
+    const next = { ...old, overrides: { [avail("a")]: { content: "changed" } } };
+    const plan = planTarget(old, next, blocks);
+    expect(plan.map((r) => `${r.action} ${r.resource}`)).toEqual([`update ${avail("a")}`]);
+    expect(plan[0]?.restart_by).toBeUndefined();
+  });
+
   it("refuses an after id of the same use", async () => {
     const blocks = await seeded();
     const own = structuredClone(blocks.get("nginx-site"));
@@ -304,6 +338,17 @@ describe("mock order: after and restarts (T-049)", () => {
     expect(err(() => render({ ...base, blocks: [{ use: "nginx-site" }] }, blocks))).toBe(
       `422 Block "nginx-site" (use "nginx-site") comes after ${avail("site")}, which is its own resource; resources of one Block already apply in the listed order`,
     );
+  });
+
+  it("leaves cycle detection to the real API", async () => {
+    const blocks = await seeded();
+    const block = structuredClone(blocks.get("nginx-site"));
+    if (!block) throw new Error("no nginx-site");
+    block.spec.after = ["service:nginx"];
+    blocks.set(block.name, block);
+    const resources = render({ ...base, blocks: [{ use: "nginx" }, site("a")] }, blocks);
+    expect(resources.find((r) => r.id === avail("a"))?.after).toEqual(["service:nginx"]);
+    expect(restartOn(resources)).toContain(avail("a"));
   });
 
   it("plans after and restart_by for a new site on a target with nginx", async () => {
