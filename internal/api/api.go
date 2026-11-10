@@ -45,10 +45,10 @@ type Config struct {
 
 // Server is the API.
 type Server struct {
-	cfg     Config
-	st      *store.Store
-	log     *slog.Logger
-	now     func() time.Time
+	cfg Config
+	st  *store.Store
+	log *slog.Logger
+	now func() time.Time
 	// Failed logins (review T-011 M1): 5/min per user and client, 20/min
 	// per client, and 100/min per known user. Nobody can lock out the real
 	// user from another client by guessing at 5/min.
