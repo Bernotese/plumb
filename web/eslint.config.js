@@ -6,7 +6,16 @@ import globals from "globals";
 import svelteConfig from "./svelte.config.js";
 
 export default ts.config(
-  { ignores: ["dist/", "dist-mock/", "test-results/", "playwright-report/", "node_modules/", "src/lib/api.gen.ts"] },
+  {
+    ignores: [
+      "dist/",
+      "dist-mock/",
+      "test-results/",
+      "playwright-report/",
+      "node_modules/",
+      "src/lib/api.gen.ts",
+    ],
+  },
   js.configs.recommended,
   ...ts.configs.strict,
   ...svelte.configs.recommended,
@@ -16,7 +25,7 @@ export default ts.config(
     languageOptions: { globals: { ...globals.browser } },
   },
   {
-    files: ["scripts/**", "*.config.{js,ts}"],
+    files: ["scripts/**", "e2e/**", "*.config.{js,ts}"],
     languageOptions: { globals: { ...globals.node } },
   },
   {
