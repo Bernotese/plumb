@@ -26,6 +26,10 @@ const (
 	OriginRevert   = "revert"
 	OriginAccept   = "accept"
 	OriginReenroll = "reenroll"
+	// Slice 2 (migration plan_origin, D-096).
+	OriginRollback   = "rollback"
+	OriginImport     = "import"
+	OriginIgnoreRule = "ignore_rule"
 )
 
 // DocKey names a document.
@@ -54,6 +58,9 @@ type Input struct {
 	Author   string // principal
 	Origin   string // default OriginProposal
 	IssueID  int64
+	// Base, when not 0, is the head revision that the proposal was built
+	// against. Propose fails with store.ErrPlanStale when the head moved.
+	Base int64
 }
 
 // TargetPlan is the planned work on one target. The Plan stores a list

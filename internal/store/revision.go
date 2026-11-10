@@ -300,3 +300,10 @@ func (s *Store) Diff(ctx context.Context, a, b int64) ([]DocChange, error) {
 	}
 	return out, rows.Err()
 }
+
+// DocCount returns the number of documents in a revision.
+func (s *Store) DocCount(ctx context.Context, id int64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM revision_doc WHERE revision_id = ?`, id).Scan(&n)
+	return n, err
+}

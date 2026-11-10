@@ -199,6 +199,10 @@ func (s *Server) Handler() http.Handler {
 	route("PUT /api/v1/secrets/{name}", admin, s.putSecret)
 	route("DELETE /api/v1/secrets/{name}", admin, s.deleteSecret)
 
+	route("GET /api/v1/revisions", read, s.listRevisions)
+	route("GET /api/v1/revisions/{n}/diff", read, s.diffRevision)
+	route("POST /api/v1/revisions/{n}/rollback", planTier, s.rollbackRevision)
+
 	route("GET /api/v1/events", read, s.events)
 
 	if s.cfg.Dev && s.cfg.DevLoginToken != "" {

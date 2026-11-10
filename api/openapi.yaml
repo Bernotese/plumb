@@ -1157,7 +1157,6 @@ paths:
     get:
       tags: [revisions]
       operationId: listRevisions
-      x-plumb-planned: T-031
       summary: List revisions, newest first
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -1197,7 +1196,6 @@ paths:
     get:
       tags: [revisions]
       operationId: diffRevision
-      x-plumb-planned: T-031
       summary: Compare a revision with an earlier one
       description: |
         Lists the documents that differ between revision `from` and revision `n`, with both
@@ -1265,7 +1263,6 @@ paths:
     post:
       tags: [revisions]
       operationId: rollbackRevision
-      x-plumb-planned: T-031
       summary: Plan a rollback to a revision
       description: |
         Builds a proposal that puts and deletes documents until the document set equals revision
