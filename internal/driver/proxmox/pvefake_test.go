@@ -40,6 +40,14 @@ type fakePVE struct {
 	taskPolls int               // polls before a task stops
 	log       []string          // "METHOD /path"
 	params    map[string]url.Values
+
+	// Fault injection for the review tests.
+	allPools     bool              // answer /pools with every pool, ignoring poolid
+	echoParam    map[string]string // request key → parameter whose value a 400 echoes
+	notJSON      map[string]bool   // request key → 200 with an HTML page
+	nullAnswer   map[string]bool   // request key → 200 with data null
+	statusFails  int               // task status reads that fail with 500 first
+	stoppedTasks []string          // UPIDs that got DELETE
 }
 
 type fakeVM struct {
@@ -66,7 +74,8 @@ func newFakePVE(t *testing.T) *fakePVE {
 	t.Helper()
 	f := &fakePVE{t: t, auth: "PVEAPIToken=" + fakeToken + "=" + fakeSecret, node: fakeNode,
 		vms: map[int]*fakeVM{}, files: map[string]bool{}, tasks: map[string]*fakeTask{},
-		failNext: map[string]string{}, taskPolls: 2, params: map[string]url.Values{}}
+		failNext: map[string]string{}, taskPolls: 2, params: map[string]url.Values{},
+		echoParam: map[string]string{}, notJSON: map[string]bool{}, nullAnswer: map[string]bool{}}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	f.caFile = filepath.Join(t.TempDir(), "pve-root-ca.pem")
@@ -176,7 +185,7 @@ func (f *fakePVE) task(key string) string {
 var (
 	reQemu    = regexp.MustCompile(`^/nodes/([^/]+)/qemu/(\d+)(/.*)?$`)
 	reStorage = regexp.MustCompile(`^/nodes/([^/]+)/storage/([^/]+)/(content|download-url)$`)
-	reTask    = regexp.MustCompile(`^/nodes/([^/]+)/tasks/([^/]+)/(status|log)$`)
+	reTask    = regexp.MustCompile(`^/nodes/([^/]+)/tasks/([^/]+)(?:/(status|log))?$`)
 )
 
 func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +203,24 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	f.params[key] = r.Form
 
+	if param, ok := f.echoParam[key]; ok {
+		delete(f.echoParam, key)
+		fail(w, 400, "Parameter verification failed.", map[string]string{param: fmt.Sprintf("value '%s' does not match the format", r.Form.Get(param))})
+		return
+	}
+	if f.notJSON[key] {
+		delete(f.notJSON, key)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(200)
+		fmt.Fprint(w, "<html>proxy login page</html>")
+		return
+	}
+	if f.nullAnswer[key] {
+		delete(f.nullAnswer, key)
+		reply(w, 200, nil)
+		return
+	}
+
 	switch {
 	case r.Method == "GET" && path == "/pools":
 		if r.Form.Get("poolid") == "" {
@@ -208,13 +235,26 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		sort.Ints(ids)
 		for _, id := range ids {
 			vm := f.vms[id]
-			if vm.pool == r.Form.Get("poolid") {
+			if vm.pool == r.Form.Get("poolid") || f.allPools {
 				t := 0
 				if vm.template {
 					t = 1
 				}
 				members = append(members, map[string]any{"vmid": id, "type": "qemu", "name": vm.cfg["name"], "template": t, "id": "qemu/" + strconv.Itoa(id)})
 			}
+		}
+		if f.allPools { // a server that ignores the filter: one entry per pool
+			byPool := map[string][]map[string]any{}
+			for _, m := range members {
+				id := m["vmid"].(int)
+				byPool[f.vms[id].pool] = append(byPool[f.vms[id].pool], m)
+			}
+			var all []any
+			for p, ms := range byPool {
+				all = append(all, map[string]any{"poolid": p, "members": ms})
+			}
+			reply(w, 200, all)
+			return
 		}
 		reply(w, 200, []any{map[string]any{"poolid": r.Form.Get("poolid"), "members": members}})
 
@@ -292,12 +332,24 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "no such task", nil)
 			return
 		}
+		if r.Method == "DELETE" {
+			f.stoppedTasks = append(f.stoppedTasks, m[2])
+			t.exit = "interrupted by signal"
+			t.polls = 1 << 30
+			reply(w, 200, nil)
+			return
+		}
 		if m[3] == "log" {
 			lines := []map[string]any{}
 			for i, l := range t.log {
 				lines = append(lines, map[string]any{"n": i + 1, "t": l})
 			}
 			reply(w, 200, lines)
+			return
+		}
+		if f.statusFails > 0 {
+			f.statusFails--
+			fail(w, 500, "temporary failure", nil)
 			return
 		}
 		t.polls++

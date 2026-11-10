@@ -58,14 +58,14 @@ func TestTasks(t *testing.T) {
 	c := f.client(t)
 	ctx := context.Background()
 	f.addVM(9001, fakePool, map[string]string{"name": "x"}, false)
-	if err := c.PostWait(ctx, fakeNode, "/nodes/pve/qemu/9001/status/start", nil); err != nil {
+	if err := c.Task(ctx, fakeNode, "POST", "/nodes/pve/qemu/9001/status/start", nil); err != nil {
 		t.Fatal(err)
 	}
 	if f.vms[9001].running != true {
 		t.Error("start did not run")
 	}
 	// A failed task is a TaskError with the end of its log.
-	err := c.PostWait(ctx, fakeNode, "/nodes/pve/qemu/9001/status/start", nil)
+	err := c.Task(ctx, fakeNode, "POST", "/nodes/pve/qemu/9001/status/start", nil)
 	var te *TaskError
 	if !errors.As(err, &te) || !strings.Contains(te.ExitStatus, "already running") || len(te.Log) == 0 {
 		t.Errorf("failed task: %v", err)
@@ -74,7 +74,7 @@ func TestTasks(t *testing.T) {
 	f.taskPolls = 1 << 30
 	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 	defer cancel()
-	if err := c.PostWait(short, fakeNode, "/nodes/pve/qemu/9001/status/shutdown", nil); !errors.Is(err, context.DeadlineExceeded) {
+	if err := c.Task(short, fakeNode, "POST", "/nodes/pve/qemu/9001/status/shutdown", nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("endless task: %v", err)
 	}
 }
@@ -373,7 +373,7 @@ func TestUpdateDigestGuard(t *testing.T) {
 	f.mu.Lock()
 	f.vms[9020].cfg["description"] = "x"
 	f.mu.Unlock()
-	err := d.c.PostWait(ctx, fakeNode, "/nodes/pve/qemu/9020/config", url.Values{"digest": {"stale"}, "cores": {"4"}})
+	err := d.c.Task(ctx, fakeNode, "POST", "/nodes/pve/qemu/9020/config", url.Values{"digest": {"stale"}, "cores": {"4"}})
 	var ae *APIError
 	if !errors.As(err, &ae) || !strings.Contains(ae.Message, "modified configuration") || f.vms[9020].cfg["cores"] != "2" {
 		t.Errorf("stale digest: %v", err)

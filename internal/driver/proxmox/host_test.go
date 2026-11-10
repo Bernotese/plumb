@@ -14,6 +14,7 @@ package proxmox
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -55,6 +56,18 @@ func TestHostLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Delete refuses templates, so the test removes its own template
+	// through the client (review T-012 #10): no guest stays behind.
+	t.Cleanup(func() {
+		id, m, err := d.own(context.Background(), string(ref))
+		if err != nil || m.Template != 1 {
+			t.Errorf("cleanup of template %s: %v", ref, err)
+			return
+		}
+		if err := d.c.Task(context.Background(), d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}}); err != nil {
+			t.Errorf("cleanup of template %s: %v (remove it by hand)", ref, err)
+		}
+	})
 	spec := driver.GuestSpec{Name: "plumb-host-test", Kind: wire.KindVM, Image: ref, Cores: 1, MemoryMB: 1024, DiskGB: 8,
 		Bridge: os.Getenv("PLUMB_PVE_BRIDGE"), IP: "dhcp", User: "plumb"}
 	id, err := d.Create(ctx, spec, driver.Bootstrap{Token: "host-test-token-1"})

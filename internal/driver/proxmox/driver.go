@@ -88,6 +88,7 @@ type member struct {
 // members lists the qemu guests in the pool.
 func (d *Driver) members(ctx context.Context) ([]member, error) {
 	var pools []struct {
+		PoolID  string   `json:"poolid"`
 		Members []member `json:"members"`
 	}
 	if err := d.c.Get(ctx, "/pools", url.Values{"poolid": {d.cfg.Pool}, "type": {"qemu"}}, &pools); err != nil {
@@ -95,6 +96,11 @@ func (d *Driver) members(ctx context.Context) ([]member, error) {
 	}
 	var out []member
 	for _, p := range pools {
+		// The query asks for one pool, but the guard does not trust the
+		// server's filter: only members of our pool count (review T-012 #1).
+		if p.PoolID != d.cfg.Pool {
+			continue
+		}
 		for _, m := range p.Members {
 			if m.Type == "qemu" || m.Type == "" {
 				out = append(out, m)
@@ -134,7 +140,7 @@ func (d *Driver) nextID(ctx context.Context) (int, error) {
 		var got string
 		err := d.c.Get(ctx, "/cluster/nextid", url.Values{"vmid": {strconv.Itoa(id)}}, &got)
 		var ae *APIError
-		if errors.As(err, &ae) && ae.Status == 400 {
+		if errors.As(err, &ae) && ae.Status == 400 && strings.Contains(ae.Error(), "already exists") {
 			continue // taken
 		}
 		if err != nil {
@@ -198,6 +204,13 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 			return driver.ImageRef(strconv.Itoa(m.VMID)), nil
 		}
 	}
+	// A VM with the template's name that is no template is the rest of a
+	// failed earlier try: remove it before the next try (review T-012 #6).
+	for _, m := range ms {
+		if m.Name == name && m.Template != 1 && m.VMID >= d.cfg.VMIDMin && m.VMID <= d.cfg.VMIDMax {
+			d.removeHalfMade(ctx, m.VMID)
+		}
+	}
 
 	file := importFile(spec)
 	storage := d.node() + "/storage/" + url.PathEscape(d.cfg.ImageStorage)
@@ -214,7 +227,7 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		return c.VolID == volid
 	})
 	if !have {
-		if err := d.c.PostWait(ctx, d.cfg.Node, storage+"/download-url", url.Values{
+		if err := d.c.Task(ctx, d.cfg.Node, "POST", storage+"/download-url", url.Values{
 			"content": {"import"}, "filename": {file}, "url": {spec.URL},
 			"checksum": {spec.SHA256}, "checksum-algorithm": {"sha256"}, "verify-certificates": {"1"},
 		}); err != nil {
@@ -226,7 +239,7 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	if err != nil {
 		return "", err
 	}
-	if err := d.c.PostWait(ctx, d.cfg.Node, d.node()+"/qemu", url.Values{
+	if err := d.c.Task(ctx, d.cfg.Node, "POST", d.node()+"/qemu", url.Values{
 		"vmid": {strconv.Itoa(id)}, "name": {name}, "pool": {d.cfg.Pool},
 		"ostype": {"l26"}, "memory": {"1024"}, "cores": {"1"}, "cpu": {"x86-64-v2-AES"},
 		"scsihw": {"virtio-scsi-single"}, "scsi0": {d.cfg.DiskStorage + ":0,import-from=" + volid},
@@ -234,9 +247,11 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		"serial0": {"socket"}, "vga": {"serial0"},
 		"description": {"Plumb image " + spec.Name + "\nsha256=" + spec.SHA256},
 	}); err != nil {
+		d.removeHalfMade(ctx, id)
 		return "", fmt.Errorf("proxmox: create template VM: %w", err)
 	}
-	if err := d.c.PostWait(ctx, d.cfg.Node, vmPath(d, id)+"/template", nil); err != nil {
+	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/template", nil); err != nil {
+		d.removeHalfMade(ctx, id)
 		return "", fmt.Errorf("proxmox: convert to template: %w", err)
 	}
 	return driver.ImageRef(strconv.Itoa(id)), nil
@@ -268,10 +283,10 @@ func smbios(old, serial string) string {
 	fields := parseProps(old)
 	for k, v := range fields {
 		if fields["base64"] != "1" && k != "uuid" && k != "base64" {
-			fields[k] = base64.StdEncoding.EncodeToString([]byte(v))
+			fields[k] = b64(v)
 		}
 	}
-	fields["serial"] = base64.StdEncoding.EncodeToString([]byte(serial))
+	fields["serial"] = b64(serial)
 	fields["base64"] = "1"
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
@@ -299,6 +314,9 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	if boot.Token == "" {
 		return "", errors.New("proxmox: a new guest needs an enrollment token")
 	}
+	if err := checkSpec(spec); err != nil {
+		return "", err
+	}
 	tpl, m, err := d.own(ctx, string(spec.Image))
 	if err != nil {
 		return "", fmt.Errorf("proxmox: image %s: %w", spec.Image, err)
@@ -310,7 +328,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	if err != nil {
 		return "", err
 	}
-	if err := d.c.PostWait(ctx, d.cfg.Node, vmPath(d, tpl)+"/clone", url.Values{
+	if err := d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, tpl)+"/clone", url.Values{
 		"newid": {strconv.Itoa(id)}, "name": {spec.Name}, "pool": {d.cfg.Pool},
 		"full": {"1"}, "storage": {d.cfg.DiskStorage},
 	}); err != nil {
@@ -318,12 +336,52 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	}
 	gid := driver.GuestID(strconv.Itoa(id))
 	if err := d.configure(ctx, id, tpl, spec, boot.Token); err != nil {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-		defer cancel()
-		_ = d.c.DeleteWait(cleanup, d.cfg.Node, vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}})
-		return "", err
+		d.removeHalfMade(ctx, id)
+		return "", scrub(err, boot.Token)
 	}
 	return gid, nil
+}
+
+// removeHalfMade deletes a guest that a failed Create or FetchImage left
+// behind. It is best effort, with its own deadline.
+func (d *Driver) removeHalfMade(ctx context.Context, id int) {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	if st, err := d.status(cleanup, id); err == nil && st == "running" {
+		_ = d.c.Task(cleanup, d.cfg.Node, "POST", vmPath(d, id)+"/status/stop", nil)
+	}
+	_ = d.c.Task(cleanup, d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}})
+}
+
+// The driver is the last step before the host: values that go into a
+// Proxmox property string must not carry "," or "=" (review T-012 #5).
+var (
+	reBridge = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,14}$`)
+	reIPv4   = regexp.MustCompile(`^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$`)
+	reUser   = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+)
+
+func checkSpec(s driver.GuestSpec) error {
+	if !reBridge.MatchString(s.Bridge) {
+		return fmt.Errorf("proxmox: bad bridge %q", s.Bridge)
+	}
+	if s.IP != "" && s.IP != "dhcp" {
+		addr, bits, ok := strings.Cut(s.IP, "/")
+		n, err := strconv.Atoi(bits)
+		if !ok || !reIPv4.MatchString(addr) || err != nil || n < 0 || n > 32 {
+			return fmt.Errorf("proxmox: bad ip %q", s.IP)
+		}
+	}
+	if s.Gateway != "" && !reIPv4.MatchString(s.Gateway) {
+		return fmt.Errorf("proxmox: bad gateway %q", s.Gateway)
+	}
+	if s.User != "" && !reUser.MatchString(s.User) {
+		return fmt.Errorf("proxmox: bad user %q", s.User)
+	}
+	if s.Cores < 1 || s.MemoryMB < 16 || s.DiskGB < 1 {
+		return errors.New("proxmox: cores, memory and disk must be positive")
+	}
+	return nil
 }
 
 func (d *Driver) configure(ctx context.Context, id, tpl int, spec driver.GuestSpec, token string) error {
@@ -345,15 +403,15 @@ func (d *Driver) configure(ctx context.Context, id, tpl int, spec driver.GuestSp
 	if len(spec.SSHKeys) > 0 {
 		params.Set("sshkeys", sshKeysParam(spec.SSHKeys))
 	}
-	if err := d.c.PostWait(ctx, d.cfg.Node, vmPath(d, id)+"/config", params); err != nil {
+	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params); err != nil {
 		return fmt.Errorf("proxmox: configure: %w", err)
 	}
-	if err := d.c.PutWait(ctx, d.cfg.Node, vmPath(d, id)+"/resize", url.Values{
+	if err := d.c.Task(ctx, d.cfg.Node, "PUT", vmPath(d, id)+"/resize", url.Values{
 		"disk": {"scsi0"}, "size": {strconv.Itoa(spec.DiskGB) + "G"},
 	}); err != nil {
 		return fmt.Errorf("proxmox: resize disk: %w", err)
 	}
-	if err := d.c.PostWait(ctx, d.cfg.Node, vmPath(d, id)+"/status/start", nil); err != nil {
+	if err := d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/status/start", nil); err != nil {
 		return fmt.Errorf("proxmox: start: %w", err)
 	}
 	return nil
@@ -437,7 +495,8 @@ func specOf(name string, cfg map[string]string) driver.GuestSpec {
 	ip := parseProps(cfg["ipconfig0"])
 	s.IP, s.Gateway = ip["ip"], ip["gw"]
 	s.User = cfg["ciuser"]
-	if keys, err := url.QueryUnescape(cfg["sshkeys"]); err == nil && keys != "" {
+	// PathUnescape: a raw "+" stays "+" (review T-012 #11).
+	if keys, err := url.PathUnescape(cfg["sshkeys"]); err == nil && keys != "" {
 		for _, k := range strings.Split(strings.TrimSpace(keys), "\n") {
 			if k = strings.TrimSpace(k); k != "" {
 				s.SSHKeys = append(s.SSHKeys, k)
@@ -542,7 +601,11 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 	if len(params) == 1 {
 		return nil
 	}
-	return d.c.PostWait(ctx, d.cfg.Node, vmPath(d, id)+"/config", params)
+	token := ""
+	if boot != nil {
+		token = boot.Token
+	}
+	return scrub(d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params), token)
 }
 
 // replaceProp sets one key of a property string and keeps the rest (for
@@ -584,11 +647,11 @@ func (d *Driver) Power(ctx context.Context, gid driver.GuestID, action driver.Po
 		if st != "running" {
 			return nil
 		}
-		return d.c.PostWait(ctx, d.cfg.Node, vmPath(d, id)+"/status/shutdown", url.Values{
+		return d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/status/shutdown", url.Values{
 			"timeout": {strconv.Itoa(int(d.cfg.ShutdownTimeout.Seconds()))}, "forceStop": {"1"},
 		})
 	}
-	start := func() error { return d.c.PostWait(ctx, d.cfg.Node, vmPath(d, id)+"/status/start", nil) }
+	start := func() error { return d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/status/start", nil) }
 	switch action {
 	case driver.PowerStart:
 		if st == "running" {
@@ -620,9 +683,11 @@ func (d *Driver) Delete(ctx context.Context, gid driver.GuestID) error {
 		return err
 	}
 	if st == "running" {
-		if err := d.c.PostWait(ctx, d.cfg.Node, vmPath(d, id)+"/status/stop", nil); err != nil {
+		if err := d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/status/stop", nil); err != nil {
 			return err
 		}
 	}
-	return d.c.DeleteWait(ctx, d.cfg.Node, vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}})
+	return d.c.Task(ctx, d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}})
 }
+
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
