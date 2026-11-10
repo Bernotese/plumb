@@ -6,7 +6,7 @@ import globals from "globals";
 import svelteConfig from "./svelte.config.js";
 
 export default ts.config(
-  { ignores: ["dist/", "dist-mock/", "node_modules/", "src/lib/api.gen.ts"] },
+  { ignores: ["dist/", "dist-mock/", "test-results/", "playwright-report/", "node_modules/", "src/lib/api.gen.ts"] },
   js.configs.recommended,
   ...ts.configs.strict,
   ...svelte.configs.recommended,
