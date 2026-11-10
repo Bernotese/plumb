@@ -5,7 +5,7 @@ Rules for every agent in this repo. Keep this file short; details live in `docs/
 ## Project
 - **Plump**: new full-stack project of the user. Product/stack decisions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`. Current state: `docs/STATUS.md`.
 - Repo: `/home/jannes/workspcae/plump` (git, `main` = merged + tested).
-- Agents run on a dedicated dev VM with **full access** (no permission prompts). You may install tools and packages. Still: never delete data outside this repo and its worktrees, never push secrets.
+- Agents run on a dedicated dev VM in **auto mode** (see Permissions). You may install tools and packages. Never delete data outside this repo and its worktrees, never push secrets.
 
 ## Language
 - Talk to each other and to the user in short, plain sentences (ASD-STE100 style: active voice, one instruction per sentence).
@@ -52,9 +52,17 @@ Rules for every agent in this repo. Keep this file short; details live in `docs/
 - Run independent cards in parallel. Keep every agent busy; nobody waits for a plan they do not need.
 
 ## Git
+- Remote: `origin` = https://github.com/Bernotese/plumb.git (public). Never commit secrets or `.env` files.
 - One worktree per agent: `git worktree add ../plump-wt/<agent> -b <agent>/T-NNN-<slug>`.
-- Small commits on your branch. Never edit another agent's worktree. Only `pl-lead` merges and removes worktrees.
+- Small commits on your branch. Push your branch (`git push -u origin <branch>`) and open a PR with `gh pr create --base main --title "T-NNN: …" --body "<card link, tests>"`. Never edit another agent's worktree.
+- Only `pl-lead` merges into `main` (after QA + review, `gh pr merge --squash` or local merge + push) and removes worktrees.
+- Forbidden: force-push, deleting remote branches, changing repo settings/secrets. These are blocked by the permission rules.
 - Tests must pass on your branch before you report done. If you cannot test, say why.
+
+## Permissions
+- Claude agents run in **auto mode** (`.claude/settings.json`): installs, git (commit, branch, push), `gh pr …` are pre-allowed; truly risky actions (force-push, repo deletion/settings, sudo, deleting home/system paths, reading credentials) are denied.
+- Codex agents run with `--approve-for-me` (workspace-write sandbox + automatic review). Same allow/forbid rules in `~/.codex/rules/default.rules`.
+- If an action is blocked and you think it is needed, report it to `pl-lead`; do not work around the block.
 
 ## Tools on this machine
 - `codex-usage [--route|--json]` – Codex limit status and routing.
