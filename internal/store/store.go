@@ -163,9 +163,15 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("store: migration %s: %w", m.name, err)
 		}
 	}
+	// The pragma is a silent no-op in some states: read it back.
+	var fk int
 	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		conn.Raw(func(any) error { return driver.ErrBadConn })
 		return fmt.Errorf("store: %w", err)
+	}
+	if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+		conn.Raw(func(any) error { return driver.ErrBadConn })
+		return fmt.Errorf("store: foreign keys did not come back on after the migrations (%d, %v)", fk, err)
 	}
 	return nil
 }

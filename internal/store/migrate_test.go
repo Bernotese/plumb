@@ -114,9 +114,32 @@ func TestMigratePlanOrigin(t *testing.T) {
 
 	// New origins are allowed; unknown ones are not.
 	for _, origin := range []string{"rollback", "import", "ignore_rule"} {
-		if _, err := s.CreatePlan(ctx, Plan{BaseRevision: 2, Origin: origin, Risk: "read", Reason: origin, Author: "user:admin"}); err != nil {
-			t.Errorf("origin %s: %v", origin, err)
+		p := Plan{BaseRevision: 2, Origin: origin, Risk: "read", Reason: origin, Author: "user:admin"}
+		if origin == "rollback" {
+			p.RollbackTo = 1
 		}
+		created, err := s.CreatePlan(ctx, p)
+		if err != nil {
+			t.Errorf("origin %s: %v", origin, err)
+			continue
+		}
+		if got, _ := s.GetPlan(ctx, created.ID); got.RollbackTo != p.RollbackTo {
+			t.Errorf("origin %s: rollback_to %d", origin, got.RollbackTo)
+		}
+	}
+	// rollback_to belongs to origin rollback only, and must name a revision (D-131).
+	for _, p := range []Plan{
+		{BaseRevision: 2, Origin: "rollback", Risk: "read", Reason: "no goal", Author: "user:admin"},
+		{BaseRevision: 2, Origin: "proposal", RollbackTo: 1, Risk: "read", Reason: "goal without rollback", Author: "user:admin"},
+		{BaseRevision: 2, Origin: "rollback", RollbackTo: 99, Risk: "read", Reason: "unknown revision", Author: "user:admin"},
+	} {
+		if _, err := s.CreatePlan(ctx, p); err == nil {
+			t.Errorf("%s was accepted", p.Reason)
+		}
+	}
+	// Migrated rows have no rollback goal.
+	if p1, _ := s.GetPlan(ctx, 1); p1.RollbackTo != 0 {
+		t.Errorf("migrated plan has rollback_to %d", p1.RollbackTo)
 	}
 	if _, err := s.CreatePlan(ctx, Plan{BaseRevision: 2, Origin: "magic", Risk: "read", Reason: "x", Author: "user:admin"}); err == nil {
 		t.Error("origin magic was accepted")

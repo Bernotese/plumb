@@ -34,4 +34,5 @@ A client can read the revision history, compare two revisions and roll back to o
 - Branch `pl-backend/T-031-revision-api`, stacked on T-028 (PR #37): migration 0004 needs 0003 (D-096, no gaps D-051). Tests: `make lint test` → pass.
 - From the pl-reviewer handover (kept whole): runner D-115, migration 0004, `plan.Rollback`, the three handlers, matrix rows.
 - Added: slice test `TestRevisionHistoryAndRollback`, TestContract calls (and `rule.json` in the contract loader), migration test through 0003 + 0004, D-115, D-125 … D-127.
+- Merged QA #42 and fix #43. D-131 `Plan.rollback_to` (column + CHECK in 0004). Review nits 3–7 done; D-128: revision author = Plan author (contract text fixed).
 - Human-only rollback tests (D-099) come with T-029 and T-032.

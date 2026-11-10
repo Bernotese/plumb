@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/state"
@@ -98,10 +99,12 @@ func TestRevisionHistoryAndRollback(t *testing.T) {
 	var pl struct {
 		ID           int64
 		Origin, Risk string
-		BaseRevision int64 `json:"base_revision"`
+		BaseRevision int64  `json:"base_revision"`
+		RollbackTo   *int64 `json:"rollback_to"`
 	}
 	json.Unmarshal(body, &pl)
-	if code != 201 || pl.Origin != "rollback" || pl.Risk != string(wire.RiskDestructive) || pl.BaseRevision != 3 {
+	if code != 201 || pl.Origin != "rollback" || pl.Risk != string(wire.RiskDestructive) || pl.BaseRevision != 3 ||
+		pl.RollbackTo == nil || *pl.RollbackTo != 1 {
 		t.Fatalf("rollback: %d %s", code, body)
 	}
 	applyTok := e.token(TierApply, wire.RiskDisruptive)
@@ -135,6 +138,18 @@ func TestRevisionHistoryAndRollback(t *testing.T) {
 		if got[k] != h {
 			t.Errorf("%s: hash %s, want %s", k, got[k], h)
 		}
+	}
+	// Provenance: revision 4 points at the rollback Plan, which names its
+	// goal, author and reason. A normal Plan has no goal.
+	planAuthor := "token:" + planTok.bearer[:strings.Index(planTok.bearer, ".")]
+	if head.PlanID != pl.ID || head.Author != planAuthor || head.Reason != "back to one" {
+		t.Errorf("revision 4: %+v", head)
+	}
+	if rp, err := e.st.GetPlan(e.ctx, pl.ID); err != nil || rp.Origin != "rollback" || rp.RollbackTo != 1 || rp.Author != planAuthor || rp.ApprovedBy != "user:admin" {
+		t.Errorf("rollback plan: %+v %v", rp, err)
+	}
+	if _, body := adm.do("GET", "/api/v1/plans/1", nil); !strings.Contains(string(body), `"rollback_to":null`) {
+		t.Errorf("normal plan: %s", body)
 	}
 
 	// The head equals revision 1 now: nothing to do. Unknown revision: 404.

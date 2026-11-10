@@ -11,6 +11,7 @@ CREATE TABLE plan_new (
     base_revision INTEGER REFERENCES revision (id),  -- head at plan time; NULL = empty state
     origin        TEXT NOT NULL CHECK (origin IN ('proposal', 'revert', 'accept', 'reenroll', 'rollback', 'import', 'ignore_rule')),
     issue_id      INTEGER REFERENCES issue (id),     -- set for revert, accept and ignore_rule
+    rollback_to   INTEGER REFERENCES revision (id),  -- the revision n of a rollback (D-131)
     proposal      TEXT NOT NULL,        -- JSON: documents to put and delete
     changes       TEXT NOT NULL,        -- JSON: [{target, resources: [{resource, changes: [wire.Change]}]}]
     risk          TEXT NOT NULL CHECK (risk IN ('read', 'reversible', 'disruptive', 'destructive')),
@@ -22,7 +23,8 @@ CREATE TABLE plan_new (
     author        TEXT NOT NULL,        -- principal
     approved_by   TEXT,                 -- principal
     created_at    TEXT NOT NULL,
-    approved_at   TEXT
+    approved_at   TEXT,
+    CHECK ((origin = 'rollback') = (rollback_to IS NOT NULL))
 ) STRICT;
 
 INSERT INTO plan_new (id, base_revision, origin, issue_id, proposal, changes, risk, status, reason, author, approved_by, created_at, approved_at)

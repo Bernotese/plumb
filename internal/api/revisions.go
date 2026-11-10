@@ -40,18 +40,19 @@ func (s *Server) listRevisions(w http.ResponseWriter, r *http.Request, _ *princi
 	}
 	items := []revisionInfo{}
 	var next *string
-	for i, rev := range revs {
-		if i == n {
-			next = encodeCursor(strconv.FormatInt(revs[n-1].ID, 10))
-			break
-		}
-		count, err := s.st.DocCount(r.Context(), rev.ID)
-		if err != nil {
+	if len(revs) > n {
+		revs, next = revs[:n], encodeCursor(strconv.FormatInt(revs[n-1].ID, 10))
+	}
+	var counts map[int64]int
+	if len(revs) > 0 { // newest first: the ids run from revs[last] to revs[0]
+		if counts, err = s.st.DocCounts(r.Context(), revs[len(revs)-1].ID, revs[0].ID); err != nil {
 			s.internal(w, err)
 			return
 		}
+	}
+	for _, rev := range revs {
 		items = append(items, revisionInfo{ID: rev.ID, Author: rev.Author, Reason: rev.Reason, PlanID: nullID(rev.PlanID),
-			CreatedAt: rev.CreatedAt.UTC(), Documents: count})
+			CreatedAt: rev.CreatedAt.UTC(), Documents: counts[rev.ID]})
 	}
 	writeJSON(w, http.StatusOK, page{Items: items, Next: next})
 }
@@ -153,11 +154,14 @@ func (s *Server) rollbackRevision(w http.ResponseWriter, r *http.Request, p *pri
 			Errors: []fieldError{{"/reason", "A reason of 1 to 2000 characters is required."}}})
 		return
 	}
+	// Only a missing revision n is "does not exist"; any other not-found
+	// from Propose keeps its own answer (review nit 5).
+	if _, err := s.st.Revision(r.Context(), n); err != nil {
+		s.notFoundRevision(w, err, n)
+		return
+	}
 	pl, err := s.cfg.Plans.Rollback(r.Context(), n, req.Reason, p.name)
 	switch {
-	case errors.Is(err, store.ErrNotFound):
-		problem(w, http.StatusNotFound, "not-found", "Not found", fmt.Sprintf("Revision %d does not exist.", n))
-		return
 	case errors.Is(err, plan.ErrNothingToDo):
 		problem(w, http.StatusConflict, "nothing-to-do", "Nothing to do", fmt.Sprintf("Revision %d has the same documents as the head revision.", n))
 		return

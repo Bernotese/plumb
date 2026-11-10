@@ -58,6 +58,8 @@ type Input struct {
 	Author   string // principal
 	Origin   string // default OriginProposal
 	IssueID  int64
+	// RollbackTo is the revision of a rollback (D-131). Only Rollback sets it.
+	RollbackTo int64
 	// Base, when not 0, is the head revision that the proposal was built
 	// against. Propose fails with store.ErrPlanStale when the head moved.
 	Base int64

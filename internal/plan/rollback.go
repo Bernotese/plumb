@@ -57,5 +57,5 @@ func (e *Engine) Rollback(ctx context.Context, n int64, reason, author string) (
 	if len(p.Put)+len(p.Delete) == 0 {
 		return store.Plan{}, fmt.Errorf("plan: revision %d has the same documents as the head revision %d: %w", n, head.ID, ErrNothingToDo)
 	}
-	return e.Propose(ctx, Input{Proposal: p, Reason: reason, Author: author, Origin: OriginRollback, Base: head.ID})
+	return e.Propose(ctx, Input{Proposal: p, Reason: reason, Author: author, Origin: OriginRollback, Base: head.ID, RollbackTo: n})
 }

@@ -174,7 +174,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	proposal, _ := json.Marshal(in.Proposal)
 	changes, _ := json.Marshal(plans)
 	p, err := e.st.CreatePlan(ctx, store.Plan{
-		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, Proposal: proposal,
+		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, RollbackTo: in.RollbackTo, Proposal: proposal,
 		Changes: changes, Risk: string(risk), Reason: in.Reason, Author: in.Author,
 	})
 	if err != nil {
