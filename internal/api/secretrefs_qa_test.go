@@ -24,7 +24,7 @@ func qaSecretPlan(t *testing.T, e *env, c *client, name string) string {
 }
 
 func TestQASecretValuesAndErrors(t *testing.T) {
-	for _, mode := range []string{"markers", "newlines", "64KiB", "1MiB", "refusal", "timeout"} {
+	for _, mode := range []string{"markers", "newlines", "64KiB", "1MiB", "refusal", "timeout", "short-error1", "short-error2", "short-error3", "short-output1", "short-output2", "short-output3"} {
 		t.Run(mode, func(t *testing.T) {
 			var logs bytes.Buffer
 			envLog = slog.New(slog.NewTextHandler(&logs, nil))
@@ -32,6 +32,10 @@ func TestQASecretValuesAndErrors(t *testing.T) {
 			e := newEnv(t, true)
 			adm := e.admin()
 			value := "qa-error-secret-82c3"
+			short := strings.HasPrefix(mode, "short-")
+			if short {
+				value = "~!@"[:int(mode[len(mode)-1]-'0')]
+			}
 			switch mode {
 			case "markers":
 				value = "qa-" + state.Marker("not-a-reference")
@@ -54,17 +58,24 @@ func TestQASecretValuesAndErrors(t *testing.T) {
 				t.Fatalf("PUT: %d", code)
 			}
 			a := e.agent("web1")
-			if mode == "refusal" || mode == "timeout" {
+			if mode == "refusal" || mode == "timeout" || short {
 				a.SetHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					rec := httptest.NewRecorder()
 					e.link.Handler().ServeHTTP(rec, r)
 					var cmd wire.Command
 					json.Unmarshal(rec.Body.Bytes(), &cmd)
 					if r.URL.Path == wire.PathPoll && cmd.Type == wire.CommandApply {
-						if mode == "refusal" {
-							a.Report(r.Context(), wire.Report{Type: wire.ReportResult, CommandID: cmd.ID,
-								Error: "refused password " + value, Items: []wire.Item{{Resource: "file:/etc/app.env",
-									Status: wire.StatusRefused, Output: "refused password " + value}}})
+						if mode == "refusal" || short {
+							rep := wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: []wire.Item{{Resource: "file:/etc/app.env", Status: wire.StatusRefused, Output: "refused password " + value}}}
+							if !strings.HasPrefix(mode, "short-output") {
+								rep.Error = "refused password " + value
+								if short {
+									rep.Items = nil
+								}
+							}
+							if code := a.Report(r.Context(), rep); code != http.StatusNoContent {
+								t.Errorf("report: %d", code)
+							}
 						}
 						w.WriteHeader(http.StatusNoContent)
 						return
@@ -82,7 +93,7 @@ func TestQASecretValuesAndErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode == "refusal" || mode == "timeout" {
+			if mode == "refusal" || mode == "timeout" || short {
 				if run.Status != "failed" || a.Guest("file:/etc/app.env") != nil {
 					t.Fatal("failed command changed guest or run did not fail")
 				}
@@ -90,6 +101,20 @@ func TestQASecretValuesAndErrors(t *testing.T) {
 				t.Fatal("secret did not arrive unchanged")
 			}
 			adm.do("GET", "/api/v1/runs/"+itoa(run.ID), nil)
+			if short {
+				steps, _ := e.st.Steps(e.ctx, run.ID)
+				masked := false
+				for _, step := range steps {
+					if strings.Contains(step.Output, value) {
+						t.Fatal("short secret stored")
+					}
+					masked = masked || strings.Contains(step.Output, "[redacted]")
+				}
+				if !masked {
+					t.Fatal("no masked report persisted")
+				}
+				return // A one-byte canary would also match unrelated encrypted database bytes.
+			}
 			escaped, _ := json.Marshal(value)
 			e.noValue(&logs, value, string(escaped[1:len(escaped)-1]))
 		})
