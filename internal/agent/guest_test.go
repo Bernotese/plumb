@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -17,6 +18,20 @@ import (
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
+
+// Keep raw failures from the real runner to prove the canary reached tool stderr.
+type guestExecRunner struct{ errors chan error }
+
+func (r guestExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := (resource.ExecRunner{}).Run(ctx, name, args...)
+	if err != nil {
+		select {
+		case r.errors <- err:
+		default:
+		}
+	}
+	return out, err
+}
 
 func TestGuestAgentLoop(t *testing.T) {
 	comm, err := os.ReadFile("/proc/1/comm")
@@ -38,9 +53,19 @@ func TestGuestAgentLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	reports := t.TempDir()
 	deliveries := make(chan link.Delivery, 32)
 	ctl, err := link.New(link.Config{Dir: filepath.Join(t.TempDir(), "link"), Store: st,
-		OnReport: func(_ context.Context, d link.Delivery) error { deliveries <- d; return nil },
+		OnReport: func(_ context.Context, d link.Delivery) error {
+			payload, err := json.Marshal(d.Report)
+			if err == nil {
+				err = os.WriteFile(filepath.Join(reports, d.Report.CommandID+"-"+string(d.Report.Type)), payload, 0o600)
+			}
+			if err == nil {
+				deliveries <- d
+			}
+			return err
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,13 +79,44 @@ func TestGuestAgentLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(dir, "token"), token)
-	a, err := New(Options{Config: Config{URL: srv.URL, CA: string(ctl.CA().CertPEM),
-		TokenFile: filepath.Join(dir, "token"), StateDir: filepath.Join(dir, "state"), FullCheck: Duration(time.Hour)},
-		Root: "/", Runner: resource.ExecRunner{}, Hostname: "guest", CloudInitFlag: filepath.Join(dir, "cloud-init.disabled"),
+	state := filepath.Join(dir, "state")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".desired.json-crash", ".credential-crash"} {
+		if err := os.WriteFile(filepath.Join(state, name), []byte("stale secret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := guestExecRunner{errors: make(chan error, 32)}
+	opt := Options{Config: Config{URL: srv.URL, CA: string(ctl.CA().CertPEM),
+		TokenFile: filepath.Join(dir, "token"), StateDir: state, FullCheck: Duration(time.Hour)},
+		Root: "/", Runner: runner, Hostname: "guest", CloudInitFlag: filepath.Join(dir, "cloud-init.disabled"),
 		Debounce: 500 * time.Millisecond, PollWait: 1,
-	})
+	}
+	a, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range []string{".desired.json-crash", ".credential-crash"} {
+		if _, err := os.Lstat(filepath.Join(state, name)); !os.IsNotExist(err) {
+			t.Fatalf("startup did not remove %s: %v", name, err)
+		}
+	}
+	bad := opt
+	bad.Config.StateDir = filepath.Join(dir, "bad-state")
+	if err := os.Mkdir(bad.Config.StateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	badAgent, err := New(bad) // New logs cleanup errors; persistence must refuse the directory.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := badAgent.state.saveCredential("refuse"); err == nil || !strings.Contains(err.Error(), "mode 0700") {
+		t.Fatalf("accepted state_dir mode 0755 as root: %v", err)
+	}
+	if mode(t, bad.Config.StateDir) != 0o755 {
+		t.Fatal("agent changed the invalid state directory")
 	}
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()
@@ -142,4 +198,63 @@ func TestGuestAgentLoop(t *testing.T) {
 		t.Fatal("no inotify drift within the maximum debounce wait")
 	}
 	quiet() // The same difference is reported once.
+
+	// A real apt failure contains the sensitive version before redaction.
+	const secret = "plumb-canary-version-9a7f23"
+	pkg := wire.Resource{ID: "package:less", Type: "package", Block: "canary",
+		Attrs: map[string]any{"name": "less", "strictness": "exact", "version": secret}, Sensitive: []string{"version"}}
+	for len(runner.errors) > 0 {
+		<-runner.errors
+	}
+	id, err = ctl.Send("guest", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{pkg},
+		Planned: unverified(pkg), MaxRisk: wire.RiskDisruptive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultSeen, driftSeen := false, false
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case d := <-deliveries:
+			if d.Report.Type == wire.ReportDrift {
+				for _, it := range d.Report.Items {
+					driftSeen = driftSeen || (it.Resource == pkg.ID && it.Status == wire.StatusDiffers)
+				}
+			}
+			if d.Report.Type == wire.ReportResult && d.Report.CommandID == id {
+				resultSeen = true
+				if len(d.Report.Items) != 1 || d.Report.Items[0].Status != wire.StatusFailed || d.Report.Items[0].Output != resource.HiddenOutput {
+					t.Fatalf("canary did not exercise a tool failure: %+v", d)
+				}
+				found := false
+				for len(runner.errors) > 0 {
+					rawErr := <-runner.errors
+					found = strings.Contains(rawErr.Error(), secret) || found
+				}
+				if !found {
+					t.Fatal("canary did not reach the agent's real tool stderr")
+				}
+				stored, err := os.ReadFile(filepath.Join(reports, id+"-"+string(wire.ReportResult)))
+				if err != nil || strings.Contains(string(stored), secret) || !strings.Contains(string(stored), resource.HiddenOutput) {
+					t.Fatalf("controller stored an unsafe canary result: %s: %v", stored, err)
+				}
+			}
+			if !resultSeen || !driftSeen {
+				continue
+			}
+			entries, err := os.ReadDir(reports)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				stored, err := os.ReadFile(filepath.Join(reports, entry.Name()))
+				if err != nil || strings.Contains(string(stored), secret) {
+					t.Fatalf("unsafe stored report %s: %s: %v", entry.Name(), stored, err)
+				}
+			}
+			return
+		case <-deadline:
+			t.Fatal("missing canary result or drift report")
+		}
+	}
 }
