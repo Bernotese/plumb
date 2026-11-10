@@ -49,6 +49,12 @@
       from the desired state. Found by {source} at {formatTime(issue.opened_at)}.
     </p>
     <p>Risk of a revert: <RiskBadge risk={issue.risk} /> · Status: {issue.status}</p>
+    {#if issue.resolution}
+      <p>
+        Resolved: <strong>{issue.resolution.action}</strong> by
+        <span class="mono">{issue.resolution.by}</span> at {formatTime(issue.resolution.at)}.
+      </p>
+    {/if}
     {#if issue.plan_id}
       <p>Plan: <a href={href({ name: "plan", id: issue.plan_id })}>Plan {issue.plan_id}</a></p>
     {/if}
