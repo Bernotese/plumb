@@ -181,7 +181,9 @@ func writeAt(dirfd int, name, p string, data []byte, mode uint32, uid, gid int) 
 	ok := false
 	defer func() {
 		if !ok {
-			unix.Close(fd)
+			if fd >= 0 {
+				unix.Close(fd)
+			}
 			_ = unix.Unlinkat(dirfd, tmp, 0)
 		}
 	}()
@@ -198,7 +200,9 @@ func writeAt(dirfd int, name, p string, data []byte, mode uint32, uid, gid int) 
 	if err := unix.Fsync(fd); err != nil {
 		return err
 	}
-	if err := unix.Close(fd); err != nil {
+	err = unix.Close(fd)
+	fd = -1 // Linux releases the descriptor even if Close returns an error.
+	if err != nil {
 		return err
 	}
 	if err := unix.Renameat(dirfd, tmp, dirfd, name); err != nil {
