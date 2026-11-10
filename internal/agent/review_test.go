@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -265,5 +268,131 @@ func TestDriftRefusedForGood(t *testing.T) {
 	ctl.mu.Unlock()
 	if n := len(ctl.reportsOf(wire.ReportHello)); n > 3 || tries > 2 {
 		t.Fatalf("hellos %d, refused flushes %d: the agent retried a permanent refusal", n, tries)
+	}
+}
+
+func overLinkLimits(rep wire.Report) bool {
+	if len(rep.Items) > 10000 {
+		return true
+	}
+	for _, it := range rep.Items {
+		if len(it.Output) > 64<<10 {
+			return true
+		}
+	}
+	return false
+}
+
+func holds(rep wire.Report, res string) bool {
+	for _, it := range rep.Items {
+		if it.Resource == res {
+			return true
+		}
+	}
+	return false
+}
+
+// addDrift puts open drift items into the agent, as a check would.
+func addDrift(ta *testAgent, items ...wire.Item) {
+	ta.a.mu.Lock()
+	defer ta.a.mu.Unlock()
+	for _, it := range items {
+		ta.a.open[it.Resource] = it
+		ta.a.dirty[it.Resource] = true
+	}
+}
+
+func driftItem(res, output string) wire.Item {
+	return wire.Item{Resource: res, Status: wire.StatusDiffers, Output: output,
+		Changes: []wire.Change{{Attr: "content", From: "a", To: "b", Risk: wire.RiskReversible}}}
+}
+
+func (ta *testAgent) dirtyCount() int {
+	ta.a.mu.Lock()
+	defer ta.a.mu.Unlock()
+	return len(ta.a.dirty)
+}
+
+// T-022 review: a too long Output is cut, not the whole report dropped.
+func TestDriftOutputIsTruncated(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok-1")
+	ta := startAgent(t, ctl, ca, "tok-1")
+	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) == 1 })
+	ctl.mu.Lock()
+	ctl.linkLimits = true
+	ctl.mu.Unlock()
+	addDrift(ta, driftItem("file:/big", strings.Repeat("é", 50<<10)), driftItem("file:/small", "ok"))
+	if err := ta.a.flushDrift(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	big, small := ctl.driftItems("file:/big"), ctl.driftItems("file:/small")
+	if len(big) != 1 || len(small) != 1 {
+		t.Fatalf("delivered: big %d, small %d", len(big), len(small))
+	}
+	if out := big[0].Output; len(out) > 64<<10 || !strings.HasSuffix(out, truncateMarker) || !utf8.ValidString(out) {
+		t.Errorf("output: %d bytes, valid %v", len(out), utf8.ValidString(out))
+	}
+	if n := ta.dirtyCount(); n != 0 {
+		t.Errorf("%d items stay unsent", n)
+	}
+}
+
+// T-022 review: more than 10 000 items go out in chunks.
+func TestDriftIsChunked(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok-1")
+	ta := startAgent(t, ctl, ca, "tok-1")
+	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) == 1 })
+	ctl.mu.Lock()
+	ctl.linkLimits = true
+	ctl.mu.Unlock()
+	var items []wire.Item
+	for i := 0; i < 10005; i++ {
+		items = append(items, driftItem(fmt.Sprintf("file:/f%05d", i), ""))
+	}
+	addDrift(ta, items...)
+	if err := ta.a.flushDrift(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	reports := ctl.reportsOf(wire.ReportDrift)
+	total := 0
+	for _, r := range reports {
+		if len(r.Items) > 10000 {
+			t.Errorf("a report with %d items", len(r.Items))
+		}
+		total += len(r.Items)
+	}
+	if len(reports) < 2 || total != 10005 || ta.dirtyCount() != 0 {
+		t.Errorf("%d reports, %d items, %d unsent", len(reports), total, ta.dirtyCount())
+	}
+}
+
+// T-022 review: one item that the controller refuses does not hide the
+// other drift of the agent.
+func TestDriftDropsOnlyTheRefusedItem(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok-1")
+	ta := startAgent(t, ctl, ca, "tok-1")
+	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) == 1 })
+	ctl.mu.Lock()
+	ctl.rejectRes = "file:/bad"
+	ctl.mu.Unlock()
+	var items []wire.Item
+	for _, r := range []string{"file:/a", "file:/b", "file:/bad", "file:/c", "file:/d", "file:/e", "file:/f", "file:/g"} {
+		items = append(items, driftItem(r, ""))
+	}
+	addDrift(ta, items...)
+	if err := ta.a.flushDrift(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		got := len(ctl.driftItems(it.Resource))
+		if it.Resource == "file:/bad" && got != 0 || it.Resource != "file:/bad" && got != 1 {
+			t.Errorf("%s delivered %d times", it.Resource, got)
+		}
+	}
+	if n := ta.dirtyCount(); n != 0 {
+		t.Errorf("%d items stay unsent; the refused one must be dropped", n)
 	}
 }
