@@ -19,10 +19,10 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-015 slice acceptance (HTTP) | pl-codex-qa | waits for T-018 on main; real-host part waits for the test host |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
-| T-029 secret references | pl-backend | PR #49: re-review approve, QA re-check passed (D-156). Open: merge of main, CI. Then merge |
-| T-033 export/import | pl-backend | PR #56: 1 must fixed (3ef335f, no write on a failed import); open: D-158 by pl-architect, QA tests PR, re-review. Merges after #49 |
-| T-036 e2e part; export/import e2e | pl-frontend | T-036 e2e waits for T-029 on main; export/import e2e waits for T-033 |
-| T-037 slice 2 acceptance, leak hunt | pl-codex-qa | waits for T-029 … T-033 on main |
+| T-033 export/import | pl-backend | PR #56 (base main): D-158 implemented, QA PR #58 merged in; open: merge of main, re-review by pl-reviewer, CI |
+| T-036 e2e part | pl-frontend | running, against the real API |
+| export/import e2e (T-035) | pl-frontend | waits for T-033 on main |
+| T-037 slice 2 acceptance, leak hunt | pl-codex-qa | waits for T-033 on main |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
 
@@ -49,6 +49,7 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-028: secret store (PR #37), D-102 … D-109, D-130.
 - T-035 mock part: settings UI (PR #45).
 - T-034, T-035 e2e on the real API (PR #51).
+- T-029: secret references, D-132 … D-139, D-156 (PR #49).
 - T-032: ignore actions, Plan.human_only, migration 0005 (PR #53, local squash), D-145 … D-149.
 - T-040: bad-bearer limit scope (PR #55), D-157.
 - T-036 mock part: secret parameters, human-only Plans, ignore actions (PR #48).
