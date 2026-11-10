@@ -9,7 +9,10 @@ package resource
 import (
 	"context"
 	"embed"
+	"fmt"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -25,8 +28,11 @@ type State map[string]any
 //   - Observe changes nothing.
 //   - Diff is pure. It returns no change when the guest equals the desired
 //     state, with the strictness of the resource applied. For an attribute in
-//     wire.Resource.Sensitive it sets only Change.Changed, never From or To.
-//   - Apply is idempotent and applies only the given changes.
+//     wire.Resource.Sensitive it compares locally and returns only
+//     {Attr, Sensitive: true, Risk}, never From or To (D-037, D-047).
+//   - Apply is idempotent and applies only the given changes. It takes the
+//     values from the desired attributes, never from Change.To, so it also
+//     works for sensitive changes.
 //   - A resource that is not on the guest is observed as state "absent"
 //     (wire.AttrState, wire.StateAbsent), so wire.ActionOf can tell create,
 //     update and delete apart.
@@ -45,14 +51,68 @@ type Resource interface {
 }
 
 // Runner runs a command on the guest. Tests replace it with a fake.
+// Output is stdout. A command that exits non-zero returns an *ExitError.
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) (output []byte, err error)
 }
 
 // Env is what a resource may touch. Tests point Root at a temp directory.
+// Build it with NewEnv.
 type Env struct {
 	Root string // file-system root of the guest, "/" in production
 	Run  Runner
+	// PackageLock serializes every package-manager call of one guest.
+	PackageLock *sync.Mutex
+}
+
+// MaxOutput is the longest Item.Output in bytes.
+const MaxOutput = 4096
+
+// SafeOutput is the only way to build wire.Item.Output for a resource
+// (wire.Redact does not cover Output). It replaces every value of a sensitive
+// attribute, and every line of such a value with 4 or more characters, with
+// "[redacted]", and it cuts the text to MaxOutput bytes.
+func SafeOutput(r wire.Resource, text string) string {
+	for _, attr := range r.Sensitive {
+		for _, secret := range secretStrings(r.Attrs[attr]) {
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
+	}
+	return clip(text, MaxOutput)
+}
+
+// secretStrings lists the texts that must not appear in output, longest
+// first so that a full value is replaced before its lines.
+func secretStrings(v any) []string {
+	var out []string
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		out = append(out, s)
+		for _, line := range strings.Split(s, "\n") {
+			if line = strings.TrimSpace(line); len(line) >= 4 && line != s {
+				out = append(out, line)
+			}
+		}
+	}
+	switch v := v.(type) {
+	case nil:
+	case string:
+		add(v)
+	case []any:
+		for _, e := range v {
+			out = append(out, secretStrings(e)...)
+		}
+	case []string:
+		for _, e := range v {
+			add(e)
+		}
+	default:
+		add(fmt.Sprint(v))
+	}
+	sort.SliceStable(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
+	return out
 }
 
 // Factory builds a resource from its rendered form.
@@ -72,11 +132,11 @@ var schemas embed.FS
 // types is the table of all resource types. Add a type here, add its
 // schema file and its Go file. Nothing else registers types.
 var types = map[string]Type{
-	"file":      {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"directory": {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
+	"file":      {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFile},
+	"directory": {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newDirectory},
+	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
+	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
+	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
 }
 
 // Lookup returns the type with the given name.
