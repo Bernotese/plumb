@@ -38,8 +38,11 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/issues/999999", nil, TierRead, false},
 	{"POST", "/api/v1/issues/999999/resolve", map[string]string{"action": "revert"}, TierPlan, false},
 	{"POST", "/api/v1/issues/999999/comments", map[string]string{"body": "x"}, TierPlan, false},
-	{"GET", "/api/v1/events?since=-1", nil, TierRead, false}, // allowed → 400, so the stream never opens
-	{"DELETE", "/api/v1/session", nil, TierAdmin, true},      // last: it logs the session out
+	{"GET", "/api/v1/secrets", nil, TierRead, false},
+	{"PUT", "/api/v1/secrets/tier-test", map[string]string{}, TierAdmin, true}, // allowed → 422 (no value)
+	{"DELETE", "/api/v1/secrets/nope", nil, TierAdmin, true},                   // allowed → 404
+	{"GET", "/api/v1/events?since=-1", nil, TierRead, false},                   // allowed → 400, so the stream never opens
+	{"DELETE", "/api/v1/session", nil, TierAdmin, true},                        // last: it logs the session out
 }
 
 func TestTierMatrix(t *testing.T) {

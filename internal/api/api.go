@@ -21,6 +21,7 @@ import (
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -31,6 +32,8 @@ type Config struct {
 	Events *event.Log
 	Plans  *plan.Engine
 	Issues *issue.Service
+	// Secrets is the encrypted secret store (required).
+	Secrets *secret.Store
 	// UI is the built web UI (index.html, assets/…). nil: no UI.
 	UI fs.FS
 	// Dev: plain HTTP. The session cookie has no Secure flag and the
@@ -163,6 +166,7 @@ func (s *Server) Handler() http.Handler {
 	read, planTier, apply := access{tier: TierRead}, access{tier: TierPlan}, access{tier: TierApply}
 	self := access{tier: TierRead, duringReset: true}
 	human := access{tier: TierAdmin, sessionOnly: true, duringReset: true}
+	admin := access{tier: TierAdmin, sessionOnly: true}
 
 	route("GET /api/v1/session", self, s.getSession)
 	route("POST /api/v1/session", access{}, s.login)
@@ -190,6 +194,10 @@ func (s *Server) Handler() http.Handler {
 	route("GET /api/v1/issues/{id}", read, s.getIssue)
 	route("POST /api/v1/issues/{id}/resolve", planTier, s.resolveIssue)
 	route("POST /api/v1/issues/{id}/comments", planTier, s.commentIssue)
+
+	route("GET /api/v1/secrets", read, s.listSecrets)
+	route("PUT /api/v1/secrets/{name}", admin, s.putSecret)
+	route("DELETE /api/v1/secrets/{name}", admin, s.deleteSecret)
 
 	route("GET /api/v1/events", read, s.events)
 
@@ -337,6 +345,9 @@ type problemBody struct {
 	Status int          `json:"status"`
 	Detail string       `json:"detail,omitempty"`
 	Errors []fieldError `json:"errors,omitempty"`
+	// secret-in-use (D-087)
+	Targets []string `json:"targets,omitempty"`
+	Plans   []int64  `json:"plans,omitempty"`
 }
 
 func writeProblem(w http.ResponseWriter, p problemBody) {

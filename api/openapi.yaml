@@ -1333,7 +1333,6 @@ paths:
     get:
       tags: [secrets]
       operationId: listSecrets
-      x-plumb-planned: T-028
       summary: List secrets (names only)
       description: |
         Names and metadata of all secrets, sorted by name. No operation of this API returns a
@@ -1375,7 +1374,6 @@ paths:
     put:
       tags: [secrets]
       operationId: putSecret
-      x-plumb-planned: T-028
       summary: Create a secret or replace its value
       description: |
         Stores the value encrypted (D-087). Human session only. A new value changes no guest by
@@ -1408,7 +1406,6 @@ paths:
     delete:
       tags: [secrets]
       operationId: deleteSecret
-      x-plumb-planned: T-028
       summary: Delete a secret
       description: |
         Human session only. A secret that the head revision or a pending Plan uses cannot be
