@@ -35,7 +35,10 @@ type Config struct {
 	UI fs.FS
 	// Dev: plain HTTP. The session cookie has no Secure flag and the
 	// expected Origin scheme is http (D-039). Never on a real host.
-	Dev            bool
+	Dev bool
+	// DevLoginToken enables GET /dev/login (D-080). It counts only with
+	// Dev; on every other server the route does not exist.
+	DevLoginToken  string
 	PasswordParams PasswordParams
 	SessionTTL     time.Duration // default 12 h
 	KeepAlive      time.Duration // SSE comment interval, default 15 s
@@ -189,6 +192,12 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/issues/{id}/comments", planTier, s.commentIssue)
 
 	route("GET /api/v1/events", read, s.events)
+
+	if s.cfg.Dev && s.cfg.DevLoginToken != "" {
+		mux.HandleFunc("GET /dev/login", s.devLogin)
+	}
+	// Reserve dev routes so disabled endpoints cannot fall back to the SPA.
+	mux.HandleFunc("/dev/", http.NotFound)
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "not-found", "Not found", "No such API operation.")

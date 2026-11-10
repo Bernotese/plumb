@@ -5,8 +5,12 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
+	"github.com/Bernotese/plumb/internal/api"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/link"
@@ -60,8 +64,11 @@ func devDocs() []state.Doc {
 }
 
 // seedDev starts a simulated agent per dev target and, on an empty
-// store, plans and approves the seed documents (D-039).
-func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, drv *fake.Driver, log *slog.Logger) error {
+// store, plans and approves the seed documents (D-039). With demo it adds
+// the demo data of D-080: one open drift Issue and one
+// pending Plan.
+func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, drv *fake.Driver, demo bool, log *slog.Logger) error {
+	agents := map[string]*linktest.Agent{}
 	for _, t := range devTargets {
 		token := func() (string, bool) {
 			b, err := st.GetBinding(ctx, state.KindTarget, t)
@@ -71,9 +78,14 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 			boot, ok := drv.Bootstrap(driver.GuestID(b.Ref))
 			return boot.Token, ok
 		}
-		go linktest.New(lk.Handler(), token).Run(ctx)
+		a := linktest.New(lk.Handler(), token)
+		agents[t] = a
+		go a.Run(ctx)
 	}
 	if _, err := st.Head(ctx); err == nil {
+		if demo {
+			log.Info("demo data skipped: store already seeded")
+		}
 		return nil // seeded already
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -86,5 +98,46 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 		return err
 	}
 	log.Info("dev seed approved", "plan", p.ID, "targets", devTargets)
+	if !demo {
+		return nil
+	}
+	return seedDemo(ctx, st, eng, lk, agents, log)
+}
+
+// seedDemo waits for the seed Run and adds the demo data of D-080.
+func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, agents map[string]*linktest.Agent, log *slog.Logger) error {
+	eng.Wait()
+	deadline := time.Now().Add(30 * time.Second)
+	for _, t := range devTargets {
+		for !lk.Online(t) {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("dev demo: %s is not online", t)
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}
+	// An open drift Issue: someone edits the motd of web2.
+	if err := agents["web2"].Change(ctx, "file:/etc/motd", map[string]any{
+		"path": "/etc/motd", "content": "Edited by hand\n", "mode": "0644", "owner": "root", "group": "root"}); err != nil {
+		return err
+	}
+	// A pending Plan: a new motd text for web1.
+	docs := devDocs()
+	var put []state.Doc
+	for _, d := range docs {
+		if d.Kind == state.KindTarget && d.Name == "web1" {
+			d.Spec = json.RawMessage(strings.Replace(string(d.Spec), "Hello from web1", "Hello from web1, now with a plan", 1))
+			put = append(put, d)
+		}
+	}
+	p, err := eng.Propose(ctx, plan.Input{Proposal: plan.Proposal{Put: put}, Reason: "demo: new motd for web1", Author: "user:" + api.DevUser})
+	if err != nil {
+		return err
+	}
+	log.Info("dev demo seeded", "pending_plan", p.ID)
 	return nil
 }
