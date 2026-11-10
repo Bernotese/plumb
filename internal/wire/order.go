@@ -64,7 +64,7 @@ func (e *OrderError) Error() string {
 	} else {
 		b.WriteString(" waits for " + e.IDs[0])
 	}
-	b.WriteString("; check after, restarts and restart_on")
+	b.WriteString("; check after, restarts, restart_on and the order of the resources in each Block")
 	return b.String()
 }
 
@@ -174,13 +174,14 @@ func Order(list []Resource) ([][]Edge, error) {
 
 // RestartOn returns the restart_on list of a resource: the ids whose change
 // restarts a service (D-036). It reads the JSON form ([]any of strings) and
-// the Go form ([]string) and leaves out values that are not strings. Every
+// the Go form ([]string) and leaves out values that are not strings. The
+// result is a new slice: a caller can change it and not the resource. Every
 // reader of restart_on uses it, so both forms always give the same result
 // (D-172).
 func RestartOn(r Resource) []string {
 	switch v := r.Attrs["restart_on"].(type) {
 	case []string:
-		return v
+		return append([]string(nil), v...)
 	case []any:
 		out := make([]string, 0, len(v))
 		for _, e := range v {

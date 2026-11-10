@@ -90,7 +90,7 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if p.BaseRevision == 0 {
 		base, err = state.Validate(nil)
 	} else {
-		base, err = state.Load(ctx, e.st, p.BaseRevision)
+		base, err = e.load(ctx, p.BaseRevision)
 	}
 	if err != nil {
 		return store.Run{}, err

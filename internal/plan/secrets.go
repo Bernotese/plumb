@@ -205,7 +205,7 @@ func (e *Engine) SecretUsage(ctx context.Context) (map[string]secret.Usage, erro
 	}
 	head, err := e.st.Head(ctx)
 	if err == nil {
-		set, err := state.Load(ctx, e.st, head.ID)
+		set, err := e.load(ctx, head.ID)
 		if err != nil {
 			return nil, err
 		}
