@@ -33,6 +33,8 @@ A Block parameter can take a secret. The value reaches the agent and nothing els
 - Human-only: a `plan` token proposes `{secret: x}` on a new target and on an existing target, an `apply` token (max risk `disruptive`) approves → 403; the same for a Block change that moves the secret into another resource, and for a rollback to a revision with that binding (when T-031 is on `main`; else T-037 covers it). A Plan that only sends a new value over an existing binding is approved by the `apply` token.
 - Version: `PUT /secrets` between plan and approve → 409 `plan-stale`; delete between approve and apply (test hook) → step `failed`, guest unchanged.
 - `make lint test` passes.
+- [ ] (added by pl-lead, from the T-031 review) A test shows that a revision diff of a document with a secret reference shows the reference only, never the value.
+- [ ] (added by pl-lead, from T-028) A Run fails closed when a referenced secret is missing (delete and new Plan are not atomic).
 
 ## Out of scope
 - Secrets in `guest:config` (cloud-init user password), in overrides and in Image documents. UI (T-035, T-036).
