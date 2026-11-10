@@ -19,11 +19,19 @@ The UI works against the real controller.
 - [ ] API errors show the problem title and detail.
 - [ ] The PR has `browser-shot` screenshots: create target → plan → run → issue → revert.
 - [ ] Tests: `npm test` passes. One Playwright test covers the same path.
+- [ ] **Dev login, server part (pl-backend, D-080):** `plumb serve --dev --dev-demo` seeds, on an empty store, demo data on top of the dev seed: one pending Plan, one open drift Issue and the user `dev` (no usable password, no forced change). It prints one line: `dev login: /dev/login?token=<token>&next=/`. The token is 256 random bits, new at every start, in memory only. The request log never holds the token.
+- [ ] **Dev login, route (pl-backend):** `GET /dev/login?token=…&next=…` compares the token in constant time, makes a normal session for `dev` (cookie and lifetime of D-070) and answers 303 to `next`. `next` must be a local path (one leading `/`, no `//`, no `\`); else the route uses `/`. A wrong or missing token is 404.
+- [ ] **Dev login, guard (pl-backend):** `--dev-demo` without `--dev` stops the start with an error. The `api` package registers the route only when `Dev` is true and a token is set. Without the flag the path is 404 and the user `dev` does not exist. Tests cover these three cases.
+- [ ] **Dev login, UI part (pl-frontend):** the screenshots run against `serve --dev --dev-demo --listen 0.0.0.0:<port>` with `browser-shot "http://10.0.0.50:<port>/dev/login?token=…&next=<screen>"`. The UI has no link to `/dev/login` and no code for it. The Playwright test uses the real login form.
 
 ## Out of scope
 - New screens.
 
 ## Plan (architect, optional)
+- Screenshots with a session (D-080): `browser-shot` cannot type, so the server gets a dev login. The option `--cookie` for `browser-shot` is rejected: the tool is outside the repo, so the flow would have no test and no review.
+- The server part (the three pl-backend criteria) is a small change in `cmd/plumb/serve.go`, `cmd/plumb/dev.go` and `internal/api`. pl-backend does it as its own card and PR; pl-lead creates the card. pl-reviewer checks the guard.
+- The UI work does not wait for the server part. Only the screenshot criterion needs it.
+- The open drift Issue needs a simulated agent that reports a drift (`link/linktest`). The pending Plan is a normal proposal that the seed does not approve.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
