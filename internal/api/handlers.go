@@ -34,11 +34,19 @@ func badQuery(w http.ResponseWriter, err error) {
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	var pe *plan.ProposalError
 	var se state.Errors
+	var ms *plan.MissingSecretsError
 	switch {
+	case errors.As(err, &ms):
+		var fe []fieldError
+		for _, e := range ms.Errors {
+			fe = append(fe, fieldError{Pointer: e.Path, Message: fmt.Sprintf("%s %q: %s", e.Kind, e.Name, e.Msg)})
+		}
+		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
+			Detail: "The proposal refers to secrets that do not exist.", Errors: fe, Secrets: ms.Names})
 	case errors.Is(err, store.ErrNotFound):
 		problem(w, http.StatusNotFound, "not-found", "Not found", "")
 	case errors.Is(err, store.ErrPlanStale):
-		problem(w, http.StatusConflict, "plan-stale", "Plan is stale", "The head revision moved. Propose again.")
+		problem(w, http.StatusConflict, "plan-stale", "Plan is stale", "The head revision moved or a secret of the Plan changed. Propose again.")
 	case errors.Is(err, store.ErrPlanNotPending):
 		problem(w, http.StatusConflict, "plan-not-pending", "Plan is not pending", "The Plan is approved or stale already.")
 	case errors.Is(err, store.ErrIssueNotOpen):
@@ -302,9 +310,10 @@ func (s *Server) headTarget(ctx context.Context, name string) (store.DocRow, err
 }
 
 type proposalRequest struct {
-	Reason string        `json:"reason"`
-	Put    []state.Doc   `json:"put"`
-	Delete []plan.DocKey `json:"delete"`
+	Reason  string        `json:"reason"`
+	Put     []state.Doc   `json:"put"`
+	Delete  []plan.DocKey `json:"delete"`
+	Targets []string      `json:"targets"` // plan also without a document change (D-090)
 }
 
 func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -317,12 +326,12 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal
 			Errors: []fieldError{{"/reason", "A reason of 1 to 2000 characters is required."}}})
 		return
 	}
-	if len(req.Put)+len(req.Delete) == 0 {
+	if len(req.Put)+len(req.Delete)+len(req.Targets) == 0 {
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
 			Errors: []fieldError{{"/put", "The proposal changes nothing."}}})
 		return
 	}
-	pl, err := s.cfg.Plans.Propose(r.Context(), plan.Input{Proposal: plan.Proposal{Put: req.Put, Delete: req.Delete},
+	pl, err := s.cfg.Plans.Propose(r.Context(), plan.Input{Proposal: plan.Proposal{Put: req.Put, Delete: req.Delete, Targets: req.Targets},
 		Reason: req.Reason, Author: p.name})
 	var se state.Errors
 	if errors.As(err, &se) {
@@ -438,6 +447,11 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request, p *principa
 	check := func(pl store.Plan) error {
 		if p.human() {
 			return nil
+		}
+		// Only a human approves a Plan that gives a secret to a new place (D-099).
+		if reasons := plan.HumanOnly(pl); len(reasons) > 0 {
+			return &riskError{"human-required", "Human session required",
+				"This Plan is human-only (" + strings.Join(reasons, ", ") + "); no token can approve it."}
 		}
 		risk := wire.Risk(pl.Risk)
 		if risk == wire.RiskDestructive {

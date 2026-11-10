@@ -42,6 +42,19 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return store.Run{}, err
 	}
+	// The approver approves the planned values: another version or a
+	// missing secret makes the Plan stale (D-089).
+	if err := e.checkPlannedVersions(ctx, targets); err != nil {
+		if errors.Is(err, ErrStale) {
+			if ok, merr := e.st.MarkPlanStale(ctx, planID); merr == nil && ok {
+				e.emit(ctx, "plan.stale", fmt.Sprintf("plan:%d", planID), "system", nil)
+				if e.cfg.OnPlanDone != nil {
+					e.cfg.OnPlanDone(ctx, planID, false)
+				}
+			}
+		}
+		return store.Run{}, err
+	}
 	// Reserve the targets before anything is committed. A second approval
 	// for a busy target fails here; on any later error the reservation is
 	// released.
@@ -246,7 +259,7 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	if r != nil {
 		defer func() {
 			if !watched {
-				if _, err := e.cfg.Agents.Send(tp.Target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources}); err != nil {
+				if err := e.watch(ctx, tp.Target, r); err != nil {
 					e.log.Error("watch", "target", tp.Target, "err", err)
 				}
 			}
@@ -295,7 +308,7 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// differs becomes an Issue through the drift report (D-075).
 	if reenroll {
 		watched = true
-		if _, err := e.cfg.Agents.Send(tp.Target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources}); err != nil {
+		if err := e.watch(ctx, tp.Target, r); err != nil {
 			e.log.Error("watch", "target", tp.Target, "err", err)
 			return false
 		}
@@ -306,8 +319,14 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// only as far as the Plan shows it (D-075), and never above the
 	// approved risk of this target (D-022).
 	maxRisk := tp.risk()
+	// Exactly the planned secret versions, or no apply at all (D-089).
+	body, _, err := e.withSecrets(ctx, r.Resources, plannedOrEmpty(tp.Secrets))
+	if err != nil {
+		s.failRest(ctx, "not applied: "+err.Error()+"; plan again")
+		return false
+	}
 	rep, err := e.command(ctx, tp.Target, wire.CommandApply,
-		wire.ApplyBody{PlanID: p.ID, Resources: r.Resources, Planned: planned(tp), MaxRisk: maxRisk}, e.cfg.ApplyTimeout,
+		wire.ApplyBody{PlanID: p.ID, Resources: body, Planned: planned(tp), MaxRisk: maxRisk}, e.cfg.ApplyTimeout,
 		func(pr wire.Report) {
 			for _, it := range pr.Items {
 				if it.Status == wire.StatusRunning {

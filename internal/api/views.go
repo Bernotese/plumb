@@ -100,8 +100,9 @@ type resourcePlanView struct {
 }
 
 type targetPlanView struct {
-	Target    string             `json:"target"`
-	Resources []resourcePlanView `json:"resources"`
+	Target    string               `json:"target"`
+	Secrets   []plan.PlannedSecret `json:"secrets,omitempty"`
+	Resources []resourcePlanView   `json:"resources"`
 }
 
 type planView struct {
@@ -121,12 +122,16 @@ type planView struct {
 	RunID        *int64           `json:"run_id"`
 	Targets      []targetPlanView `json:"targets"`
 	Warnings     []string         `json:"warnings"`
+	HumanOnly    []string         `json:"human_only"`
 }
 
 func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 	v := planView{ID: p.ID, Origin: p.Origin, IssueID: nullID(p.IssueID), RollbackTo: nullID(p.RollbackTo), Status: p.Status, Risk: p.Risk,
 		Reason: p.Reason, Author: p.Author, CreatedAt: p.CreatedAt.UTC(), BaseRevision: nullID(p.BaseRevision),
-		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), Targets: []targetPlanView{}, Warnings: []string{}}
+		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), Targets: []targetPlanView{}, Warnings: []string{}, HumanOnly: plan.HumanOnly(p)}
+	if v.HumanOnly == nil {
+		v.HumanOnly = []string{}
+	}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {
 		v.RunID, v.Revision = &run.ID, &run.RevisionID
 	} else if err != store.ErrNotFound {
@@ -137,7 +142,7 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		return v, err
 	}
 	for _, tp := range targets {
-		tv := targetPlanView{Target: tp.Target, Resources: []resourcePlanView{}}
+		tv := targetPlanView{Target: tp.Target, Secrets: tp.Secrets, Resources: []resourcePlanView{}}
 		unverified := 0
 		for _, rc := range tp.Resources {
 			action := rc.Action
@@ -156,7 +161,7 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		v.Targets = append(v.Targets, tv)
 	}
 	if p.Status == store.PlanStale {
-		v.Warnings = append(v.Warnings, "The head revision moved. Propose again.")
+		v.Warnings = append(v.Warnings, "The head revision moved or a secret changed. Propose again.")
 	}
 	return v, nil
 }

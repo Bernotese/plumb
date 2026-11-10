@@ -182,6 +182,10 @@ func (s *Server) putSecret(w http.ResponseWriter, r *http.Request, p *principal)
 	if s.cfg.Events != nil {
 		s.cfg.Events.Emit(r.Context(), "secret.updated", "secret:"+name, p.name, map[string]any{"name": name})
 	}
+	// Pending Plans that use the secret are stale now (D-089).
+	if err := s.cfg.Plans.SecretChanged(r.Context(), name); err != nil {
+		s.log.Error("mark plans stale", "secret", name, "err", err)
+	}
 	writeJSON(w, http.StatusOK, viewSecret(info))
 }
 
@@ -211,6 +215,9 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	if s.cfg.Events != nil {
 		s.cfg.Events.Emit(r.Context(), "secret.deleted", "secret:"+name, p.name, map[string]any{"name": name})
+	}
+	if err := s.cfg.Plans.SecretChanged(r.Context(), name); err != nil {
+		s.log.Error("mark plans stale", "secret", name, "err", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

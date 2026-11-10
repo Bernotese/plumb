@@ -150,6 +150,10 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if err := e.checkIdle(names); err != nil {
 		return store.Plan{}, err
 	}
+	// A touched target that refers to a missing secret is 422 (D-089).
+	if err := e.checkSecrets(ctx, next, names); err != nil {
+		return store.Plan{}, err
+	}
 	plans := make([]TargetPlan, len(names))
 	errs := make([]error, len(names))
 	var wg sync.WaitGroup
@@ -158,6 +162,14 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		go func() {
 			defer wg.Done()
 			plans[i], errs[i] = e.planTarget(ctx, next, t, contains(in.Proposal.Reenroll, t))
+			if errs[i] == nil {
+				// The rule reads the renders, not the origin (D-099).
+				before, err := renderOrNil(base, t)
+				after, err2 := renderOrNil(next, t)
+				if errs[i] = errors.Join(err, err2); errs[i] == nil {
+					plans[i].SecretBinding = newBinding(before, after)
+				}
+			}
 		}()
 	}
 	wg.Wait()
@@ -234,8 +246,21 @@ func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string,
 		// Nobody can observe a guest that does not exist (D-066). The
 		// first apply may restart services, so the risk is disruptive.
 		for _, res := range r.Resources {
-			tp.Resources = append(tp.Resources, ResourceChange{Resource: res.ID, Action: wire.ActionCreate,
-				Risk: wire.RiskDisruptive, Unverified: true})
+			rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: wire.RiskDisruptive, Unverified: true}
+			// A sensitive attribute shows as "set", never with its value (D-089).
+			for _, attr := range res.Sensitive {
+				rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: wire.RiskDisruptive})
+			}
+			tp.Resources = append(tp.Resources, rc)
+		}
+		if names := state.SecretNames(r); len(names) > 0 {
+			have, err := e.versions(ctx, names)
+			if err != nil {
+				return tp, err
+			}
+			for _, n := range names {
+				tp.Secrets = append(tp.Secrets, PlannedSecret{Name: n, Version: have[n]})
+			}
 		}
 		return tp, nil
 	}
@@ -278,7 +303,14 @@ func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string,
 		return tp, &ProposalError{Target: target, Err: ErrOffline,
 			Msg: "the agent is offline (no poll in the last 90 s); the proposal changes this target, so it cannot be planned"}
 	}
-	rep, err := e.command(ctx, target, wire.CommandObserve, wire.ObserveBody{Resources: r.Resources}, e.cfg.ObserveTimeout, nil)
+	// The observe body is the one place in planning with clear values;
+	// the versions it used are the versions of the Plan (D-089).
+	body, used, err := e.withSecrets(ctx, r.Resources, nil)
+	if err != nil {
+		return tp, &ProposalError{Target: target, Msg: "the secrets of the target cannot be read: " + err.Error(), Err: err}
+	}
+	tp.Secrets = used
+	rep, err := e.command(ctx, target, wire.CommandObserve, wire.ObserveBody{Resources: body}, e.cfg.ObserveTimeout, nil)
 	if err != nil {
 		return tp, &ProposalError{Target: target, Msg: "observe failed: " + err.Error(), Err: err}
 	}

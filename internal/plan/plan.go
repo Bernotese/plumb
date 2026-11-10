@@ -15,6 +15,7 @@ import (
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/link"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -73,6 +74,12 @@ type TargetPlan struct {
 	// "reenroll" or "" (no guest change).
 	Guest     string           `json:"guest,omitempty"`
 	Resources []ResourceChange `json:"resources"`
+	// Secrets are the secrets of the desired state of this target, with
+	// the versions that the Plan was made with (D-089).
+	Secrets []PlannedSecret `json:"secrets,omitempty"`
+	// SecretBinding: a resource gets a secret that it did not get in the
+	// render of the base revision, so only a human approves (D-099).
+	SecretBinding bool `json:"secret_binding,omitempty"`
 }
 
 // ResourceChange is the planned change of one resource.
@@ -111,6 +118,9 @@ type Config struct {
 	Events *event.Log
 	Agents Agents
 	Driver driver.Driver
+	// Secrets is the secret store. nil: no secret exists, and a target
+	// that refers to one cannot be planned.
+	Secrets *secret.Store
 	// OnDrift receives drift reports of agents and of the guest poll.
 	// The issue package handles them.
 	OnDrift func(ctx context.Context, target string, rep wire.Report) error
@@ -275,7 +285,18 @@ func (e *Engine) sendWatch(ctx context.Context, target string) error {
 	if err != nil || r == nil {
 		return err
 	}
-	_, err = e.cfg.Agents.Send(target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources})
+	return e.watch(ctx, target, r)
+}
+
+// watch sends the desired list of a render with the current secret
+// values. When a secret is missing it sends nothing: a marker or an empty
+// value never reaches a guest (D-089).
+func (e *Engine) watch(ctx context.Context, target string, r *state.Rendered) error {
+	body, _, err := e.withSecrets(ctx, r.Resources, nil)
+	if err != nil {
+		return fmt.Errorf("plan: watch list of %s not sent: %w", target, err)
+	}
+	_, err = e.cfg.Agents.Send(target, wire.CommandWatch, wire.WatchBody{Resources: body})
 	return err
 }
 

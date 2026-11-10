@@ -358,6 +358,7 @@ type problemBody struct {
 	// secret-in-use (D-087)
 	Targets []string `json:"targets,omitempty"`
 	Plans   []int64  `json:"plans,omitempty"`
+	Secrets []string `json:"secrets,omitempty"` // missing secrets of a 422
 }
 
 func writeProblem(w http.ResponseWriter, p problemBody) {
