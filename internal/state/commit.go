@@ -21,17 +21,27 @@ func Commit(ctx context.Context, st *store.Store, set *Set, info CommitInfo) (st
 	if set == nil {
 		return store.Revision{}, fmt.Errorf("state: commit needs a validated set")
 	}
-	rows := make([]store.DocRow, 0, len(set.docs))
-	for _, d := range set.docs {
-		body, err := Canonical(d)
-		if err != nil {
-			return store.Revision{}, err
-		}
-		rows = append(rows, store.DocRow{Kind: d.Kind, Name: d.Name, Hash: Hash(body), Body: body})
+	rows, err := Rows(set)
+	if err != nil {
+		return store.Revision{}, err
 	}
 	return st.CommitRevision(ctx, store.NewRevision{
 		Author: info.Author, Reason: info.Reason, PlanID: info.PlanID, Docs: rows,
 	})
+}
+
+// Rows returns the store rows of a validated Set: canonical body and hash
+// of each document. This is the only way documents reach the store.
+func Rows(set *Set) ([]store.DocRow, error) {
+	rows := make([]store.DocRow, 0, len(set.docs))
+	for _, d := range set.docs {
+		body, err := Canonical(d)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, store.DocRow{Kind: d.Kind, Name: d.Name, Hash: Hash(body), Body: body})
+	}
+	return rows, nil
 }
 
 // Load reads the documents of a revision and validates them again. Every
