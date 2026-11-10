@@ -13,7 +13,8 @@ import (
 // the `since` query or the Last-Event-ID header; without both, it sends
 // only new events.
 func (s *Server) events(w http.ResponseWriter, r *http.Request, p *principal) {
-	ctx := r.Context()
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	var after int64 = -1
 	for _, v := range []string{r.URL.Query().Get("since"), r.Header.Get("Last-Event-ID")} {
 		if v == "" {
@@ -35,7 +36,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, p *principal) {
 		}
 		after = last
 	}
-	release, ok := s.openStream(p.name)
+	release, ok := s.openStream(p.name, cancel)
 	if !ok {
 		tooMany(w, 10*time.Second)
 		return
@@ -86,24 +87,41 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, p *principal) {
 
 // openStream counts an event stream of a principal. It refuses more than
 // maxStreamsPerCaller per principal and maxStreams in all (review m2).
-func (s *Server) openStream(who string) (release func(), ok bool) {
+// end stops the stream; endStreams calls it.
+func (s *Server) openStream(who string, end context.CancelFunc) (release func(), ok bool) {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
 	total := 0
-	for _, n := range s.streams {
-		total += n
+	for _, m := range s.streams {
+		total += len(m)
 	}
-	if s.streams[who] >= maxStreamsPerCaller || total >= maxStreams {
+	if len(s.streams[who]) >= maxStreamsPerCaller || total >= maxStreams {
 		return nil, false
 	}
-	s.streams[who]++
+	if s.streams[who] == nil {
+		s.streams[who] = map[uint64]context.CancelFunc{}
+	}
+	s.streamSeq++
+	id := s.streamSeq
+	s.streams[who][id] = end
 	return func() {
 		s.streamMu.Lock()
 		defer s.streamMu.Unlock()
-		if s.streams[who]--; s.streams[who] <= 0 {
+		delete(s.streams[who], id)
+		if len(s.streams[who]) == 0 {
 			delete(s.streams, who)
 		}
 	}, true
+}
+
+// endStreams ends every open event stream of a principal at once, for
+// example when its token is revoked (D-070).
+func (s *Server) endStreams(who string) {
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	for _, end := range s.streams[who] {
+		end()
+	}
 }
 
 // stillValid checks a principal again: the session still exists and has
