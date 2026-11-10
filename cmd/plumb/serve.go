@@ -205,9 +205,10 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	var iss *issue.Service
 	lk, err := link.New(link.Config{
 		Dir: filepath.Join(f.data, "link"), Hosts: f.hosts, Store: st, Events: events, Logger: log,
-		AgentBinary: agentBinary(),
-		OnReport:    func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
-		Sensitive:   func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
+		AgentBinary:  agentBinary(),
+		OnReport:     func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
+		Sensitive:    func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
+		SecretValues: func(ctx context.Context, t string) ([]string, error) { return eng.SecretValues(ctx, t) },
 	})
 	if err != nil {
 		return err

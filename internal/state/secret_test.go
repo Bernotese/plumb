@@ -89,6 +89,14 @@ func TestSecretReferenceRules(t *testing.T) {
 	errAt(t, err, KindTarget, "/spec/blocks/0/params/opts", "takes no secret reference")
 	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a"), "user": ref("b")}))
 	errAt(t, err, KindTarget, "/spec/blocks/0/params/user", "takes no secret reference")
+	// No reference inside an object or a list (D-139).
+	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a"), "opts": map[string]any{"x": ref("b")}}))
+	errAt(t, err, KindTarget, "/spec/blocks/0/params/opts/x", "cannot be inside a list or an object")
+	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a"), "opts": map[string]any{"l": []any{"y", map[string]any{"secret": "b", "k": 1}}}}))
+	errAt(t, err, KindTarget, "/spec/blocks/0/params/opts/l/1", "cannot be inside a list or an object")
+	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a")}, `{"file:/etc/app.env":{"content":"x","owner":{"nested":{"secret":"a"}}}}`))
+	errAt(t, err, KindTarget, "/spec/overrides/file:~1etc~1app.env/owner/nested", "override cannot hold a secret reference")
+
 	// Missing secret parameter: the schema says required.
 	_, err = Validate(secDocs(tmpl, map[string]any{}))
 	if err == nil {
@@ -139,7 +147,7 @@ func TestSecretReferenceRules(t *testing.T) {
 	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a"), "user": "x" + string(MarkStart) + "a" + string(MarkEnd)}))
 	errAt(t, err, KindTarget, "/spec/blocks/0/params/user", "reserved for secret markers")
 	_, err = Validate(secDocs(tmpl, map[string]any{"db_password": ref("a"), "opts": map[string]any{string(MarkEnd): 1}}))
-	errAt(t, err, KindTarget, "/spec/blocks/0/params/opts/"+string(MarkEnd), "reserved for secret markers")
+	errAt(t, err, KindTarget, "/spec/blocks/0/params/opts", "reserved for secret markers")
 	_, err = Validate(secDocs("a"+string(MarkStart), map[string]any{"db_password": ref("a")}))
 	errAt(t, err, KindBlock, "/spec/resources/0/file/content", "reserved for secret markers")
 }

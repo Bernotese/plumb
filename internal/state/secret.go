@@ -162,21 +162,12 @@ func stableNames(v any, names map[string]bool) {
 	}
 }
 
-func sortedNames(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // ResourceSecrets returns the names of the secrets in one rendered
 // resource, sorted.
 func ResourceSecrets(r wire.Resource) []string {
 	names := map[string]bool{}
 	stableNames(r.Attrs, names)
-	return sortedNames(names)
+	return sortedKeys(names)
 }
 
 // SecretNames returns the names of all secrets in a render, sorted.
@@ -185,7 +176,7 @@ func SecretNames(r *Rendered) []string {
 	for _, res := range r.All() {
 		stableNames(res.Attrs, names)
 	}
-	return sortedNames(names)
+	return sortedKeys(names)
 }
 
 // WithSecrets returns a deep copy of the resources with every marker
@@ -202,6 +193,10 @@ func WithSecrets(rs []wire.Resource, values map[string]string) ([]wire.Resource,
 		}
 		r.Attrs = attrs.(map[string]any)
 		r.Sensitive = append([]string(nil), r.Sensitive...)
+		r.SecretValues = nil
+		for _, n := range ResourceSecrets(rs[i]) {
+			r.SecretValues = append(r.SecretValues, values[n])
+		}
 		out[i] = r
 	}
 	return out, nil
@@ -307,7 +302,12 @@ func checkNoMarkChars(v any, path string) string {
 		sort.Strings(keys)
 		for _, k := range keys {
 			if strings.ContainsAny(k, markChars) {
-				return ptr(path, k)
+				// The pointer names the object, never the key: an error
+				// must not carry a marker character (T-029 QA).
+				if path == "" {
+					return "/"
+				}
+				return path
 			}
 			if p := checkNoMarkChars(v[k], ptr(path, k)); p != "" {
 				return p
@@ -349,7 +349,7 @@ func secretParams(block string, raw []byte, secrets map[string]bool) ([]byte, Er
 	}
 	var errs Errors
 	props, _ := schema["properties"].(map[string]any)
-	for _, name := range sortedAnyKeys(props) {
+	for _, name := range sortedKeys(props) {
 		prop, _ := props[name].(map[string]any)
 		if prop == nil || prop["writeOnly"] != true {
 			continue
@@ -368,7 +368,7 @@ func secretParams(block string, raw []byte, secrets map[string]bool) ([]byte, Er
 	nested = func(v any, path string) {
 		switch v := v.(type) {
 		case map[string]any:
-			for _, k := range sortedAnyKeys(v) {
+			for _, k := range sortedKeys(v) {
 				if k == "writeOnly" && v[k] == true {
 					errs = append(errs, errf(ptr(path, k), "writeOnly is only allowed on a top-level string parameter (a secret parameter)"))
 					continue
@@ -389,13 +389,26 @@ func secretParams(block string, raw []byte, secrets map[string]bool) ([]byte, Er
 	return out, errs
 }
 
-func sortedAnyKeys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+// findRef returns the pointer of the first map inside v that has a
+// "secret" key, or "". Such a map is a secret reference, or looks like
+// one; only the whole value of a secret parameter may be one (D-139).
+func findRef(v any, path string) string {
+	switch v := v.(type) {
+	case map[string]any:
+		if _, ok := v["secret"]; ok {
+			return path
+		}
+		for _, k := range sortedKeys(v) {
+			if p := findRef(v[k], ptr(path, k)); p != "" {
+				return p
+			}
+		}
+	case []any:
+		for i, e := range v {
+			if p := findRef(e, ptr(path, i)); p != "" {
+				return p
+			}
+		}
 	}
-	sort.Strings(out)
-	return out
+	return ""
 }
-
-func sortedParams(m map[string]any) []string { return sortedAnyKeys(m) }
