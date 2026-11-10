@@ -26,4 +26,10 @@ The minimal installer gives a controller that starts: it creates the key volume 
 - Tarball download, upgrades, backups.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- `pl-backend/T-013-minimal-installer` (PR #26) · tests: `go test -count=1 ./install/` ok, `shellcheck -x` clean (v0.10.0).
+- Key volume `mp0 <disk>:1,mp=/var/lib/plumb/key,backup=0`; mount point checked; `chown plumb`, `chmod 0700` (D-177).
+- `plumb key init` via `lxc-attach … runuser -u plumb`, between `systemctl enable` and the first start; never captured; needs a terminal before any change; repair run with a key skips it (D-178).
+- An old Plumb LXC without the key volume (or without `backup=0`) is refused before any change.
+- `--remove` names the key volume, warns about the recovery key, frees a volume that `pct destroy` left.
+- DHCP warning in dry and real runs; `--lxc-ip`/`--lxc-gw` already existed (D-179). New tests: `install/key_test.go`.
+- Note for T-013 step 3: the real install shows the recovery key, so the user runs it on a terminal (`ssh -t`), not an agent.

@@ -144,6 +144,12 @@ pvesm)
 		;;
 	set) echo "${*:2}" >>"$st/storage-set" ;;
 	remove) rm -f "$st/storage.$2" "$st/content.$2" ;;
+	list) # pvesm list STORAGE --vmid ID: volumes left in $st/vol.*
+		for f in "$st"/vol.*; do
+			[[ -e $f ]] && cat "$f"
+		done
+		;;
+	free) grep -lxF "$2 rootdir" "$st"/vol.* 2>/dev/null | xargs -r rm -f ;;
 	esac
 	;;
 pvesh)
@@ -189,19 +195,29 @@ pct)
 	create)
 		id=$2
 		shift 2
-		host="" desc=""
+		host="" desc="" mp=""
 		while [[ $# -gt 0 ]]; do
 			case $1 in
 			--hostname) host=$2 ;;
 			--description) desc=$2 ;;
+			--mp0) mp=$2 ;;
 			esac
 			shift
 		done
 		printf 'hostname: %s\ndescription: %s\n' "$host" "$desc" >"$st/lxc.$id"
+		if [[ -n $mp ]]; then
+			# local-lvm:1,mp=… becomes local-lvm:vm-ID-disk-1,mp=…
+			vol="${mp%%:*}:vm-$id-disk-1"
+			printf 'mp0: %s,%s\n' "$vol" "${mp#*,}" >>"$st/lxc.$id"
+			if [[ ${FAKE_KEEP_VOLUME:-0} == 1 ]]; then
+				# A PVE whose pct destroy leaves the volume behind.
+				echo "$vol rootdir" >"$st/vol.$id"
+			fi
+		fi
 		;;
 	config) cat "$st/lxc.$2" ;;
 	start | stop) ;;
-	destroy) rm -f "$st/lxc.$2" ;;
+	destroy) rm -f "$st/lxc.$2" "$st/key.$2" ;;
 	push)
 		mkdir -p "$st/push"
 		dst=${4//\//_}
@@ -210,15 +226,27 @@ pct)
 		;;
 	pull) printf -- '-----BEGIN CERTIFICATE-----\nMIIBfakePlumbCA\n-----END CERTIFICATE-----\n' >"$4" ;;
 	exec)
+		id=$2
 		shift 3 # pct exec ID --
 		case "$*" in
 		"hostname -I") echo "fd00::50 192.168.1.50" ;;
 		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
+		"test -s /var/lib/plumb/key/master.key") has "key.$id" ;;
+		"mountpoint -q /var/lib/plumb/key") grep -q '^mp0: .*mp=/var/lib/plumb/key' "$st/lxc.$id" ;;
 		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;
 		*) ;;
 		esac
 		;;
 	esac
+	;;
+lxc-attach) # lxc-attach -n ID --clear-env -- runuser -u plumb -- plumb key init …
+	[[ ${FAKE_KEYINIT_FAIL:-0} == 1 ]] && exit 1
+	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key init --data /var/lib/plumb" ]]; then
+		has "key.$2" && exit 1 # a key is never replaced
+		touch "$st/key.$2"
+		echo "RECOVERY KEY (shown once; Plumb stores it nowhere):"
+		echo "    FAKERECOVERYKEY"
+	fi
 	;;
 *) echo "fakepve: unknown command $name" >&2; exit 2 ;;
 esac

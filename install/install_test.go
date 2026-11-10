@@ -18,7 +18,7 @@ import (
 const fakeSecret = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
 
 // fakeNames are the commands that testdata/fakepve plays.
-var fakeNames = []string{"pveversion", "dpkg-query", "dpkg", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install"}
+var fakeNames = []string{"pveversion", "dpkg-query", "dpkg", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install", "lxc-attach"}
 
 type host struct {
 	t       *testing.T
@@ -62,6 +62,9 @@ func newHost(t *testing.T) *host {
 		"FAKE_SECRET="+fakeSecret,
 		"PLUMB_INSTALL_PVE_CA="+h.pveCA,
 		"PLUMB_INSTALL_STATE="+h.stateF,
+		// The tests have no terminal; the fake plumb key init does not check.
+		// TestKeyInitNeedsTerminal sets it back to 0.
+		"PLUMB_INSTALL_ASSUME_TTY=1",
 	)
 	return h
 }
@@ -92,7 +95,7 @@ func (h *host) calls() []string {
 
 // mutating reports a fake call that changes the host.
 var mutating = regexp.MustCompile(`^(pveum (pool (add|delete)|role (add|modify|delete)|user (add|delete)|acl (modify|delete)|user token (add|remove))|` +
-	`pvesm (add|set|remove)|pveam (update|download)|pct (create|start|stop|destroy|push|pull|exec [0-9]+ -- (install|sh|chown|systemctl))|install )`)
+	`pvesm (add|set|remove|free)|pveam (update|download)|pct (create|start|stop|destroy|push|pull|exec [0-9]+ -- (install|sh|chown|chmod|systemctl))|install |lxc-attach )`)
 
 func TestDryRunChangesNothing(t *testing.T) {
 	h := newHost(t)
@@ -125,10 +128,15 @@ func TestDryRunChangesNothing(t *testing.T) {
 			t.Errorf("dry run does not print %q", want)
 		}
 	}
-	// The LXC has no host mount and is not in the Plumb pool (§7).
+	// The LXC has no host mount and is not in the Plumb pool (§7). Its one
+	// mount point is a new volume on the disk storage: the key volume.
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "+ pct create") && (strings.Contains(line, "--mp") || strings.Contains(line, "--pool")) {
-			t.Errorf("LXC with a mount or in the pool: %s", line)
+		if !strings.HasPrefix(line, "+ pct create") {
+			continue
+		}
+		if strings.Contains(line, "--pool") || strings.Count(line, "--mp") != 1 ||
+			!strings.Contains(line, `--mp0 local-lvm:1\,mp=/var/lib/plumb/key\,backup=0 `) {
+			t.Errorf("LXC with a host mount, without the key volume, or in the pool: %s", line)
 		}
 	}
 	if strings.Contains(out, "PLUMB_PVE_SECRET") || strings.Contains(out+errOut, "dry-run-secret") {

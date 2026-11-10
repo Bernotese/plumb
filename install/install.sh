@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# install.sh – prepare a Proxmox VE host for Plumb (T-013, D-007, D-081..D-084).
+# install.sh – prepare a Proxmox VE host for Plumb (T-013, D-007, D-081..D-084,
+# T-052: key volume and plumb key init, D-177..D-179).
 #
-# Run as root on the Proxmox host:
+# Run as root on the Proxmox host, on a terminal (plumb key init shows the
+# recovery key there once):
 #   install.sh --plumb-binary ./plumb [options]        install or repair
 #   install.sh --snippet-only --ca FILE --url URL      write only the vendor snippet
 #   install.sh --remove                                remove what this script made
@@ -15,6 +17,8 @@
 #   PLUMB_INSTALL_ASSUME_ROOT=1   skip the root check (fake commands only)
 #   PLUMB_INSTALL_PVE_CA=FILE     the host CA file instead of /etc/pve/pve-root-ca.pem
 #   PLUMB_INSTALL_STATE=FILE      the state file instead of /etc/plumb/install.state
+#   PLUMB_INSTALL_ASSUME_TTY=1    skip the terminal check before plumb key init
+#                                 (plumb key init itself still refuses a non-terminal)
 set -euo pipefail
 umask 077
 
@@ -51,6 +55,11 @@ SNIPPET_DIR_SET=0
 PVE_CA=${PLUMB_INSTALL_PVE_CA:-/etc/pve/pve-root-ca.pem}
 STATE_FILE=${PLUMB_INSTALL_STATE:-/etc/plumb/install.state}
 
+# The key volume (D-086, D-102, D-177): its own volume with backup=0, so the
+# master key is never in a backup of the LXC. plumb key init never creates
+# the directory; it must be the mount point.
+readonly KEY_DIR=/var/lib/plumb/key KEY_FILE=/var/lib/plumb/key/master.key KEY_VOLUME_GB=1
+
 usage() {
 	cat <<'EOF'
 Usage:
@@ -66,7 +75,8 @@ Options:
   --template-storage ID  storage for the LXC template (default local)
   --bridge NAME          bridge for guests and the LXC (default vmbr0)
   --lxc-id N             VMID of the Plumb LXC (default: next free id)
-  --lxc-ip CIDR|dhcp     address of the LXC (default dhcp)
+  --lxc-ip CIDR|dhcp     address of the LXC (default dhcp; a static address is recommended:
+                         the vendor snippet holds it, D-179)
   --lxc-gw IP            gateway for a static LXC address
   --vmid-range MIN-MAX   VMIDs for Plumb guests (default 9000-9099)
   --pool NAME            pool of Plumb guests (default plumb)
@@ -583,7 +593,7 @@ lxc_template() {
 	local name arch re
 	arch=$(query dpkg --print-architecture)
 	[[ $arch =~ ^[a-z0-9]+$ ]] || die "cannot read the host architecture: $arch"
-	re="debian-13-standard_.*_${arch}\\.tar\\."
+	re="debian-13-standard_.*_${arch}[.]tar[.]"
 	name=$({ query pveam list "$TEMPLATE_STORAGE" || true; } | awk -v re="$re" '$1 ~ re {sub(/.*vztmpl\//, "", $1); print $1}' | sort -V | tail -n1)
 	if [[ -z $name ]]; then
 		run pveam update
@@ -616,9 +626,12 @@ ensure_lxc() {
 	local net="name=eth0,bridge=$BRIDGE,ip=$LXC_IP"
 	[[ -n $LXC_GW ]] && net+=",gw=$LXC_GW"
 	lxc_template
-	# Unprivileged, no mount point, not in the Plumb pool (ARCHITECTURE §7).
+	# Unprivileged, no host mount, not in the Plumb pool (ARCHITECTURE §7).
+	# mp0 is a new volume on the disk storage (not a host path) with
+	# backup=0: the key volume (D-177).
 	run pct create "$LXC_ID" "$TEMPLATE" --hostname "$LXC_HOSTNAME" --unprivileged 1 --features nesting=1 \
-		--cores 2 --memory 1024 --swap 512 --rootfs "$DISK_STORAGE:8" --net0 "$net" --onboot 1 --ostype debian \
+		--cores 2 --memory 1024 --swap 512 --rootfs "$DISK_STORAGE:8" \
+		--mp0 "$DISK_STORAGE:$KEY_VOLUME_GB,mp=$KEY_DIR,backup=0" --net0 "$net" --onboot 1 --ostype debian \
 		--description "$LXC_MARKER Plumb controller, made by install.sh"
 	run pct start "$LXC_ID"
 	LXC_NEW=1
@@ -702,6 +715,13 @@ setup_lxc() {
 	local host=$1 ip=$2 tmp
 	run pct exec "$LXC_ID" -- sh -c 'id plumb >/dev/null 2>&1 || useradd --system --home-dir /var/lib/plumb --shell /usr/sbin/nologin plumb'
 	run pct exec "$LXC_ID" -- install -d -o plumb -g plumb -m 0700 /etc/plumb /var/lib/plumb
+	# The key directory is the mount point of the key volume (D-102).
+	if [[ $DRY_RUN != 1 ]]; then
+		query pct exec "$LXC_ID" -- mountpoint -q "$KEY_DIR" ||
+			die "$KEY_DIR in LXC $LXC_ID is not a mount point; the key volume is missing"
+	fi
+	run pct exec "$LXC_ID" -- chown plumb:plumb "$KEY_DIR"
+	run pct exec "$LXC_ID" -- chmod 0700 "$KEY_DIR"
 	run pct push "$LXC_ID" "$PLUMB_BINARY" /usr/local/bin/plumb --perms 0755 --user 0 --group 0
 	run pct push "$LXC_ID" "$PVE_CA" /etc/plumb/pve-root-ca.pem --perms 0644 --user 0 --group 0
 	if [[ -n $TOKEN_SECRET ]]; then
@@ -713,7 +733,60 @@ setup_lxc() {
 	rm -f "$tmp"
 	run pct exec "$LXC_ID" -- systemctl daemon-reload
 	run pct exec "$LXC_ID" -- systemctl enable plumb.service
+	key_init
 	run pct exec "$LXC_ID" -- systemctl restart plumb.service # a repair run brings a new binary
+}
+
+# lxc_has_key reports whether the LXC holds the master key file.
+lxc_has_key() {
+	query pct exec "$1" -- test -s "$KEY_FILE" >/dev/null 2>&1
+}
+
+# lxc_key_volume ID prints the config line of the key volume ("mpN: …").
+lxc_key_volume() {
+	{ query pct config "$1" 2>/dev/null || true; } | grep -E "^mp[0-9]+: [^,]+,(.*,)?mp=$KEY_DIR(,|\$)" | head -n1 || true
+}
+
+# check_key_preflight runs before any change. It refuses an existing Plumb
+# LXC without the key volume, and it needs a terminal when plumb key init
+# will run (D-178).
+NEED_KEY_INIT=1
+check_key_preflight() {
+	local id=${LXC_ID:-$(state_get lxc_id)} vol
+	if [[ -n $id && $(lxc_state "$id") == ours ]]; then
+		vol=$(lxc_key_volume "$id")
+		[[ -n $vol ]] || die "the Plumb LXC $id has no key volume at $KEY_DIR (made by an older install.sh); run install.sh --remove and install again. Nothing was changed."
+		[[ $vol =~ (^|,)backup=0(,|$) ]] || die "the key volume of LXC $id is in the backups (no backup=0): $vol. Nothing was changed."
+		if lxc_has_key "$id"; then
+			NEED_KEY_INIT=0
+		fi
+	fi
+	if [[ $NEED_KEY_INIT == 1 ]]; then
+		say "It runs \"plumb key init\" in the LXC on this terminal: it shows the RECOVERY KEY once. Write it down;"
+		say "install.sh does not store it, and without it a restored backup cannot read the stored secrets."
+		if [[ $DRY_RUN != 1 && ${PLUMB_INSTALL_ASSUME_TTY:-0} != 1 ]] && ! [[ -t 0 && -t 1 ]]; then
+			die "plumb key init shows the recovery key only on a terminal; run install.sh on a terminal (ssh -t), not through a pipe, file or script. Nothing was changed."
+		fi
+	fi
+}
+
+# key_init runs plumb key init as user plumb on this terminal, before the
+# first start of plumb.service (D-086, D-178). lxc-attach passes the
+# terminal; pct exec does not. The output is never captured: the recovery
+# key goes only to the terminal.
+key_init() {
+	if [[ $DRY_RUN != 1 ]] && lxc_has_key "$LXC_ID"; then
+		say "The master key exists in LXC $LXC_ID; it is kept."
+		return 0
+	fi
+	say ""
+	say "plumb key init: the RECOVERY KEY follows. Write it down and keep it offline."
+	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key init --data /var/lib/plumb ||
+		die "plumb key init failed; plumb.service was not started. Run install.sh again on a terminal."
+	if [[ $DRY_RUN != 1 ]]; then
+		lxc_has_key "$LXC_ID" || die "plumb key init wrote no $KEY_FILE; plumb.service was not started"
+	fi
+	say ""
 }
 
 # fetch_plumb_ca copies the CA that plumb made at its first start.
@@ -749,8 +822,14 @@ do_install() {
 	print_rights
 	say "It creates or keeps: pool $POOL, user $PVE_USER, token $PVE_USER!$TOKEN_NAME, storage $SNIPPET_STORAGE ($SNIPPET_DIR),"
 	say "the vendor snippet $SNIPPET, the image storage $IMAGE_STORAGE, and an unprivileged Debian 13 LXC \"$LXC_HOSTNAME\" without host mounts."
+	say "The LXC gets a key volume ($DISK_STORAGE, ${KEY_VOLUME_GB} GB, $KEY_DIR, backup=0) for the master key."
+	if [[ $LXC_IP == dhcp ]]; then
+		say "WARNING: the LXC gets its address by DHCP. The vendor snippet holds this address: when the lease"
+		say "changes, no agent reaches Plumb any more. Use a static address: --lxc-ip CIDR --lxc-gw IP (D-179)."
+	fi
 	check_storages
 	check_user_groups
+	check_key_preflight
 	STRAY_ACLS=$(stray_acls)
 	if [[ -n $STRAY_ACLS ]]; then
 		say "These older rights of Plumb are not in the plan and are removed:"
@@ -821,8 +900,16 @@ do_remove() {
 			die "pool $POOL still has guests or templates; remove them through Plumb first. Nothing was removed."
 		fi
 	fi
+	local keyvol=""
+	[[ -n $lxc && $(lxc_state "$lxc") == ours ]] && keyvol=$(lxc_key_volume "$lxc")
+	keyvol=${keyvol#*: }
+	keyvol=${keyvol%%,*}
 	say "This removes:"
-	[[ -n $lxc ]] && say "  the Plumb LXC $lxc with its disk (all Plumb data)"
+	[[ -n $lxc ]] && say "  the Plumb LXC $lxc with its disk (all Plumb data) and its key volume${keyvol:+ $keyvol} (the master key)"
+	if [[ -n $lxc ]]; then
+		say "  A backup of the Plumb database stays readable only with the recovery key of \"plumb key init\";"
+		say "  without it, the stored secrets in any backup are lost for good."
+	fi
 	say "  token $PVE_USER!$TOKEN_NAME, user $PVE_USER (with its ACLs), roles ${ROLE_NAMES[*]}"
 	say "  pool $POOL, storage $SNIPPET_STORAGE${dir:+, the snippet $dir/snippets/$SNIPPET and its empty directories}, $STATE_FILE"
 	confirm "Remove all of it?" remove || die "stopped; nothing was removed"
@@ -830,6 +917,10 @@ do_remove() {
 	if [[ -n $lxc && $(lxc_state "$lxc") == ours ]]; then
 		run pct stop "$lxc"
 		run pct destroy "$lxc" --purge 1
+		# pct destroy removes the mount point volumes too; make sure of it.
+		if [[ -n $keyvol ]] && { query pvesm list "${keyvol%%:*}" --vmid "$lxc" 2>/dev/null || true; } | grep -q "^$keyvol "; then
+			run pvesm free "$keyvol"
+		fi
 	fi
 	if query pveum user list --output-format json | json_has userid "$PVE_USER"; then
 		run pveum user token remove "$PVE_USER" "$TOKEN_NAME" || true
