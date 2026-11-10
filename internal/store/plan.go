@@ -383,3 +383,19 @@ func (s *Store) FailUnfinishedSteps(ctx context.Context, runID int64, output str
 		 WHERE run_id = ? AND status IN ('pending', 'running')`, output, now, now, runID)
 	return err
 }
+
+// DiscardPlan marks a pending Plan stale. It returns ErrPlanNotPending
+// for any other status.
+func (s *Store) DiscardPlan(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE plan SET status = 'stale' WHERE id = ? AND status = 'pending'`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := s.GetPlan(ctx, id); err != nil {
+			return err
+		}
+		return ErrPlanNotPending
+	}
+	return nil
+}

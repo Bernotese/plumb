@@ -581,6 +581,23 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [plans]
+      operationId: discardPlan
+      summary: Drop a pending plan
+      description: |
+        The Plan becomes `stale` and is never applied. An issue that it would resolve is `open`
+        again. Only a `pending` Plan can be dropped; else 409.
+      security:
+        - session: []
+        - token: [plan]
+      responses:
+        "204":
+          description: Dropped.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /plans/{id}/approve:
     parameters:
       - $ref: "#/components/parameters/PlanId"
@@ -1388,6 +1405,11 @@ components:
         changes:
           type: array
           items: { $ref: "#/components/schemas/Change" }
+        unverified:
+          type: boolean
+          description: |
+            A resource of a new target. Nobody could observe it, so `changes` is empty; it is
+            verified at the first apply after the first boot (D-066).
 
     RunStatus:
       type: string

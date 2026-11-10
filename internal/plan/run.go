@@ -530,3 +530,16 @@ func planned(tp TargetPlan) []wire.Planned {
 	}
 	return out
 }
+
+// Discard drops a pending Plan: it becomes stale, and the Issues that it
+// would resolve are open again (review T-010 m5).
+func (e *Engine) Discard(ctx context.Context, planID int64, principal string) error {
+	if err := e.st.DiscardPlan(ctx, planID); err != nil {
+		return err
+	}
+	e.emit(ctx, "plan.stale", fmt.Sprintf("plan:%d", planID), principal, map[string]any{"discarded": true})
+	if e.cfg.OnPlanDone != nil {
+		e.cfg.OnPlanDone(ctx, planID, false)
+	}
+	return nil
+}

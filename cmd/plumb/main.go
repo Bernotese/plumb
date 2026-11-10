@@ -2,9 +2,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -19,6 +22,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "plumb", version)
 		return 0
 	}
-	fmt.Fprintln(stderr, "usage: plumb version")
+	if len(args) >= 1 && args[0] == "serve" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return serve(ctx, args[1:], stdout, stderr)
+	}
+	fmt.Fprintln(stderr, "usage: plumb version | plumb serve [--dev] [flags]")
 	return 2
 }
