@@ -27,11 +27,10 @@ The public API contract for the slice exists, and the web app builds with genera
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-- Branch `pl-frontend/T-017-openapi-web-skeleton`. `api/openapi.yaml` covers session (incl. password), images, blocks, targets (+status, reenroll), plans, runs, issues, events. Token tiers = 3.1 security roles (minimum tier).
-- `npm run check:api`: Redocly `recommended-strict` (examples validated against schemas) + own checks: every response body has an example, all properties snake_case. Part of `npm run lint` → `make lint-web` → CI.
-- `web/`: Svelte 5 + Vite + TS (5.9; openapi-typescript needs TS 5). One page (Targets). `src/lib/api.ts` typed GET client over generated `api.gen.ts` (not committed; `npm run gen`).
-- Embed: Go package `web` (`web/embed.go`, `//go:embed all:dist`, `FS()`, `Built()`). `web/dist/.gitkeep` is force-added (root `.gitignore` has `dist/`). `cmd/plumb`/`internal/api` import it (T-011 serves it).
-- Makefile lines for after T-003: `build-web: cd web && npm ci && npm run build` · `lint-web: cd web && npm ci && npm run lint` · `test` also runs `cd web && npm test` · Go targets use `go list ./... | grep -v /node_modules/` and `gofmt -l` skips `web/node_modules` (review should 1).
-- Tests: web lint/test(8)/build pass; clean checkout `go vet ./... && go test ./web` passes with and without built UI. `make` not yet run (no Makefile on main).
-- Review fixes (cd6f31b+1): reenroll restart as own `action: restart`, login Origin check, per-kind id params, list items = full objects, param snake_case check, `current_password` minLength. Open for pl-architect: schema openness/two sources, `ignore_rule`. Decision line needed for build deps outside §9 (`@redocly/openapi-core`, `@sveltejs/vite-plugin-svelte`, `@tsconfig/svelte`, `globals`).
-- Not in contract (card scope): revisions, tokens, secrets, export/import. `npm audit`: dev-tool advisories only (deepmerge, minimatch), nothing in `dist`.
+- Branch `pl-frontend/T-017-openapi-web-skeleton`, PR #2. Contract follows D-043…D-048: integer ids, principal strings, wire states, `Change` = `wire.Change`, document schemas by `$ref` to `internal/state/schema/*.json` (lint validates examples against them; codegen bundles them), issue actions `accept|revert`.
+- GET of a document returns `{revision, document}` (+ `status` for targets), because the document schemas are closed.
+- `npm run check:api`: Redocly recommended-strict + own checks (every response body has an example, snake_case properties and parameters). Runs in `make lint-web`.
+- `web/`: Svelte 5 + Vite + TS 5.9, one page (Targets), typed GET client over generated `api.gen.ts` (`npm run gen`, not committed).
+- Makefile: `build-web`, `lint-web`, `test-web` filled (npm ci only when the lock file changes). CI: `actions/setup-node` v7.1.0 (SHA-pinned), Node 26.
+- Embed: Go package `web` (`FS()`, `Built()`); `web/dist/.gitkeep` is tracked (force-added; an exception line cannot re-include a file under an ignored `dist/` dir). Nothing imports `web` yet → `plumb` links the UI when T-011 serves it.
+- Tests: `make lint test build` → pass (Go tests, vitest 8, build); `bin/plumb version` OK.

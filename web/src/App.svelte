@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { ApiError, get, type Target } from "./lib/api";
+  import { ApiError, get, type TargetView } from "./lib/api";
 
   type Load =
-    { state: "loading" } | { state: "ok"; targets: Target[] } | { state: "error"; message: string };
+    | { state: "loading" }
+    | { state: "ok"; targets: TargetView[] }
+    | { state: "error"; message: string };
 
   let load = $state<Load>({ state: "loading" });
 
@@ -42,11 +44,11 @@
         <tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th></tr>
       </thead>
       <tbody>
-        {#each load.targets as t (t.name)}
+        {#each load.targets as t (t.document.name)}
           <tr>
-            <td class="mono">{t.name}</td>
-            <td>{t.spec.type}</td>
-            <td>{t.status?.phase ?? "unknown"}</td>
+            <td class="mono">{t.document.name}</td>
+            <td>{t.document.spec.type}</td>
+            <td>{t.status.phase}</td>
           </tr>
         {/each}
       </tbody>

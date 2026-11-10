@@ -3,7 +3,7 @@ import type { components, paths } from "./api.gen";
 
 export type Schemas = components["schemas"];
 export type Problem = Schemas["Problem"];
-export type Target = Schemas["Target"];
+export type TargetView = Schemas["TargetView"];
 
 export const API_BASE = "/api/v1";
 
