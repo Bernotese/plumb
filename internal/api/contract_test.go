@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/issue"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/wire"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -260,6 +261,24 @@ func TestContract(t *testing.T) {
 	call(adm, "POST", "/api/v1/targets/nope/reenroll", "/targets/{name}/reenroll", nil) // 404
 	call(adm, "DELETE", "/api/v1/plans/"+id(re), "/plans/{id}", nil)
 	call(adm, "DELETE", "/api/v1/plans/"+id(re), "/plans/{id}", nil) // 409
+
+	// Secrets (T-028).
+	call(adm, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", map[string]string{"value": "contract-value"})
+	call(adm, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", map[string]string{})                 // 422
+	call(adm, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", []byte(`{"value": nope}`))           // 400
+	call(readTok, "PUT", "/api/v1/secrets/app-db", "/secrets/{name}", map[string]string{"value": "x"}) // 403
+	call(adm, "PUT", "/api/v1/secrets/other", "/secrets/{name}", map[string]string{"value": "x"})
+	call(readTok, "GET", "/api/v1/secrets", "/secrets", nil)
+	call(adm, "GET", "/api/v1/secrets?limit=1", "/secrets", nil)
+	e.sec.SetUsage(func(context.Context) (map[string]secret.Usage, error) {
+		return map[string]secret.Usage{"app-db": {Targets: []string{"web1"}, Plans: []int64{1}}}, nil
+	})
+	call(adm, "DELETE", "/api/v1/secrets/app-db", "/secrets/{name}", nil) // 409
+	e.sec.SetUsage(nil)
+	call(adm, "DELETE", "/api/v1/secrets/app-db", "/secrets/{name}", nil)
+	call(adm, "DELETE", "/api/v1/secrets/app-db", "/secrets/{name}", nil) // 404
+	call(tok, "DELETE", "/api/v1/secrets/other", "/secrets/{name}", nil)  // 403
+	call(e.anon(), "GET", "/api/v1/secrets", "/secrets", nil)             // 401
 
 	// API tokens (T-030).
 	var newTok struct{ Token struct{ ID string } }
