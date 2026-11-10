@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/symlink.json",
+  "title": "symlink",
+  "description": "A symbolic link. Key: path. The target is stored as given and never followed.",
+  "type": "object",
+  "required": [
+    "path"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string",
+      "pattern": "^/",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)|\\x00"
+      },
+      "maxLength": 4096,
+      "description": "Absolute path of the link. No component of it may be a symlink."
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4095,
+      "not": {
+        "pattern": "\\x00"
+      },
+      "description": "Content of the link, absolute or relative to the directory of the link. Required when state is present."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  },
+  "if": {
+    "properties": {
+      "state": {
+        "const": "absent"
+      }
+    },
+    "required": [
+      "state"
+    ]
+  },
+  "else": {
+    "required": [
+      "target"
+    ]
+  }
+}

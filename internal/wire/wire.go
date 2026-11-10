@@ -1,7 +1,8 @@
 // Package wire holds the types that the controller and the agent share:
 // resources, changes, risk classes and the messages of the agent protocol
-// (docs/ARCHITECTURE.md §3 and §5). It has no logic besides small helpers
-// for ids and risk order, and it imports no other Plumb package.
+// (docs/ARCHITECTURE.md §3 and §5). It has no logic besides the rules that
+// both sides must share (ids, risk order, ActionOf, Covers, Order), and it
+// imports no other Plumb package.
 package wire
 
 import (
@@ -64,8 +65,17 @@ type Resource struct {
 	// Block is the id of the Block use that rendered the resource: the "id"
 	// of the entry in the Target, which defaults to the Block name. Two uses
 	// of the same Block need different ids. Resources with the same Block
-	// apply in the listed order; different Blocks apply in parallel.
+	// apply in the listed order; different Blocks apply in parallel, unless
+	// After orders them.
 	Block string `json:"block"`
+	// After names resources of the same target that must have ended before
+	// this one starts (D-167). state.Render sets it on the first resource of
+	// a Block use whose Block has spec.after; the rest of the use follows by
+	// the listed order. The resource runs only when each named resource
+	// ended unchanged or applied; else it is skipped (D-170). After is order
+	// only: it is no attribute, has no diff and an override cannot set it.
+	// An agent from before D-169 ignores the field. See Order.
+	After []string `json:"after,omitempty"`
 	// Attrs are the desired attributes. The JSON Schema of the type defines them.
 	Attrs map[string]any `json:"attrs"`
 	// Sensitive names the attributes whose value came from a secret.

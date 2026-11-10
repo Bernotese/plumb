@@ -218,3 +218,174 @@ describe("rendering", () => {
     );
   });
 });
+
+describe("mock order: after and restarts (T-049)", () => {
+  const seeded = async () =>
+    new Map(
+      (await createMockApi({ signedIn: true }).listBlocks()).map((b) => [
+        b.document.name,
+        b.document,
+      ]),
+    );
+  const base = {
+    type: "vm" as const,
+    image: "i",
+    guest: { cores: 1, memory: 256, disk: 1, bridge: "b" },
+  };
+  const site = (name: string) => ({ use: "nginx-site", id: `site-${name}`, params: { name } });
+  const avail = (n: string) => `file:/etc/nginx/sites-available/${n}`;
+  const link = (n: string) => `symlink:/etc/nginx/sites-enabled/${n}`;
+  const restartOn = (r: { id: string; attrs: Record<string, unknown> }[]) =>
+    r.find((x) => x.id === "service:nginx")?.attrs["restart_on"];
+  const err = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      return e instanceof ApiError ? `${e.problem.status} ${e.problem.detail}` : String(e);
+    }
+    return "no error";
+  };
+
+  it("seeds nginx-site with after and restarts", async () => {
+    const b = (await seeded()).get("nginx-site");
+    expect(b?.spec.after).toEqual(["package:nginx"]);
+    expect(b?.spec.restarts).toEqual(["service:nginx"]);
+  });
+
+  it("merges restarts into restart_on and sets after on the first resource, in both orders", async () => {
+    const blocks = await seeded();
+    for (const uses of [
+      [{ use: "nginx" }, site("a"), site("b")],
+      [site("a"), site("b"), { use: "nginx" }],
+    ]) {
+      const r = render({ ...base, blocks: uses }, blocks);
+      expect(restartOn(r)).toEqual([
+        avail("default"),
+        link("default"),
+        avail("a"),
+        link("a"),
+        avail("b"),
+        link("b"),
+      ]);
+      expect(r.filter((x) => x.after).map((x) => [x.id, x.after])).toEqual([
+        [avail("a"), ["package:nginx"]],
+        [avail("b"), ["package:nginx"]],
+      ]);
+    }
+  });
+
+  it("applies overrides after restarts: an override replaces the full list (D-053)", async () => {
+    const r = render(
+      {
+        ...base,
+        blocks: [{ use: "nginx" }, site("a")],
+        overrides: { "service:nginx": { restart_on: [avail("a")] } },
+      },
+      await seeded(),
+    );
+    expect(restartOn(r)).toEqual([avail("a")]);
+  });
+
+  it("refuses an after id that is not on the target", async () => {
+    const blocks = await seeded();
+    expect(err(() => render({ ...base, blocks: [site("a")] }, new Map()))).toContain("422");
+    expect(err(() => render({ ...base, blocks: [site("a")] }, blocks))).toBe(
+      '422 Block "nginx-site" (use "site-a") comes after package:nginx, but package:nginx is not on this target; add the Block that provides it',
+    );
+  });
+
+  it("lets an empty restart_on override disable restarts from a changed site", async () => {
+    const blocks = await seeded();
+    const old = { ...base, blocks: [{ use: "nginx" }, site("a")] };
+    const next = {
+      ...old,
+      blocks: [...old.blocks, site("b")],
+      overrides: { "service:nginx": { restart_on: [] } },
+    };
+    expect(restartOn(render(next, blocks))).toEqual([]);
+    const plan = planTarget(old, next, blocks);
+    expect(plan.map((r) => r.resource)).toEqual([avail("b"), link("b")]);
+    expect(plan[0]?.after).toEqual(["package:nginx"]);
+    expect(plan.some((r) => r.restart_by)).toBe(false);
+  });
+
+  it("does not restart a service for a changed after dependency alone", async () => {
+    const blocks = await seeded();
+    const nginx = structuredClone(blocks.get("nginx"));
+    if (!nginx) throw new Error("no nginx");
+    nginx.spec.resources = [{ service: { name: "nginx", state: "running" } }];
+    nginx.spec.after = [avail("a")];
+    blocks.set("nginx", nginx);
+    const siteBlock = structuredClone(blocks.get("nginx-site"));
+    if (!siteBlock) throw new Error("no nginx-site");
+    siteBlock.spec.after = [];
+    siteBlock.spec.restarts = [];
+    blocks.set("nginx-site", siteBlock);
+    const old = { ...base, blocks: [{ use: "nginx" }, site("a")] };
+    const next = { ...old, overrides: { [avail("a")]: { content: "changed" } } };
+    const plan = planTarget(old, next, blocks);
+    expect(plan.map((r) => `${r.action} ${r.resource}`)).toEqual([`update ${avail("a")}`]);
+    expect(plan[0]?.restart_by).toBeUndefined();
+  });
+
+  it("refuses an after id of the same use", async () => {
+    const blocks = await seeded();
+    const own = structuredClone(blocks.get("nginx-site"));
+    if (!own) throw new Error("no nginx-site");
+    own.spec.after = [avail("site")];
+    own.spec.restarts = [];
+    blocks.set("nginx-site", own);
+    expect(err(() => render({ ...base, blocks: [{ use: "nginx-site" }] }, blocks))).toBe(
+      `422 Block "nginx-site" (use "nginx-site") comes after ${avail("site")}, which is its own resource; resources of one Block already apply in the listed order`,
+    );
+  });
+
+  it("leaves cycle detection to the real API", async () => {
+    const blocks = await seeded();
+    const block = structuredClone(blocks.get("nginx-site"));
+    if (!block) throw new Error("no nginx-site");
+    block.spec.after = ["service:nginx"];
+    blocks.set(block.name, block);
+    const resources = render({ ...base, blocks: [{ use: "nginx" }, site("a")] }, blocks);
+    expect(resources.find((r) => r.id === avail("a"))?.after).toEqual(["service:nginx"]);
+    expect(restartOn(resources)).toContain(avail("a"));
+  });
+
+  it("plans after and restart_by for a new site on a target with nginx", async () => {
+    const blocks = await seeded();
+    const old = { ...base, blocks: [{ use: "nginx" }, site("a")] };
+    const next = { ...base, blocks: [{ use: "nginx" }, site("a"), site("b")] };
+    const plan = planTarget(old, next, blocks);
+    expect(plan.map((r) => `${r.action} ${r.resource}`)).toEqual([
+      `create ${avail("b")}`,
+      `create ${link("b")}`,
+      "restart service:nginx",
+    ]);
+    expect(plan[0]?.after).toEqual(["package:nginx"]);
+    expect(plan[1]?.after).toBeUndefined();
+    expect(plan[2]?.restart_by).toEqual([avail("b"), link("b")]);
+    expect(plan[2]?.after).toBeUndefined();
+  });
+
+  it("plans a new target with nginx and two sites: after, no restart", async () => {
+    const plan = planTarget(
+      undefined,
+      { ...base, blocks: [{ use: "nginx" }, site("a"), site("b")] },
+      await seeded(),
+    );
+    expect(plan.filter((r) => r.after).map((r) => r.resource)).toEqual([avail("a"), avail("b")]);
+    expect(plan.some((r) => r.action === "restart" || r.restart_by)).toBe(false);
+  });
+
+  it("refuses a proposal with a site but no nginx", async () => {
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
+    const doc: TargetDoc = {
+      kind: "Target",
+      name: "site1",
+      spec: { ...base, blocks: [site("a")] },
+    };
+    await expect(api.createPlan({ reason: "Site only", put: [doc] })).rejects.toSatisfy(
+      (e) => status(e) === 422,
+    );
+  });
+});

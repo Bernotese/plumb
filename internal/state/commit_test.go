@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/store"
@@ -130,5 +131,76 @@ func TestCommitNumberSpellingIsNoChange(t *testing.T) {
 	}
 	if d, _ := st.Diff(ctx, 0, r3); len(d) != 2 {
 		t.Errorf("sanity: Diff(0, r3) = %+v", d)
+	}
+}
+
+// D-168, review S3: a revision that was stored before the save-time cycle
+// check still loads, so that a proposal can repair it. Validate, which
+// every proposal goes through, refuses the same documents.
+func TestLoadKeepsAStoredCycle(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	cyc := doc(KindBlock, "svc", `{"resources":[{"service":{"name":"x","restart_on":["file:/late"]}},{"file":{"path":"/late","content":"l"}}]}`)
+	docs := fixture(cyc, target(`"blocks":[{"use":"svc"}]`),
+		doc(KindTarget, "t2", `{"type":"vm","image":"img",`+guest+`,"blocks":[{"use":"motd"}]}`))
+
+	// Only a set of a stored revision can hold the cycle.
+	old, err := validate(docs, DefaultLimits, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev, err := Commit(ctx, st, old, CommitInfo{Author: "system", Reason: "from before D-168"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	set, err := Load(ctx, st, rev.ID)
+	if err != nil {
+		t.Fatalf("a stored revision with a cycle must load: %v", err)
+	}
+	cycles := set.Cycles()
+	if len(cycles) != 1 || !strings.Contains(cycles["t1"], "apply order has a cycle: service:x") {
+		t.Fatalf("Cycles() = %v, want only t1", cycles)
+	}
+	// The Target still renders: the controller serves it as before, and
+	// the agent refuses its applies (D-055).
+	r, err := set.Render("t1")
+	if err != nil || len(r.Resources) != 2 {
+		t.Fatalf("Render of the Target with the cycle: %v, %v", r, err)
+	}
+	cycles["t1"] = "changed by the caller"
+	if set.Cycles()["t1"] == "changed by the caller" {
+		t.Error("Cycles() gave the map of the set")
+	}
+
+	// A proposal that leaves the cycle in is refused and names the Target.
+	next := append(set.Docs(), doc(KindBlock, "extra", `{"resources":[{"file":{"path":"/e"}}]}`))
+	_, err = Validate(next)
+	var es Errors
+	if !errors.As(err, &es) || len(es) != 1 || es[0].Kind != KindTarget || es[0].Name != "t1" ||
+		es[0].Path != "/spec/blocks" || !strings.Contains(es[0].Msg, "apply order has a cycle") {
+		t.Fatalf("a proposal with the cycle: %v", err)
+	}
+	// A proposal that repairs it passes, and its revision has no cycle.
+	fixed := doc(KindBlock, "svc", `{"resources":[{"file":{"path":"/late","content":"l"}},{"service":{"name":"x","restart_on":["file:/late"]}}]}`)
+	good, err := Validate(fixture(fixed, target(`"blocks":[{"use":"svc"}]`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev2, err := Commit(ctx, st, good, CommitInfo{Author: "system", Reason: "repair"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set, err := Load(ctx, st, rev2.ID); err != nil || len(set.Cycles()) != 0 {
+		t.Fatalf("the repaired revision: %v, cycles %v", err, set.Cycles())
+	}
+
+	// Load is soft for a cycle only. An unknown after id can never be in a
+	// stored revision, so it stays an error.
+	bad := []Doc{doc(KindImage, "img", image),
+		doc(KindBlock, "b", `{"after":["file:/nope"],"resources":[{"file":{"path":"/b","content":"b"}}]}`),
+		target(`"blocks":[{"use":"b"}]`)}
+	if _, err := validate(bad, DefaultLimits, true); err == nil || !strings.Contains(err.Error(), "is not on this target") {
+		t.Fatalf("an unknown after id in a stored set: %v", err)
 	}
 }

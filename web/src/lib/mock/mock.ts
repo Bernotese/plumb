@@ -54,9 +54,11 @@ export interface MockOptions {
 export interface MockApi extends PlumbApi {
   /** Resolves when no simulated run is active (tests). */
   idle(): Promise<void>;
+  /** Id of the demo Plan with nginx and two sites (T-049). */
+  orderPlanId?: number;
 }
 
-type Rendered = { id: string; type: string; attrs: Record<string, unknown> };
+type Rendered = { id: string; type: string; attrs: Record<string, unknown>; after?: string[] };
 
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -110,11 +112,17 @@ const keyAttr: Record<string, string> = {
   package: "name",
   service: "name",
   user: "name",
+  symlink: "path",
 };
 
-/** Renders the Blocks of a Target into a flat resource list. */
+/**
+ * Renders the Blocks of a Target into a flat resource list: Blocks, the
+ * `after` check, `restarts`, overrides (D-168, D-172).
+ * The mock has no cycle check (T-044 plan, section 9).
+ */
 export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): Rendered[] {
   const out: Rendered[] = [];
+  const uses: { block: BlockDoc; useId: string; ids: string[] }[] = [];
   for (const use of spec.blocks ?? []) {
     const block = blocks.get(use.use);
     if (!block)
@@ -125,16 +133,62 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
       if (d !== undefined) params[k] = d;
     }
     Object.assign(params, use.params ?? {});
+    const ids: string[] = [];
     for (const entry of block.spec.resources) {
       const [type, rawAttrs] = Object.entries(entry)[0] ?? [];
       if (!type || !rawAttrs) continue;
       const attrs: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rawAttrs)) attrs[k] = renderValue(v, params);
       const id = `${type}:${String(attrs[keyAttr[type] ?? "name"])}`;
-      // Target overrides replace rendered attributes ("Accept", raw mode, state: absent).
-      out.push({ id, type, attrs: { ...attrs, ...(spec.overrides?.[id] ?? {}) } });
+      const r: Rendered = { id, type, attrs };
+      // The first resource of a use waits for the `after` ids of its Block (D-167).
+      if (!ids.length && block.spec.after?.length) r.after = [...block.spec.after];
+      ids.push(id);
+      out.push(r);
+    }
+    uses.push({ block, useId: use.id ?? use.use, ids });
+  }
+  const byId = new Map(out.map((r) => [r.id, r]));
+  // An `after` id must be on the Target and not in the same use (D-168).
+  // Ids do not depend on overrides, so this check runs first: a site
+  // without the nginx Block names package:nginx (T-044 plan, section 6).
+  for (const u of uses) {
+    for (const id of u.block.spec.after ?? []) {
+      const who = `Block "${u.block.name}" (use "${u.useId}") comes after ${id}`;
+      if (u.ids.includes(id))
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `${who}, which is its own resource; resources of one Block already apply in the listed order`,
+        );
+      if (!byId.has(id))
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `${who}, but ${id} is not on this target; add the Block that provides it`,
+        );
     }
   }
+  // `restarts` adds the ids of the use to restart_on of each named service (D-172).
+  for (const u of uses) {
+    for (const svc of u.block.spec.restarts ?? []) {
+      const s = byId.get(svc);
+      if (!s)
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `Block "${u.block.name}" (use "${u.useId}") restarts ${svc}, but ${svc} is not on this target; add the Block that provides it`,
+        );
+      const on = [...((s.attrs["restart_on"] as string[] | undefined) ?? [])];
+      for (const id of u.ids) if (id !== svc && !on.includes(id)) on.push(id);
+      s.attrs["restart_on"] = on;
+    }
+  }
+  // Target overrides replace rendered attributes ("Accept", raw mode, state: absent).
+  for (const r of out) r.attrs = { ...r.attrs, ...(spec.overrides?.[r.id] ?? {}) };
   return out;
 }
 
@@ -195,7 +249,6 @@ export function planTarget(
 
   const before = new Map((old ? render(old, blocks) : []).map((r) => [r.id, r]));
   const after = render(next, blocks);
-  const updated = new Set<string>();
   for (const r of after) {
     const prev = before.get(r.id);
     // An explicit state: absent removes the resource on the guest (D-065).
@@ -220,21 +273,34 @@ export function planTarget(
     }
     const changes: Change[] = [];
     for (const attr of new Set([...Object.keys(prev.attrs), ...Object.keys(r.attrs)])) {
+      // restart_on is apply order, not a guest value: no change of its own.
+      if (attr === "restart_on") continue;
       if (!same(prev.attrs[attr], r.attrs[attr])) {
         changes.push(change(attr, prev.attrs[attr], r.attrs[attr], "reversible"));
       }
     }
     if (changes.length) {
-      updated.add(r.id);
       out.push(resourcePlan(r.id, "update", changes));
     }
   }
-  // A service restarts after a changed restart_on resource (D-036).
+  // A service restarts after a restart_on resource that changes in this
+  // Plan (D-036, D-160); restart_by names these ids (D-171).
+  const changed = new Set(out.map((p) => p.resource));
   for (const r of after) {
     const on = (r.attrs["restart_on"] as string[] | undefined) ?? [];
-    if (r.type === "service" && before.has(r.id) && on.some((id) => updated.has(id))) {
-      out.push(resourcePlan(r.id, "restart", [{ attr: "restart", risk: "disruptive" }]));
+    const by = on.filter((id) => changed.has(id));
+    if (r.type === "service" && before.has(r.id) && by.length) {
+      out.push({
+        ...resourcePlan(r.id, "restart", [{ attr: "restart", risk: "disruptive" }]),
+        restart_by: by,
+      });
     }
+  }
+  // The resource that waits shows its `after` ids (D-171).
+  const waits = new Map(after.filter((r) => r.after).map((r) => [r.id, r.after]));
+  for (const p of out) {
+    const a = waits.get(p.resource);
+    if (a) p.after = [...a];
   }
   // A resource that is no longer desired is no longer managed: it is not
   // deleted on the guest (D-065), so it gets no plan entry.
@@ -299,6 +365,88 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   } as BlockDoc;
   blockViews.push({ revision: 7, document: appBlock });
   blocks.set(appBlock.name, appBlock);
+
+  // T-049: the nginx Block (blocks/nginx.yaml, short form) and nginx-site
+  // with `after` and `restarts` (D-167, D-172).
+  const nginxBlock: BlockDoc = {
+    kind: "Block",
+    name: "nginx",
+    spec: {
+      title: "Nginx web server",
+      description: "Install Nginx and overwrite the distro default site.",
+      params: {
+        type: "object",
+        properties: { server_name: { type: "string", title: "Server name", default: "_" } },
+      },
+      resources: [
+        { package: { name: "nginx" } },
+        {
+          file: {
+            path: "/etc/nginx/sites-available/default",
+            content:
+              "server {\n    listen 80 default_server;\n    server_name {{ .server_name }};\n}\n",
+            mode: "0644",
+          },
+        },
+        {
+          symlink: {
+            path: "/etc/nginx/sites-enabled/default",
+            target: "/etc/nginx/sites-available/default",
+          },
+        },
+        {
+          service: {
+            name: "nginx",
+            state: "running",
+            enabled: true,
+            restart_on: [
+              "file:/etc/nginx/sites-available/default",
+              "symlink:/etc/nginx/sites-enabled/default",
+            ],
+          },
+        },
+      ],
+    },
+  } as BlockDoc;
+  const nginxSiteBlock: BlockDoc = {
+    kind: "Block",
+    name: "nginx-site",
+    spec: {
+      title: "Nginx site",
+      description:
+        "One more Nginx site. Use it once per site, with its own use id, on a Target that also uses the nginx Block.",
+      after: ["package:nginx"],
+      restarts: ["service:nginx"],
+      params: {
+        type: "object",
+        properties: {
+          name: { type: "string", title: "Site name", default: "site" },
+          server_name: { type: "string", title: "Server name", default: "site.lan" },
+          root: { type: "string", title: "Web root", default: "/var/www/html" },
+        },
+      },
+      resources: [
+        {
+          file: {
+            path: "/etc/nginx/sites-available/{{ .name }}",
+            content:
+              "server {\n    listen 80;\n    server_name {{ .server_name }};\n    root {{ .root }};\n}\n",
+            mode: "0644",
+          },
+        },
+        {
+          symlink: {
+            path: "/etc/nginx/sites-enabled/{{ .name }}",
+            target: "/etc/nginx/sites-available/{{ .name }}",
+          },
+        },
+      ],
+    },
+  } as BlockDoc;
+  for (const b of [nginxBlock, nginxSiteBlock]) {
+    blockViews.push({ revision: 7, document: b });
+    blocks.set(b.name, b);
+  }
 
   const plans = new Map<number, Plan>();
   for (const p of [
@@ -1352,6 +1500,47 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
   };
   const pendingDocs = new Map<number, Proposal>();
+
+  // A demo Plan with nginx and two sites (T-049 screenshots, "/#/plans/<id>"):
+  // web1 as if it had nginx and site a, then site a changes and site b is new.
+  // It shows "after" on the site files and the cause of the nginx restart.
+  const web1 = targets.get("web1")?.document;
+  if (web1) {
+    const site = (name: string, server: string) => ({
+      use: "nginx-site",
+      id: `site-${name}`,
+      params: { name, server_name: server },
+    });
+    const base = structuredClone(web1.spec);
+    base.blocks = [...(base.blocks ?? []), { use: "nginx" }, site("a", "a.lan")];
+    const next = structuredClone(base);
+    next.blocks = [
+      ...(next.blocks ?? []).slice(0, -1),
+      site("a", "a.lan www.a.lan"),
+      site("b", "b.lan"),
+    ];
+    const resources = planTarget(base, next, blocks);
+    const p: Plan = {
+      id: nextPlan++,
+      status: "pending",
+      origin: "proposal",
+      issue_id: null,
+      reason: "Demo: two Nginx sites on web1",
+      risk: maxRisk(resources.flatMap((r) => r.changes.map((c) => c.risk))),
+      author: "user:admin",
+      created_at: "2026-11-10T09:30:00Z",
+      base_revision: head,
+      approved_by: null,
+      approved_at: null,
+      revision: null,
+      run_id: null,
+      warnings: [],
+      targets: [{ target: "web1", resources }],
+    };
+    plans.set(p.id, p);
+    api.orderPlanId = p.id;
+    pendingDocs.set(p.id, { reason: p.reason, put: [{ ...web1, spec: next }] });
+  }
   return api;
 }
 

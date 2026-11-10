@@ -72,6 +72,28 @@
             "description": "Exactly one entry: resource type \u2192 attributes. String values are Go text/template strings over the parameters."
           },
           "description": "Resources in apply order."
+        },
+        "after": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*:.+$",
+            "maxLength": 4200
+          },
+          "description": "Resource ids (type:key) that each use of this Block comes after, for example package:nginx. Literal strings, not templates. The named resources must be on the same Target, in another Block use. A use starts only when each of them ended unchanged or applied; else the use is skipped. Uses with no such relation apply in parallel."
+        },
+        "restarts": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^service:.+$",
+            "maxLength": 300
+          },
+          "description": "Service ids (service:name) that restart when a resource of a use of this Block changes, for example service:nginx. Literal strings, not templates. The services must be on the same Target. Render adds the resource ids of the use to restart_on of each service."
         }
       }
     }

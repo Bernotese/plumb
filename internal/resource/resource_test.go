@@ -29,7 +29,7 @@ func compile(t *testing.T, typ Type) *jsonschema.Schema {
 }
 
 func TestTypeTable(t *testing.T) {
-	want := []string{"directory", "file", "package", "service", "user"}
+	want := []string{"directory", "file", "package", "service", "symlink", "user"}
 	if got := Names(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
@@ -85,6 +85,8 @@ func TestSchemas(t *testing.T) {
 		{"package", `{"name":"nginx","strictness":"exact"}`, false}, // exact needs a version
 		{"package", `{"name":"nginx; rm -rf /"}`, false},
 		{"package", `{"name":"-o=Dpkg::x"}`, false}, // must not look like an option
+		{"package", `{"name":"nginx-"}`, false},     // apt reads "foo-" as "remove foo"
+		{"package", `{"name":"g++"}`, true},
 		{"service", `{"name":"nginx","state":"running","enabled":true,"restart_on":["file:/etc/nginx/sites-enabled/default"]}`, true},
 		{"service", `{"name":"nginx","restart_on":["not-an-id"]}`, false},
 		{"service", `{"name":"nginx","enabled":"yes"}`, false},
@@ -100,6 +102,14 @@ func TestSchemas(t *testing.T) {
 		{"user", `{"name":"-x"}`, false},
 		{"user", `{"name":"deploy","ssh_keys":["command=\"x\" ` + key + `"]}`, false}, // no key options
 		{"user", `{"name":"deploy","password":"x"}`, false},                           // no passwords in the slice
+		{"symlink", `{"path":"/etc/nginx/sites-enabled/app","target":"../sites-available/app"}`, true},
+		{"symlink", `{"path":"/usr/local/bin/tool","target":"/opt/tool/bin/tool","state":"present"}`, true},
+		{"symlink", `{"path":"/etc/nginx/sites-enabled/app","state":"absent"}`, true},
+		{"symlink", `{"path":"/etc/nginx/sites-enabled/app"}`, false},       // present needs a target
+		{"symlink", `{"path":"/etc/x","target":""}`, false},                 // empty target
+		{"symlink", `{"path":"/etc/x","target":"a\u0000b"}`, false},         // NUL in target
+		{"symlink", `{"path":"/etc/../x","target":"y"}`, false},             // no ".." in the path
+		{"symlink", `{"path":"/etc/x","target":"y","owner":"root"}`, false}, // unknown attribute
 	}
 	schemas := map[string]*jsonschema.Schema{}
 	for _, tt := range tests {

@@ -162,7 +162,18 @@
           </h3>
           <RiskBadge risk={r.risk} />
         </div>
-        {#if r.action === "restart"}
+        {#if r.after?.length}
+          <p class="order">
+            after {#each r.after as a, j (j)}{j ? ", " : ""}<code class="mono">{a}</code>{/each}
+          </p>
+        {/if}
+        {#if r.action === "restart" && r.restart_by?.length}
+          <p class="order">
+            restart because of {#each r.restart_by as c, j (j)}{j ? ", " : ""}<code class="mono"
+                >{c}</code
+              >{/each}
+          </p>
+        {:else if r.action === "restart"}
           <p class="muted">
             {r.resource.startsWith("guest:")
               ? "The guest restarts. Its services are down for a short time."
@@ -241,6 +252,14 @@
     gap: var(--space-2);
     align-items: center;
     flex-wrap: wrap;
+  }
+  .order {
+    margin: 0 0 var(--space-2);
+    color: var(--color-text-muted);
+    overflow-wrap: anywhere;
+  }
+  .order code {
+    color: var(--color-text);
   }
   .restart {
     border-left: 4px solid var(--color-warn);

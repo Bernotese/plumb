@@ -45,7 +45,10 @@ func Rows(set *Set) ([]store.DocRow, error) {
 }
 
 // Load reads the documents of a revision and validates them again. Every
-// stored body must be in canonical form and match its hash.
+// stored body must be in canonical form and match its hash. One rule is
+// softer than in Validate: a Target whose apply order has a cycle loads,
+// and Set.Cycles names it (D-168). Such a revision is from before the
+// save-time check; if Load refused it, no proposal could repair it.
 func Load(ctx context.Context, st *store.Store, revision int64) (*Set, error) {
 	rows, err := st.RevisionDocs(ctx, revision)
 	if err != nil {
@@ -62,7 +65,7 @@ func Load(ctx context.Context, st *store.Store, revision int64) (*Set, error) {
 		}
 		docs = append(docs, d)
 	}
-	set, err := Validate(docs)
+	set, err := validate(docs, DefaultLimits, true)
 	if err != nil {
 		return nil, fmt.Errorf("state: revision %d is no longer valid: %w", revision, err)
 	}

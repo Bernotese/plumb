@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/Bernotese/plumb/internal/resource"
+	"github.com/Bernotese/plumb/internal/wire"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -309,6 +310,8 @@ type block struct {
 	secrets   map[string]bool    // secret parameters: writeOnly strings (D-088)
 	defaults  map[string]any
 	resources []blockResource
+	after     []string // spec.after: resource ids that each use comes after (D-167)
+	restarts  []string // spec.restarts: services that restart when a use changes (D-172)
 }
 
 // Set is a validated set of documents: every document matches its schema,
@@ -324,6 +327,23 @@ type Set struct {
 	// invalid holds documents that are in the input but have errors, so
 	// a reference to them is "invalid", not "does not exist".
 	invalid map[[2]string]bool
+	// stored: the set is a stored revision (Load). An apply-order cycle of
+	// a Target is then no error; it goes to cycles (D-168).
+	stored bool
+	cycles map[string]string // Target → cycle text
+}
+
+// Cycles returns the Targets of a stored revision whose apply order has a
+// cycle, with the text of the cycle. Such a revision is from before the
+// save-time check of D-168: it still loads, so that a proposal can repair
+// it, and its applies fail at the agent (D-055). A set from Validate has
+// none.
+func (s *Set) Cycles() map[string]string {
+	out := make(map[string]string, len(s.cycles))
+	for t, msg := range s.cycles {
+		out[t] = msg
+	}
+	return out
 }
 
 // Docs returns the documents of the set, ordered by kind and name.
@@ -354,7 +374,11 @@ func Validate(docs []Doc) (*Set, error) { return ValidateWithLimits(docs, Defaul
 // ValidateWithLimits is Validate with explicit render limits. The Set
 // keeps them for its Render calls.
 // A zero field of lim takes its value from DefaultLimits.
-func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
+func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) { return validate(docs, lim, false) }
+
+// validate makes a Set. stored is true for the documents of a stored
+// revision (Load): an apply-order cycle is then kept as a warning.
+func validate(docs []Doc, lim Limits, stored bool) (*Set, error) {
 	lim = lim.withDefaults()
 	sch := mustSchemas()
 	s := &Set{
@@ -364,6 +388,8 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 		rules:   map[string]Rule{},
 		limits:  lim,
 		invalid: map[[2]string]bool{},
+		stored:  stored,
+		cycles:  map[string]string{},
 	}
 	var errs Errors
 	seen := map[[2]string]bool{}
@@ -452,7 +478,11 @@ func ValidateWithLimits(docs []Doc, lim Limits) (*Set, error) {
 			errs = append(errs, &Error{Kind: KindTarget, Name: name, Msg: err.Error(), Err: err})
 			break
 		}
-		if _, err := s.render(name, total); err != nil {
+		r, err := s.render(name, total)
+		if err == nil && r.cycle != "" {
+			s.cycles[name] = r.cycle
+		}
+		if err != nil {
 			var es Errors
 			if errors.As(err, &es) {
 				errs = append(errs, es...)
@@ -476,6 +506,8 @@ func parseBlock(name string, spec json.RawMessage) (*block, Errors) {
 	var raw struct {
 		Params    json.RawMessage             `json:"params"`
 		Resources []map[string]map[string]any `json:"resources"`
+		After     []string                    `json:"after"`
+		Restarts  []string                    `json:"restarts"`
 	}
 	_ = decode(spec, &raw)
 	errf := func(path, format string, args ...any) *Error {
@@ -483,6 +515,15 @@ func parseBlock(name string, spec json.RawMessage) (*block, Errors) {
 	}
 	var errs Errors
 	b := &block{props: map[string]bool{}, secrets: map[string]bool{}, defaults: map[string]any{}}
+	// after names resources that the agent applies (D-168). Whether they
+	// are on a Target is a question of the Target: render checks it.
+	for i, id := range raw.After {
+		typ, _, _ := wire.SplitID(id)
+		if _, ok := resource.Lookup(typ); !ok {
+			errs = append(errs, errf(ptr("/spec/after", i), "after: %q has no known resource type", id))
+		}
+	}
+	b.after, b.restarts = raw.After, raw.Restarts
 	if raw.Params != nil {
 		var p struct {
 			Properties map[string]json.RawMessage `json:"properties"`

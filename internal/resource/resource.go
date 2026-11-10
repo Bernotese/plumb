@@ -10,6 +10,7 @@ import (
 	"context"
 	"embed"
 	"sort"
+	"sync"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -25,8 +26,11 @@ type State map[string]any
 //   - Observe changes nothing.
 //   - Diff is pure. It returns no change when the guest equals the desired
 //     state, with the strictness of the resource applied. For an attribute in
-//     wire.Resource.Sensitive it sets only Change.Changed, never From or To.
-//   - Apply is idempotent and applies only the given changes.
+//     wire.Resource.Sensitive it compares locally and returns only
+//     {Attr, Sensitive: true, Risk}, never From or To (D-037, D-047).
+//   - Apply is idempotent and applies only the given changes. It takes the
+//     values from the desired attributes, never from Change.To, so it also
+//     works for sensitive changes.
 //   - A resource that is not on the guest is observed as state "absent"
 //     (wire.AttrState, wire.StateAbsent), so wire.ActionOf can tell create,
 //     update and delete apart.
@@ -45,14 +49,40 @@ type Resource interface {
 }
 
 // Runner runs a command on the guest. Tests replace it with a fake.
+// Output is stdout. A command that exits non-zero returns an *ExitError.
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) (output []byte, err error)
 }
 
 // Env is what a resource may touch. Tests point Root at a temp directory.
+// Build it with NewEnv.
 type Env struct {
 	Root string // file-system root of the guest, "/" in production
 	Run  Runner
+	// PackageLock serializes every package-manager call of one guest.
+	PackageLock *sync.Mutex
+	// AccountLock serializes useradd, usermod and userdel of one guest:
+	// Blocks apply in parallel, and the shadow tools lock /etc/passwd.
+	AccountLock *sync.Mutex
+}
+
+// MaxOutput is the longest Item.Output in bytes.
+const MaxOutput = 4096
+
+// HiddenOutput is the Item.Output of a resource with sensitive attributes.
+const HiddenOutput = "output hidden: the resource has sensitive attributes"
+
+// SafeOutput is the only way to build wire.Item.Output for a resource
+// (wire.Redact does not cover Output). Command output and error texts are
+// untrusted: they can hold the desired secret and also the old value that
+// is on the guest now, which the controller never knows. So a resource with
+// sensitive attributes gets HiddenOutput instead of the text. For all other
+// resources the text is cut to MaxOutput bytes.
+func SafeOutput(r wire.Resource, text string) string {
+	if len(r.Sensitive) > 0 {
+		return HiddenOutput
+	}
+	return clip(text, MaxOutput)
 }
 
 // Factory builds a resource from its rendered form.
@@ -72,11 +102,12 @@ var schemas embed.FS
 // types is the table of all resource types. Add a type here, add its
 // schema file and its Go file. Nothing else registers types.
 var types = map[string]Type{
-	"file":      {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"directory": {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
-	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
+	"file":      {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFile},
+	"directory": {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newDirectory},
+	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
+	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
+	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
+	"symlink":   {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
 }
 
 // Lookup returns the type with the given name.

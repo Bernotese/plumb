@@ -63,9 +63,9 @@ lint-go:
 lint-web: $(WEB_DEPS)
 	cd web && npm run lint
 
-## test-guest: resource tests inside Debian and Ubuntu containers (stub; T-007 fills it)
+## test-guest: resource tests in privileged Debian/Ubuntu containers (tags removed; layer cache kept)
 test-guest:
-	@echo "test-guest: not implemented yet (T-007)"; exit 1
+	bash test/guest/run.sh
 
 ## test-pve: tests against a real Proxmox host; needs the PLUMB_PVE_* variables
 ## (internal/driver/proxmox/host_test.go). T-013 adds the installer checks.

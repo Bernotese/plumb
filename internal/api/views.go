@@ -97,6 +97,8 @@ type resourcePlanView struct {
 	Risk       wire.Risk     `json:"risk"`
 	Changes    []wire.Change `json:"changes"`
 	Unverified bool          `json:"unverified,omitempty"`
+	After      []string      `json:"after,omitempty"`      // D-171
+	RestartBy  []string      `json:"restart_by,omitempty"` // D-171
 }
 
 type targetPlanView struct {
@@ -154,7 +156,7 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 				action = wire.ActionUpdate
 			}
 			tv.Resources = append(tv.Resources, resourcePlanView{Resource: rc.Resource, Action: action, Risk: rc.Risk,
-				Changes: changes(rc.Changes), Unverified: rc.Unverified})
+				Changes: changes(rc.Changes), Unverified: rc.Unverified, After: rc.After, RestartBy: rc.RestartBy})
 			if rc.Unverified {
 				unverified++
 			}

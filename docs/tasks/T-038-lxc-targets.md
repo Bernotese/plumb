@@ -15,6 +15,8 @@ A Target with `type: lxc` is created from a Plumb template, enrolls with the `en
 - [ ] `pl-architect` turns the design into a plan with the facts from the host: upload limit and file names for `vztmpl`, clone type per storage, rights of the `Plumb` role for containers, the zstd dependency (own decision line).
 - [ ] The card then gets files, acceptance criteria and tests. Needs new architecture decisions.
 
+- (added by pl-lead, from the PR #73 review) The `symlink` resource uses `renameat2` flags (`RENAME_NOREPLACE`, `RENAME_EXCHANGE`). For LXC on ZFS they need ZFS ≥ 2.2 on the host. Check it on the test host and define the behaviour when the flags are not supported (clear error, no unsafe fallback).
+
 ## Out of scope
 - Privileged containers. Nested Docker in LXC.
 

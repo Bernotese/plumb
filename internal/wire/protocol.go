@@ -140,7 +140,7 @@ const (
 	StatusApplied   Status = "applied"   // apply made the Changes
 	StatusFailed    Status = "failed"    // apply or observe failed, see Output
 	StatusRefused   Status = "refused"   // the difference is not in the approved Plan, or a change is above max_risk; nothing of this resource was applied
-	StatusSkipped   Status = "skipped"   // an earlier resource of the same Block failed
+	StatusSkipped   Status = "skipped"   // not applied: an earlier resource of the same Block use, or a resource that it comes after (Resource.After), did not end unchanged or applied; or the apply ended first. Output names the cause (D-170)
 )
 
 // Item is the report for one resource.

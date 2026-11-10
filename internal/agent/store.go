@@ -1,0 +1,173 @@
+package agent
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/Bernotese/plumb/internal/wire"
+)
+
+// Files in Config.StateDir. Both are root-only (0600 in a 0700 directory):
+// the credential is a bearer secret, and the desired list can hold
+// sensitive values (D-037).
+const (
+	credentialFile = "credential"
+	desiredFile    = "desired.json"
+)
+
+// Tests replace these: removeFile to force a cleanup error, agentUID to
+// test the owner check without root.
+var (
+	removeFile = os.Remove
+	agentUID   = os.Geteuid
+)
+
+// stateDir stores the agent's files.
+type stateDir struct{ dir string }
+
+func (s stateDir) path(name string) string { return filepath.Join(s.dir, name) }
+
+// ensure creates the state dir with mode 0700, or checks an existing one:
+// a real directory (no symlink) owned by the agent's user with mode 0700.
+// It never changes an existing directory, so a wrong state_dir cannot break
+// the guest; New refuses to start instead (D-161).
+func (s stateDir) ensure() error {
+	fi, err := os.Lstat(s.dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(s.dir), 0o755); err != nil {
+			return err
+		}
+		if err := os.Mkdir(s.dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		fi, err = os.Lstat(s.dir)
+	}
+	if err != nil {
+		return err
+	}
+	uid := agentUID()
+	// A symlink or a non-directory cannot be repaired in place: only a new
+	// state_dir helps. Owner and mode can be fixed with chown and chmod.
+	var problem, fix string
+	repair := fmt.Sprintf("chown %d %s && chmod 0700 %s, or set state_dir to a new path", uid, s.dir, s.dir)
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	switch {
+	case fi.Mode()&fs.ModeSymlink != 0:
+		problem, fix = "is a symlink", "set state_dir to a new path"
+	case !fi.IsDir():
+		problem, fix = "is not a directory", "set state_dir to a new path"
+	case !ok || int(st.Uid) != uid:
+		problem, fix = "is not owned by the agent user", repair
+	case fi.Mode().Perm() != 0o700:
+		problem, fix = fmt.Sprintf("has mode %04o", fi.Mode().Perm()), repair
+	default:
+		return nil
+	}
+	return fmt.Errorf("state dir %s %s: it must be a real directory owned by uid %d with mode 0700 (fix: %s)",
+		s.dir, problem, uid, fix)
+}
+
+func (s stateDir) cleanStaleTemps() error {
+	if err := s.ensure(); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return err
+	}
+	var errs error // one bad file does not stop the cleanup of the others
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, ".desired.json-") && !strings.HasPrefix(name, ".credential-") {
+			continue
+		}
+		info, err := entry.Info() // Info does not follow symlinks.
+		if err != nil {
+			errs = errors.Join(errs, err)
+			continue
+		}
+		if info.Mode().IsRegular() {
+			if err := removeFile(s.path(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				errs = errors.Join(errs, err)
+			}
+		}
+	}
+	return errs
+}
+
+// write replaces a file atomically with mode 0600.
+func (s stateDir) write(name string, data []byte) error {
+	if err := s.ensure(); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(s.dir, "."+name+"-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // no-op after the rename
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), s.path(name))
+}
+
+// credential returns the stored credential, or "" when there is none.
+func (s stateDir) credential() (string, error) {
+	b, err := os.ReadFile(s.path(credentialFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return strings.TrimSpace(string(b)), err
+}
+
+func (s stateDir) saveCredential(c string) error { return s.write(credentialFile, []byte(c+"\n")) }
+
+func (s stateDir) dropCredential() error {
+	err := os.Remove(s.path(credentialFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// desired returns the stored desired list (empty when there is none).
+func (s stateDir) desired() ([]wire.Resource, error) {
+	b, err := os.ReadFile(s.path(desiredFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var list []wire.Resource
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (s stateDir) saveDesired(list []wire.Resource) error {
+	b, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	return s.write(desiredFile, b)
+}
