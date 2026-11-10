@@ -370,3 +370,38 @@ func TestPlanEdgeKinds(t *testing.T) {
 		t.Fatalf("reversed: needs %v, restartDeps %v", s.needs, s.restartDeps)
 	}
 }
+
+// S1 at the behaviour level: a resource that is in both after and
+// restart_on of a service keeps both rules. It changed → one restart (the
+// restart_on edge stays next to the after edge); it failed → the service is
+// skipped (after wins) and does not restart.
+func TestApplyAfterAndRestartOnSameResource(t *testing.T) {
+	conf := fileRes("pkg", "/srv/conf", map[string]any{"content": "c"})
+	dep := svcRes("pkg", "dep", nil)
+	tests := []struct {
+		name     string
+		list     []wire.Resource
+		st, out  string
+		restarts int
+	}{
+		{"changed", []wire.Resource{conf, svcRes("site", "web", []string{conf.ID}, conf.ID)}, "applied", "", 1},
+		{"failed", []wire.Resource{dep, svcRes("site", "web", []string{dep.ID}, dep.ID)}, "skipped", "not applied: service:dep was failed", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bothOrders(t, tt.list, func(t *testing.T, list []wire.Resource) {
+				ca := newCA(t)
+				ctl := newController(t, ca, "tok-1")
+				ta := startAgent(t, ctl, ca, "tok-1")
+				ta.runner.onUnit = units(map[string]func(context.Context, string) error{
+					"dep": func(context.Context, string) error { return errors.New("broken") },
+				})
+				items := applyNow(t, context.Background(), ta, list, wire.RiskDisruptive)
+				want(t, items, map[string][2]string{"service:web": {tt.st, tt.out}})
+				if n := ta.runner.count("systemctl", "restart"); n != tt.restarts {
+					t.Errorf("restarts = %d, want %d", n, tt.restarts)
+				}
+			})
+		})
+	}
+}
