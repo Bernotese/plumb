@@ -20,14 +20,14 @@ func TestReplayPersistedBatchesFromCursorThenLive(t *testing.T) {
 	const cursor = int64(17)
 	sub := reopened.Subscribe(ctx, cursor)
 	for want := cursor + 1; want <= count; want++ {
-		if e := recv(t, sub); e.Seq != want || e.Type != "stored" {
+		if e := recv(t, sub.C); e.Seq != want || e.Type != "stored" {
 			t.Fatalf("replay got %+v, want seq %d", e, want)
 		}
 	}
 	if _, err := reopened.Emit(ctx, "live", "target:web1", "system", nil); err != nil {
 		t.Fatal(err)
 	}
-	if e := recv(t, sub); e.Seq != count+1 || e.Type != "live" {
+	if e := recv(t, sub.C); e.Seq != count+1 || e.Type != "live" {
 		t.Fatalf("replay/live boundary duplicated or lost an event: %+v", e)
 	}
 	// Reconnect after the last sequence excludes that event.
@@ -35,7 +35,7 @@ func TestReplayPersistedBatchesFromCursorThenLive(t *testing.T) {
 	if _, err := reopened.Emit(ctx, "next", "target:web1", "system", nil); err != nil {
 		t.Fatal(err)
 	}
-	if e := recv(t, reconnect); e.Seq != count+2 || e.Type != "next" {
+	if e := recv(t, reconnect.C); e.Seq != count+2 || e.Type != "next" {
 		t.Fatalf("reconnect returned the cursor or missed its successor: %+v", e)
 	}
 }

@@ -129,35 +129,49 @@ func (d *Driver) Guests() []driver.GuestID {
 	return ids
 }
 
-// task runs fn as an async hypervisor task: it starts after Latency and
-// the caller waits for it or for ctx. fn runs with the lock held.
-func (d *Driver) task(ctx context.Context, op Op, fn func() error) error {
+// task runs fn as an async hypervisor task: it starts after the latency
+// and the caller waits for it or for ctx. fn runs with the lock held. Its
+// result comes back only through the channel, so a task that the caller
+// gave up on cannot write into the caller's variables.
+func task[T any](ctx context.Context, d *Driver, op Op, fn func() (T, error)) (T, error) {
+	var zero T
 	d.mu.Lock()
 	d.calls[op]++
 	if q := d.failures[op]; len(q) > 0 {
 		err := q[0]
 		d.failures[op] = q[1:]
 		d.mu.Unlock()
-		return err
+		return zero, err
 	}
 	latency := d.latency
 	d.mu.Unlock()
-	done := make(chan error, 1) // buffered: an abandoned task does not leak
+	type result struct {
+		v   T
+		err error
+	}
+	done := make(chan result, 1) // buffered: an abandoned task does not leak
 	go func() {
 		if latency > 0 {
 			time.Sleep(latency)
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		done <- fn()
+		v, err := fn()
+		done <- result{v, err}
 	}()
 	select {
-	case err := <-done:
-		return err
+	case r := <-done:
+		return r.v, r.err
 	case <-ctx.Done():
 		// Like Proxmox: the task may still finish in the background.
-		return ctx.Err()
+		return zero, ctx.Err()
 	}
+}
+
+// do is task for methods without a result.
+func (d *Driver) do(ctx context.Context, op Op, fn func() error) error {
+	_, err := task(ctx, d, op, func() (struct{}, error) { return struct{}{}, fn() })
+	return err
 }
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -165,24 +179,21 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // FetchImage records the image. It refuses a bad checksum or a non-HTTPS
 // URL. The same name and checksum give the same ref.
 func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.ImageRef, error) {
-	var ref driver.ImageRef
-	err := d.task(ctx, OpFetchImage, func() error {
+	return task(ctx, d, OpFetchImage, func() (driver.ImageRef, error) {
 		if !sha256Hex.MatchString(spec.SHA256) {
-			return errors.New("fake: image checksum must be 64 hex digits")
+			return "", errors.New("fake: image checksum must be 64 hex digits")
 		}
 		if !strings.HasPrefix(spec.URL, "https://") {
-			return errors.New("fake: image URL must use https")
+			return "", errors.New("fake: image URL must use https")
 		}
 		key := spec.Name + "@" + spec.SHA256
 		if r, ok := d.images[key]; ok {
-			ref = r
-			return nil
+			return r, nil
 		}
-		ref = driver.ImageRef(fmt.Sprintf("tpl-%d", 9000+len(d.images)))
+		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", 9000+len(d.images)))
 		d.images[key] = ref
-		return nil
+		return ref, nil
 	})
-	return ref, err
 }
 
 func (d *Driver) hasImage(ref driver.ImageRef) bool {
@@ -196,20 +207,19 @@ func (d *Driver) hasImage(ref driver.ImageRef) bool {
 
 // Create makes and starts a guest with the token.
 func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.Bootstrap) (driver.GuestID, error) {
-	var id driver.GuestID
-	err := d.task(ctx, OpCreate, func() error {
+	return task(ctx, d, OpCreate, func() (driver.GuestID, error) {
 		if !d.hasImage(spec.Image) {
-			return fmt.Errorf("fake: image %s: %w", spec.Image, driver.ErrNotFound)
+			return "", fmt.Errorf("fake: image %s: %w", spec.Image, driver.ErrNotFound)
 		}
 		if spec.Name == "" || spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
-			return errors.New("fake: incomplete guest spec")
+			return "", errors.New("fake: incomplete guest spec")
 		}
 		for _, g := range d.guests {
 			if g.spec.Name == spec.Name {
-				return fmt.Errorf("fake: guest name %q is taken", spec.Name)
+				return "", fmt.Errorf("fake: guest name %q is taken", spec.Name)
 			}
 		}
-		id = driver.GuestID(strconv.Itoa(d.nextID))
+		id := driver.GuestID(strconv.Itoa(d.nextID))
 		ip := strings.SplitN(spec.IP, "/", 2)[0]
 		if spec.IP == "" || spec.IP == "dhcp" {
 			ip = fmt.Sprintf("10.99.%d.%d", d.nextID/250, d.nextID%250+2)
@@ -217,28 +227,25 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		d.nextID++
 		spec.SSHKeys = append([]string(nil), spec.SSHKeys...)
 		d.guests[id] = &guest{spec: spec, power: driver.PowerRunning, token: boot.Token, ip: ip}
-		return nil
+		return id, nil
 	})
-	return id, err
 }
 
 // Observe returns the settings, the digest, the power state and the IPs.
 func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestState, error) {
-	var st driver.GuestState
-	err := d.task(ctx, OpObserve, func() error {
+	return task(ctx, d, OpObserve, func() (driver.GuestState, error) {
 		g, ok := d.guests[id]
 		if !ok {
-			return driver.ErrNotFound
+			return driver.GuestState{}, driver.ErrNotFound
 		}
 		spec := g.spec
 		spec.SSHKeys = append([]string(nil), g.spec.SSHKeys...)
-		st = driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power}
+		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power}
 		if g.power == driver.PowerRunning {
 			st.IPs = []string{g.ip}
 		}
-		return nil
+		return st, nil
 	})
-	return st, err
 }
 
 // digest changes whenever the config changes, like the Proxmox digest.
@@ -260,7 +267,7 @@ func (d *Driver) Diff(desired driver.GuestSpec, observed driver.GuestState) ([]w
 // Update applies changes. A create-only attribute is refused. The new
 // token in boot becomes active at the next cold start.
 func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.Change, boot *driver.Bootstrap) error {
-	return d.task(ctx, OpUpdate, func() error {
+	return d.do(ctx, OpUpdate, func() error {
 		g, ok := d.guests[id]
 		if !ok {
 			return driver.ErrNotFound
@@ -308,7 +315,7 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 // Power runs a power action. A pending token becomes active at a start
 // from stopped or at a restart.
 func (d *Driver) Power(ctx context.Context, id driver.GuestID, action driver.PowerAction) error {
-	return d.task(ctx, OpPower, func() error {
+	return d.do(ctx, OpPower, func() error {
 		g, ok := d.guests[id]
 		if !ok {
 			return driver.ErrNotFound
@@ -333,7 +340,7 @@ func (d *Driver) Power(ctx context.Context, id driver.GuestID, action driver.Pow
 
 // Delete removes a guest.
 func (d *Driver) Delete(ctx context.Context, id driver.GuestID) error {
-	return d.task(ctx, OpDelete, func() error {
+	return d.do(ctx, OpDelete, func() error {
 		if _, ok := d.guests[id]; !ok {
 			return driver.ErrNotFound
 		}

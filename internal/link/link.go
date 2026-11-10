@@ -54,6 +54,12 @@ type Config struct {
 	// AgentBinary is served at GET /agent/v1/binary. The plumb binary
 	// embeds it; nil means 404.
 	AgentBinary []byte
+	// Sensitive returns the sensitive attributes of a resource in the head
+	// revision. known is false when the head revision has no such
+	// resource (or no revision exists). It must survive a restart, so it
+	// reads the store, never this package's memory. nil knows nothing
+	// (D-062).
+	Sensitive func(ctx context.Context, target, resourceID string) (attrs []string, known bool, err error)
 	// OnReport receives every report after validation and wire.Redact.
 	// An error makes the agent retry the report later (503).
 	OnReport func(ctx context.Context, d Delivery) error
@@ -72,6 +78,9 @@ type Link struct {
 	log    *slog.Logger
 	binary *limiter
 	enroll *limiter
+	// authFail limits failed credential checks per client, so bad
+	// bearers cannot make the controller do unbounded work.
+	authFail *limiter
 
 	mu      sync.Mutex
 	targets map[string]*targetState
@@ -81,11 +90,19 @@ type Link struct {
 // the commands it has received and not answered, the sensitive attribute
 // lists of the resources it was sent, and its last poll.
 type targetState struct {
+	// agentID is the agent that may take commands and send reports.
+	// "" means unknown (after a controller restart): the store decides,
+	// because a new token deletes the old agent row. revokedAgent means a
+	// new token exists and no agent has enrolled with it yet.
+	agentID     string
 	queue       []wire.Command
 	wake        chan struct{} // closed and replaced when a command is queued
 	outstanding map[string]bool
-	sensitive   map[string][]string // resource id → sensitive attributes
-	lastPoll    time.Time
+	sensitive   map[string][]string // resource id → sensitive attributes; a key means "known"
+	// secrets holds the sensitive desired values that link sent, per
+	// resource. They are masked in Output and Error (defence in depth).
+	secrets  map[string][]string
+	lastPoll time.Time
 }
 
 // New loads or creates the Plumb CA and the listener certificate.
@@ -102,6 +119,11 @@ func New(cfg Config) (*Link, error) {
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("link: %w", err)
 	}
+	if info, err := os.Stat(cfg.Dir); err != nil {
+		return nil, fmt.Errorf("link: %w", err)
+	} else if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("link: %s has mode %v; it must be 0700", cfg.Dir, info.Mode().Perm())
+	}
 	ca, err := loadOrCreateCA(cfg.Dir, cfg.Now())
 	if err != nil {
 		return nil, err
@@ -117,9 +139,11 @@ func New(cfg Config) (*Link, error) {
 	return &Link{
 		cfg: cfg, ca: ca, cert: cert, now: cfg.Now, log: cfg.Logger,
 		// binary: 3 per client, then one per 20 s; enroll: 10, then one per 6 s.
-		binary:  newLimiter(cfg.Now, 20*time.Second, 3, 30),
-		enroll:  newLimiter(cfg.Now, 6*time.Second, 10, 100),
-		targets: map[string]*targetState{},
+		binary: newLimiter(cfg.Now, 20*time.Second, 3, 30),
+		enroll: newLimiter(cfg.Now, 6*time.Second, 10, 100),
+		// 20 failures per client, then one per 3 s.
+		authFail: newLimiter(cfg.Now, 3*time.Second, 20, 200),
+		targets:  map[string]*targetState{},
 	}, nil
 }
 
@@ -211,9 +235,12 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 		return "", time.Time{}, err
 	}
 	l.mu.Lock()
-	if ts, ok := l.targets[target]; ok {
+	if ts := l.target(target); ts != nil {
 		ts.lastPoll = time.Time{}
 		ts.outstanding = map[string]bool{}
+		ts.agentID = revokedAgent
+		close(ts.wake) // waiting polls of the old agent end now (with 401)
+		ts.wake = make(chan struct{})
 	}
 	l.mu.Unlock()
 	l.emit(ctx, "agent.token_created", target, "system", map[string]any{"expires_at": expires.UTC()})
@@ -233,6 +260,17 @@ var dummyHash = hashSecret("no agent")
 
 // authenticate returns the agent of the bearer credential.
 func (l *Link) authenticate(r *http.Request) (store.Agent, bool) {
+	if l.authFail.blocked(r) {
+		return store.Agent{}, false
+	}
+	agent, ok := l.checkCredential(r)
+	if !ok {
+		l.authFail.allow(r) // count the failure
+	}
+	return agent, ok
+}
+
+func (l *Link) checkCredential(r *http.Request) (store.Agent, bool) {
 	auth := r.Header.Get("Authorization")
 	cred, ok := strings.CutPrefix(auth, "Bearer ")
 	if !ok || len(cred) > 256 {
@@ -315,6 +353,7 @@ func (l *Link) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	l.mu.Lock()
 	ts := l.target(agent.Target)
 	ts.outstanding = map[string]bool{}
+	ts.agentID = agent.ID
 	l.mu.Unlock()
 	l.emit(r.Context(), "agent.enrolled", agent.Target, "agent:"+agent.Target,
 		map[string]any{"agent_id": agent.ID, "hostname": agent.Hostname, "version": agent.Version})
@@ -330,11 +369,26 @@ func printable(s string) bool {
 	return true
 }
 
+// revokedAgent is an agentID that no agent has.
+const revokedAgent = "-"
+
+// current reports whether the agent is the current agent of its target,
+// and binds an unknown target to it. The caller holds l.mu. The check
+// runs under the same lock as every dequeue, so a poll that started
+// before a re-enrollment cannot take a command after it.
+func (l *Link) current(ts *targetState, agentID string) bool {
+	if ts.agentID == "" {
+		ts.agentID = agentID // first call after a restart; authenticate checked the store
+	}
+	return ts.agentID == agentID
+}
+
 // target returns the state of a target. The caller holds l.mu.
 func (l *Link) target(name string) *targetState {
 	ts, ok := l.targets[name]
 	if !ok {
-		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]bool{}, sensitive: map[string][]string{}}
+		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]bool{},
+			sensitive: map[string][]string{}, secrets: map[string][]string{}}
 		l.targets[name] = ts
 	}
 	return ts
@@ -365,6 +419,11 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 	for {
 		l.mu.Lock()
 		ts := l.target(agent.Target)
+		if !l.current(ts, agent.ID) {
+			l.mu.Unlock()
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		ts.lastPoll = now
 		if len(ts.queue) > 0 {
 			cmd := ts.queue[0]
@@ -412,9 +471,17 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 	ts := l.target(target)
 	if typ == wire.CommandWatch {
 		ts.sensitive = map[string][]string{} // the watch list is the full desired list
+		ts.secrets = map[string][]string{}
 	}
 	for _, res := range withResources.Resources {
-		ts.sensitive[res.ID] = append([]string(nil), res.Sensitive...)
+		ts.sensitive[res.ID] = append([]string{}, res.Sensitive...)
+		var values []string
+		for _, attr := range res.Sensitive {
+			if v, ok := res.Attrs[attr].(string); ok && len(v) >= minMaskLen {
+				values = append(values, v)
+			}
+		}
+		ts.secrets[res.ID] = values
 	}
 	ts.queue = append(ts.queue, wire.Command{ID: id, Type: typ, Body: raw})
 	close(ts.wake)
@@ -466,9 +533,42 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Source 1 of D-062: the head revision. It reads the store, so it runs
+	// before l.mu is taken.
+	type headList struct {
+		attrs []string
+		known bool
+	}
+	head := make([]headList, len(rep.Items))
+	if l.cfg.Sensitive != nil {
+		cache := map[string]headList{}
+		for i, it := range rep.Items {
+			if len(it.Changes) == 0 && it.Output == "" {
+				continue
+			}
+			h, ok := cache[it.Resource]
+			if !ok {
+				attrs, known, err := l.cfg.Sensitive(r.Context(), agent.Target, it.Resource)
+				if err != nil {
+					l.log.Error("sensitive lookup", "target", agent.Target, "err", err)
+					writeError(w, http.StatusServiceUnavailable, "try again")
+					return
+				}
+				h = headList{attrs, known}
+				cache[it.Resource] = h
+			}
+			head[i] = h
+		}
+	}
+
 	// A result or progress must answer a command that this target got.
 	l.mu.Lock()
 	ts := l.target(agent.Target)
+	if !l.current(ts, agent.ID) {
+		l.mu.Unlock()
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	if rep.Type == wire.ReportResult || rep.Type == wire.ReportProgress {
 		if !ts.outstanding[rep.CommandID] {
 			l.mu.Unlock()
@@ -479,12 +579,35 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 			delete(ts.outstanding, rep.CommandID)
 		}
 	}
-	// Redact with the sensitive lists of what was sent (D-047). A change
-	// marked sensitive by the agent loses its values too.
+	// D-062: a change loses its values when the head revision, the sent
+	// list or the agent marks it. A resource that neither the head nor the
+	// sent list knows loses the values of every change.
+	var secrets []string
 	for i := range rep.Items {
-		rep.Items[i].Changes = wire.Redact(ts.sensitive[rep.Items[i].Resource], rep.Items[i].Changes)
+		it := &rep.Items[i]
+		sent, sentKnown := ts.sensitive[it.Resource]
+		attrs := append(append([]string{}, head[i].attrs...), sent...)
+		if !head[i].known && !sentKnown {
+			attrs = attrs[:0]
+			for _, c := range it.Changes {
+				attrs = append(attrs, c.Attr)
+			}
+		}
+		it.Changes = wire.Redact(attrs, it.Changes)
+		secrets = append(secrets, ts.secrets[it.Resource]...)
+	}
+	for _, v := range ts.secrets {
+		if rep.Error != "" {
+			secrets = append(secrets, v...)
+		}
 	}
 	l.mu.Unlock()
+	// Defence in depth (review T-009): sensitive desired values that link
+	// sent never pass in Output or Error, even if the agent has a bug.
+	for i := range rep.Items {
+		rep.Items[i].Output = mask(rep.Items[i].Output, secrets)
+	}
+	rep.Error = mask(rep.Error, secrets)
 
 	if rep.Type == wire.ReportHello {
 		if err := l.cfg.Store.UpdateAgentInfo(r.Context(), agent.ID, rep.Hello.Version, rep.Hello.Hostname); err != nil {
@@ -504,6 +627,20 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// minMaskLen is the shortest value that mask replaces; shorter values
+// would blank out ordinary text.
+const minMaskLen = 4
+
+// mask replaces every secret value in s.
+func mask(s string, secrets []string) string {
+	for _, v := range secrets {
+		if s != "" && len(v) >= minMaskLen {
+			s = strings.ReplaceAll(s, v, "[redacted]")
+		}
+	}
+	return s
 }
 
 // validateReport checks a report against the wire types and limits.

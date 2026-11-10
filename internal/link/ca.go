@@ -41,10 +41,17 @@ type CA struct {
 
 // loadOrCreateCA reads the CA from dir, or creates it at first start.
 func loadOrCreateCA(dir string, now time.Time) (*CA, error) {
-	certPEM, key, err := readPair(dir, caCertFile, caKeyFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return createCA(dir, now)
+	_, certErr := os.Stat(filepath.Join(dir, caCertFile))
+	_, keyErr := os.Stat(filepath.Join(dir, caKeyFile))
+	switch {
+	case errors.Is(certErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist):
+		return createCA(dir, now) // first start
+	case errors.Is(certErr, os.ErrNotExist) || errors.Is(keyErr, os.ErrNotExist):
+		// A new CA would lock out every enrolled agent without a word.
+		return nil, fmt.Errorf("link: only one of %s and %s exists in %s; restore the missing file (a new CA needs re-enrollment of every agent)",
+			caCertFile, caKeyFile, dir)
 	}
+	certPEM, key, err := readPair(dir, caCertFile, caKeyFile)
 	if err != nil {
 		return nil, err
 	}

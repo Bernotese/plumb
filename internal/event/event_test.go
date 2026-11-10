@@ -46,10 +46,10 @@ func TestAppendAndSubscribe(t *testing.T) {
 	}
 	// Replay starts after the given sequence number.
 	sub := l.Subscribe(ctx, 1)
-	if e := recv(t, sub); e.Seq != 2 || e.Subject != "target:t2" || string(e.Data) != `{"i":2}` {
+	if e := recv(t, sub.C); e.Seq != 2 || e.Subject != "target:t2" || string(e.Data) != `{"i":2}` {
 		t.Fatalf("first replayed event: %+v", e)
 	}
-	if e := recv(t, sub); e.Seq != 3 {
+	if e := recv(t, sub.C); e.Seq != 3 {
 		t.Fatalf("second replayed event: %+v", e)
 	}
 	// Live events follow without a gap, also when many arrive at once.
@@ -59,18 +59,43 @@ func TestAppendAndSubscribe(t *testing.T) {
 		}
 	}()
 	for want := int64(4); want < 254; want++ {
-		if e := recv(t, sub); e.Seq != want || string(e.Data) != `{}` {
+		if e := recv(t, sub.C); e.Seq != want || string(e.Data) != `{}` {
 			t.Fatalf("got %+v, want seq %d", e, want)
 		}
 	}
 	cancel()
 	select {
-	case _, ok := <-sub:
+	case _, ok := <-sub.C:
 		if ok {
 			t.Fatal("event after cancel")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("subscription did not close")
+	}
+	if err := sub.Err(); err != nil {
+		t.Errorf("a cancel is no error: %v", err)
+	}
+}
+
+// A store failure closes the subscription with an error (review T-009 nit 8).
+func TestSubscribeStoreError(t *testing.T) {
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "plumb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := New(st)
+	st.Close()
+	sub := l.Subscribe(context.Background(), 0)
+	select {
+	case _, ok := <-sub.C:
+		if ok {
+			t.Fatal("event from a closed store")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("subscription did not close")
+	}
+	if sub.Err() == nil {
+		t.Error("store failure: want an error")
 	}
 }
 

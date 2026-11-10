@@ -249,7 +249,7 @@ func TestEnrollTokenRules(t *testing.T) {
 		t.Errorf("%d secrets found in clear text in the database", stored)
 	}
 	// Events hold no secret.
-	ch := f.events.Subscribe(context.Background(), 0)
+	ch := f.events.Subscribe(context.Background(), 0).C
 	var types []string
 	for range 7 { // 4 token events, 3 enrollments… read what is there
 		select {

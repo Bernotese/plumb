@@ -65,12 +65,28 @@ func (l *Log) waitChan() <-chan struct{} {
 // batch is how many events a subscriber reads from the store at once.
 const batch = 100
 
-// Subscribe returns a channel with every event after the sequence number
-// after, first the stored ones and then new ones, in order and without
-// gaps. The channel closes when ctx ends or the store fails. A slow
+// Subscription is a stream of events. C closes when the context ends or
+// the store fails; Err tells which.
+type Subscription struct {
+	C   <-chan Event
+	mu  sync.Mutex
+	err error
+}
+
+// Err returns nil after a context end, or the store error. Call it after
+// C is closed.
+func (s *Subscription) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
+}
+
+// Subscribe streams every event after the sequence number after, first
+// the stored ones and then new ones, in order and without gaps. A slow
 // reader slows only its own subscription.
-func (l *Log) Subscribe(ctx context.Context, after int64) <-chan Event {
+func (l *Log) Subscribe(ctx context.Context, after int64) *Subscription {
 	out := make(chan Event)
+	sub := &Subscription{C: out}
 	go func() {
 		defer close(out)
 		last := after
@@ -80,6 +96,11 @@ func (l *Log) Subscribe(ctx context.Context, after int64) <-chan Event {
 			wake := l.waitChan()
 			events, err := l.st.EventsAfter(ctx, last, batch)
 			if err != nil {
+				if ctx.Err() == nil {
+					sub.mu.Lock()
+					sub.err = err
+					sub.mu.Unlock()
+				}
 				return
 			}
 			for _, e := range events {
@@ -100,5 +121,5 @@ func (l *Log) Subscribe(ctx context.Context, after int64) <-chan Event {
 			}
 		}
 	}()
-	return out
+	return sub
 }

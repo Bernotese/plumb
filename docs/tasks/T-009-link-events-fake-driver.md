@@ -36,4 +36,5 @@ The controller can enroll agents, send them commands and receive reports. A fake
 - event: `Append`/`Emit`, `Subscribe(after)` (replay from store, then live, no gaps).
 - driver: shared `DiffGuest` + `CreateOnly` (D-063); `driver/fake` with async tasks, digest, `Fail`, `Tamper`, `Bootstrap`, token at next cold start.
 - Negative tests: token reuse/expired/replaced/unknown (one answer), credential of another target, re-enrollment, oversized report (413), bad reports (400), foreign command id (409), binary rate limit.
-- Open: `cmd/plumb` does not embed the agent binary yet (`Config.AgentBinary`); wiring belongs to the serve command.
+- AC5 (real embedded agent binary in `cmd/plumb`) moved to T-011 by pl-lead; `link` serves `Config.AgentBinary`.
+- Review fixes: queue bound to the current agent (must 1), D-062 three-source redaction with `Config.Sensitive` (must 2), CA half-missing error, dir mode, Output/Error masking, failed-auth limit, limiter cap, `Subscription.Err`, race in `driver/fake` tasks (found by the new CI race step). QA PR #12 merged; its revocation test passes.

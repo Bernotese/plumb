@@ -44,22 +44,48 @@ func (b *bucket) take(now time.Time, rate time.Duration, burst int) bool {
 	return true
 }
 
-// allow reports whether the request may run now.
-func (l *limiter) allow(r *http.Request) bool {
+func clientIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		ip = r.RemoteAddr
+		return r.RemoteAddr
 	}
+	return ip
+}
+
+// blocked reports whether the client has no token left. It takes none.
+func (l *limiter) blocked(r *http.Request) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	c, ok := l.clients[clientIP(r)]
+	if !ok {
+		return false
+	}
+	probe := *c
+	if !probe.take(l.now(), l.rate, l.burst) {
+		return true
+	}
+	return false
+}
+
+// maxClients bounds the memory of a limiter.
+const maxClients = 10000
+
+// allow reports whether the request may run now, and takes a token.
+func (l *limiter) allow(r *http.Request) bool {
+	ip := clientIP(r)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	c, ok := l.clients[ip]
 	if !ok {
-		if len(l.clients) > 10000 { // bound the memory; forget idle clients
+		if len(l.clients) >= maxClients { // bound the memory; forget idle clients
 			for k, v := range l.clients {
 				if now.Sub(v.last) > time.Duration(l.burst)*l.rate {
 					delete(l.clients, k)
 				}
+			}
+			if len(l.clients) >= maxClients {
+				return false // all of them are active: refuse new clients
 			}
 		}
 		c = &bucket{tokens: float64(l.burst)}
