@@ -37,12 +37,13 @@ var guestRisk = map[string]wire.Risk{
 // A difference in a create-only setting returns a *CreateOnlyError for
 // the first such attribute, in the order of CreateOnly.
 func DiffGuest(desired GuestSpec, observed GuestState) ([]wire.Change, error) {
-	for _, c := range DriftGuest(desired, observed) {
+	changes := DriftGuest(desired, observed)
+	for _, c := range changes {
 		if IsCreateOnly(c.Attr) {
 			return nil, &CreateOnlyError{Attr: c.Attr}
 		}
 	}
-	return DriftGuest(desired, observed), nil
+	return changes, nil
 }
 
 // DriftGuest lists every difference, the create-only ones included, for

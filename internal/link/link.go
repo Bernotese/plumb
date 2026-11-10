@@ -258,14 +258,17 @@ func splitCredential(c string) (id, sec string, ok bool) {
 // same time as a wrong secret.
 var dummyHash = hashSecret("no agent")
 
-// authenticate returns the agent of the bearer credential.
-func (l *Link) authenticate(r *http.Request) (store.Agent, bool) {
+// authenticate returns the agent or writes the authentication failure response.
+func (l *Link) authenticate(w http.ResponseWriter, r *http.Request) (store.Agent, bool) {
 	if l.authFail.blocked(r) {
+		w.Header().Set("Retry-After", strconv.Itoa(int((l.authFail.rate+time.Second-1)/time.Second)))
+		writeError(w, http.StatusTooManyRequests, "too many requests")
 		return store.Agent{}, false
 	}
 	agent, ok := l.checkCredential(r)
 	if !ok {
 		l.authFail.allow(r) // count the failure
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 	}
 	return agent, ok
 }
@@ -395,9 +398,8 @@ func (l *Link) target(name string) *targetState {
 }
 
 func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
-	agent, ok := l.authenticate(r)
+	agent, ok := l.authenticate(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	wait := 0
@@ -513,9 +515,8 @@ var agentStatuses = map[wire.Status]bool{
 }
 
 func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
-	agent, ok := l.authenticate(r)
+	agent, ok := l.authenticate(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	var rep wire.Report
