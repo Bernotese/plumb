@@ -129,6 +129,13 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 	v := planView{ID: p.ID, Origin: p.Origin, IssueID: nullID(p.IssueID), RollbackTo: nullID(p.RollbackTo), Status: p.Status, Risk: p.Risk,
 		Reason: p.Reason, Author: p.Author, CreatedAt: p.CreatedAt.UTC(), BaseRevision: nullID(p.BaseRevision),
 		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), HumanOnly: append([]string{}, p.HumanOnly...), Targets: []targetPlanView{}, Warnings: []string{}}
+	// Warnings of the origin, for example the secrets an import wrote (D-095).
+	var prop struct {
+		Notes []string `json:"notes"`
+	}
+	if json.Unmarshal(p.Proposal, &prop) == nil {
+		v.Warnings = append(v.Warnings, prop.Notes...)
+	}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {
 		v.RunID, v.Revision = &run.ID, &run.RevisionID
 	} else if err != store.ErrNotFound {
@@ -156,7 +163,7 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		case unverified > 0 && tp.Guest == "create":
 			v.Warnings = append(v.Warnings, fmt.Sprintf("%s is a new target: %d resources are unverified until the first boot.", tp.Target, unverified))
 		case unverified > 0:
-			v.Warnings = append(v.Warnings, fmt.Sprintf("%s: %d resources get a new secret and are not observed before the approval (D-156).", tp.Target, unverified))
+			v.Warnings = append(v.Warnings, fmt.Sprintf("%s: %d resources are not observed before the approval: they get a new secret, or a value that the import writes (D-156, D-158).", tp.Target, unverified))
 		}
 		v.Targets = append(v.Targets, tv)
 	}

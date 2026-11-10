@@ -156,3 +156,67 @@ func (s *Store) SetKeyCheck(ctx context.Context, v []byte) error {
 	}
 	return nil
 }
+
+// SecretWrite is one write of PutSecretsTx.
+type SecretWrite struct {
+	Name string
+	Seal SealFunc
+}
+
+// PutSecretsTx reads the rows of names and lets decide choose the writes,
+// all in one transaction: decide sees the rows as they are now, and an
+// error from it writes nothing. Each write takes the next version.
+func (s *Store) PutSecretsTx(ctx context.Context, names []string, by string, decide func(rows []SecretRow) ([]SecretWrite, error)) error {
+	updated := s.now()
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var rows []SecretRow
+		if len(names) > 0 {
+			args := make([]any, len(names))
+			for i, n := range names {
+				args[i] = n
+			}
+			r, err := tx.QueryContext(ctx,
+				`SELECT name, version, nonce, ciphertext, updated_by, updated_at FROM secret
+				 WHERE name IN (?`+strings.Repeat(", ?", len(names)-1)+`) ORDER BY name`, args...)
+			if err != nil {
+				return err
+			}
+			for r.Next() {
+				var row SecretRow
+				var at string
+				if err := r.Scan(&row.Name, &row.Version, &row.Nonce, &row.Ciphertext, &row.UpdatedBy, &at); err != nil {
+					r.Close()
+					return err
+				}
+				row.UpdatedAt, _ = parseTime(at)
+				rows = append(rows, row)
+			}
+			if err := errors.Join(r.Err(), r.Close()); err != nil {
+				return err
+			}
+		}
+		writes, err := decide(rows)
+		if err != nil {
+			return err
+		}
+		for _, w := range writes {
+			var version int64
+			if err := tx.QueryRowContext(ctx,
+				`UPDATE secret_counter SET value = value + 1 WHERE id = 1 RETURNING value`).Scan(&version); err != nil {
+				return err
+			}
+			nonce, ct, err := w.Seal(version)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO secret (name, version, nonce, ciphertext, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+				 ON CONFLICT (name) DO UPDATE SET version = excluded.version, nonce = excluded.nonce,
+				   ciphertext = excluded.ciphertext, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+				w.Name, version, nonce, ct, by, updated); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

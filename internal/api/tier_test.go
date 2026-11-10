@@ -46,7 +46,10 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/revisions", nil, TierRead, false},
 	{"GET", "/api/v1/revisions/999/diff", nil, TierRead, false},
 	{"POST", "/api/v1/revisions/999/rollback", map[string]string{"reason": "x"}, TierPlan, false},
-	{"GET", "/api/v1/events?since=-1", nil, TierRead, false}, // allowed → 400, so the stream never opens
+	{"GET", "/api/v1/export", nil, TierRead, false},                                              // allowed → 404 or 200
+	{"POST", "/api/v1/export", map[string]string{"passphrase": "short"}, TierAdmin, true},        // allowed → 422
+	{"POST", "/api/v1/import", map[string]string{"content": "x", "reason": ""}, TierAdmin, true}, // allowed → 422
+	{"GET", "/api/v1/events?since=-1", nil, TierRead, false},                                     // allowed → 400, so the stream never opens
 	{"GET", "/api/v1/tokens", nil, TierAdmin, true},
 	{"POST", "/api/v1/tokens", map[string]string{}, TierAdmin, true}, // allowed → 422, so no token is made
 	{"DELETE", "/api/v1/tokens/tok_nope", nil, TierAdmin, true},
