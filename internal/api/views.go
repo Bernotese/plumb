@@ -108,6 +108,7 @@ type planView struct {
 	ID           int64            `json:"id"`
 	Origin       string           `json:"origin"`
 	IssueID      *int64           `json:"issue_id"`
+	RollbackTo   *int64           `json:"rollback_to"`
 	Status       string           `json:"status"`
 	Risk         string           `json:"risk"`
 	Reason       string           `json:"reason"`
@@ -123,7 +124,7 @@ type planView struct {
 }
 
 func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
-	v := planView{ID: p.ID, Origin: p.Origin, IssueID: nullID(p.IssueID), Status: p.Status, Risk: p.Risk,
+	v := planView{ID: p.ID, Origin: p.Origin, IssueID: nullID(p.IssueID), RollbackTo: nullID(p.RollbackTo), Status: p.Status, Risk: p.Risk,
 		Reason: p.Reason, Author: p.Author, CreatedAt: p.CreatedAt.UTC(), BaseRevision: nullID(p.BaseRevision),
 		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), Targets: []targetPlanView{}, Warnings: []string{}}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {

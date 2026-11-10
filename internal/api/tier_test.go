@@ -38,10 +38,13 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/issues/999999", nil, TierRead, false},
 	{"POST", "/api/v1/issues/999999/resolve", map[string]string{"action": "revert"}, TierPlan, false},
 	{"POST", "/api/v1/issues/999999/comments", map[string]string{"body": "x"}, TierPlan, false},
-	{"GET", "/api/v1/events?since=-1", nil, TierRead, false}, // allowed → 400, so the stream never opens
 	{"GET", "/api/v1/secrets", nil, TierRead, false},
 	{"PUT", "/api/v1/secrets/tier-test", map[string]string{}, TierAdmin, true}, // allowed → 422 (no value)
 	{"DELETE", "/api/v1/secrets/nope", nil, TierAdmin, true},                   // allowed → 404
+	{"GET", "/api/v1/revisions", nil, TierRead, false},
+	{"GET", "/api/v1/revisions/999/diff", nil, TierRead, false},
+	{"POST", "/api/v1/revisions/999/rollback", map[string]string{"reason": "x"}, TierPlan, false},
+	{"GET", "/api/v1/events?since=-1", nil, TierRead, false}, // allowed → 400, so the stream never opens
 	{"GET", "/api/v1/tokens", nil, TierAdmin, true},
 	{"POST", "/api/v1/tokens", map[string]string{}, TierAdmin, true}, // allowed → 422, so no token is made
 	{"DELETE", "/api/v1/tokens/tok_nope", nil, TierAdmin, true},
