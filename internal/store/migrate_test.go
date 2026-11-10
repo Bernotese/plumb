@@ -143,6 +143,21 @@ func TestMigrateRefusesBrokenReference(t *testing.T) {
 		t.Fatal("Open migrated a database with a broken reference")
 	} else if !strings.Contains(err.Error(), "foreign key") {
 		t.Errorf("error: %v", err)
+	} else if !strings.Contains(err.Error(), `table "run"`) || !strings.Contains(err.Error(), "rowid") {
+		t.Errorf("error lacks broken row: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+		t.Errorf("user_version = %d, %v; want 2", version, err)
+	}
+	var secrets int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='secret'`).Scan(&secrets); err != nil || secrets != 0 {
+		t.Errorf("secret table count = %d, %v; want 0", secrets, err)
 	}
 }
 

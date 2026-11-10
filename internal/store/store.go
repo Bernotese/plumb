@@ -184,11 +184,24 @@ func migrateOne(ctx context.Context, conn *sql.Conn, m migration) error {
 		return err
 	}
 	broken := rows.Next()
+	var table, parent string
+	var rowID sql.NullInt64
+	var fkid int
+	if broken {
+		if err := rows.Scan(&table, &rowID, &parent, &fkid); err != nil {
+			rows.Close()
+			return err
+		}
+	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
 	if broken {
-		return errors.New("a foreign key is broken after the migration")
+		row := "null"
+		if rowID.Valid {
+			row = strconv.FormatInt(rowID.Int64, 10)
+		}
+		return fmt.Errorf("foreign key violation in table %q rowid %s referencing %q", table, row, parent)
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", m.version)); err != nil {
 		return err
