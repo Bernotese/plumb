@@ -1272,7 +1272,8 @@ paths:
         `n`, and returns its Plan (origin `rollback`). Nothing changes before the approval. The
         Plan follows every rule of `POST /plans`. Secret values have no history and do not roll
         back (D-093). A rollback that brings back a secret binding or changes a rule can be
-        approved by a human session only (`Plan.human_only`, D-099).
+        approved by a human session only (`Plan.human_only`, D-099). The Plan records `n` as
+        `rollback_to` (D-131).
       security:
         - session: []
         - token: [plan]
@@ -1293,6 +1294,7 @@ paths:
               example:
                 id: 16
                 origin: rollback
+                rollback_to: 6
                 issue_id: null
                 status: pending
                 risk: reversible
@@ -1333,7 +1335,6 @@ paths:
     get:
       tags: [secrets]
       operationId: listSecrets
-      x-plumb-planned: T-028
       summary: List secrets (names only)
       description: |
         Names and metadata of all secrets, sorted by name. No operation of this API returns a
@@ -1375,7 +1376,6 @@ paths:
     put:
       tags: [secrets]
       operationId: putSecret
-      x-plumb-planned: T-028
       summary: Create a secret or replace its value
       description: |
         Stores the value encrypted (D-087). Human session only. A new value changes no guest by
@@ -1408,7 +1408,6 @@ paths:
     delete:
       tags: [secrets]
       operationId: deleteSecret
-      x-plumb-planned: T-028
       summary: Delete a secret
       description: |
         Human session only. A secret that the head revision or a pending Plan uses cannot be
@@ -2001,6 +2000,7 @@ components:
           description: Field errors for 422. `pointer` is a JSON Pointer into the request body.
           items:
             type: object
+            additionalProperties: false
             required: [pointer, message]
             properties:
               pointer: { type: string }
@@ -2019,6 +2019,7 @@ components:
           items: { $ref: "#/components/schemas/Name" }
     Page:
       type: object
+      additionalProperties: false
       required: [items, next]
       properties:
         items: { type: array }
@@ -2028,6 +2029,7 @@ components:
 
     Session:
       type: object
+      additionalProperties: false
       required: [principal, must_change_password, tier, expires_at]
       properties:
         principal: { $ref: "#/components/schemas/Principal" }
@@ -2045,12 +2047,14 @@ components:
           description: Session expiry. `null` for a token without expiry.
     LoginRequest:
       type: object
+      additionalProperties: false
       required: [username, password]
       properties:
         username: { type: string, minLength: 1, maxLength: 64 }
         password: { type: string, minLength: 1, maxLength: 1024, format: password }
     ChangePasswordRequest:
       type: object
+      additionalProperties: false
       required: [current_password, new_password]
       properties:
         current_password: { type: string, minLength: 1, maxLength: 1024, format: password }
@@ -2078,12 +2082,14 @@ components:
       enum: [Image, Block, Target, Rule]
     DocumentRef:
       type: object
+      additionalProperties: false
       required: [kind, name]
       properties:
         kind: { $ref: "#/components/schemas/DocumentKind" }
         name: { $ref: "#/components/schemas/Name" }
     ImageView:
       type: object
+      additionalProperties: false
       description: An Image of the head revision.
       required: [revision, document]
       properties:
@@ -2093,6 +2099,7 @@ components:
         document: { $ref: "#/components/schemas/Image" }
     BlockView:
       type: object
+      additionalProperties: false
       description: A Block of the head revision.
       required: [revision, document]
       properties:
@@ -2102,6 +2109,7 @@ components:
         document: { $ref: "#/components/schemas/Block" }
     RuleView:
       type: object
+      additionalProperties: false
       description: A Rule of the head revision.
       required: [revision, document]
       properties:
@@ -2111,6 +2119,7 @@ components:
         document: { $ref: "#/components/schemas/Rule" }
     TargetView:
       type: object
+      additionalProperties: false
       description: A Target of the head revision plus its live status.
       required: [revision, document, status]
       properties:
@@ -2121,6 +2130,7 @@ components:
         status: { $ref: "#/components/schemas/TargetStatus" }
     TargetStatus:
       type: object
+      additionalProperties: false
       description: Live status. It is not part of the desired state.
       required: [phase, agent, power, open_issues]
       properties:
@@ -2156,6 +2166,7 @@ components:
           items: { $ref: "#/components/schemas/IgnoredDrift" }
     IgnoredDrift:
       type: object
+      additionalProperties: false
       required: [resource, rule, attrs, last_seen]
       properties:
         resource: { type: string, examples: ["file:/etc/motd"] }
@@ -2170,6 +2181,7 @@ components:
 
     Proposal:
       type: object
+      additionalProperties: false
       required: [reason]
       properties:
         reason: { type: string, minLength: 1, maxLength: 2000 }
@@ -2187,15 +2199,18 @@ components:
           items: { $ref: "#/components/schemas/Name" }
     RollbackRequest:
       type: object
+      additionalProperties: false
       required: [reason]
       properties:
         reason: { type: string, minLength: 1, maxLength: 2000 }
     ReasonRequest:
       type: object
+      additionalProperties: false
       properties:
         reason: { type: string, maxLength: 2000 }
     ApproveRequest:
       type: object
+      additionalProperties: false
       properties:
         comment: { type: string, maxLength: 2000 }
 
@@ -2243,6 +2258,7 @@ components:
         the result). `stale`: the head moved before approval.
     Plan:
       type: object
+      additionalProperties: false
       required:
         - id
         - origin
@@ -2268,6 +2284,15 @@ components:
         issue_id:
           $ref: "#/components/schemas/NullableId"
           description: The issue, for `revert`, `accept` and `ignore_rule`.
+        rollback_to:
+          type: [integer, "null"]
+          format: int64
+          minimum: 1
+          description: |
+            The revision `n` of `POST /revisions/{n}/rollback` (D-131). Set when `origin` is
+            `rollback`; missing or `null` for every other origin. The server sets it; no request
+            can send it. The Plan was built against `base_revision`, so the revision that an
+            approval commits has the same documents as revision `rollback_to`.
         status: { $ref: "#/components/schemas/PlanStatus" }
         risk: { $ref: "#/components/schemas/Risk" }
         reason: { type: string }
@@ -2303,6 +2328,7 @@ components:
             enum: [secret-binding, rule-change]
     PlannedSecret:
       type: object
+      additionalProperties: false
       description: A secret that a target gets, with the version that the Plan was made with.
       required: [name, version]
       properties:
@@ -2310,6 +2336,7 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
     TargetPlan:
       type: object
+      additionalProperties: false
       required: [target, resources]
       properties:
         target: { $ref: "#/components/schemas/Name" }
@@ -2324,6 +2351,7 @@ components:
           items: { $ref: "#/components/schemas/ResourcePlan" }
     ResourcePlan:
       type: object
+      additionalProperties: false
       required: [resource, action, risk, changes]
       properties:
         resource:
@@ -2350,6 +2378,7 @@ components:
       description: "`refused`: a change was above the approved risk."
     Run:
       type: object
+      additionalProperties: false
       description: A Run starts at approval. Who approved is on the Plan.
       required: [id, plan_id, revision, status, started_at, finished_at, targets]
       properties:
@@ -2364,6 +2393,7 @@ components:
           items: { $ref: "#/components/schemas/TargetRun" }
     TargetRun:
       type: object
+      additionalProperties: false
       required: [target, status, steps]
       properties:
         target: { $ref: "#/components/schemas/Name" }
@@ -2373,6 +2403,7 @@ components:
           items: { $ref: "#/components/schemas/RunStep" }
     RunStep:
       type: object
+      additionalProperties: false
       required: [resource, action, status, changes, output, started_at, finished_at]
       properties:
         resource: { type: string }
@@ -2402,6 +2433,7 @@ components:
         `POST /issues/{id}/resolve` for who may use them.
     Issue:
       type: object
+      additionalProperties: false
       description: |
         Drift of one resource on one target. Drift on `guest:config` comes from Proxmox, all
         other drift from the agent.
@@ -2448,6 +2480,7 @@ components:
           items: { $ref: "#/components/schemas/Comment" }
     Resolution:
       type: object
+      additionalProperties: false
       required: [action, by, at]
       properties:
         action:
@@ -2460,6 +2493,7 @@ components:
         at: { $ref: "#/components/schemas/Time" }
     ResolveRequest:
       type: object
+      additionalProperties: false
       required: [action]
       properties:
         action: { $ref: "#/components/schemas/IssueAction" }
@@ -2482,6 +2516,7 @@ components:
               items: { type: string, minLength: 1, maxLength: 100 }
     Comment:
       type: object
+      additionalProperties: false
       required: [id, author, body, created_at]
       properties:
         id: { $ref: "#/components/schemas/Id" }
@@ -2490,12 +2525,14 @@ components:
         created_at: { $ref: "#/components/schemas/Time" }
     CommentRequest:
       type: object
+      additionalProperties: false
       required: [body]
       properties:
         body: { type: string, minLength: 1, maxLength: 10000 }
 
     RevisionInfo:
       type: object
+      additionalProperties: false
       description: One committed revision (provenance, D-008).
       required: [id, author, reason, plan_id, created_at, documents]
       properties:
@@ -2514,6 +2551,7 @@ components:
           description: Number of documents in the revision.
     RevisionDiff:
       type: object
+      additionalProperties: false
       required: [from, to, changes]
       properties:
         from:
@@ -2525,6 +2563,7 @@ components:
           items: { $ref: "#/components/schemas/DocumentChange" }
     DocumentChange:
       type: object
+      additionalProperties: false
       required: [kind, name, op, before, after]
       properties:
         kind: { $ref: "#/components/schemas/DocumentKind" }
@@ -2664,6 +2703,7 @@ components:
 
     Event:
       type: object
+      additionalProperties: false
       description: One entry of the append-only event log.
       required: [seq, type, time, subject, actor, data]
       properties:

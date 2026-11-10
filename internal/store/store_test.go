@@ -45,11 +45,12 @@ func openMigrated(t *testing.T) *sql.DB {
 
 func TestMigrationsCreateSliceTables(t *testing.T) {
 	db := openMigrated(t)
-	// The exact list of ARCHITECTURE §3. The secret table is not in the
-	// first slice; the secret store adds it with its own migration.
+	// The exact list of ARCHITECTURE §3, plus the secret store of
+	// migration 0003 (D-087).
 	want := []string{
 		"agent", "api_token", "binding", "doc", "enroll_token", "event", "issue", "issue_comment",
-		"plan", "revision", "revision_doc", "run", "run_step", "session", "user",
+		"key_check", "plan", "revision", "revision_doc", "run", "run_step", "secret", "secret_counter",
+		"session", "user",
 	}
 	rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {

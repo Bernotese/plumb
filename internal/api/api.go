@@ -22,6 +22,7 @@ import (
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -32,6 +33,8 @@ type Config struct {
 	Events *event.Log
 	Plans  *plan.Engine
 	Issues *issue.Service
+	// Secrets is the encrypted secret store (required).
+	Secrets *secret.Store
 	// UI is the built web UI (index.html, assets/…). nil: no UI.
 	UI fs.FS
 	// Dev: plain HTTP. The session cookie has no Secure flag and the
@@ -194,6 +197,10 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/issues/{id}/resolve", planTier, s.resolveIssue)
 	route("POST /api/v1/issues/{id}/comments", planTier, s.commentIssue)
 
+	route("GET /api/v1/secrets", read, s.listSecrets)
+	route("PUT /api/v1/secrets/{name}", admin, s.putSecret)
+	route("DELETE /api/v1/secrets/{name}", admin, s.deleteSecret)
+
 	route("GET /api/v1/events", read, s.events)
 
 	route("GET /api/v1/tokens", admin, s.listTokens)
@@ -344,6 +351,9 @@ type problemBody struct {
 	Status int          `json:"status"`
 	Detail string       `json:"detail,omitempty"`
 	Errors []fieldError `json:"errors,omitempty"`
+	// secret-in-use (D-087)
+	Targets []string `json:"targets,omitempty"`
+	Plans   []int64  `json:"plans,omitempty"`
 }
 
 func writeProblem(w http.ResponseWriter, p problemBody) {
