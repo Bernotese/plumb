@@ -25,11 +25,11 @@ test("create target → plan → run → issue → revert", async ({ page }) => 
   // Create a target with one Block.
   await page.getByRole("link", { name: "New target" }).click();
   await expect(page.getByRole("heading", { name: "New target" })).toBeVisible();
-  await page.getByLabel("Name", { exact: true }).fill("e2e1");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("e2e1");
   await page.getByLabel("Block to add").selectOption({ label: "Message of the day" });
   await page.getByRole("button", { name: "Add Block" }).click();
-  await page.getByLabel("Text").fill("Hello from the e2e test");
-  await page.getByLabel("Reason").fill("e2e: new target");
+  await page.getByRole("textbox", { name: "Text", exact: true }).fill("Hello from the e2e test");
+  await page.getByRole("textbox", { name: "Reason", exact: true }).fill("e2e: new target");
   await page.getByRole("button", { name: "Show the plan" }).click();
 
   // The plan, then approve.
