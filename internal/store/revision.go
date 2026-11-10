@@ -61,53 +61,68 @@ const (
 // checks that every hash is the SHA-256 of its body and that kind and name
 // match the body, so a row can never lie about its content.
 func (s *Store) CommitRevision(ctx context.Context, in NewRevision) (Revision, error) {
+	if err := checkNewRevision(in); err != nil {
+		return Revision{}, err
+	}
+	var rev Revision
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		rev, err = s.commitTx(ctx, tx, in)
+		return err
+	})
+	if err != nil {
+		return Revision{}, fmt.Errorf("store: commit revision: %w", err)
+	}
+	return rev, nil
+}
+
+func checkNewRevision(in NewRevision) error {
 	if in.Author == "" {
-		return Revision{}, errors.New("store: revision needs an author")
+		return errors.New("store: revision needs an author")
 	}
 	seen := make(map[[2]string]bool, len(in.Docs))
 	for _, d := range in.Docs {
 		if err := checkDocRow(d); err != nil {
-			return Revision{}, err
+			return err
 		}
 		key := [2]string{d.Kind, d.Name}
 		if seen[key] {
-			return Revision{}, fmt.Errorf("store: %s %q is twice in the revision", d.Kind, d.Name)
+			return fmt.Errorf("store: %s %q is twice in the revision", d.Kind, d.Name)
 		}
 		seen[key] = true
 	}
+	return nil
+}
+
+// commitTx inserts a revision inside a transaction. The input is checked.
+func (s *Store) commitTx(ctx context.Context, tx *sql.Tx, in NewRevision) (Revision, error) {
 	rev := Revision{Author: in.Author, Reason: in.Reason, PlanID: in.PlanID}
 	created := s.now()
-	err := s.tx(ctx, func(tx *sql.Tx) error {
-		var plan any
-		if in.PlanID != 0 {
-			plan = in.PlanID
-		}
-		res, err := tx.ExecContext(ctx,
-			`INSERT INTO revision (id, author, reason, plan_id, created_at)
-			 VALUES ((SELECT COALESCE(MAX(id), 0) + 1 FROM revision), ?, ?, ?, ?)`,
-			in.Author, in.Reason, plan, created)
-		if err != nil {
-			return err
-		}
-		if rev.ID, err = res.LastInsertId(); err != nil {
-			return err
-		}
-		for _, d := range in.Docs {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO doc (hash, kind, name, body) VALUES (?, ?, ?, ?) ON CONFLICT (hash) DO NOTHING`,
-				d.Hash, d.Kind, d.Name, string(d.Body)); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (?, ?, ?, ?)`,
-				rev.ID, d.Kind, d.Name, d.Hash); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	var plan any
+	if in.PlanID != 0 {
+		plan = in.PlanID
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO revision (id, author, reason, plan_id, created_at)
+		 VALUES ((SELECT COALESCE(MAX(id), 0) + 1 FROM revision), ?, ?, ?, ?)`,
+		in.Author, in.Reason, plan, created)
 	if err != nil {
-		return Revision{}, fmt.Errorf("store: commit revision: %w", err)
+		return Revision{}, err
+	}
+	if rev.ID, err = res.LastInsertId(); err != nil {
+		return Revision{}, err
+	}
+	for _, d := range in.Docs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO doc (hash, kind, name, body) VALUES (?, ?, ?, ?) ON CONFLICT (hash) DO NOTHING`,
+			d.Hash, d.Kind, d.Name, string(d.Body)); err != nil {
+			return Revision{}, err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (?, ?, ?, ?)`,
+			rev.ID, d.Kind, d.Name, d.Hash); err != nil {
+			return Revision{}, err
+		}
 	}
 	rev.CreatedAt, _ = parseTime(created)
 	return rev, nil
