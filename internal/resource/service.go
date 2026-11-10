@@ -14,6 +14,9 @@ const (
 	ServiceStopped = "stopped"
 )
 
+// unitMasked is the observed "enabled" value of a masked unit.
+const unitMasked = "masked"
+
 // unitSuffixes are the systemd unit types. A name without one is a service.
 var unitSuffixes = []string{".service", ".socket", ".timer", ".target", ".mount", ".automount", ".path", ".slice", ".scope", ".swap", ".device"}
 
@@ -69,7 +72,9 @@ func RestartChange(svc wire.Resource, changed []string) (wire.Change, bool) {
 
 // Observe asks systemd for the load, active and enablement state. A unit
 // that systemd does not know is absent. "enabled" is left out when the unit
-// cannot be enabled or disabled (static, generated, indirect ...).
+// cannot be enabled or disabled (static, generated, indirect ...). A masked
+// unit is observed as enabled "masked"; Plumb does not unmask units, so
+// Apply fails with a clear message for it.
 func (s *service) Observe(ctx context.Context) (State, error) {
 	out, err := s.run(ctx, "systemctl", "show", "--property=LoadState,ActiveState,UnitFileState", "--", s.unit)
 	if err != nil {
@@ -95,8 +100,10 @@ func (s *service) Observe(ctx context.Context) (State, error) {
 	switch props["UnitFileState"] {
 	case "enabled", "enabled-runtime":
 		st["enabled"] = true
-	case "disabled", "masked", "masked-runtime":
+	case "disabled":
 		st["enabled"] = false
+	case "masked", "masked-runtime":
+		st["enabled"] = unitMasked
 	}
 	return st, nil
 }
@@ -121,8 +128,15 @@ func (s *service) Diff(observed State) []wire.Change {
 		}
 		out = append(out, change(wire.AttrState, cur, s.a.State, risk))
 	}
-	if en, ok := observed["enabled"].(bool); ok && en != s.a.Enabled {
-		out = append(out, change("enabled", en, s.a.Enabled, wire.RiskReversible))
+	switch en := observed["enabled"].(type) {
+	case bool:
+		if en != s.a.Enabled {
+			out = append(out, change("enabled", en, s.a.Enabled, wire.RiskReversible))
+		}
+	case string: // masked: a running or enabled unit is wanted, or it is drift
+		if s.a.Enabled || s.a.State == ServiceRunning {
+			out = append(out, change("enabled", en, s.a.Enabled, wire.RiskReversible))
+		}
 	}
 	return s.finish(out)
 }
@@ -133,6 +147,11 @@ func (s *service) Diff(observed State) []wire.Change {
 func (s *service) Apply(ctx context.Context, changes []wire.Change) error {
 	if len(changes) == 0 {
 		return nil
+	}
+	for _, c := range changes {
+		if c.From == unitMasked {
+			return fmt.Errorf("unit %s is masked; Plumb does not unmask units (systemctl unmask -- %s)", s.unit, s.unit)
+		}
 	}
 	ctl := func(args ...string) error {
 		_, err := s.run(ctx, "systemctl", append(args, "--", s.unit)...)

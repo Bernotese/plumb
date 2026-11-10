@@ -421,3 +421,86 @@ func TestWatch(t *testing.T) {
 		}
 	}
 }
+
+func TestUserAccountLock(t *testing.T) {
+	g := newFakeGuest(t)
+	g.aptDelay = 30 * time.Millisecond
+	env := g.env()
+	var wg sync.WaitGroup
+	errs := make(chan error, 3)
+	for _, name := range []string{"alice", "bob", "carol"} {
+		r := build(t, res("user", name, nil), env)
+		changes := plan(t, r)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- r.Apply(context.Background(), changes)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if g.shadowMax != 1 {
+		t.Fatalf("%d account-tool calls ran at the same time, want 1", g.shadowMax)
+	}
+}
+
+func TestUserGuards(t *testing.T) {
+	g := newFakeGuest(t)
+	if _, err := New(res("user", "deploy", map[string]any{"ssh_keys": []any{keyA + "\n" + keyB}}), g.env()); err == nil {
+		t.Fatal("key with a line break: want error")
+	}
+	// An account with uid 0 under another name.
+	passwd := filepath.Join(g.root, "etc/passwd")
+	data, _ := os.ReadFile(passwd)
+	mustWrite(t, passwd, string(data)+"toor:x:0:0::/home/toor:/bin/bash\n")
+	if err := os.MkdirAll(filepath.Join(g.root, "home/toor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keys := build(t, res("user", "toor", map[string]any{"ssh_keys": []any{keyA}}), g.env())
+	if err := keys.Apply(context.Background(), plan(t, keys)); err == nil || !strings.Contains(err.Error(), "uid 0") {
+		t.Fatalf("keys of uid 0: err = %v", err)
+	}
+	del := build(t, res("user", "toor", map[string]any{"state": "absent"}), g.env())
+	if err := del.Apply(context.Background(), plan(t, del)); err == nil || !strings.Contains(err.Error(), "uid 0") {
+		t.Fatalf("delete uid 0: err = %v", err)
+	}
+	if g.count("userdel") != 0 {
+		t.Fatal("userdel ran")
+	}
+}
+
+func TestPackageNameGuard(t *testing.T) {
+	env := newFakeGuest(t).env()
+	for _, name := range []string{"nginx-", "-nginx"} {
+		r := wire.Resource{ID: "package:" + name, Type: "package", Attrs: map[string]any{"name": name}}
+		if _, err := New(r, env); err == nil {
+			t.Errorf("package %q: want error", name)
+		}
+	}
+	build(t, res("package", "g++", nil), env)
+}
+
+func TestServiceMasked(t *testing.T) {
+	g := newFakeGuest(t)
+	g.units["nginx.service"] = &unit{masked: true}
+	r := build(t, res("service", "nginx", nil), g.env())
+	changes := plan(t, r)
+	if !has(changes, "enabled") {
+		t.Fatalf("masked unit: changes = %+v", changes)
+	}
+	if err := r.Apply(context.Background(), changes); err == nil || !strings.Contains(err.Error(), "masked") {
+		t.Fatalf("Apply on a masked unit: err = %v", err)
+	}
+	if g.count("systemctl", "enable") != 0 || g.count("systemctl", "start") != 0 {
+		t.Fatal("systemctl changed a masked unit")
+	}
+	// A masked unit that must stay stopped and disabled is fine.
+	if c := plan(t, build(t, res("service", "nginx", map[string]any{"state": "stopped", "enabled": false}), g.env())); len(c) != 0 {
+		t.Fatalf("stopped and disabled: %+v", c)
+	}
+}

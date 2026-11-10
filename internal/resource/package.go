@@ -42,6 +42,11 @@ func newPackage(r wire.Resource, env Env) (Resource, error) {
 	if err := decode(r, "package", &p.a, func() string { return p.a.Name }); err != nil {
 		return nil, err
 	}
+	// "apt-get install foo-" removes foo; the schema forbids it, the agent
+	// does not trust the wire.
+	if strings.HasSuffix(p.a.Name, "-") || strings.HasPrefix(p.a.Name, "-") {
+		return nil, fmt.Errorf("resource %s: bad package name", r.ID)
+	}
 	if p.a.Strictness == StrictExact && p.a.Version == "" {
 		return nil, fmt.Errorf("resource %s: strictness exact needs a version", r.ID)
 	}

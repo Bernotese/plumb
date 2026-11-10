@@ -19,10 +19,10 @@ import (
 )
 
 // NewEnv returns an Env for the guest file system at root. All resources
-// built with the same Env share one package-manager lock, so build one Env
-// per guest.
+// built with the same Env share one package-manager lock and one account
+// lock, so build one Env per guest.
 func NewEnv(root string, run Runner) Env {
-	return Env{Root: root, Run: run, PackageLock: new(sync.Mutex)}
+	return Env{Root: root, Run: run, PackageLock: new(sync.Mutex), AccountLock: new(sync.Mutex)}
 }
 
 // New builds the resource for a rendered resource of a known, implemented type.
@@ -31,32 +31,64 @@ func New(r wire.Resource, env Env) (Resource, error) {
 	if !ok || t.New == nil {
 		return nil, fmt.Errorf("resource %s: unknown type %q", r.ID, r.Type)
 	}
-	if env.Run == nil || env.PackageLock == nil || env.Root == "" {
+	if env.Run == nil || env.PackageLock == nil || env.AccountLock == nil || env.Root == "" {
 		return nil, fmt.Errorf("resource %s: incomplete Env, use NewEnv", r.ID)
 	}
 	return t.New(r, env)
 }
 
 // ExecRunner runs real commands. Output is stdout. A command that exits
-// non-zero returns an *ExitError with the start of stderr.
+// non-zero returns an *ExitError with stderr (up to MaxStderr bytes).
 type ExecRunner struct{}
+
+// MaxStderr bounds the stderr kept in an ExitError. It is not cut further
+// here: SafeOutput redacts first and cuts after, so a secret is never cut
+// in half before redaction.
+const MaxStderr = 64 << 10
+
+// commandEnv is the whole environment of every command. Nothing of the
+// agent's own environment (credential paths, proxies, ...) reaches
+// maintainer scripts or hooks.
+var commandEnv = []string{
+	"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+	"LC_ALL=C",
+	"DEBIAN_FRONTEND=noninteractive",
+	"HOME=/root",
+}
 
 // Run implements Runner. It never uses a shell.
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	cmd.Env = append([]string(nil), commandEnv...)
+	stderr := &limitedBuffer{max: MaxStderr}
+	cmd.Stderr = stderr
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			return out, &ExitError{Name: name, Code: ee.ExitCode(), Stderr: clip(strings.TrimSpace(stderr.String()), 2048)}
+			return out, &ExitError{Name: name, Code: ee.ExitCode(), Stderr: strings.TrimSpace(stderr.String())}
 		}
 		return out, fmt.Errorf("%s: %w", name, err)
 	}
 	return out, nil
 }
+
+// limitedBuffer keeps the first max bytes and drops the rest. The buffer is
+// a field, not embedded: an embedded bytes.Buffer brings ReadFrom, which
+// io.Copy would use to bypass Write and the limit.
+type limitedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.buf.Len(); room > 0 {
+		b.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (b *limitedBuffer) String() string { return b.buf.String() }
 
 // ExitError is a command that ran and exited with a non-zero code.
 type ExitError struct {

@@ -154,7 +154,13 @@ func writeAtomic(path string, data []byte, mode os.FileMode, uid, gid int) error
 		return err
 	}
 	ok = true
-	return nil
+	// Make the rename durable.
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // observeNode reads mode, owner and group of a file or directory.

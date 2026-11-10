@@ -40,6 +40,12 @@ func newUser(r wire.Resource, env Env) (Resource, error) {
 		u.a.Home = "/home/" + u.a.Name
 	}
 	u.a.Groups = sortedSet(u.a.Groups)
+	// The schema forbids this; the agent does not trust the wire.
+	for _, k := range u.a.SSHKeys {
+		if strings.ContainsAny(k, "\r\n\x00") {
+			return nil, fmt.Errorf("resource %s: an ssh key holds a line break", r.ID)
+		}
+	}
 	return u, nil
 }
 
@@ -122,12 +128,23 @@ func (u *user) Diff(observed State) []wire.Change {
 }
 
 // Apply runs useradd, usermod or userdel and writes authorized_keys.
-// userdel keeps the home directory.
+// userdel keeps the home directory. A home change runs "usermod --home"
+// without --move-home: the files stay in the old directory. Plumb never
+// deletes an account with uid 0 or manages its keys.
 func (u *user) Apply(ctx context.Context, changes []wire.Change) error {
 	if len(changes) == 0 {
 		return nil
 	}
+	u.env.AccountLock.Lock()
+	defer u.env.AccountLock.Unlock()
 	name := u.a.Name
+	acc, exists, err := u.account()
+	if err != nil {
+		return err
+	}
+	if exists && acc.uid == 0 && (u.a.State == wire.StateAbsent || has(changes, "ssh_keys")) {
+		return fmt.Errorf("user %s has uid 0; Plumb does not delete it or manage its ssh keys", name)
+	}
 	if u.a.State == wire.StateAbsent {
 		_, err := u.run(ctx, "userdel", "--", name)
 		return err

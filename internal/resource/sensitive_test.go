@@ -107,34 +107,21 @@ func TestSensitiveFileContent(t *testing.T) {
 }
 
 func TestSafeOutput(t *testing.T) {
-	r := res("user", "deploy", map[string]any{
-		"ssh_keys": []any{keyA},
-		"shell":    "/bin/bash",
-	}, "ssh_keys")
-	multi := res("file", "/etc/x", map[string]any{"content": "line-one-secret\nline-two-secret\n"}, "content")
+	sensitive := res("file", "/etc/x", map[string]any{"content": "new-secret"}, "content")
+	plain := res("file", "/etc/y", map[string]any{"content": "a"})
 
-	tests := []struct {
-		name string
-		r    wire.Resource
-		in   string
-		want string
-	}{
-		{"list value", r, "usermod: bad key " + keyA, "usermod: bad key [redacted]"},
-		{"not sensitive stays", r, "shell /bin/bash", "shell /bin/bash"},
-		{"each line of a multi-line value", multi, "got line-two-secret at 2", "got [redacted] at 2"},
-		{"full multi-line value", multi, "x line-one-secret\nline-two-secret\n y", "x [redacted] y"},
-		{"no sensitive attributes", res("file", "/etc/y", map[string]any{"content": "a"}), "a b", "a b"},
-		{"empty value is ignored", res("file", "/etc/z", map[string]any{"content": ""}, "content"), "abc", "abc"},
+	// Any text of a resource with sensitive attributes is hidden: it may
+	// hold the old value on the guest, which no redaction can know.
+	for _, text := range []string{"", "replacing old-secret with new-secret", "exit status 1"} {
+		if got := SafeOutput(sensitive, text); got != HiddenOutput {
+			t.Fatalf("SafeOutput(sensitive, %q) = %q", text, got)
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := SafeOutput(tt.r, tt.in); got != tt.want {
-				t.Fatalf("SafeOutput = %q, want %q", got, tt.want)
-			}
-		})
+	if got := SafeOutput(plain, "exit status 1: no space"); got != "exit status 1: no space" {
+		t.Fatalf("SafeOutput(plain) = %q", got)
 	}
 
-	long := SafeOutput(r, strings.Repeat("é", MaxOutput))
+	long := SafeOutput(plain, strings.Repeat("é", MaxOutput))
 	if len(long) > MaxOutput+len("…") || !strings.HasSuffix(long, "…") {
 		t.Fatalf("long output: len %d", len(long))
 	}

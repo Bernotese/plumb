@@ -43,7 +43,7 @@ func mustWrite(t *testing.T, path, content string) {
 // unit is the simulated state of one systemd unit.
 type unit struct {
 	active, enabled bool
-	static          bool
+	static, masked  bool
 }
 
 // fakeGuest is a fake Runner that simulates dpkg/apt, systemd and the
@@ -58,9 +58,11 @@ type fakeGuest struct {
 	packages   map[string]string   // installed package → version
 	candidates map[string][]string // installable versions, first is the newest
 	units      map[string]*unit
-	aptBusy    int // apt-get calls in flight
-	aptMax     int // highest aptBusy seen
-	aptDelay   time.Duration
+	aptBusy    int           // apt-get calls in flight
+	aptMax     int           // highest aptBusy seen
+	aptDelay   time.Duration // also delays the account tools
+	shadowBusy int           // account-tool calls in flight
+	shadowMax  int
 	updated    bool // apt-get update ran
 	needUpdate bool // install fails until apt-get update ran
 }
@@ -113,7 +115,17 @@ func (g *fakeGuest) Run(_ context.Context, name string, args ...string) ([]byte,
 	case "systemctl":
 		return g.systemctl(args, operand)
 	case "useradd", "usermod", "userdel":
-		return nil, g.shadow(name, args[:i], operand)
+		g.mu.Lock()
+		g.shadowBusy++
+		g.shadowMax = max(g.shadowMax, g.shadowBusy)
+		delay := g.aptDelay
+		g.mu.Unlock()
+		time.Sleep(delay)
+		err := g.shadow(name, args[:i], operand)
+		g.mu.Lock()
+		g.shadowBusy--
+		g.mu.Unlock()
+		return nil, err
 	}
 	return nil, &ExitError{Name: name, Code: 127, Stderr: "command not found"}
 }
@@ -177,6 +189,9 @@ func (g *fakeGuest) systemctl(args []string, operand string) ([]byte, error) {
 		}
 		if u.static {
 			file = "static"
+		}
+		if u.masked {
+			file = "masked"
 		}
 		return []byte("LoadState=loaded\nActiveState=" + active + "\nUnitFileState=" + file + "\n"), nil
 	}
