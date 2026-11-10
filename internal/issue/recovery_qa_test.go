@@ -160,6 +160,9 @@ func TestCrashDuringResolveRunRecoversIssue(t *testing.T) {
 	first := e.eng
 	t.Cleanup(first.Close)
 	e.start()
+	if err := e.eng.Recover(e.ctx); err != nil {
+		t.Fatal(err)
+	}
 	if got, err := e.st.GetRun(e.ctx, run.ID); err != nil || got.Status != "failed" || got.FinishedAt.IsZero() {
 		t.Errorf("crash left the Run unfinished: %+v, %v", got, err)
 	}
