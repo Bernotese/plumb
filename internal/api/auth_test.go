@@ -21,7 +21,7 @@ func TestPasswordHash(t *testing.T) {
 	if !VerifyPassword("correct horse", h) || VerifyPassword("correct hors", h) || VerifyPassword("x", "$bcrypt$x") {
 		t.Error("verify")
 	}
-	if HashPassword("a", fastPasswords) == HashPassword("a", fastPasswords) {
+	if h1, h2 := HashPassword("a", fastPasswords), HashPassword("a", fastPasswords); h1 == h2 {
 		t.Error("no salt")
 	}
 	// A stored hash with absurd parameters is refused, not computed.

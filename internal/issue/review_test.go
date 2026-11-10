@@ -222,3 +222,30 @@ func TestApplyOnlyPlanned(t *testing.T) {
 		t.Errorf("motd was overwritten: %v", g)
 	}
 }
+
+// Review T-010 n1: a Run that fails early still gives the agent the watch
+// list of the new revision.
+func TestEarlyFailureStillWatches(t *testing.T) {
+	e := newEnv(t)
+	e.seed("web1")
+	a := e.agents["web1"]
+	watches := func() int {
+		n := 0
+		for _, c := range a.Commands() {
+			if c == wire.CommandWatch {
+				n++
+			}
+		}
+		return n
+	}
+	before := watches()
+	p := e.propose(plan.Proposal{Put: []state.Doc{doc(state.KindTarget, "web1",
+		`{"type":"vm","image":"ubuntu","guest":{"cores":4,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"motd","params":{"text":"hello web1"}}]}`)}})
+	e.drv.Fail("Update", errors.New("task failed"))
+	run := e.approve(p.ID)
+	steps, _ := e.st.Steps(e.ctx, run.ID)
+	if run.Status != "failed" || steps[0].Resource != wire.GuestConfigID || steps[0].Status != "failed" {
+		t.Fatalf("run %s: %+v", run.Status, steps)
+	}
+	eventually(t, "watch after the failed Run", func() bool { return watches() > before })
+}

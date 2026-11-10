@@ -154,7 +154,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	}
 	defer eng.Close()
 	iss = issue.New(st, events, eng)
-	// Close what a crash left open before agents connect (review T-010 B1).
+	// Close what a crash left open. This must run before the agent
+	// listener, the API and the guest poll start (review T-010 B1, n3).
 	if err := eng.Recover(ctx); err != nil {
 		return err
 	}

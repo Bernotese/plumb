@@ -38,3 +38,5 @@ jobs:
         run: |
           bin/plumb version
           bin/plumb-agent version
+      - name: plumb embeds the UI and the agent
+        run: make check-embed

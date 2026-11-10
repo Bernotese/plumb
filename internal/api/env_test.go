@@ -45,7 +45,8 @@ type env struct {
 	h      http.Handler
 	agents map[string]*linktest.Agent
 
-	password string // admin password at bootstrap
+	password string   // admin password at bootstrap
+	bearers  []string // every token created
 	mu       sync.Mutex
 	seen     [][]byte // every response body, for the secret scan
 }
@@ -123,6 +124,8 @@ func (e *env) token(tier string, risk wire.Risk) *client {
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	_, sec, _ := strings.Cut(b, ".")
+	e.bearers = append(e.bearers, sec)
 	return &client{e: e, bearer: b}
 }
 
@@ -190,7 +193,7 @@ func (c *client) raw(method, path string, body any) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	c.e.h.ServeHTTP(rec, req)
 	c.e.mu.Lock()
-	c.e.seen = append(c.e.seen, rec.Body.Bytes(), []byte(strings.Join(rec.Header().Values("Set-Cookie"), "\n")))
+	c.e.seen = append(c.e.seen, rec.Body.Bytes()) // bodies only: Set-Cookie of a login holds the session id by design
 	c.e.mu.Unlock()
 	return rec
 }

@@ -238,3 +238,22 @@ func (s *Store) Comments(ctx context.Context, issueID int64) ([]Comment, error) 
 	}
 	return out, rows.Err()
 }
+
+// TokenHashes returns the hashes of all tokens. For tests that prove no
+// response leaks one.
+func (s *Store) TokenHashes(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT hash FROM api_token`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
