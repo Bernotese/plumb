@@ -1438,7 +1438,6 @@ paths:
     get:
       tags: [tokens]
       operationId: listTokens
-      x-plumb-planned: T-030
       summary: List API tokens, newest first
       description: Human session only. Revoked tokens stay in the list. No bearer value or hash is returned.
       security:
@@ -1482,7 +1481,6 @@ paths:
     post:
       tags: [tokens]
       operationId: createToken
-      x-plumb-planned: T-030
       summary: Create an API token
       description: |
         Human session only. The answer holds the bearer value once; Plumb stores only a hash.
@@ -1525,7 +1523,6 @@ paths:
     delete:
       tags: [tokens]
       operationId: revokeToken
-      x-plumb-planned: T-030
       summary: Revoke an API token
       description: |
         Human session only. The token fails at its next call and its open event streams end

@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -63,8 +64,9 @@ type Server struct {
 	// hashSlots bounds concurrent argon2id work (64 MiB each, review M2).
 	hashSlots chan struct{}
 
-	streamMu sync.Mutex
-	streams  map[string]int // open event streams per principal (review m2)
+	streamMu  sync.Mutex
+	streams   map[string]map[uint64]context.CancelFunc // open event streams per principal (review m2)
+	streamSeq uint64
 }
 
 // Limits of expensive or long-lived work.
@@ -99,7 +101,7 @@ func New(cfg Config) *Server {
 		bearers:   newFailLimiter(cfg.Now, 20, time.Minute),
 		dummy:     HashPassword(randomText(16), cfg.PasswordParams),
 		hashSlots: make(chan struct{}, hashSlotCount),
-		streams:   map[string]int{},
+		streams:   map[string]map[uint64]context.CancelFunc{},
 	}
 }
 
@@ -163,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	read, planTier, apply := access{tier: TierRead}, access{tier: TierPlan}, access{tier: TierApply}
 	self := access{tier: TierRead, duringReset: true}
 	human := access{tier: TierAdmin, sessionOnly: true, duringReset: true}
+	admin := access{tier: TierAdmin, sessionOnly: true}
 
 	route("GET /api/v1/session", self, s.getSession)
 	route("POST /api/v1/session", access{}, s.login)
@@ -192,6 +195,10 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/issues/{id}/comments", planTier, s.commentIssue)
 
 	route("GET /api/v1/events", read, s.events)
+
+	route("GET /api/v1/tokens", admin, s.listTokens)
+	route("POST /api/v1/tokens", admin, s.createToken)
+	route("DELETE /api/v1/tokens/{id}", admin, s.revokeToken)
 
 	if s.cfg.Dev && s.cfg.DevLoginToken != "" {
 		mux.HandleFunc("GET /dev/login", s.devLogin)

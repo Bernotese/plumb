@@ -261,6 +261,20 @@ func TestContract(t *testing.T) {
 	call(adm, "DELETE", "/api/v1/plans/"+id(re), "/plans/{id}", nil)
 	call(adm, "DELETE", "/api/v1/plans/"+id(re), "/plans/{id}", nil) // 409
 
+	// API tokens (T-030).
+	var newTok struct{ Token struct{ ID string } }
+	json.Unmarshal(call(adm, "POST", "/api/v1/tokens", "/tokens", map[string]any{"name": "CI", "tier": "apply", "max_risk": "reversible"}), &newTok)
+	call(adm, "POST", "/api/v1/tokens", "/tokens", map[string]any{"name": "x", "tier": "plan", "max_risk": "reversible"}) // 422
+	call(adm, "POST", "/api/v1/tokens", "/tokens", []byte(`{`))                                                           // 400
+	call(readTok, "POST", "/api/v1/tokens", "/tokens", map[string]any{"name": "x", "tier": "read"})                       // 403
+	call(e.anon(), "GET", "/api/v1/tokens", "/tokens", nil)                                                               // 401
+	call(readTok, "GET", "/api/v1/tokens", "/tokens", nil)                                                                // 403
+	call(adm, "DELETE", "/api/v1/tokens/"+newTok.Token.ID, "/tokens/{id}", nil)
+	call(adm, "DELETE", "/api/v1/tokens/tok_nope", "/tokens/{id}", nil) // 404
+	call(readTok, "DELETE", "/api/v1/tokens/tok_nope", "/tokens/{id}", nil)
+	call(adm, "GET", "/api/v1/tokens?limit=1", "/tokens", nil)
+	call(adm, "GET", "/api/v1/tokens", "/tokens", nil)
+
 	// Logout.
 	call(adm, "DELETE", "/api/v1/session", "/session", nil)
 
