@@ -6,6 +6,7 @@
   import { formatTime } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { describedBy, pointerErrors } from "../lib/formErrors";
 
   let { api }: { api: PlumbApi } = $props();
   let tokens = $state<Token[] | null>(null);
@@ -15,6 +16,10 @@
   let tier = $state<Tier>("plan");
   let maxRisk = $state<"reversible" | "disruptive">("reversible");
   let createError = $state<unknown>(null);
+  /** Errors of the form's own checks, by pointer. */
+  let own = $state<Record<string, string>>({});
+  const errs = $derived({ ...pointerErrors(createError), ...own });
+  const FIELDS = ["/name", "/tier", "/max_risk"];
   let busy = $state(false);
   // The bearer lives only here, only until "Done". Never in a store or URL.
   let created = $state<{ name: string; bearer: string } | null>(null);
@@ -49,13 +54,19 @@
 
   async function create(e: SubmitEvent) {
     e.preventDefault();
-    busy = true;
     createError = null;
+    own = name.trim() ? {} : { "/name": "Give the token a name. Use 1 to 100 characters." };
+    if (own["/name"]) {
+      document.getElementById("token-name")?.focus();
+      return;
+    }
+    busy = true;
     try {
       const res = await api.createToken(
         tier === "apply" ? { name, tier, max_risk: maxRisk } : { name, tier },
       );
       created = { name: res.token.name, bearer: res.bearer };
+      own = {};
       copied = false;
       name = "";
       await reload();
@@ -67,6 +78,14 @@
       busy = false;
     }
   }
+
+  // A shown bearer is lost when the page closes: the browser asks first (review nit).
+  $effect(() => {
+    if (!created) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  });
 
   async function copy() {
     if (!created) return;
@@ -127,7 +146,7 @@
   </section>
 {/if}
 
-<form class="card" onsubmit={create}>
+<form class="card" onsubmit={create} novalidate>
   <h2>Create a token</h2>
   <div class="field">
     <label for="token-name">Name</label>
@@ -138,31 +157,46 @@
       required
       maxlength="100"
       autocomplete="off"
-      aria-describedby="token-name-hint"
+      aria-invalid={!!errs["/name"]}
+      aria-describedby={describedBy("token-name", errs["/name"])}
     />
+    {#if errs["/name"]}<span class="error" id="token-name-error">{errs["/name"]}</span>{/if}
     <span class="hint" id="token-name-hint">Who uses it, for example "CI deploy".</span>
   </div>
   <div class="field">
     <label for="token-tier">Tier</label>
-    <select id="token-tier" bind:value={tier} aria-describedby="token-tier-hint">
+    <select
+      id="token-tier"
+      bind:value={tier}
+      aria-invalid={!!errs["/tier"]}
+      aria-describedby={describedBy("token-tier", errs["/tier"])}
+    >
       <option value="read">read</option>
       <option value="plan">plan</option>
       <option value="apply">apply</option>
     </select>
+    {#if errs["/tier"]}<span class="error" id="token-tier-error">{errs["/tier"]}</span>{/if}
     <span class="hint" id="token-tier-hint">{tierText[tier]}</span>
   </div>
   {#if tier === "apply"}
     <div class="field">
       <label for="token-risk">Max risk it can approve</label>
-      <select id="token-risk" bind:value={maxRisk} aria-describedby="token-risk-hint">
+      <select
+        id="token-risk"
+        bind:value={maxRisk}
+        aria-invalid={!!errs["/max_risk"]}
+        aria-describedby={describedBy("token-risk", errs["/max_risk"])}
+      >
         <option value="reversible">reversible</option>
         <option value="disruptive">disruptive (restarts)</option>
       </select>
+      {#if errs["/max_risk"]}<span class="error" id="token-risk-error">{errs["/max_risk"]}</span
+        >{/if}
       <span class="hint" id="token-risk-hint">Destructive plans always need a person.</span>
     </div>
   {/if}
-  <ProblemBox error={createError} />
-  <button class="btn primary" type="submit" disabled={busy || !name.trim()}>Create token</button>
+  <ProblemBox error={createError} fields={FIELDS} />
+  <button class="btn primary" type="submit" disabled={busy}>Create token</button>
 </form>
 
 <h2>Tokens</h2>

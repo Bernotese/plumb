@@ -6,6 +6,7 @@
   import type { SecretInfo } from "../lib/types";
   import { formatTime } from "../lib/view";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { describedBy, pointerErrors } from "../lib/formErrors";
 
   let { api }: { api: PlumbApi } = $props();
   let secrets = $state<SecretInfo[] | null>(null);
@@ -17,6 +18,10 @@
   let value = $state("");
   let multiline = $state(false);
   let saveError = $state<unknown>(null);
+  /** Errors of the form's own checks, by pointer. */
+  let own = $state<Record<string, string>>({});
+  const errs = $derived({ ...pointerErrors(saveError), ...own });
+  const FIELDS = ["/name", "/value"];
   let busy = $state(false);
   /** After a replace of a used secret: offer to plan its targets (D-090). */
   let replaced = $state<SecretInfo | null>(null);
@@ -57,6 +62,7 @@
   }
 
   function resetForm() {
+    own = {};
     name = "";
     replacing = false;
     value = "";
@@ -65,8 +71,16 @@
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
-    busy = true;
     saveError = null;
+    const check: Record<string, string> = {};
+    if (!nameOk) check["/name"] = "Use lower-case letters, digits, dots and dashes (at most 63).";
+    if (value === "") check["/value"] = "Enter a value.";
+    own = check;
+    if (Object.keys(check).length) {
+      document.getElementById(check["/name"] ? "secret-name" : "secret-value")?.focus();
+      return;
+    }
+    busy = true;
     replaced = null;
     const sent = value;
     value = ""; // never kept after the request
@@ -117,8 +131,9 @@
 </script>
 
 <p class="muted">
-  Plumb stores secret values encrypted. It never shows a value again, not to you and not in plans,
-  logs or exports. Targets refer to a secret by its name.
+  Plumb stores secret values encrypted. It never shows a value again, not to you and not in plans or
+  logs. An export holds values only when you choose it, and then only encrypted with your
+  passphrase. Targets refer to a secret by its name.
 </p>
 
 {#if replaced}
@@ -139,7 +154,7 @@
   </section>
 {/if}
 
-<form class="card" onsubmit={save} autocomplete="off">
+<form class="card" onsubmit={save} autocomplete="off" novalidate>
   <h2>{replacing ? `Replace the value of ${name}` : "Set a secret"}</h2>
   <div class="field">
     <label for="secret-name">Name</label>
@@ -148,14 +163,16 @@
       type="text"
       class="mono"
       bind:value={name}
+      name="plumb-secret-name"
       readonly={replacing}
       required
       maxlength="63"
       autocomplete="off"
       spellcheck="false"
-      aria-invalid={name !== "" && !nameOk}
-      aria-describedby="secret-name-hint"
+      aria-invalid={!!errs["/name"]}
+      aria-describedby={describedBy("secret-name", errs["/name"])}
     />
+    {#if errs["/name"]}<span class="error" id="secret-name-error">{errs["/name"]}</span>{/if}
     <span class="hint" id="secret-name-hint">
       Lower-case letters, digits, dots and dashes.
       {#if !replacing && exists}A secret with this name exists: saving replaces its value.{/if}
@@ -167,22 +184,27 @@
       <textarea
         id="secret-value"
         bind:value
+        name="plumb-secret-value"
         required
-        autocomplete="off"
+        autocomplete="new-password"
         spellcheck="false"
         autocapitalize="off"
-        aria-describedby="secret-value-hint"></textarea>
+        aria-invalid={!!errs["/value"]}
+        aria-describedby={describedBy("secret-value", errs["/value"])}></textarea>
     {:else}
       <input
         id="secret-value"
         type="password"
         bind:value
+        name="plumb-secret-value"
         required
-        autocomplete="off"
+        autocomplete="new-password"
         spellcheck="false"
-        aria-describedby="secret-value-hint"
+        aria-invalid={!!errs["/value"]}
+        aria-describedby={describedBy("secret-value", errs["/value"])}
       />
     {/if}
+    {#if errs["/value"]}<span class="error" id="secret-value-error">{errs["/value"]}</span>{/if}
     <span class="hint" id="secret-value-hint">
       {multiline
         ? "Multi-line text is visible while you type. Check that nobody watches your screen."
@@ -195,9 +217,9 @@
       Multi-line value (for example an SSH or TLS key)
     </label>
   </div>
-  <ProblemBox error={saveError} />
+  <ProblemBox error={saveError} fields={FIELDS} />
   <div class="row">
-    <button class="btn primary" type="submit" disabled={busy || !nameOk || value === ""}>
+    <button class="btn primary" type="submit" disabled={busy}>
       {replacing || exists ? "Replace value" : "Save secret"}
     </button>
     {#if replacing}

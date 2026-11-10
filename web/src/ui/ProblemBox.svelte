@@ -1,8 +1,11 @@
 <script lang="ts">
   import { ApiError, NetworkError } from "../lib/api";
 
-  let { error }: { error: unknown } = $props();
+  /** `fields`: pointers that the form shows at its fields; they are not listed here. */
+  let { error, fields = [] }: { error: unknown; fields?: string[] } = $props();
   const p = $derived(error instanceof ApiError ? error.problem : undefined);
+  const rest = $derived(p?.errors?.filter((e) => !fields.includes(e.pointer)) ?? []);
+  const atFields = $derived((p?.errors?.length ?? 0) > rest.length);
   // Only the HTTP client marks a failed fetch; any other error is a bug.
   const network = $derived(error instanceof NetworkError);
   const text = $derived(error instanceof Error ? error.message : String(error));
@@ -22,9 +25,10 @@
       {#if p.secrets?.length}
         <p class="list">Secrets: <span class="mono">{p.secrets.join(", ")}</span></p>
       {/if}
-      {#if p.errors?.length}
+      {#if atFields}Check the marked fields.{/if}
+      {#if rest.length}
         <ul>
-          {#each p.errors as e, i (i)}
+          {#each rest as e, i (i)}
             <li><span class="mono">{e.pointer}</span>: {e.message}</li>
           {/each}
         </ul>

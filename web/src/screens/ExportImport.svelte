@@ -4,6 +4,7 @@
   import { saveText } from "../lib/download";
   import { go, href } from "../lib/router";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { describedBy, pointerErrors } from "../lib/formErrors";
 
   let { api, save = saveText }: { api: PlumbApi; save?: (filename: string, text: string) => void } =
     $props();
@@ -21,10 +22,20 @@
   const passShort = $derived(withSecrets && pass1.length > 0 && pass1.length < MIN_PASS);
   const passDiffer = $derived(withSecrets && pass2.length > 0 && pass1 !== pass2);
   const exportReady = $derived(!withSecrets || (pass1.length >= MIN_PASS && pass1 === pass2));
+  /** Export field errors: own checks on submit, then the server's (by pointer). */
+  let exportOwn = $state<Record<string, string>>({});
+  const eErrs: Record<string, string> = $derived({ ...pointerErrors(exportError), ...exportOwn });
 
   async function doExport(e: SubmitEvent) {
     e.preventDefault();
-    if (!exportReady) return;
+    exportOwn = {};
+    if (!exportReady) {
+      if (pass1.length < MIN_PASS)
+        exportOwn["/passphrase"] = `Use at least ${MIN_PASS} characters.`;
+      else exportOwn["/passphrase2"] = "The two passphrases differ.";
+      document.getElementById(exportOwn["/passphrase"] ? "export-pass" : "export-pass2")?.focus();
+      return;
+    }
     exporting = true;
     exportError = null;
     exportDone = null;
@@ -59,6 +70,15 @@
   /** Names of a 422 about missing secrets. */
   let missing = $state<string[] | null>(null);
 
+  /** Import field errors: own checks on submit, then the server's (by pointer). */
+  let importOwn = $state<Record<string, string>>({});
+  const iErrs: Record<string, string> = $derived({
+    ...pointerErrors(importError),
+    ...(fileError ? { "/content": fileError } : {}),
+    ...importOwn,
+  });
+  const IMPORT_FIELDS = ["/content", "/passphrase", "/reason"];
+
   async function pick(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     const f = input.files?.[0];
@@ -69,6 +89,7 @@
     overwrite = [];
     missing = null;
     importError = null;
+    importOwn = {};
     if (!f) return;
     if (f.size > MAX_BYTES) {
       fileError = "The file is larger than 8 MiB. Plumb does not accept it.";
@@ -80,7 +101,13 @@
 
   async function doImport(e: SubmitEvent) {
     e.preventDefault();
-    if (!content || !reason.trim()) return;
+    importOwn = {};
+    if (!content) importOwn["/content"] = fileError ?? "Choose an export file.";
+    if (!reason.trim()) importOwn["/reason"] = "Give a reason for the import.";
+    if (!content || Object.keys(importOwn).length) {
+      document.getElementById(importOwn["/content"] ? "import-file" : "import-reason")?.focus();
+      return;
+    }
     importing = true;
     importError = null;
     missing = null;
@@ -112,7 +139,7 @@
   }
 </script>
 
-<form class="card" onsubmit={doExport} autocomplete="off">
+<form class="card" onsubmit={doExport} autocomplete="off" novalidate>
   <h2>Export</h2>
   <p>
     One YAML file with every image, block, target and rule of the head revision. History, issues,
@@ -138,9 +165,12 @@
         type="password"
         bind:value={pass1}
         autocomplete="new-password"
-        aria-invalid={passShort}
-        aria-describedby="export-pass-hint"
+        aria-invalid={passShort || !!eErrs["/passphrase"]}
+        aria-describedby={describedBy("export-pass", eErrs["/passphrase"])}
       />
+      {#if eErrs["/passphrase"]}<span class="error" id="export-pass-error"
+          >{eErrs["/passphrase"]}</span
+        >{/if}
       <span class="hint" id="export-pass-hint" class:error={passShort}>
         At least {MIN_PASS} characters. Plumb cannot recover it.
       </span>
@@ -152,24 +182,27 @@
         type="password"
         bind:value={pass2}
         autocomplete="new-password"
-        aria-invalid={passDiffer}
-        aria-describedby="export-pass2-hint"
+        aria-invalid={passDiffer || !!eErrs["/passphrase2"]}
+        aria-describedby={describedBy("export-pass2", eErrs["/passphrase2"])}
       />
+      {#if eErrs["/passphrase2"]}<span class="error" id="export-pass2-error"
+          >{eErrs["/passphrase2"]}</span
+        >{/if}
       <span class="hint" id="export-pass2-hint" class:error={passDiffer}>
         {passDiffer ? "The two passphrases differ." : "Type it again to check it."}
       </span>
     </div>
   {/if}
-  <ProblemBox error={exportError} />
+  <ProblemBox error={exportError} fields={["/passphrase"]} />
   {#if exportDone}
     <p class="banner ok" role="status">Saved as <span class="mono">{exportDone}</span>.</p>
   {/if}
-  <button class="btn primary" type="submit" disabled={exporting || !exportReady}>
+  <button class="btn primary" type="submit" disabled={exporting}>
     {exporting ? "Exporting…" : "Download export"}
   </button>
 </form>
 
-<form class="card" onsubmit={doImport} autocomplete="off">
+<form class="card" onsubmit={doImport} autocomplete="off" novalidate>
   <h2>Import</h2>
   <p>
     Plumb reads an export file and makes a plan. Nothing changes until you approve the plan, except
@@ -182,10 +215,13 @@
       type="file"
       accept=".yaml,.yml,application/yaml,text/yaml"
       onchange={pick}
-      aria-describedby="import-file-hint"
+      aria-invalid={!!iErrs["/content"]}
+      aria-describedby={describedBy("import-file", iErrs["/content"])}
     />
-    <span class="hint" id="import-file-hint" class:error={fileError}>
-      {fileError ?? (fileName ? `Selected: ${fileName}` : "A file from Export, at most 8 MiB.")}
+    {#if iErrs["/content"]}<span class="error" id="import-file-error">{iErrs["/content"]}</span
+      >{/if}
+    <span class="hint" id="import-file-hint">
+      {fileName ? `Selected: ${fileName}` : "A file from Export, at most 8 MiB."}
     </span>
   </div>
   <fieldset>
@@ -212,8 +248,12 @@
       type="password"
       bind:value={passphrase}
       autocomplete="off"
-      aria-describedby="import-pass-hint"
+      aria-invalid={!!iErrs["/passphrase"]}
+      aria-describedby={describedBy("import-pass", iErrs["/passphrase"])}
     />
+    {#if iErrs["/passphrase"]}<span class="error" id="import-pass-error"
+        >{iErrs["/passphrase"]}</span
+      >{/if}
     <span class="hint" id="import-pass-hint">
       Without it, Plumb writes no secret from the file. With it, Plumb creates the missing secrets
       at once; they stay when you drop the plan.
@@ -221,7 +261,15 @@
   </div>
   <div class="field">
     <label for="import-reason">Reason (required)</label>
-    <textarea id="import-reason" bind:value={reason} required maxlength="2000"></textarea>
+    <textarea
+      id="import-reason"
+      bind:value={reason}
+      required
+      maxlength="2000"
+      aria-invalid={!!iErrs["/reason"]}
+      aria-describedby={describedBy("import-reason", iErrs["/reason"], false)}></textarea>
+    {#if iErrs["/reason"]}<span class="error" id="import-reason-error">{iErrs["/reason"]}</span
+      >{/if}
   </div>
 
   {#if missing}
@@ -249,8 +297,8 @@
     </fieldset>
   {/if}
 
-  <ProblemBox error={importError} />
-  <button class="btn primary" type="submit" disabled={importing || !content || !reason.trim()}>
+  <ProblemBox error={importError} fields={IMPORT_FIELDS} />
+  <button class="btn primary" type="submit" disabled={importing}>
     {importing ? "Importing…" : conflicts ? "Import again" : "Make import plan"}
   </button>
 </form>

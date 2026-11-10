@@ -176,11 +176,17 @@ describe("Tokens", () => {
     button("Create token")?.click();
     const alert = await until(() => document.querySelector('form [role="alert"]'));
     expect(alert.textContent).toContain("Check your access or name.");
-    if (status === 422) expect(alert.textContent).toContain("/name: Name refused.");
+    if (status === 422) {
+      // The field error is at the field, not in the list (QA-035-1).
+      expect(alert.textContent).toContain("Check the marked fields.");
+      expect(alert.textContent).not.toContain("/name");
+      expect(el("#token-name-error").textContent).toBe("Name refused.");
+      expect(el("#token-name").getAttribute("aria-invalid")).toBe("true");
+    }
   });
 
-  // QA-035-1: keep the unmet field-error requirement executable until fixed.
-  it.fails("associates a server 422 with the token name field", async () => {
+  // QA-035-1: server field errors are associated with their field.
+  it("associates a server 422 with the token name field (QA-035-1)", async () => {
     show(Tokens, { api: adminApi() });
     await until(() => rows().length === 2);
     type("#token-name", "   ");
@@ -245,7 +251,7 @@ describe("Secrets", () => {
     await until(() => rows().length === 2);
     const value = el<HTMLInputElement>("#secret-value");
     expect(value.type).toBe("password");
-    expect(value.getAttribute("autocomplete")).toBe("off");
+    expect(value.getAttribute("autocomplete")).toBe("new-password");
     type("#secret-name", "smtp");
     type("#secret-value", "s3cret value");
     button("Save secret")?.click();
@@ -283,7 +289,10 @@ describe("Secrets", () => {
     flushSync();
     expect(el<HTMLTextAreaElement>("#secret-value").value).toBe("");
     expect(document.body.innerHTML).not.toContain("must-not-survive");
-    expect(button("Save secret")?.disabled).toBe(true);
+    // A new save needs the value again: the form says so at the field.
+    button("Save secret")?.click();
+    await until(() => el("#secret-value-error").textContent === "Enter a value.");
+    expect(put).toHaveBeenCalledTimes(1);
   });
 
   it("switches to a multi-line field for keys", async () => {
@@ -293,11 +302,23 @@ describe("Secrets", () => {
     box.click();
     flushSync();
     const area = el<HTMLTextAreaElement>("textarea#secret-value");
-    expect(area.getAttribute("autocomplete")).toBe("off");
+    expect(area.getAttribute("autocomplete")).toBe("new-password");
     expect(area.getAttribute("spellcheck")).toBe("false");
   });
 
-  it.fails("associates a server 422 with the secret value field (QA-035-1)", async () => {
+  it("is not a login form: no autofill of the Plumb password (review)", async () => {
+    show(Secrets, { api: adminApi() });
+    await until(() => rows().length === 2);
+    const name = el<HTMLInputElement>("#secret-name");
+    expect(name.getAttribute("autocomplete")).toBe("off");
+    expect(name.getAttribute("name")).toBe("plumb-secret-name");
+    const value = el<HTMLInputElement>("#secret-value");
+    expect(value.type).toBe("password");
+    expect(value.getAttribute("autocomplete")).toBe("new-password");
+    expect(value.getAttribute("name")).toBe("plumb-secret-value");
+  });
+
+  it("associates a server 422 with the secret value field (QA-035-1)", async () => {
     show(Secrets, { api: adminApi() });
     await until(() => rows().length === 2);
     type("#secret-name", "smtp");
@@ -367,15 +388,20 @@ describe("Export and import", () => {
     el<HTMLInputElement>('input[name="export-secrets"][value="true"]').click();
     flushSync();
     const submit = button("Download export");
-    expect(submit?.disabled).toBe(true);
+    submit?.click();
+    flushSync();
+    expect(el("#export-pass-error").textContent).toBe("Use at least 12 characters.");
+    expect(document.activeElement?.id).toBe("export-pass");
     type("#export-pass", "too short");
     expect(el("#export-pass").getAttribute("aria-invalid")).toBe("true");
     type("#export-pass", "long enough passphrase");
     type("#export-pass2", "long enough passphrasX");
     expect(text()).toContain("The two passphrases differ.");
-    expect(submit?.disabled).toBe(true);
+    submit?.click();
+    flushSync();
+    expect(el("#export-pass2-error").textContent).toBe("The two passphrases differ.");
+    expect(exp).not.toHaveBeenCalled();
     type("#export-pass2", "long enough passphrase");
-    expect(submit?.disabled).toBe(false);
     submit?.click();
     await until(() => save.mock.calls.length === 1);
     expect(exp).toHaveBeenCalledWith("long enough passphrase");
@@ -462,7 +488,13 @@ describe("Export and import", () => {
     show(ExportImport, { api, save: vi.fn() });
     pickFile("x".repeat(8 * 1024 * 1024 + 1));
     await until(() => text().includes("larger than 8 MiB"));
-    expect(button("Make import plan")?.disabled).toBe(true);
+    const file = el("#import-file");
+    expect(file.getAttribute("aria-invalid")).toBe("true");
+    expect(file.getAttribute("aria-describedby")).toContain("import-file-error");
+    type("#import-reason", "Try.");
+    button("Make import plan")?.click();
+    flushSync();
     expect(imp).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(file);
   });
 });
