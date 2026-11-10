@@ -2,7 +2,7 @@
 
 - **Owner:** pl-codex-qa   · **Reviewer:** pl-reviewer   · **QA:** –
 - **Size:** S (Codex)   · **Depends on:** T-003   · **Parallel with:** T-004, T-005, T-008
-- **Status:** in review; guest run pending Docker access
+- **Status:** in review; guest CI pending GitHub outage recovery
 
 ## Goal
 The team can run resource tests inside real Debian and Ubuntu systems with one command.
@@ -25,11 +25,10 @@ The team can run resource tests inside real Debian and Ubuntu systems with one c
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-`pl-codex-qa/T-007-guest-test-harness` · see PR commit
-Tests: `go test ./...`, `make lint-go`, `bash -n test/guest/run.sh`, `git diff --check` pass.
-`make test-guest` compiles the guest binary, then fails on Docker socket access.
-Guest runs on both distributions, test failure propagation, and container cleanup remain pending.
-Docker access needs user action; no permission workaround attempted.
-Review fixes: private cgroups, no host cgroup mount, Docker-only guard fails loudly on the host.
-Cleanup removes containers and per-run image tags; HUP trap, executable runner, comments added.
-Pending: base-image digest pins and real guest/failure/interrupt/cleanup checks after Docker access.
+`pl-codex-qa/T-007-guest-test-harness` · harness commit `6013b9c` · PR #5
+Merged `origin/main`; kept private cgroups, host guard, traps, and image/container cleanup.
+Pinned both base images and added apt retries for builds and guest package operations.
+Tests: guest binary compile, `bash -n`, `git diff --check` pass.
+GitHub scheduled no checks for the pushed head; PR mergeability remains unknown.
+GitHub status reports Pull Requests major outage and Actions partial outage.
+Real guest evidence remains pending; see `docs/tasks/T-007.run.log.md`.
