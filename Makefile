@@ -1,5 +1,5 @@
 # Plumb – build, test and lint. See docs/ARCHITECTURE.md §9.
-# Needs: Go (version in go.mod). The web targets need Node (T-017).
+# Needs: Go (version in go.mod) and Node >= 24 with npm for the web targets.
 
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GO_BUILD     = CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)"
@@ -8,6 +8,8 @@ STATICCHECK  = honnef.co/go/tools/cmd/staticcheck@v0.8.2
 # npm packages can ship Go files. The go command skips web/node_modules
 # through the "ignore" line in go.mod; gofmt needs its own file list.
 GO_FILES     = $(shell find . -name '*.go' -not -path '*/node_modules/*')
+# npm ci runs only when the lock file changed; npm writes this file on every install.
+WEB_DEPS     = web/node_modules/.package-lock.json
 
 .PHONY: build build-web test test-go test-web lint lint-go lint-web test-guest test-pve clean
 
@@ -16,9 +18,13 @@ build: build-web
 	$(GO_BUILD) -o bin/plumb ./cmd/plumb
 	$(GO_BUILD) -o bin/plumb-agent ./cmd/plumb-agent
 
-## build-web: build the web UI into web/dist (stub; T-017 fills it)
-build-web:
-	@echo "build-web: stub, filled by T-017"
+$(WEB_DEPS): web/package.json web/package-lock.json
+	cd web && npm ci --ignore-scripts
+	@touch $@
+
+## build-web: generate API types and build the web UI into web/dist (embedded by package web)
+build-web: $(WEB_DEPS)
+	cd web && npm run build
 
 ## test: all tests that need no Proxmox host and no root
 test: test-go test-web
@@ -26,9 +32,9 @@ test: test-go test-web
 test-go:
 	go test ./...
 
-## test-web: unit tests of the web UI (stub; T-017 fills it)
-test-web:
-	@echo "test-web: stub, filled by T-017"
+## test-web: unit tests of the web UI (vitest)
+test-web: $(WEB_DEPS)
+	cd web && npm test
 
 ## lint: all linters
 lint: lint-go lint-web
@@ -39,9 +45,9 @@ lint-go:
 	go run $(STATICCHECK) ./...
 	go mod tidy -diff
 
-## lint-web: lint the web UI (stub; T-017 fills it)
-lint-web:
-	@echo "lint-web: stub, filled by T-017"
+## lint-web: OpenAPI check, eslint, prettier --check, svelte-check
+lint-web: $(WEB_DEPS)
+	cd web && npm run lint
 
 ## test-guest: resource tests inside Debian and Ubuntu containers (stub; T-007 fills it)
 test-guest:
