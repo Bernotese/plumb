@@ -205,6 +205,7 @@ check_host() {
 	for pkg in qemu-server:$MIN_QEMU_SERVER libpve-storage-perl:$MIN_STORAGE_PERL; do
 		min=${pkg#*:}
 		pkg=${pkg%%:*}
+		# shellcheck disable=SC2016 # ${Version} is a dpkg-query field, not a shell variable
 		have=$(query dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null) || die "$pkg is not installed. Nothing was changed."
 		query dpkg --compare-versions "$have" ge "$min" ||
 			die "Plumb needs $pkg $min or newer (cicustom must check the snippet storage, D-081); this host has $have. Update Proxmox VE. Nothing was changed."
@@ -409,6 +410,7 @@ json_rows() { perl -MJSON::PP -e 'my $d = decode_json(join "", <STDIN>); '"$1" "
 # acl_entries prints "path ugid role type" for every ACL of the Plumb user
 # and token.
 acl_entries() {
+	# shellcheck disable=SC2016 # perl code
 	query pveum acl list --output-format json |
 		json_rows 'for my $e (@$d) { next unless $e->{ugid} eq $ARGV[0] || $e->{ugid} eq $ARGV[1];
 			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type}\n" }' "$PVE_USER" "$PVE_USER!$TOKEN_NAME"
@@ -448,6 +450,7 @@ remove_stray_acls() {
 check_role() {
 	[[ $DRY_RUN == 1 ]] && return 0
 	local have want
+	# shellcheck disable=SC2016 # perl code
 	have=$(query pveum role list --output-format json |
 		json_rows 'for my $e (@$d) { next unless $e->{roleid} eq $ARGV[0]; my $p = $e->{privs}; $p = join ",", @$p if ref $p;
 			print join(" ", sort split /[, ]+/, $p), "\n" }' "$1")
@@ -725,7 +728,7 @@ do_install() {
 	STRAY_ACLS=$(stray_acls)
 	if [[ -n $STRAY_ACLS ]]; then
 		say "These older rights of Plumb are not in the plan and are removed:"
-		sed 's/^/  /' <<<"$STRAY_ACLS"
+		printf '  %s\n' "${STRAY_ACLS//$'\n'/$'\n'  }"
 	fi
 	confirm "Continue?" || die "stopped; nothing was changed"
 
