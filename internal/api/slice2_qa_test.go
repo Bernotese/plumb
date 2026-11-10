@@ -210,10 +210,54 @@ func randBytes(t *testing.T) []byte {
 	return b
 }
 
-func slice2Scan(t *testing.T, surface string, b []byte, values []string) {
+// Capture expected scanner errors without failing the surrounding test.
+type slice2ScanProbe struct{ hits int }
+
+func (*slice2ScanProbe) Helper()                 {}
+func (p *slice2ScanProbe) Errorf(string, ...any) { p.hits++ }
+
+func TestSlice2ScannerPositiveControl(t *testing.T) {
+	value := "qa-scanner-࠿࠾-canary-0123456789"
+	plants := map[string]string{"text": value, "hex": hex.EncodeToString([]byte(value)), "HEX": strings.ToUpper(hex.EncodeToString([]byte(value)))}
+	for name, enc := range map[string]*base64.Encoding{"std": base64.StdEncoding, "raw-std": base64.RawStdEncoding, "url": base64.URLEncoding, "raw-url": base64.RawURLEncoding} {
+		for offset := 0; offset < 3; offset++ {
+			plants[fmt.Sprintf("%s/offset-%d", name, offset)] = enc.EncodeToString([]byte(strings.Repeat("z", offset) + value + "suffix"))
+		}
+	}
+	for name, plant := range plants {
+		t.Run(name, func(t *testing.T) {
+			probe := &slice2ScanProbe{}
+			slice2Scan(probe, "planted buffer", []byte("before "+plant+" after"), []string{value})
+			if probe.hits == 0 {
+				t.Fatal("scanner missed planted canary")
+			}
+		})
+	}
+	probe := &slice2ScanProbe{}
+	slice2Scan(probe, "clean buffer", []byte("no canary here"), []string{value})
+	if probe.hits != 0 {
+		t.Fatal("scanner flagged a clean buffer")
+	}
+}
+
+func slice2Scan(t interface {
+	Helper()
+	Errorf(string, ...any)
+}, surface string, b []byte, values []string) {
 	t.Helper()
 	for _, v := range values {
-		for _, encoded := range []string{v, base64.StdEncoding.EncodeToString([]byte(v)), base64.RawStdEncoding.EncodeToString([]byte(v)), base64.URLEncoding.EncodeToString([]byte(v)), base64.RawURLEncoding.EncodeToString([]byte(v)), hex.EncodeToString([]byte(v)), strings.ToUpper(hex.EncodeToString([]byte(v)))} {
+		patterns := []string{v, hex.EncodeToString([]byte(v)), strings.ToUpper(hex.EncodeToString([]byte(v)))}
+		for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+			for offset := 0; offset < 3; offset++ {
+				encoded := enc.EncodeToString([]byte(strings.Repeat("x", offset) + v))
+				// Keep only characters whose six bits come entirely from the canary.
+				start, end := (offset*8+5)/6, (offset+len(v))*8/6
+				if end > start {
+					patterns = append(patterns, encoded[start:end])
+				}
+			}
+		}
+		for _, encoded := range patterns {
 			if bytes.Contains(b, []byte(encoded)) {
 				t.Errorf("canary found in %s (value omitted)", surface)
 			}
