@@ -1,7 +1,7 @@
 # T-044 – Order between Block uses (`after`), then `nginx-site`
 
 - **Owner:** pl-architect (plan first), then tbd   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
-- **Size:** M   · **Depends on:** T-020 on `main`   · **State:** plan ready (2026-11-10), waits for the user's approval. No feature code and no contract edit before that, because the plan changes the agent
+- **Size:** M   · **Depends on:** T-020 on `main`   · **State:** plan approved by the user (D-176, 2026-11-10). Work is in the child cards T-046 … T-051; T-051 closes this card
 
 ## Goal
 A Block use can depend on another Block use of the same Target, so a Block such as `nginx-site` applies clean in the first Run on a new Target.
@@ -16,7 +16,7 @@ A Block use can depend on another Block use of the same Target, so a Block such 
 - `docs/ARCHITECTURE.md` §10 (roadmap: `after`, `uses`), `docs/DECISIONS.md` D-027, D-165
 - `internal/agent/exec.go`, `internal/state` (render, validate)
 
-## Acceptance criteria (refined by the plan; final after the user's approval)
+## Acceptance criteria (final, D-176)
 - [ ] A Block names the resources it comes after (`spec.after`, D-167). Only these edges are sequential; everything else stays parallel.
 - [ ] An unknown id, an id of the same use and a cycle are save-time errors (D-168). The Plan shows `after` on the resource that waits (D-171).
 - [ ] Skip rule (D-170): a use whose `after` resource ended `failed`, `refused` or `skipped` is skipped and names it; other uses run. Tested in `internal/agent`.
@@ -28,7 +28,7 @@ A Block use can depend on another Block use of the same Target, so a Block such 
 - `after` on a Block use in the Target, Block names in `after`, templates in `after` / `restarts`, reverse order for removal (D-175).
 
 ## Plan (architect)
-Decisions: `docs/decisions/T-044.md`, D-167 … D-175, all PROPOSED. Nothing below is built yet.
+Decisions: `docs/decisions/T-044.md`, D-167 … D-175, decided (D-176). Cards: `T-046-after-contract.md`, `T-047-after-state-plan.md`, `T-048-after-agent.md`, `T-049-after-web.md`, `T-050-nginx-site-block.md`, `T-051-after-qa.md`.
 Plan review: pl-reviewer, PR #77 issuecomment-6781495903 (approve; S1 … S5 and N1 … N3 are in this text).
 
 ### 1. The dependency (D-167)
@@ -105,7 +105,7 @@ As in the first D-165 draft (PR #73, issuecomment-6775293986). Render adds the i
 - **Guest test, CI guest job:** `TestGuestNginxSitesFirstRun` in `internal/agent` (tag `guest`, `run.sh` already runs `^TestGuest`). Purge nginx, check that `/etc/nginx` is gone, render the Target from the real `blocks/*.yaml` (new `blocks/embed.go` with `blocks.FS`), one `apply` with all resources `unverified`. Expect no `failed`, `refused`, `skipped`; `curl -H "Host: a.lan"` and `b.lan` return each site's own page (the test makes two web roots first). Run it for both Target orders. Raise `-test.timeout` of `agent.test` in `run.sh` (1m is too short for two installs). Local: `sg docker -c "make test-guest"`.
 - Web: mock render tests, Plan view tests for the `after` label and the restart cause, `browser-shot` of a Plan with `nginx` + two sites (light, dark).
 
-### 9. Child cards (after the user's approval)
+### 9. Child cards (owner of T-047 and T-048: pl-lead assigns)
 | Card | Owner | Size | Work | Needs |
 |---|---|---|---|---|
 | T-046 contract | pl-architect | S | `openapi.yaml` (`after`, `restart_by`, `skipped` text), `block.json`, `wire.Resource.After`, the graph function in `wire` (edges with kind) and `wire.RestartOn` with tests, `StatusSkipped` comment, `api.gen.ts`, ARCHITECTURE §3 and §10 (also: agent self-update owns the version gate), comments that say "Blocks run in parallel" | approval |

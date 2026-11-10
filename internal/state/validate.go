@@ -476,12 +476,23 @@ func parseBlock(name string, spec json.RawMessage) (*block, Errors) {
 	var raw struct {
 		Params    json.RawMessage             `json:"params"`
 		Resources []map[string]map[string]any `json:"resources"`
+		After     []string                    `json:"after"`
+		Restarts  []string                    `json:"restarts"`
 	}
 	_ = decode(spec, &raw)
 	errf := func(path, format string, args ...any) *Error {
 		return &Error{Kind: KindBlock, Name: name, Path: path, Msg: fmt.Sprintf(format, args...)}
 	}
 	var errs Errors
+	// The contract has both fields (T-046), render does not use them yet.
+	// A Block that needs an order must not be saved and then apply without
+	// it. T-047 replaces this guard with the real checks (D-168, D-172).
+	if len(raw.After) > 0 {
+		errs = append(errs, errf("/spec/after", "after is not available yet (T-047)"))
+	}
+	if len(raw.Restarts) > 0 {
+		errs = append(errs, errf("/spec/restarts", "restarts is not available yet (T-047)"))
+	}
 	b := &block{props: map[string]bool{}, secrets: map[string]bool{}, defaults: map[string]any{}}
 	if raw.Params != nil {
 		var p struct {
