@@ -31,3 +31,9 @@ export interface PageOf<T> {
   items: T[];
   next: string | null;
 }
+export type Token = S["Token"];
+export type TokenRequest = S["TokenRequest"];
+export type TokenCreated = S["TokenCreated"];
+export type Tier = S["Tier"];
+export type SecretInfo = S["SecretInfo"];
+export type ImportRequest = S["ImportRequest"];

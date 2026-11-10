@@ -12,7 +12,11 @@ export type Route =
   | { name: "issue"; id: number }
   | { name: "history" }
   | { name: "revision"; id: number }
+  | { name: "settings"; tab: SettingsTab }
   | { name: "not-found"; path: string };
+
+export type SettingsTab = "tokens" | "secrets" | "export";
+const TABS: readonly string[] = ["tokens", "secrets", "export"] satisfies SettingsTab[];
 
 const NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
 
@@ -44,6 +48,9 @@ export function parse(hash: string): Route {
   if (a === "issues" && n) return { name: "issue", id: n };
   if (parts.length === 1 && a === "history") return { name: "history" };
   if (a === "revisions" && n) return { name: "revision", id: n };
+  if (parts.length === 1 && a === "settings") return { name: "settings", tab: "tokens" };
+  if (parts.length === 2 && a === "settings" && b && TABS.includes(b))
+    return { name: "settings", tab: b as SettingsTab };
   return { name: "not-found", path };
 }
 
@@ -71,6 +78,8 @@ export function href(r: Route): string {
       return "#/history";
     case "revision":
       return `#/revisions/${r.id}`;
+    case "settings":
+      return `#/settings/${r.tab}`;
     case "not-found":
       return `#${r.path}`;
   }
