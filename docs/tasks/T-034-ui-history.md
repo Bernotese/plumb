@@ -30,4 +30,4 @@ A user browses revisions, sees what changed and starts a rollback that opens the
 - Mock part done: branch `pl-frontend/T-034-ui-history`. Screens History, RevisionView, DocDiff; `listRevisions`, `diffRevision`, `rollbackRevision` in PlumbApi, HTTP and mock (mock data from the contract examples; approve commits revision snapshots).
 - Own YAML writer + line diff with unit tests (D-110, D-111). Screen tests in happy-dom (D-112). Paging + live reload (D-113).
 - Tests: `make lint test` → pass (117 web tests). Pictures: branch `pl-frontend/T-034-screens`, in the PR.
-- Open: Playwright e2e waits for T-031 on `main`.
+- E2E done (branch `pl-frontend/T-034-T-035-e2e`): `web/e2e/slice2-history.spec.ts` on `plumb serve --dev`: change web1 twice, diff, rollback plan shows "Rollback to revision n" (D-131), approve, nothing-to-do note. Plan view links `rollback_to`.

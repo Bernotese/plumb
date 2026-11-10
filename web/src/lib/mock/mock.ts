@@ -573,7 +573,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
 
   function newPlan(
     fields: Pick<Plan, "origin" | "issue_id" | "reason" | "targets" | "warnings"> &
-      Partial<Pick<Plan, "human_only">>,
+      Partial<Pick<Plan, "human_only" | "rollback_to">>,
   ): Plan {
     const s = auth();
     const all = fields.targets.flatMap((t) =>
@@ -1163,6 +1163,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         .map((c) => `Target ${c.name} is removed from Plumb. Plumb does not delete its guest.`);
       const p = newPlan({
         origin: "rollback",
+        rollback_to: n,
         issue_id: null,
         reason,
         targets: planTargets,
