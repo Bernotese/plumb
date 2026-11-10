@@ -110,6 +110,7 @@ const keyAttr: Record<string, string> = {
   package: "name",
   service: "name",
   user: "name",
+  symlink: "path",
 };
 
 /** Renders the Blocks of a Target into a flat resource list. */

@@ -34,6 +34,8 @@ One script prepares a Proxmox host for Plumb, so the real-host tests and the fir
   3. `setup_lxc`, before `systemctl restart plumb.service` (~l. 711): if `/var/lib/plumb/key/master.key` is missing, run `plumb key init --data /var/lib/plumb` as user `plumb` on a real TTY (`lxc-attach`/`pct enter`, not `pct exec`). A repair run with a key skips it. `--dry-run` only prints it. Without a terminal the installer stops before the start.
   4. `--remove`: `pct destroy --purge` also destroys the key volume; the confirmation text must say that the database is unreadable without the recovery key.
 
+- Agent unit in the cloud-init snippet (from the PR #72 review, D-161): the agent refuses a state directory with a mode other than 0700. Today the unit has no `StateDirectory=` and the agent creates its default directory with 0700 itself; keep it so. If a `StateDirectory=` is ever added, it needs `StateDirectoryMode=0700`, else the agent refuses every start. Check on the real host that the agent starts in a fresh VM.
+
 ## Plan (architect, optional)
 
 ## To verify on host (offline part; tested only against fake commands in `install/testdata/fakepve`)

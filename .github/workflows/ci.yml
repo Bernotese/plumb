@@ -13,6 +13,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  guest:
+    name: Debian and Ubuntu guest tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make test-guest
+        env:
+          GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Forced guest failure cleans up and stops the distro loop
+        run: |
+          log="$RUNNER_TEMP/guest-failure.log"
+          if bash test/guest/run.sh -test.no-such-flag >"$log" 2>&1; then cat "$log"; exit 1; fi
+          grep -q 'test.no-such-flag' "$log"
+          if grep -q 'plumb-guest-ubuntu' "$log"; then exit 1; fi
+          test -z "$(docker ps -aq --filter "name=$GUEST_RUN_ID")"
+          test -z "$(docker images -q "plumb-guest-*-$GUEST_RUN_ID")"
+        env:
+          GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Interrupt guest run cleans up
+        run: |
+          set +e
+          timeout --foreground --preserve-status -s INT -k 60 25 bash test/guest/run.sh
+          status=$?
+          set -e
+          echo "interrupt exit status: $status"
+          test "$status" -eq 130
+          containers=$(docker ps -aq --filter "name=$GUEST_RUN_ID")
+          images=$(docker images -q "plumb-guest-*-$GUEST_RUN_ID")
+          echo "leftover containers: ${containers:-none}; images: ${images:-none}"
+          test -z "$containers"
+          test -z "$images"
+          ! compgen -G '/tmp/tmp.*/guest.test' >/dev/null
+        env:
+          GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
   check:
     name: lint, test, build
     runs-on: ubuntu-latest

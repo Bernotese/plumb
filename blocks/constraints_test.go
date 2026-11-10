@@ -92,6 +92,7 @@ func TestParametersRejectUnsafeValues(t *testing.T) {
 		{"deploy-user", "ssh_key", []any{"invalid", "ssh-ed25519 AAAA\ninjected"}},
 		{"nginx", "server_name", []any{"_; location /x { alias /etc/; }", "ok\ninjected", "", strings.Repeat("a", 254)}},
 		{"motd", "message", []any{strings.Repeat("a", 2001)}},
+		{"nginx", "default_site", []any{"yes", "", "present\n"}},
 	} {
 		t.Run(tc.block+"/"+tc.param, func(t *testing.T) {
 			raw, err := os.ReadFile(tc.block + ".yaml")

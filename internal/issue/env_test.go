@@ -56,7 +56,7 @@ func (c *clock) add(d time.Duration) {
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T, configure ...func(*plan.Config)) *env {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
@@ -66,7 +66,7 @@ func newEnv(t *testing.T) *env {
 	}
 	e := &env{t: t, ctx: ctx, dir: dir, st: st, events: event.New(st), drv: fake.New(), clock: &clock{},
 		agents: map[string]*linktest.Agent{}, stops: map[string]context.CancelFunc{}}
-	e.start()
+	e.start(configure...)
 	t.Cleanup(func() {
 		cancel()
 		e.eng.Close()
@@ -77,25 +77,30 @@ func newEnv(t *testing.T) *env {
 
 // start builds link, engine and issue service on the store, like a
 // controller start.
-func (e *env) start() {
+func (e *env) start(configure ...func(*plan.Config)) {
 	e.t.Helper()
 	var err error
 	var eng *plan.Engine
 	e.link, err = link.New(link.Config{
 		Dir: filepath.Join(e.dir, "link"), Store: e.st, Events: e.events, Now: e.clock.now, Logger: quiet,
-		OnReport:  func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
-		Sensitive: func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
+		OnReport:     func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
+		SecretValues: func(ctx context.Context, t string) ([]string, error) { return eng.SecretValues(ctx, t) },
+		Sensitive:    func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
 	})
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	var iss *issue.Service
-	eng, err = plan.New(plan.Config{
+	cfg := plan.Config{
 		Store: e.st, Events: e.events, Agents: e.link, Driver: e.drv, Logger: quiet,
 		OnDrift:        func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
 		OnPlanDone:     func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 		ObserveTimeout: 5 * time.Second, EnrollTimeout: 3 * time.Second, ApplyTimeout: 5 * time.Second,
-	})
+	}
+	for _, f := range configure {
+		f(&cfg)
+	}
+	eng, err = plan.New(cfg)
 	if err != nil {
 		e.t.Fatal(err)
 	}
