@@ -1,0 +1,18 @@
+{
+  "kind": "Block",
+  "name": "motd",
+  "spec": {
+    "title": "Message of the day",
+    "params": {
+      "type": "object",
+      "properties": {
+        "text": {"type": "string", "title": "Text", "default": "Managed by Plumb"},
+        "path": {"type": "string", "title": "File", "default": "/etc/motd"},
+        "loud": {"type": "boolean", "title": "Upper case", "default": false}
+      }
+    },
+    "resources": [
+      {"file": {"path": "{{ .path }}", "content": "{{ if .loud }}{{ upper .text }}{{ else }}{{ .text }}{{ end }}\n", "mode": "0644", "owner": "root", "group": "root"}}
+    ]
+  }
+}

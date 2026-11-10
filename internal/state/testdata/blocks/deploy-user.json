@@ -1,0 +1,18 @@
+{
+  "kind": "Block",
+  "name": "deploy-user",
+  "spec": {
+    "title": "Deploy user",
+    "params": {
+      "type": "object",
+      "required": ["ssh_key"],
+      "properties": {
+        "name": {"type": "string", "title": "User name", "default": "deploy"},
+        "ssh_key": {"type": "string", "title": "SSH public key"}
+      }
+    },
+    "resources": [
+      {"user": {"name": "{{ .name }}", "shell": "/bin/bash", "home": "/home/{{ .name }}", "groups": ["sudo"], "ssh_keys": ["{{ .ssh_key }}"]}}
+    ]
+  }
+}

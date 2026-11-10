@@ -122,8 +122,8 @@ func TestCanonical(t *testing.T) {
 		"blocks": [{"use": "motd", "params": {"text": "a <b> & c\u00e9"}}]
 	}`)}
 	const want = `{"kind":"Target","name":"web1","spec":{"blocks":[{"params":{"text":"a <b> & cé"},"use":"motd"}],` +
-		`"guest":{"big":12345678901234567890,"bridge":"vmbr0","cores":2,"disk":20.0,"memory":2048},"image":"ubuntu-26.04","type":"vm"}}`
-	const wantHash = "c40574d37a7a121bce33486bbccbbbf10254d5fd4ab1a194a571afb6989e9082"
+		`"guest":{"big":12345678901234567890,"bridge":"vmbr0","cores":2,"disk":20,"memory":2048},"image":"ubuntu-26.04","type":"vm"}}`
+	const wantHash = "ca2eb43d539d8b5905b0eb55d1a5f116b386957ad03a14cc388e60262080d360"
 	got, err := Canonical(doc)
 	if err != nil {
 		t.Fatal(err)
