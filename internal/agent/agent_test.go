@@ -246,7 +246,7 @@ func TestWatchListOnDiskAndReconnect(t *testing.T) {
 
 	// The link breaks and comes back: hello and all open drift again.
 	ctl.mu.Lock()
-	ctl.pollFail = 1
+	ctl.pollFail, ctl.failCode = 1, http.StatusInternalServerError
 	ctl.mu.Unlock()
 	waitFor(t, "drift after reconnect", func() bool { return len(ctl.driftItems(conf.ID)) >= 2 })
 	if n := len(ctl.reportsOf(wire.ReportHello)); n < 2 {
@@ -332,7 +332,7 @@ func TestBusyIsNotRevoked(t *testing.T) {
 			ta := startAgent(t, ctl, ca, "tok-1")
 			waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) == 1 })
 			ctl.mu.Lock()
-			ctl.failCode, ctl.pollFail = code, 5
+			ctl.failCode, ctl.pollFail, ctl.retryAfter = code, 2, "1"
 			ctl.mu.Unlock()
 			waitFor(t, "all busy answers used", func() bool {
 				ctl.mu.Lock()
@@ -348,6 +348,23 @@ func TestBusyIsNotRevoked(t *testing.T) {
 			ctl.mu.Unlock()
 			if enrolled != 1 {
 				t.Fatalf("enrollments = %d; a busy controller must not cause re-enrollment", enrolled)
+			}
+			// A busy controller keeps the link: no new hello, no resend of all drift.
+			if n := len(ctl.reportsOf(wire.ReportHello)); n != 1 {
+				t.Fatalf("hello reports = %d, want 1", n)
+			}
+			// Retry-After: 1 is honored (backoff alone would retry after ~10 ms).
+			ctl.mu.Lock()
+			times := append([]time.Time(nil), ctl.pollTimes...)
+			ctl.mu.Unlock()
+			waits := 0
+			for i := 1; i < len(times); i++ {
+				if times[i].Sub(times[i-1]) >= 950*time.Millisecond {
+					waits++
+				}
+			}
+			if waits < 2 {
+				t.Fatalf("only %d poll gaps of >= 1 s after two busy answers", waits)
 			}
 			if b, _ := os.ReadFile(filepath.Join(ta.cfg.StateDir, credentialFile)); strings.TrimSpace(string(b)) != "cred-1" {
 				t.Fatalf("credential changed: %q", b)

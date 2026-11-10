@@ -78,6 +78,9 @@ type controller struct {
 	rejected    map[string]int // 401 answers per credential
 	pollFail    int            // answer this many polls with failCode
 	failCode    int            // default 503
+	retryAfter  string         // Retry-After of a failed poll or report
+	reportFail  int            // answer this many reports with failCode
+	pollTimes   []time.Time
 	reports     []wire.Report
 	commands    chan wire.Command
 }
@@ -127,20 +130,27 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	failWith := func() {
+		code := c.failCode
+		if code == 0 {
+			code = http.StatusServiceUnavailable
+		}
+		if c.retryAfter != "" {
+			w.Header().Set("Retry-After", c.retryAfter)
+		}
+		w.WriteHeader(code)
+	}
 	switch r.URL.Path {
 	case wire.PathPoll:
 		c.mu.Lock()
+		c.pollTimes = append(c.pollTimes, time.Now())
 		fail := c.pollFail > 0
 		if fail {
 			c.pollFail--
+			failWith()
 		}
 		c.mu.Unlock()
 		if fail {
-			code := c.failCode
-			if code == 0 {
-				code = http.StatusServiceUnavailable
-			}
-			w.WriteHeader(code)
 			return
 		}
 		select {
@@ -157,6 +167,12 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.mu.Lock()
+		if c.reportFail > 0 && rep.Type == wire.ReportResult {
+			c.reportFail--
+			failWith()
+			c.mu.Unlock()
+			return
+		}
 		c.reports = append(c.reports, rep)
 		c.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
@@ -234,16 +250,20 @@ type runner struct {
 	mu        sync.Mutex
 	calls     [][]string
 	onRestart func()
+	onShow    func() // runs before "systemctl show" answers
 }
 
 func (r *runner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, append([]string{name}, args...))
-	hook := r.onRestart
+	hook, show := r.onRestart, r.onShow
 	r.mu.Unlock()
 	if name == "systemctl" && len(args) > 0 {
 		switch args[0] {
 		case "show":
+			if show != nil {
+				show()
+			}
 			return []byte("LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"), nil
 		case "restart":
 			if hook != nil {

@@ -114,8 +114,11 @@ func (a *Agent) apply(ctx context.Context, cmdID string, body wire.ApplyBody) ([
 	}
 	// The applied resources become part of the desired list, so the drift
 	// check after the apply compares against what was applied.
+	// No drift check runs while the apply changes the guest.
+	a.applyLock.Lock()
 	a.beginApply(body.Resources)
 	defer a.endApply(body.Resources)
+	defer a.applyLock.Unlock()
 	if err := a.saveDesired(); err != nil {
 		return nil, fmt.Errorf("store desired list: %w", err)
 	}

@@ -21,6 +21,35 @@ import (
 // any more, or the enrollment token was refused.
 var errUnauthorized = errors.New("controller answered 401")
 
+// maxRetryAfter bounds a Retry-After from the controller.
+const maxRetryAfter = 10 * time.Minute
+
+// busyError is a 429 or 503: the controller is busy. The agent keeps its
+// credential and waits at least RetryAfter (D-055).
+type busyError struct {
+	Status     int
+	RetryAfter time.Duration
+}
+
+func (e *busyError) Error() string {
+	return fmt.Sprintf("controller busy (%d), retry after %s", e.Status, e.RetryAfter)
+}
+
+// retryAfter parses a Retry-After header: seconds or an HTTP date.
+func retryAfter(h string, now time.Time) time.Duration {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return 0
+	}
+	var d time.Duration
+	if n, err := strconv.Atoi(h); err == nil {
+		d = time.Duration(n) * time.Second
+	} else if t, err := http.ParseTime(h); err == nil {
+		d = t.Sub(now)
+	}
+	return min(max(d, 0), maxRetryAfter)
+}
+
 // maxCommandBytes limits the body of a command from the controller.
 const maxCommandBytes = 16 << 20
 
@@ -37,7 +66,7 @@ func newClient(cfg Config, pollWait time.Duration) (*client, error) {
 	}
 	tr := &http.Transport{
 		// Only the Plumb CA: no system roots, no proxy from the environment.
-		TLSClientConfig:       &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		TLSClientConfig:       &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: pollWait + 15*time.Second,
 		MaxIdleConns:          2,
@@ -79,6 +108,8 @@ func (c *client) do(ctx context.Context, method, path, cred string, in, out any)
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return resp.StatusCode, errUnauthorized
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable:
+		return resp.StatusCode, &busyError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now())}
 	case resp.StatusCode == http.StatusOK && out != nil:
 		b, err := io.ReadAll(lim)
 		if err != nil {

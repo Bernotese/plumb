@@ -3,10 +3,12 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -24,12 +26,34 @@ type stateDir struct{ dir string }
 
 func (s stateDir) path(name string) string { return filepath.Join(s.dir, name) }
 
-// write replaces a file atomically with mode 0600.
-func (s stateDir) write(name string, data []byte) error {
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+// ensure creates the state dir with mode 0700, or checks an existing one:
+// a real directory (no symlink) owned by the agent's user with no group or
+// other permissions. It never changes an existing directory, so a wrong
+// state_dir cannot break the guest.
+func (s stateDir) ensure() error {
+	fi, err := os.Lstat(s.dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(s.dir), 0o755); err != nil {
+			return err
+		}
+		if err := os.Mkdir(s.dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		fi, err = os.Lstat(s.dir)
+	}
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(s.dir, 0o700); err != nil {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || int(st.Uid) != os.Geteuid() || fi.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("state dir %s must be a directory owned by the agent user with mode 0700", s.dir)
+	}
+	return nil
+}
+
+// write replaces a file atomically with mode 0600.
+func (s stateDir) write(name string, data []byte) error {
+	if err := s.ensure(); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(s.dir, "."+name+"-*")

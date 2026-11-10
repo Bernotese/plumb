@@ -54,6 +54,10 @@ type Agent struct {
 	credMu sync.Mutex
 	cred   string
 
+	// applyLock: an apply holds it for writing, a drift check for reading,
+	// so a check never observes a half-applied resource (D-055).
+	applyLock sync.RWMutex
+
 	mu       sync.Mutex
 	desired  []wire.Resource
 	applying int                  // applies in progress
@@ -61,6 +65,7 @@ type Agent struct {
 	dirty    map[string]bool      // drift items not yet sent
 	resolved map[string]wire.Item // drift that went away, not yet sent
 
+	watcher     *watcher      // set by Run (tests read it)
 	listChanged chan struct{} // the desired list changed
 	applyDone   chan []string // an apply ended; ids of its resources
 	sendMu      sync.Mutex    // one drift report at a time
@@ -131,35 +136,53 @@ func (a *Agent) Run(ctx context.Context) error {
 		return fmt.Errorf("inotify: %w", err)
 	}
 	defer w.close()
+	a.mu.Lock()
+	a.watcher = w
+	a.mu.Unlock()
 	go a.driftLoop(ctx, w)
 
 	b := backoff{min: a.opt.BackoffMin, max: a.opt.BackoffMax}
 	connected := false
+	// pending is a command result that the controller has not accepted
+	// yet. It is sent again until a call succeeds; after a 401 the link has
+	// forgotten the command, so the result is dropped.
+	var pending *wire.Report
 	for ctx.Err() == nil {
 		if a.credential() == "" {
 			if err := a.enroll(ctx); err != nil {
 				a.log.Warn("enroll failed", "err", err)
-				b.sleep(ctx)
+				b.sleep(ctx, retryAfterOf(err))
 				continue
 			}
 		}
 		if !connected {
 			// After start and after every reconnect: hello, then all open drift.
 			if err := a.send(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()}); err != nil {
-				a.connError(ctx, err, &b)
+				connected = a.connError(ctx, err, &b, connected)
 				continue
 			}
 			if err := a.flushDrift(ctx, true); err != nil {
-				a.connError(ctx, err, &b)
+				connected = a.connError(ctx, err, &b, connected)
 				continue
 			}
 			connected = true
 			b.reset()
 		}
+		if pending != nil {
+			if err := a.send(ctx, *pending); err != nil {
+				if errors.Is(err, errUnauthorized) {
+					a.log.Warn("result dropped after 401", "command", pending.CommandID)
+					pending = nil
+				}
+				connected = a.connError(ctx, err, &b, connected)
+				continue
+			}
+			pending = nil
+			b.reset()
+		}
 		cmd, err := a.client.poll(ctx, a.credential(), a.opt.PollWait)
 		if err != nil {
-			connected = false
-			a.connError(ctx, err, &b)
+			connected = a.connError(ctx, err, &b, connected)
 			continue
 		}
 		b.reset()
@@ -167,29 +190,43 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue
 		}
 		rep := a.handle(ctx, *cmd)
-		if err := a.send(ctx, rep); err != nil {
-			connected = false
-			a.connError(ctx, err, &b)
-		}
+		pending = &rep // sent at the top of the next round
 	}
 	return ctx.Err()
 }
 
-// connError handles a failed call: a 401 drops the credential, so the next
-// round enrolls with a fresh token. Every error waits with backoff.
-func (a *Agent) connError(ctx context.Context, err error, b *backoff) {
+// connError handles a failed call and returns the new connected state.
+// A 401 drops the credential, so the next round enrolls with a fresh token.
+// A busy controller (429, 503) keeps the link: no new hello, no resend of
+// all drift. Every error waits with backoff, and at least Retry-After.
+func (a *Agent) connError(ctx context.Context, err error, b *backoff, connected bool) bool {
 	if ctx.Err() != nil {
-		return
+		return false
 	}
-	if errors.Is(err, errUnauthorized) {
+	var busy *busyError
+	switch {
+	case errors.Is(err, errUnauthorized):
 		a.log.Warn("credential refused; enrolling again")
 		if derr := a.dropCredential(); derr != nil {
 			a.log.Error("drop credential", "err", derr)
 		}
-	} else {
+		connected = false
+	case errors.As(err, &busy):
+		a.log.Info("controller busy", "status", busy.Status, "retry_after", busy.RetryAfter)
+	default:
 		a.log.Warn("controller call failed", "err", err)
+		connected = false
 	}
-	b.sleep(ctx)
+	b.sleep(ctx, retryAfterOf(err))
+	return connected
+}
+
+func retryAfterOf(err error) time.Duration {
+	var busy *busyError
+	if errors.As(err, &busy) {
+		return busy.RetryAfter
+	}
+	return 0
 }
 
 func (a *Agent) credential() string {
@@ -275,13 +312,14 @@ type backoff struct {
 
 func (b *backoff) reset() { b.cur = 0 }
 
-func (b *backoff) sleep(ctx context.Context) {
+// sleep waits the next backoff step, and at least atLeast.
+func (b *backoff) sleep(ctx context.Context, atLeast time.Duration) {
 	if b.cur == 0 {
 		b.cur = b.min
 	} else {
 		b.cur = min(b.cur*2, b.max)
 	}
-	d := b.cur/2 + rand.N(b.cur/2+1)
+	d := max(b.cur/2+rand.N(b.cur/2+1), atLeast)
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {

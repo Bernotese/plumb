@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -85,6 +86,10 @@ func (c *Config) check() error {
 	if c.StateDir == "" {
 		c.StateDir = DefaultStateDir
 	}
+	if !filepath.IsAbs(c.StateDir) || filepath.Clean(c.StateDir) == "/" {
+		return fmt.Errorf("state_dir must be an absolute directory other than /, got %q", c.StateDir)
+	}
+	c.StateDir = filepath.Clean(c.StateDir)
 	if c.FullCheck <= 0 {
 		c.FullCheck = Duration(DefaultFullCheck)
 	}

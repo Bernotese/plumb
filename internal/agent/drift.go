@@ -104,6 +104,10 @@ func (a *Agent) isApplying() bool {
 	return a.applying > 0
 }
 
+// maxDebounceWait bounds the debounce: a file that changes more often than
+// the debounce is still checked at least this often.
+func (a *Agent) maxDebounceWait() time.Duration { return 5 * a.opt.Debounce }
+
 // driftLoop runs the fast and the slow path until ctx ends.
 func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 	full := time.NewTicker(time.Duration(a.cfg.FullCheck))
@@ -111,29 +115,46 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 	debounce := time.NewTimer(time.Hour)
 	debounce.Stop()
 	pending := map[string]bool{}
+	var firstPending time.Time // when the oldest pending event came
+	arm := func() {
+		if firstPending.IsZero() {
+			firstPending = time.Now()
+		}
+		left := a.maxDebounceWait() - time.Since(firstPending)
+		debounce.Reset(max(min(a.opt.Debounce, left), 0))
+	}
 	paths := a.rewatch(w)
+	events := w.events
 
 	a.check(ctx, nil) // a full check at start
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case p, ok := <-w.events:
+		case p, ok := <-events:
 			if !ok {
-				return
+				a.log.Error("inotify stopped; drift is found only by the full check")
+				events = nil
+				continue
 			}
 			for _, id := range affected(paths, p) {
 				pending[id] = true
 			}
 			if len(pending) > 0 && !a.isApplying() {
-				debounce.Reset(a.opt.Debounce)
+				arm()
 			}
+		case <-w.overflow:
+			// Events were lost: only a full check is safe.
+			clear(pending)
+			firstPending = time.Time{}
+			a.check(ctx, nil)
+			paths = a.rewatch(w)
 		case ids := <-a.applyDone:
 			for _, id := range ids {
 				pending[id] = true
 			}
 			paths = a.rewatch(w)
-			debounce.Reset(a.opt.Debounce)
+			arm()
 		case <-debounce.C:
 			if a.isApplying() {
 				continue // endApply sets the timer again
@@ -143,6 +164,7 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 				ids = append(ids, id)
 			}
 			clear(pending)
+			firstPending = time.Time{}
 			a.check(ctx, ids)
 			paths = a.rewatch(w)
 		case <-full.C:
@@ -167,6 +189,7 @@ func (a *Agent) rewatch(w *watcher) map[string][]string {
 	list := append([]wire.Resource(nil), a.desired...)
 	a.mu.Unlock()
 	paths := map[string][]string{}
+	dirs := map[string]bool{}
 	for _, r := range list {
 		rs, err := resource.New(r, a.env)
 		if err != nil {
@@ -175,11 +198,10 @@ func (a *Agent) rewatch(w *watcher) map[string][]string {
 		for _, p := range rs.Watch() {
 			p = filepath.Clean(p)
 			paths[p] = append(paths[p], r.ID)
-			if err := w.add(filepath.Dir(p)); err != nil {
-				a.log.Debug("watch", "dir", filepath.Dir(p), "err", err)
-			}
+			dirs[filepath.Dir(p)] = true
 		}
 	}
+	w.sync(dirs, a.log)
 	return paths
 }
 
@@ -197,6 +219,12 @@ func affected(paths map[string][]string, p string) []string {
 // check observes the given resources (all for nil) and reports what
 // changed since the last report.
 func (a *Agent) check(ctx context.Context, ids []string) {
+	// No apply runs while the check reads the list and observes (D-055).
+	// The list is copied under the lock: an apply that ended just before
+	// has merged its resources into it.
+	a.applyLock.RLock()
+	defer a.flushAfterCheck(ctx)
+	defer a.applyLock.RUnlock()
 	a.mu.Lock()
 	list := append([]wire.Resource(nil), a.desired...)
 	a.mu.Unlock()
@@ -225,6 +253,9 @@ func (a *Agent) check(ctx context.Context, ids []string) {
 		}
 		a.mu.Unlock()
 	}
+}
+
+func (a *Agent) flushAfterCheck(ctx context.Context) {
 	if err := a.flushDrift(ctx, false); err != nil {
 		a.log.Debug("drift report not sent; it is sent again after reconnect", "err", err)
 	}
