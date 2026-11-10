@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -40,9 +41,11 @@ func (e *MissingSecretsError) Error() string {
 // version than planned, or a missing one.
 var ErrSecretChanged = errors.New("a secret changed or is gone since the Plan")
 
-// checkSecrets returns a MissingSecretsError for the references of the
+// checkSecretsPresent returns a MissingSecretsError for the references of the
 // targets that do not exist, or nil.
-func (e *Engine) checkSecrets(ctx context.Context, set *state.Set, targets []string) error {
+// The names in present count as existing (the secrets that an import
+// writes).
+func (e *Engine) checkSecretsPresent(ctx context.Context, set *state.Set, targets, present []string) error {
 	var refs []state.SecretRef
 	owner := map[int]string{}
 	for _, t := range targets {
@@ -61,6 +64,9 @@ func (e *Engine) checkSecrets(ctx context.Context, set *state.Set, targets []str
 	have, err := e.versions(ctx, names)
 	if err != nil {
 		return err
+	}
+	for _, n := range present {
+		have[n] = 0
 	}
 	missing := map[string]bool{}
 	var errs state.Errors
@@ -357,4 +363,41 @@ func (e *Engine) SecretValues(ctx context.Context, target string) ([]string, err
 		out = append(out, v.Text)
 	}
 	return out, nil
+}
+
+// usesAny returns the ids of the resources of a render that use one of
+// the names.
+func usesAny(r *state.Rendered, names []string) map[string]bool {
+	out := map[string]bool{}
+	if r == nil || len(names) == 0 {
+		return out
+	}
+	for _, res := range r.All() {
+		for _, n := range state.ResourceSecrets(res) {
+			if slices.Contains(names, n) {
+				out[res.ID] = true
+			}
+		}
+	}
+	return out
+}
+
+// refreshVersions sets the planned version of the named secrets to their
+// version now (after an import wrote them).
+func (e *Engine) refreshVersions(ctx context.Context, plans []TargetPlan, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	have, err := e.versions(ctx, names)
+	if err != nil {
+		return err
+	}
+	for i := range plans {
+		for j := range plans[i].Secrets {
+			if v, ok := have[plans[i].Secrets[j].Name]; ok && slices.Contains(names, plans[i].Secrets[j].Name) {
+				plans[i].Secrets[j].Version = v
+			}
+		}
+	}
+	return nil
 }

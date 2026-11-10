@@ -251,7 +251,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		}
 		devToken = randomToken()
 	}
-	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Secrets: secrets, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
+	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Secrets: secrets, Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
 
 	errc := make(chan error, 2)
 	go func() { errc <- lk.Serve(ctx, f.agentListen) }()

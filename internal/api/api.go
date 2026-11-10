@@ -33,6 +33,8 @@ type Config struct {
 	Events *event.Log
 	Plans  *plan.Engine
 	Issues *issue.Service
+	// Version is the Plumb version, for the export header.
+	Version string
 	// Secrets is the encrypted secret store (required).
 	Secrets *secret.Store
 	// UI is the built web UI (index.html, assets/…). nil: no UI.
@@ -210,6 +212,10 @@ func (s *Server) Handler() http.Handler {
 	route("GET /api/v1/revisions", read, s.listRevisions)
 	route("GET /api/v1/revisions/{n}/diff", read, s.diffRevision)
 	route("POST /api/v1/revisions/{n}/rollback", planTier, s.rollbackRevision)
+
+	route("GET /api/v1/export", read, s.exportState)
+	route("POST /api/v1/export", admin, s.exportStateWithSecrets)
+	route("POST /api/v1/import", admin, s.importState)
 
 	route("GET /api/v1/events", read, s.events)
 

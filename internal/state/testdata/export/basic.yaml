@@ -1,0 +1,55 @@
+kind: Export
+format: 1
+revision: 7
+exported_at: "2026-11-10T09:30:00Z"
+version: 0.2.0
+secrets: [app-db]
+---
+kind: Block
+name: motd
+spec:
+  params:
+    properties:
+      pw:
+        type: string
+        writeOnly: true
+      ratio:
+        default: 2.5
+        type: number
+      text:
+        default: Managed by Plumb.
+        type: string
+    type: object
+  resources:
+    - file:
+        content: |
+          {{ .text }}
+          -- managed
+          line 3
+        mode: "0644"
+        path: /etc/motd
+  title: Message of the day
+---
+kind: Image
+name: ubuntu
+spec:
+  sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+  type: vm
+  url: https://images.invalid/u.img
+---
+kind: Target
+name: web1
+spec:
+  blocks:
+    - params:
+        pw:
+          secret: app-db
+        text: "yes"
+      use: motd
+  guest:
+    bridge: vmbr0
+    cores: 2
+    disk: 20
+    memory: 2048
+  image: ubuntu
+  type: vm

@@ -1531,7 +1531,6 @@ paths:
     get:
       tags: [state]
       operationId: exportState
-      x-plumb-planned: T-033
       summary: Export the desired state without secret values
       description: |
         One YAML stream of the head revision (D-094): a header document `kind: Export`, then
@@ -1578,7 +1577,6 @@ paths:
     post:
       tags: [state]
       operationId: exportStateWithSecrets
-      x-plumb-planned: T-033
       summary: Export the desired state with an encrypted secret bundle
       description: |
         Human session only. The same file as `GET /export` plus a last document
@@ -1633,7 +1631,6 @@ paths:
     post:
       tags: [state]
       operationId: importState
-      x-plumb-planned: T-033
       summary: Plan an import of an export file
       description: |
         Human session only. Reads an export file and returns a Plan (origin `import`). Nothing

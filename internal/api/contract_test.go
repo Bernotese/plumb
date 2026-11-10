@@ -137,10 +137,19 @@ func (k *contract) check(t *testing.T, r recorded) {
 	if r.ctype == "text/event-stream" {
 		return
 	}
-	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(r.body))
-	if err != nil {
-		t.Errorf("%s: body is not JSON: %s", name, r.body)
-		return
+	var inst any
+	if r.ctype == "application/yaml" {
+		// An export file: a string by the schema, and a file that Decode reads.
+		if _, err := state.Decode(r.body); err != nil {
+			t.Errorf("%s: the export file does not decode: %v", name, err)
+		}
+		inst = string(r.body)
+	} else {
+		var err error
+		if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(r.body)); err != nil {
+			t.Errorf("%s: body is not JSON: %s", name, r.body)
+			return
+		}
 	}
 	s := k.schema(t, pointer+"/content/"+ptrEscape(r.ctype)+"/schema")
 	if err := s.Validate(inst); err != nil {
@@ -320,6 +329,16 @@ func TestContract(t *testing.T) {
 	call(readTok, "DELETE", "/api/v1/tokens/tok_nope", "/tokens/{id}", nil)
 	call(adm, "GET", "/api/v1/tokens?limit=1", "/tokens", nil)
 	call(adm, "GET", "/api/v1/tokens", "/tokens", nil)
+
+	// Export and import (T-033).
+	exported := call(readTok, "GET", "/api/v1/export", "/export", nil)
+	call(adm, "POST", "/api/v1/export", "/export", map[string]string{"passphrase": "short"})             // 422
+	call(tok, "POST", "/api/v1/export", "/export", map[string]string{"passphrase": "a long passphrase"}) // 403
+	call(adm, "POST", "/api/v1/export", "/export", map[string]string{"passphrase": "a long passphrase"})
+	call(adm, "POST", "/api/v1/import", "/import", map[string]any{"content": "kind: X\n", "reason": "x"}) // 422
+	call(adm, "POST", "/api/v1/import", "/import", []byte(`{`))                                           // 400
+	imp := call(adm, "POST", "/api/v1/import", "/import", map[string]any{"content": string(exported), "reason": "same", "mode": "merge"})
+	call(adm, "DELETE", "/api/v1/plans/"+id(imp), "/plans/{id}", nil)
 
 	// Logout.
 	call(adm, "DELETE", "/api/v1/session", "/session", nil)

@@ -47,6 +47,7 @@ type env struct {
 	eng    *plan.Engine
 	iss    *issue.Service
 	sec    *secret.Store
+	key    secret.Key
 	srv    *Server
 	dir    string // data directory: plumb.db and link/
 	h      http.Handler
@@ -70,7 +71,8 @@ func newEnv(t *testing.T, dev bool) *env {
 	e := &env{t: t, ctx: ctx, dir: dir, st: st, events: event.New(st), drv: fake.New(), agents: map[string]*linktest.Agent{}}
 	var eng *plan.Engine
 	var iss *issue.Service
-	if e.sec, err = secret.Open(ctx, st, secret.NewKey()); err != nil {
+	e.key = secret.NewKey()
+	if e.sec, err = secret.Open(ctx, st, e.key); err != nil {
 		t.Fatal(err)
 	}
 	e.link, err = link.New(link.Config{Dir: filepath.Join(dir, "link"), Store: st, Events: e.events, Logger: log,

@@ -32,14 +32,15 @@ type Agent struct {
 	// attributes, like a buggy agent. The controller must redact them.
 	LeakSensitive bool
 
-	bodies   [][]byte // raw body of every command, in order
-	mu       sync.Mutex
-	cred     string
-	enrolls  int
-	guest    map[string]map[string]any // what is "on the guest"
-	watch    []wire.Resource
-	failing  map[string]string // resource id → apply error
-	commands []wire.CommandType
+	bodies    [][]byte               // raw body of every command, in order
+	onCommand func(wire.CommandType) // see OnCommand
+	mu        sync.Mutex
+	cred      string
+	enrolls   int
+	guest     map[string]map[string]any // what is "on the guest"
+	watch     []wire.Resource
+	failing   map[string]string // resource id → apply error
+	commands  []wire.CommandType
 }
 
 // New returns an agent that talks to h. token reads the token source, as
@@ -247,7 +248,11 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 	a.mu.Lock()
 	a.commands = append(a.commands, cmd.Type)
 	a.bodies = append(a.bodies, append([]byte(nil), cmd.Body...))
+	hook := a.onCommand
 	a.mu.Unlock()
+	if hook != nil {
+		hook(cmd.Type)
+	}
 	var body wire.ApplyBody // the widest body: resources, plan, max risk
 	if err := json.Unmarshal(cmd.Body, &body); err != nil {
 		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Error: "bad body"})
@@ -399,4 +404,13 @@ func (a *Agent) Bodies() [][]byte {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([][]byte(nil), a.bodies...)
+}
+
+// OnCommand sets a test hook that runs before the agent handles each
+// command (nil clears it). It can change the controller while a Plan
+// observes.
+func (a *Agent) OnCommand(f func(wire.CommandType)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onCommand = f
 }
