@@ -19,6 +19,13 @@ The pending decisions are final, so PR #1 can be approved and merged.
 - [ ] The wave plan shows which cards can start without the test host.
 - [ ] Same branch and PR (#1), one small commit, no force-push.
 
+## Part 2 – shoulds from the second review (verdict: approve)
+Review: https://github.com/Bernotese/plumb/pull/1#pullrequestreview-5835523725 (0 must, 3 should, 4 nit)
+- [ ] Should 1: after cloud-init is disabled, cloud-init field changes (ip, sshkeys) and disk grow have no effect in the guest. Make them create-only in Driver.Diff, or add a guest resize.
+- [ ] Should 2: a plain hash of a sensitive value can be brute-forced. Report changed true/false, or use an HMAC (D-037, T-005).
+- [ ] Should 3: T-018: on 401 the agent re-enrolls from the token source (D-038).
+- [ ] Nits: fix the cheap ones.
+
 ## Result (owner, max 8 lines)
 T-019 done · branch `pl-architect/T-001-architecture` · PR #1 · tests: none (docs only)
 - D-019, D-030, D-032 are final (no "pending"). New: D-040 (LAN only, Plumb CA certificate), D-041 (test host later; blocked cards).
