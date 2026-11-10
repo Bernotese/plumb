@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Bernotese/plumb/internal/wire"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -37,7 +38,7 @@ func TestTypeTable(t *testing.T) {
 		if !ok || typ.Name != name {
 			t.Fatalf("Lookup(%q) = %+v, %v", name, typ, ok)
 		}
-		if len(typ.Kinds) == 0 || !typ.Supports(KindVM) {
+		if len(typ.Kinds) == 0 || !typ.Supports(wire.KindVM) {
 			t.Errorf("%s: slice types must support VMs, kinds = %v", name, typ.Kinds)
 		}
 		// The key attribute must be a required string of the schema.
@@ -88,6 +89,12 @@ func TestSchemas(t *testing.T) {
 		{"service", `{"name":"nginx","restart_on":["not-an-id"]}`, false},
 		{"service", `{"name":"nginx","enabled":"yes"}`, false},
 		{"service", `{"name":"a b"}`, false},
+		{"service", `{"name":"-Hroot@host"}`, false}, // must not look like an option
+		{"service", `{"name":"getty@tty1.service"}`, true},
+		{"package", `{"name":"nginx","strictness":"exact","version":"1:1.26.0-1~deb13u1+b2"}`, true},
+		{"package", `{"name":"nginx","strictness":"exact","version":"--force-yes"}`, false},
+		{"package", `{"name":"nginx","version":"1.0 ; reboot"}`, false},
+		{"user", `{"name":"deploy","ssh_keys":["` + key + `\nssh-ed25519 AAAA evil"]}`, false}, // one key per entry
 		{"user", `{"name":"deploy","shell":"/bin/bash","groups":["sudo"],"ssh_keys":["` + key + `"]}`, true},
 		{"user", `{"name":"Deploy"}`, false},
 		{"user", `{"name":"-x"}`, false},

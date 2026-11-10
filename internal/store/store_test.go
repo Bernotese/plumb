@@ -48,7 +48,7 @@ func TestMigrationsCreateSliceTables(t *testing.T) {
 	// The exact list of ARCHITECTURE §3. The secret table is not in the
 	// first slice; the secret store adds it with its own migration.
 	want := []string{
-		"agent", "api_token", "binding", "doc", "enroll_token", "event", "issue",
+		"agent", "api_token", "binding", "doc", "enroll_token", "event", "issue", "issue_comment",
 		"plan", "revision", "revision_doc", "run", "run_step", "session", "user",
 	}
 	rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -90,13 +90,21 @@ func TestMigrationConstraints(t *testing.T) {
 		{"apply token without max_risk", `INSERT INTO api_token (id, name, hash, tier, created_by, created_at) VALUES ('c', 'n', 'h', 'apply', 'user:admin', '` + now + `')`, false},
 		{"token with destructive max_risk", `INSERT INTO api_token (id, name, hash, tier, max_risk, created_by, created_at) VALUES ('d', 'n', 'h', 'apply', 'destructive', 'user:admin', '` + now + `')`, false},
 		{"read token with max_risk", `INSERT INTO api_token (id, name, hash, tier, max_risk, created_by, created_at) VALUES ('e', 'n', 'h', 'read', 'reversible', 'user:admin', '` + now + `')`, false},
+		{"admin token", `INSERT INTO api_token (id, name, hash, tier, created_by, created_at) VALUES ('g', 'n', 'h', 'admin', 'user:admin', '` + now + `')`, false},
+		{"admin token with max_risk", `INSERT INTO api_token (id, name, hash, tier, max_risk, created_by, created_at) VALUES ('h', 'n', 'h', 'admin', 'disruptive', 'user:admin', '` + now + `')`, false},
 		{"token with unknown tier", `INSERT INTO api_token (id, name, hash, tier, created_by, created_at) VALUES ('f', 'n', 'h', 'root', 'user:admin', '` + now + `')`, false},
 
 		{"first open issue", `INSERT INTO issue (target, resource, status, changes, opened_at, updated_at) VALUES ('web1', 'file:/etc/motd', 'open', '[]', '` + now + `', '` + now + `')`, true},
 		{"second open issue for the same resource", `INSERT INTO issue (target, resource, status, changes, opened_at, updated_at) VALUES ('web1', 'file:/etc/motd', 'open', '[]', '` + now + `', '` + now + `')`, false},
-		{"resolved issue for the same resource", `INSERT INTO issue (target, resource, status, changes, resolution, opened_at, updated_at, resolved_at) VALUES ('web1', 'file:/etc/motd', 'resolved', '[]', 'revert', '` + now + `', '` + now + `', '` + now + `')`, true},
+		{"resolved issue for the same resource", `INSERT INTO issue (target, resource, status, changes, resolution, opened_at, updated_at, resolved_by, resolved_at) VALUES ('web1', 'file:/etc/motd', 'resolved', '[]', 'revert', '` + now + `', '` + now + `', 'user:admin', '` + now + `')`, true},
+		{"resolved issue without resolution", `INSERT INTO issue (target, resource, status, changes, opened_at, updated_at) VALUES ('web2', 'file:/etc/motd', 'resolved', '[]', '` + now + `', '` + now + `')`, false},
+		{"open issue with resolution", `INSERT INTO issue (target, resource, status, changes, resolution, opened_at, updated_at, resolved_by, resolved_at) VALUES ('web3', 'file:/etc/motd', 'open', '[]', 'gone', '` + now + `', '` + now + `', 'system', '` + now + `')`, false},
+		{"issue with unknown resolution", `INSERT INTO issue (target, resource, status, changes, resolution, opened_at, updated_at, resolved_by, resolved_at) VALUES ('web4', 'file:/etc/motd', 'resolved', '[]', 'ignore_rule', '` + now + `', '` + now + `', 'user:admin', '` + now + `')`, false},
+		{"comment", `INSERT INTO issue_comment (issue_id, author, body, created_at) VALUES (1, 'token:ci', 'looks like a manual edit', '` + now + `')`, true},
+		{"comment on an issue that does not exist", `INSERT INTO issue_comment (issue_id, author, body, created_at) VALUES (999, 'token:ci', 'x', '` + now + `')`, false},
 
 		{"plan with unknown risk", `INSERT INTO plan (origin, proposal, changes, risk, status, reason, author, created_at) VALUES ('proposal', '{}', '[]', 'harmless', 'pending', 'r', 'user:admin', '` + now + `')`, false},
+		{"plan with a state of the run", `INSERT INTO plan (origin, proposal, changes, risk, status, reason, author, created_at) VALUES ('proposal', '{}', '[]', 'reversible', 'applied', 'r', 'user:admin', '` + now + `')`, false},
 		{"plan", `INSERT INTO plan (origin, proposal, changes, risk, status, reason, author, created_at) VALUES ('proposal', '{}', '[]', 'reversible', 'pending', 'r', 'user:admin', '` + now + `')`, true},
 		{"revision of a plan that does not exist", `INSERT INTO revision (author, reason, plan_id, created_at) VALUES ('user:admin', 'r', 999, '` + now + `')`, false},
 		{"revision", `INSERT INTO revision (author, reason, plan_id, created_at) VALUES ('user:admin', 'r', 1, '` + now + `')`, true},

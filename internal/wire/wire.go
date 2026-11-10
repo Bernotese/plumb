@@ -58,29 +58,119 @@ type Resource struct {
 	ID string `json:"id"`
 	// Type is the resource type, for example "file".
 	Type string `json:"type"`
-	// Block names the Block use that rendered the resource. It is unique per
-	// use, also when a target uses the same Block twice. Resources with the
-	// same Block apply in the listed order; different Blocks apply in parallel.
+	// Block is the id of the Block use that rendered the resource: the "id"
+	// of the entry in the Target, which defaults to the Block name. Two uses
+	// of the same Block need different ids. Resources with the same Block
+	// apply in the listed order; different Blocks apply in parallel.
 	Block string `json:"block"`
 	// Attrs are the desired attributes. The JSON Schema of the type defines them.
 	Attrs map[string]any `json:"attrs"`
 	// Sensitive names the attributes whose value came from a secret.
-	// The agent never reports a value or a hash for them (D-037).
+	// The agent never reports a value or a hash for them (D-037); see Redact.
 	Sensitive []string `json:"sensitive,omitempty"`
 }
 
-// Change is one difference between the desired and the observed state of
-// one attribute.
+// Kind is the kind of a target.
+type Kind string
+
+const (
+	KindVM  Kind = "vm"
+	KindLXC Kind = "lxc"
+)
+
+// Change is one difference between the observed and the desired state of
+// one attribute. It has the same meaning and the same JSON form in agent
+// reports, Plans, run steps, Issues and the public API:
+// From is what the guest has now, To is the desired state.
 type Change struct {
 	Attr string `json:"attr"`
-	// From is the observed value and To the desired value.
-	// Both are absent for a sensitive attribute.
+	// From is the observed value and To the desired value. A missing value
+	// means "not there". Both are always missing for a sensitive attribute.
 	From any `json:"from,omitempty"`
 	To   any `json:"to,omitempty"`
-	// Changed is set for a sensitive attribute. It is the only information
-	// that leaves the guest for such an attribute.
-	Changed bool `json:"changed,omitempty"`
-	Risk    Risk `json:"risk"`
+	// Sensitive marks a change of a secret value. The entry itself says
+	// "changed"; no value and no hash of it leaves the guest (D-037).
+	Sensitive bool `json:"sensitive,omitempty"`
+	Risk      Risk `json:"risk"`
+}
+
+// Redact enforces the sensitive rule on changes that come from outside the
+// controller. It returns a copy in which every change that is marked
+// sensitive, or whose attribute is in the sensitive list, has no From and
+// no To. The controller must call it on every agent report before it
+// stores or forwards the changes: agent reports are untrusted input.
+func Redact(sensitive []string, changes []Change) []Change {
+	if changes == nil {
+		return nil
+	}
+	out := make([]Change, len(changes))
+	for i, c := range changes {
+		if c.Sensitive || contains(sensitive, c.Attr) {
+			c = Change{Attr: c.Attr, Sensitive: true, Risk: c.Risk}
+		}
+		out[i] = c
+	}
+	return out
+}
+
+// Action says what a set of changes does to one resource.
+type Action string
+
+const (
+	ActionNone    Action = ""        // no change
+	ActionCreate  Action = "create"  // the resource does not exist yet
+	ActionUpdate  Action = "update"  // the resource exists and changes
+	ActionDelete  Action = "delete"  // the resource goes away
+	ActionRestart Action = "restart" // nothing changes besides a restart
+)
+
+// Attribute and values that every resource uses to say whether it exists.
+// A resource that is not on the guest is observed as state "absent".
+const (
+	AttrState    = "state"
+	StateAbsent  = "absent"
+	StatePresent = "present"
+)
+
+// ActionOf derives the action of one resource from its changes. This is the
+// only rule; Plans, run steps and the API use it.
+//
+//   - no changes: ActionNone
+//   - a "state" change from "absent" (or from nothing): ActionCreate
+//   - a "state" change to "absent": ActionDelete
+//   - only "restart" changes: ActionRestart
+//   - everything else: ActionUpdate
+func ActionOf(changes []Change) Action {
+	if len(changes) == 0 {
+		return ActionNone
+	}
+	onlyRestart := true
+	for _, c := range changes {
+		if c.Attr == AttrState {
+			if c.To == StateAbsent {
+				return ActionDelete
+			}
+			if c.From == nil || c.From == StateAbsent {
+				return ActionCreate
+			}
+		}
+		if c.Attr != AttrRestart {
+			onlyRestart = false
+		}
+	}
+	if onlyRestart {
+		return ActionRestart
+	}
+	return ActionUpdate
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // AttrRestart is the attribute of the change that the agent adds to a

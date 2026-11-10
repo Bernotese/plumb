@@ -73,12 +73,12 @@
             "ip": {
               "type": "string",
               "default": "dhcp",
-              "pattern": "^(dhcp|[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2})$",
+              "pattern": "^(dhcp|(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([0-9]|[12][0-9]|3[0-2]))$",
               "description": "dhcp or an IPv4 address in CIDR form. Create-only."
             },
             "gateway": {
               "type": "string",
-              "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$",
+              "pattern": "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$",
               "description": "IPv4 gateway for a static ip. Create-only."
             },
             "user": {
@@ -92,9 +92,23 @@
               "default": [],
               "items": {
                 "type": "string",
-                "minLength": 1
+                "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$"
               },
-              "description": "Public keys of the bootstrap user. Create-only."
+              "description": "Public keys of the bootstrap user, without options. Create-only."
+            }
+          },
+          "dependentSchemas": {
+            "gateway": {
+              "required": [
+                "ip"
+              ],
+              "properties": {
+                "ip": {
+                  "not": {
+                    "const": "dhcp"
+                  }
+                }
+              }
             }
           }
         },
@@ -116,10 +130,15 @@
               "params": {
                 "type": "object",
                 "default": {}
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+                "description": "Id of this use of the Block. Default: the Block name. Two uses of the same Block need different ids. It names the order group of the rendered resources."
               }
             }
           },
-          "description": "Blocks of the target. The same Block can be used more than once with different parameters."
+          "description": "Blocks of the target. The same Block can be used more than once, with different ids and parameters."
         },
         "overrides": {
           "type": "object",

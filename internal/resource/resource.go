@@ -27,6 +27,11 @@ type State map[string]any
 //     state, with the strictness of the resource applied. For an attribute in
 //     wire.Resource.Sensitive it sets only Change.Changed, never From or To.
 //   - Apply is idempotent and applies only the given changes.
+//   - A resource that is not on the guest is observed as state "absent"
+//     (wire.AttrState, wire.StateAbsent), so wire.ActionOf can tell create,
+//     update and delete apart.
+//   - Attribute values are data, never options: every command gets "--"
+//     before its operands, and no value is passed through a shell.
 type Resource interface {
 	// Observe reads the real state from the guest.
 	Observe(ctx context.Context) (State, error)
@@ -53,18 +58,12 @@ type Env struct {
 // Factory builds a resource from its rendered form.
 type Factory func(r wire.Resource, env Env) (Resource, error)
 
-// Target kinds that a resource type can support.
-const (
-	KindVM  = "vm"
-	KindLXC = "lxc"
-)
-
 // Type describes one resource type.
 type Type struct {
-	Name  string   // "file"
-	Key   string   // attribute that forms the key of the id ("path" → "file:<path>")
-	Kinds []string // target kinds that support the type
-	New   Factory  // nil until the type is implemented
+	Name  string      // "file"
+	Key   string      // attribute that forms the key of the id ("path" → "file:<path>")
+	Kinds []wire.Kind // target kinds that support the type
+	New   Factory     // nil until the type is implemented
 }
 
 //go:embed schema/*.json
@@ -73,11 +72,11 @@ var schemas embed.FS
 // types is the table of all resource types. Add a type here, add its
 // schema file and its Go file. Nothing else registers types.
 var types = map[string]Type{
-	"file":      {Name: "file", Key: "path", Kinds: []string{KindVM, KindLXC}},
-	"directory": {Name: "directory", Key: "path", Kinds: []string{KindVM, KindLXC}},
-	"package":   {Name: "package", Key: "name", Kinds: []string{KindVM, KindLXC}},
-	"service":   {Name: "service", Key: "name", Kinds: []string{KindVM, KindLXC}},
-	"user":      {Name: "user", Key: "name", Kinds: []string{KindVM, KindLXC}},
+	"file":      {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
+	"directory": {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
+	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
+	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
+	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}},
 }
 
 // Lookup returns the type with the given name.
@@ -107,7 +106,7 @@ func (t Type) Schema() []byte {
 }
 
 // Supports reports whether the type works on the given target kind.
-func (t Type) Supports(kind string) bool {
+func (t Type) Supports(kind wire.Kind) bool {
 	for _, k := range t.Kinds {
 		if k == kind {
 			return true

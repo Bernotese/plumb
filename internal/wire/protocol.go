@@ -59,7 +59,7 @@ type ObserveBody struct {
 // ApplyBody asks the agent to converge the resources of an approved Plan.
 // The agent observes again and refuses every change above MaxRisk.
 type ApplyBody struct {
-	PlanID    int64      `json:"plan_id"`
+	PlanID    int64      `json:"plan_id"` // Plan, Run and Issue ids are integers everywhere
 	Resources []Resource `json:"resources"`
 	MaxRisk   Risk       `json:"max_risk"`
 }
@@ -99,7 +99,10 @@ type Hello struct {
 // Status is the state of one resource in a Report.
 type Status string
 
+// The states of a run step in the database and in the API are the same
+// words: pending, running, unchanged, applied, failed, refused, skipped.
 const (
+	StatusPending   Status = "pending"   // controller only: the step has not started
 	StatusUnchanged Status = "unchanged" // the guest equals the desired state
 	StatusDiffers   Status = "differs"   // observe or drift: Changes lists the differences
 	StatusRunning   Status = "running"   // progress: apply started

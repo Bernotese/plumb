@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -66,11 +67,24 @@ func TestDocumentSchemas(t *testing.T) {
 		{"target", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"ubuntu-26.04",` + guest + `,
 			"blocks":[{"use":"deploy-user","params":{"ssh_key":"ssh-ed25519 AAAA"}},{"use":"nginx"}],"overrides":{}}}`, true},
 		{"target with static ip and override", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"debian-13",
-			"guest":{"cores":1,"memory":512,"disk":8,"bridge":"vmbr0","ip":"10.0.0.7/24","gateway":"10.0.0.1","user":"plumb","ssh_keys":["ssh-ed25519 AAAA"]},
+			"guest":{"cores":1,"memory":512,"disk":8,"bridge":"vmbr0","ip":"10.0.0.7/24","gateway":"10.0.0.1","user":"plumb","ssh_keys":["ssh-ed25519 AAAA me@host"]},
 			"overrides":{"file:/etc/motd":{"content":"by hand"}}}}`, true},
 		{"target without guest", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"ubuntu-26.04"}}`, false},
 		{"target with unknown kind of guest", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"docker","image":"x",` + guest + `}}`, false},
 		{"target with zero cores", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x","guest":{"cores":0,"memory":512,"disk":8,"bridge":"vmbr0"}}}`, false},
+		{"target with two uses of one Block", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",` + guest + `,
+			"blocks":[{"use":"deploy-user","id":"deploy","params":{"ssh_key":"k"}},{"use":"deploy-user","id":"personal","params":{"ssh_key":"k2"}}]}}`, true},
+		{"target with bad block id", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",` + guest + `,"blocks":[{"use":"motd","id":"A B"}]}}`, false},
+		{"target with ssh key options", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",
+			"guest":{"cores":1,"memory":512,"disk":8,"bridge":"vmbr0","ssh_keys":["command=\"id\" ssh-ed25519 AAAA"]}}}`, false},
+		{"target with a second line in an ssh key", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",
+			"guest":{"cores":1,"memory":512,"disk":8,"bridge":"vmbr0","ssh_keys":["ssh-ed25519 AAAA me\nssh-ed25519 BBBB evil"]}}}`, false},
+		{"target with impossible ip", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",
+			"guest":{"cores":1,"memory":512,"disk":8,"bridge":"vmbr0","ip":"999.1.1.1/99"}}}`, false},
+		{"target with gateway and dhcp", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",
+			"guest":{"cores":1,"memory":512,"disk":8,"bridge":"vmbr0","ip":"dhcp","gateway":"10.0.0.1"}}}`, false},
+		{"target with gateway and no ip", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",
+			"guest":{"cores":1,"memory":512,"disk":8,"bridge":"vmbr0","gateway":"10.0.0.1"}}}`, false},
 		{"target with bad override id", KindTarget, `{"kind":"Target","name":"web1","spec":{"type":"vm","image":"x",` + guest + `,"overrides":{"motd":{}}}}`, false},
 		{"target with bad name", KindTarget, `{"kind":"Target","name":"Web_1","spec":{"type":"vm","image":"x",` + guest + `}}`, false},
 		{"wrong kind", KindTarget, `{"kind":"Block","name":"web1","spec":{"type":"vm","image":"x",` + guest + `}}`, false},
@@ -96,5 +110,52 @@ func TestDocumentSchemas(t *testing.T) {
 				t.Error("want invalid, got valid")
 			}
 		})
+	}
+}
+
+// The canonical form is permanent: document hashes are stored in revisions.
+// If this test fails, the form changed and old hashes no longer match.
+func TestCanonical(t *testing.T) {
+	doc := Doc{Kind: KindTarget, Name: "web1", Spec: []byte(`{
+		"type": "vm",  "image": "ubuntu-26.04",
+		"guest": {"memory": 2048, "cores": 2, "disk": 20.0, "big": 12345678901234567890, "bridge": "vmbr0"},
+		"blocks": [{"use": "motd", "params": {"text": "a <b> & c\u00e9"}}]
+	}`)}
+	const want = `{"kind":"Target","name":"web1","spec":{"blocks":[{"params":{"text":"a <b> & cé"},"use":"motd"}],` +
+		`"guest":{"big":12345678901234567890,"bridge":"vmbr0","cores":2,"disk":20.0,"memory":2048},"image":"ubuntu-26.04","type":"vm"}}`
+	const wantHash = "c40574d37a7a121bce33486bbccbbbf10254d5fd4ab1a194a571afb6989e9082"
+	got, err := Canonical(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("canonical form changed:\n got %s\nwant %s", got, want)
+	}
+	if h := Hash(got); h != wantHash {
+		t.Errorf("hash = %s, want %s", h, wantHash)
+	}
+
+	// Key order and whitespace of the input do not matter.
+	same := Doc{Kind: KindTarget, Name: "web1", Spec: []byte(`{"blocks":[{"params":{"text":"a <b> & cé"},"use":"motd"}],"image":"ubuntu-26.04","guest":{"bridge":"vmbr0","big":12345678901234567890,"disk":20.0,"cores":2,"memory":2048},"type":"vm"}`)}
+	again, err := Canonical(same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != want {
+		t.Errorf("same document, other input order:\n got %s\nwant %s", again, want)
+	}
+	// The canonical form of a canonical body is itself.
+	var parsed Doc
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if twice, err := Canonical(parsed); err != nil || string(twice) != want {
+		t.Errorf("not stable: %s, %v", twice, err)
+	}
+
+	for _, bad := range []string{``, `{"a":`, `{} {}`, `{"a":1} x`} {
+		if _, err := Canonical(Doc{Kind: KindBlock, Name: "x", Spec: []byte(bad)}); err == nil {
+			t.Errorf("spec %q: want an error", bad)
+		}
 	}
 }

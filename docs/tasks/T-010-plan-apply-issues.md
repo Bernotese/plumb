@@ -16,6 +16,7 @@ A proposal becomes a Plan, an approved Plan becomes a Revision and a Run, and dr
 - [ ] The Plan fails with a clear reason only when a target that the proposal touches is offline. Other offline targets do not matter.
 - [ ] A proposal that changes a create-only field of an existing target (`ip`, bootstrap user, `disk`) is refused with a clear message.
 - [ ] A new target plans `guest:config` as create and lists its resources as "unverified until first boot".
+- [ ] Every agent report goes through `wire.Redact` before it is stored or sent on. A test sends a report with values for a sensitive attribute and finds no value in the database or in events.
 - [ ] Approve: fails when the Plan is stale. It takes a check function for the rights of the principal (used by T-011).
 - [ ] Approve commits the Revision with author, reason and plan id, then starts the Run.
 - [ ] Run: targets in parallel. Per target: guest step, wait for enrollment, resource steps. Every step emits an event. A failed step does not stop other targets.

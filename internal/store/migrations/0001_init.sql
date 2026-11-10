@@ -3,8 +3,12 @@
 -- Conventions for all migrations:
 --   * Forward only. Never edit a migration that is on main; add a new file.
 --   * STRICT tables. Times are TEXT in UTC RFC 3339. JSON is TEXT.
---   * A principal is TEXT: 'user:<name>', 'token:<id>' or 'system'.
+--   * A principal is TEXT: 'user:<name>', 'token:<id>', 'agent:<target>' or 'system'.
 --   * Secrets, tokens and credentials are stored only as hashes.
+--   * One vocabulary: the words and ids here are the words and ids of the
+--     agent protocol (internal/wire) and of the public API (D-045).
+--     Revision, plan, run, issue and comment ids are integers.
+--     Changes are stored as JSON arrays of wire.Change, already redacted.
 
 -- A document, stored once by the hash of its canonical JSON body.
 CREATE TABLE doc (
@@ -39,18 +43,20 @@ CREATE TABLE plan (
     origin        TEXT NOT NULL CHECK (origin IN ('proposal', 'revert', 'accept', 'reenroll')),
     issue_id      INTEGER REFERENCES issue (id),     -- set for revert and accept
     proposal      TEXT NOT NULL,        -- JSON: documents to put and delete
-    changes       TEXT NOT NULL,        -- JSON: per target and resource: action, changes, risk
+    changes       TEXT NOT NULL,        -- JSON: [{target, resources: [{resource, changes: [wire.Change]}]}]
     risk          TEXT NOT NULL CHECK (risk IN ('read', 'reversible', 'disruptive', 'destructive')),
-    status        TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'stale', 'failed')),
+    -- pending: waits for approval. approved: revision committed, run exists.
+    -- stale: the head moved before approval. The result of the apply is run.status.
+    -- A proposal that cannot be planned is an API error; it gets no row.
+    status        TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'stale')),
     reason        TEXT NOT NULL,
     author        TEXT NOT NULL,        -- principal
     approved_by   TEXT,                 -- principal
-    error         TEXT,                 -- why planning failed (status = failed)
     created_at    TEXT NOT NULL,
     approved_at   TEXT
 ) STRICT;
 
--- The execution of an approved plan.
+-- The execution of an approved plan. It starts at approval, so there is no 'pending'.
 CREATE TABLE run (
     id          INTEGER PRIMARY KEY,
     plan_id     INTEGER NOT NULL UNIQUE REFERENCES plan (id),
@@ -66,8 +72,9 @@ CREATE TABLE run_step (
     seq         INTEGER NOT NULL,       -- order of creation inside the run
     target      TEXT NOT NULL,
     resource    TEXT NOT NULL,          -- resource id
+    -- wire.Status values. refused: a change was above the approved risk.
     status      TEXT NOT NULL CHECK (status IN ('pending', 'running', 'unchanged', 'applied', 'failed', 'refused', 'skipped')),
-    changes     TEXT NOT NULL DEFAULT '[]',   -- JSON: wire changes
+    changes     TEXT NOT NULL DEFAULT '[]',   -- JSON: [wire.Change]; the action is wire.ActionOf(changes)
     output      TEXT NOT NULL DEFAULT '',
     started_at  TEXT,
     finished_at TEXT,
@@ -80,14 +87,29 @@ CREATE TABLE issue (
     target      TEXT NOT NULL,
     resource    TEXT NOT NULL,          -- resource id
     status      TEXT NOT NULL CHECK (status IN ('open', 'resolving', 'resolved')),
-    changes     TEXT NOT NULL,          -- JSON: wire changes (latest report)
-    resolution  TEXT CHECK (resolution IN ('accept', 'revert', 'gone')),  -- gone = drift went away
-    plan_id     INTEGER REFERENCES plan (id),      -- the plan that resolves it
+    -- JSON: [wire.Change] of the latest report; from = guest now, to = desired.
+    -- The risk of the issue is the highest risk in it (the risk of a revert).
+    -- Drift on 'guest:config' comes from Proxmox, all other drift from the agent.
+    changes     TEXT NOT NULL,
+    resolution  TEXT CHECK (resolution IN ('accept', 'revert', 'gone')),  -- gone = the drift went away by itself
+    plan_id     INTEGER REFERENCES plan (id),      -- the plan that resolves it (accept, revert)
     opened_at   TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    resolved_at TEXT
+    resolved_by TEXT,                   -- principal; 'system' for gone
+    resolved_at TEXT,
+    CHECK ((status = 'resolved') = (resolution IS NOT NULL AND resolved_by IS NOT NULL AND resolved_at IS NOT NULL))
 ) STRICT;
 CREATE UNIQUE INDEX issue_one_open ON issue (target, resource) WHERE status <> 'resolved';
+
+-- A comment on an issue, from a human or an API token (tier plan or higher).
+CREATE TABLE issue_comment (
+    id         INTEGER PRIMARY KEY,
+    issue_id   INTEGER NOT NULL REFERENCES issue (id),
+    author     TEXT NOT NULL,           -- principal
+    body       TEXT NOT NULL,           -- plain text
+    created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX issue_comment_issue ON issue_comment (issue_id, id);
 
 -- What a document is in the driver: Image → template, Target → guest.
 -- This is runtime data. It is not part of the state and not of a revision.
@@ -95,7 +117,7 @@ CREATE TABLE binding (
     kind       TEXT NOT NULL,           -- Image | Target
     name       TEXT NOT NULL,
     ref        TEXT NOT NULL,           -- driver.ImageRef or driver.GuestID
-    digest     TEXT NOT NULL DEFAULT '', -- Target: last seen config digest; Image: pinned sha256
+    digest     TEXT NOT NULL DEFAULT '', -- Target: last seen config digest. Image: always empty
     updated_at TEXT NOT NULL,
     PRIMARY KEY (kind, name)
 ) STRICT, WITHOUT ROWID;
@@ -148,12 +170,15 @@ CREATE TABLE session (
 ) STRICT;
 
 -- An API token with a permission tier (docs/ARCHITECTURE.md §7).
+-- Token tiers are read < plan < apply. 'admin' is the tier of a human
+-- session; no token has it. Only an apply token approves, and only up to
+-- its max_risk, which can never be 'destructive'.
 CREATE TABLE api_token (
     id           TEXT PRIMARY KEY,      -- public part of the token
     name         TEXT NOT NULL,
     hash         TEXT NOT NULL,         -- SHA-256 (hex) of the secret part
-    tier         TEXT NOT NULL CHECK (tier IN ('read', 'plan', 'apply', 'admin')),
-    max_risk     TEXT CHECK (max_risk IN ('reversible', 'disruptive')),  -- only for tier apply; never destructive
+    tier         TEXT NOT NULL CHECK (tier IN ('read', 'plan', 'apply')),
+    max_risk     TEXT CHECK (max_risk IN ('reversible', 'disruptive')),  -- for tier apply, and only for it
     created_by   TEXT NOT NULL,         -- principal
     created_at   TEXT NOT NULL,
     last_used_at TEXT,

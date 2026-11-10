@@ -49,7 +49,7 @@
       "default": [],
       "items": {
         "type": "string",
-        "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( .*)?$"
+        "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$"
       },
       "description": "Public keys for authorized_keys. The list is complete: other keys are drift."
     },

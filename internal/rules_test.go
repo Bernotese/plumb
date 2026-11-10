@@ -3,10 +3,12 @@
 package internal
 
 import (
+	"encoding/json"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -145,6 +147,9 @@ func TestCommandImportRules(t *testing.T) {
 			if imp == module+"/web" && top(pkg) == "plumb" {
 				continue
 			}
+			if imp == "database/sql" || strings.HasPrefix(imp, "modernc.org/") {
+				t.Errorf("cmd/%s imports %s; only internal/store may use the database", pkg, imp)
+			}
 			if !strings.HasPrefix(imp, module+"/") {
 				continue
 			}
@@ -176,6 +181,113 @@ func TestDependencyAllowlist(t *testing.T) {
 		}
 		if !ok {
 			t.Errorf("go.mod: direct dependency %s is not on the allowlist (D-035)", fields[0])
+		}
+	}
+}
+
+// The agent binary runs as root in every guest. It must stay small: no
+// controller code and no database, also not through an indirect import.
+func TestAgentBinaryDependencies(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", "../cmd/plumb-agent").Output()
+	if err != nil {
+		t.Fatalf("go list -deps: %v", err)
+	}
+	allowedInternal := cmdMayImport["plumb-agent"]
+	deps := strings.Fields(string(out))
+	if len(deps) < 3 {
+		t.Fatalf("go list -deps returned too little: %q", out)
+	}
+	for _, dep := range deps {
+		switch {
+		case dep == "database/sql" || strings.HasPrefix(dep, "modernc.org/"):
+			t.Errorf("plumb-agent links %s", dep)
+		case dep == module+"/web":
+			t.Errorf("plumb-agent links the web UI")
+		case strings.HasPrefix(dep, module+"/internal/"):
+			if pkg := top(strings.TrimPrefix(dep, module+"/internal/")); !allowed(allowedInternal, pkg) {
+				t.Errorf("plumb-agent links internal/%s", pkg)
+			}
+		}
+	}
+}
+
+// Each schema file is self-contained, so the OpenAPI file can refer to it
+// (D-043). The price is that some patterns are copied. This test keeps the
+// copies equal: every group must hold one and the same value.
+func TestSharedSchemaPatterns(t *testing.T) {
+	groups := map[string][]string{
+		"document name": {
+			"state/schema/image.json#/properties/name/pattern",
+			"state/schema/block.json#/properties/name/pattern",
+			"state/schema/target.json#/properties/name/pattern",
+			"state/schema/target.json#/properties/spec/properties/image/pattern",
+			"state/schema/target.json#/properties/spec/properties/blocks/items/properties/use/pattern",
+			"state/schema/target.json#/properties/spec/properties/blocks/items/properties/id/pattern",
+		},
+		"unix user or group name": {
+			"resource/schema/user.json#/properties/name/pattern",
+			"resource/schema/user.json#/properties/groups/items/pattern",
+			"resource/schema/file.json#/properties/owner/pattern",
+			"resource/schema/file.json#/properties/group/pattern",
+			"resource/schema/directory.json#/properties/owner/pattern",
+			"resource/schema/directory.json#/properties/group/pattern",
+			"state/schema/target.json#/properties/spec/properties/guest/properties/user/pattern",
+		},
+		"ssh public key": {
+			"resource/schema/user.json#/properties/ssh_keys/items/pattern",
+			"state/schema/target.json#/properties/spec/properties/guest/properties/ssh_keys/items/pattern",
+		},
+		"absolute path": {
+			"resource/schema/file.json#/properties/path/pattern",
+			"resource/schema/directory.json#/properties/path/pattern",
+			"resource/schema/user.json#/properties/shell/pattern",
+			"resource/schema/user.json#/properties/home/pattern",
+		},
+		"absolute path, forbidden parts": {
+			"resource/schema/file.json#/properties/path/not/pattern",
+			"resource/schema/directory.json#/properties/path/not/pattern",
+			"resource/schema/user.json#/properties/shell/not/pattern",
+			"resource/schema/user.json#/properties/home/not/pattern",
+		},
+		"resource id": {
+			"resource/schema/service.json#/properties/restart_on/items/pattern",
+			"state/schema/target.json#/properties/spec/properties/overrides/propertyNames/pattern",
+		},
+	}
+	files := map[string]any{}
+	lookup := func(ref string) string {
+		file, pointer, _ := strings.Cut(ref, "#/")
+		if _, ok := files[file]; !ok {
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc any
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatalf("%s: %v", file, err)
+			}
+			files[file] = doc
+		}
+		node := files[file]
+		for _, key := range strings.Split(pointer, "/") {
+			obj, ok := node.(map[string]any)
+			if !ok {
+				t.Fatalf("%s: nothing at %q", ref, key)
+			}
+			node = obj[key]
+		}
+		value, ok := node.(string)
+		if !ok || value == "" {
+			t.Fatalf("%s: no pattern there", ref)
+		}
+		return value
+	}
+	for name, refs := range groups {
+		want := lookup(refs[0])
+		for _, ref := range refs[1:] {
+			if got := lookup(ref); got != want {
+				t.Errorf("%s: %s has %q, but %s has %q", name, ref, got, refs[0], want)
+			}
 		}
 	}
 }
