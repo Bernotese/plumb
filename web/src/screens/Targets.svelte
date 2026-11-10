@@ -65,7 +65,9 @@
             <td
               ><Badge tone={st.tone} label={st.label} title={st.detail} /><span class="sr-only"
                 >: {st.detail}</span
-              ></td
+              >{#if t.status.ignored_drift?.length}<span class="ignored"
+                  >{t.status.ignored_drift.length} ignored by rule</span
+                >{/if}</td
             >
             <td class="mono">{t.document.spec.image}</td>
             <td class="nowrap">{g.cores} CPU · {g.memory / 1024} GiB · {g.disk} GiB</td>
@@ -79,6 +81,11 @@
 {/if}
 
 <style>
+  .ignored {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
   .flush {
     padding: 0;
     overflow: hidden;

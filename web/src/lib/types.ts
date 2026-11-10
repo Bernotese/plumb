@@ -31,3 +31,15 @@ export interface PageOf<T> {
   items: T[];
   next: string | null;
 }
+export type Token = S["Token"];
+export type TokenRequest = S["TokenRequest"];
+export type TokenCreated = S["TokenCreated"];
+export type Tier = S["Tier"];
+export type SecretInfo = S["SecretInfo"];
+export type ImportRequest = S["ImportRequest"];
+export type RuleView = S["RuleView"];
+export type RuleDoc = S["Rule"];
+export type ResolveRequest = S["ResolveRequest"];
+export type RuleScope = NonNullable<ResolveRequest["rule"]>;
+export type IgnoredDrift = S["IgnoredDrift"];
+export type TargetPlan = S["TargetPlan"];

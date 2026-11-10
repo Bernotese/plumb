@@ -135,6 +135,7 @@ describe("RevisionView", () => {
     const id = await until(() => /^#\/plans\/(\d+)$/.exec(location.hash)?.[1]);
     const plan = await api.getPlan(Number(id));
     expect(plan.origin).toBe("rollback");
+    expect(plan.rollback_to).toBe(6); // D-131
     expect(plan.reason).toBe("The MOTD change was wrong.");
     expect(plan.targets.map((t) => t.target)).toEqual(["web1"]);
 

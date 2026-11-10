@@ -187,11 +187,11 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 
 	markIgnored(next.Rules(), plans)
 	humanOnly, err := humanOnlyReasons(base, in.Proposal)
-	if slices.Contains(binding, true) {
-		humanOnly = append(humanOnly, HumanOnlySecretBinding)
-	}
 	if err != nil {
 		return store.Plan{}, err
+	}
+	if slices.Contains(binding, true) {
+		humanOnly = append(humanOnly, HumanOnlySecretBinding)
 	}
 
 	// Every check passed: now an import writes its secrets (D-153), and the

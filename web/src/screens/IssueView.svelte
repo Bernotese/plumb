@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import type { Issue, IssueAction } from "../lib/types";
@@ -13,6 +14,9 @@
   let actionError = $state<unknown>(null);
   let reason = $state("");
   let busy = $state(false);
+  let ignored = $state(false);
+  let allTargets = $state(false);
+  let onlyChanged = $state(false);
 
   $effect(() => {
     api.getIssue(id).then(
@@ -26,7 +30,49 @@
     issue?.resource === "guest:config" ? "Proxmox" : "the agent in the guest",
   );
 
-  async function resolve(action: IssueAction) {
+  const changedAttrs = $derived([...new Set(issue?.changes.map((c) => c.attr) ?? [])]);
+  const canIgnore = $derived(
+    issue?.actions.includes("ignore_once") || issue?.actions.includes("ignore_rule"),
+  );
+
+  let confirmIgnore = $state(false);
+  async function askIgnore() {
+    confirmIgnore = true;
+    await tick();
+    document.getElementById("ignore-confirm")?.focus();
+  }
+
+  async function ignoreOnce() {
+    confirmIgnore = false;
+    busy = true;
+    actionError = null;
+    try {
+      issue = await api.ignoreOnce(id, reason || undefined);
+      ignored = true;
+    } catch (err) {
+      actionError = err;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function ignoreRule() {
+    busy = true;
+    actionError = null;
+    try {
+      const plan = await api.resolveIssue(id, "ignore_rule", reason || undefined, {
+        all_targets: allTargets,
+        ...(onlyChanged && changedAttrs.length ? { attrs: changedAttrs } : {}),
+      });
+      go({ name: "plan", id: plan.id });
+    } catch (err) {
+      actionError = err;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function resolve(action: Exclude<IssueAction, "ignore_once" | "ignore_rule">) {
     busy = true;
     actionError = null;
     try {
@@ -49,9 +95,18 @@
       from the desired state. Found by {source} at {formatTime(issue.opened_at)}.
     </p>
     <p>Risk of a revert: <RiskBadge risk={issue.risk} /> · Status: {issue.status}</p>
+    {#if ignored}
+      <p class="banner ok" role="status">
+        Ignored once. The same drift opens no new issue until the resource matches again or a run
+        applies it.
+      </p>
+    {/if}
     {#if issue.resolution}
       <p>
-        Resolved: <strong>{issue.resolution.action}</strong> by
+        Resolved: <strong
+          >{issue.resolution.action === "ignore" ? "ignored" : issue.resolution.action}</strong
+        >
+        by
         <span class="mono">{issue.resolution.by}</span> at {formatTime(issue.resolution.at)}.
       </p>
     {/if}
@@ -99,9 +154,79 @@
         {/if}
       </div>
       <p class="muted">
-        {issue.actions.length > 1 ? "Both make a plan." : "This makes a plan."} Nothing changes until
-        you approve it.
+        {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a plan.{/if}
+        Nothing changes until you approve it.
       </p>
+
+      {#if canIgnore}
+        <h3>Ignore</h3>
+        {#if issue.actions.includes("ignore_once")}
+          <div class="option">
+            {#if confirmIgnore}
+              <div class="confirm" role="group" aria-labelledby="ignore-q">
+                <p id="ignore-q">
+                  <strong>Ignore this drift?</strong> The issue is resolved at once and no screen can
+                  undo it. The same drift opens no new issue until the resource matches again or a run
+                  applies it.
+                </p>
+                <div class="row">
+                  <button
+                    id="ignore-confirm"
+                    class="btn"
+                    type="button"
+                    disabled={busy}
+                    onclick={ignoreOnce}>Ignore this drift</button
+                  >
+                  <button class="btn" type="button" onclick={() => (confirmIgnore = false)}
+                    >Cancel</button
+                  >
+                </div>
+              </div>
+            {:else}
+              <button class="btn" type="button" disabled={busy} onclick={askIgnore}>
+                Ignore once
+              </button>
+              <p class="muted">
+                Resolves this issue now, without a plan. The guest keeps its value until the next
+                apply. A new, different drift opens a new issue.
+              </p>
+            {/if}
+          </div>
+        {/if}
+        {#if issue.actions.includes("ignore_rule")}
+          <fieldset class="option">
+            <legend>Ignore by rule</legend>
+            <div class="choices" role="radiogroup" aria-label="Targets of the rule">
+              <label
+                ><input type="radio" name="rule-scope" value={false} bind:group={allTargets} />
+                Only target <span class="mono">{issue.target}</span></label
+              >
+              <label
+                ><input type="radio" name="rule-scope" value={true} bind:group={allTargets} />
+                All targets, also future ones</label
+              >
+            </div>
+            <div class="choices" role="radiogroup" aria-label="Attributes of the rule">
+              <label
+                ><input type="radio" name="rule-attrs" value={false} bind:group={onlyChanged} />
+                All attributes of <span class="mono">{issue.resource}</span></label
+              >
+              <label
+                ><input type="radio" name="rule-attrs" value={true} bind:group={onlyChanged} />
+                Only the changed attributes:
+                <span class="mono">{changedAttrs.join(", ")}</span></label
+              >
+            </div>
+            <button class="btn" type="button" disabled={busy} onclick={ignoreRule}>
+              Make ignore-rule plan
+            </button>
+            <p class="muted">
+              The rule is a document of the desired state. Only a person can approve the plan. The
+              next apply still writes the desired state.
+            </p>
+          </fieldset>
+        {/if}
+      {/if}
     </section>
   {/if}
 
@@ -119,6 +244,31 @@
 {/if}
 
 <style>
+  h3 {
+    font-size: var(--text-md);
+    margin: var(--space-4) 0 var(--space-2);
+  }
+  .option {
+    margin-bottom: var(--space-3);
+  }
+  .option p {
+    margin: var(--space-1) 0 0;
+  }
+  .confirm p {
+    margin: 0 0 var(--space-2);
+  }
+  .choices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-bottom: var(--space-3);
+  }
+  .choices label {
+    display: flex;
+    gap: var(--space-2);
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
   .body {
     white-space: pre-wrap;
     margin: 0;

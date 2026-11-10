@@ -162,7 +162,8 @@ func (s *Service) IgnoreOnce(ctx context.Context, id int64, principal string, ch
 	if err != nil {
 		return store.Issue{}, err
 	}
-	out, err := s.st.IgnoreIssue(ctx, id, principal, canon)
+	// The row must still hold the changes that check saw (review #53).
+	out, err := s.st.IgnoreIssue(ctx, id, principal, iss.Changes, canon)
 	if err != nil {
 		return store.Issue{}, err
 	}
@@ -215,8 +216,9 @@ func ruleProposal(iss store.Issue, scope RuleScope, principal string) (plan.Inpu
 }
 
 // applyRules drops the changes of open Issues that the head rules cover
-// (D-092): an Issue with no change left resolves as "ignore" by `by`; one
-// with some left keeps the rest. Records of removed rules go.
+// (D-092): an Issue with no change left resolves as "ignore" by `by` (the
+// approver of a rule change, else system); one with some left keeps the
+// rest. Records of removed rules go.
 func (s *Service) applyRules(ctx context.Context, by string) {
 	rules, err := s.headRules(ctx)
 	if err != nil {

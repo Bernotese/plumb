@@ -240,6 +240,7 @@ func TestMigrateIssueIgnore(t *testing.T) {
 	ctx := context.Background()
 	const ts = "'2026-11-10T00:00:00.000000000Z'"
 	path := openAt(t, migrationNumber(t, "_issue_ignore.sql")-1,
+		`INSERT INTO issue (id, target, resource, status, changes, opened_at, updated_at) VALUES (3, 'web1', 'file:/open', 'open', '[]', `+ts+`, `+ts+`)`,
 		`INSERT INTO revision (id, author, reason, created_at) VALUES (1, 'system', 'seed', `+ts+`)`,
 		`INSERT INTO issue (id, target, resource, status, changes, opened_at, updated_at) VALUES (1, 'web1', 'file:/etc/motd', 'resolving', '[]', `+ts+`, `+ts+`)`,
 		`INSERT INTO issue (id, target, resource, status, changes, resolution, opened_at, updated_at, resolved_by, resolved_at)
@@ -254,6 +255,9 @@ func TestMigrateIssueIgnore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	if iss, err := s.GetIssue(ctx, 3); err != nil || iss.Status != IssueOpen || string(iss.Changes) != "[]" {
+		t.Fatalf("open issue after migration: %+v %v", iss, err)
+	}
 	if iss, err := s.GetIssue(ctx, 1); err != nil || iss.Status != IssueResolving || iss.PlanID != 1 {
 		t.Fatalf("issue 1: %+v %v", iss, err)
 	}
@@ -284,7 +288,7 @@ func TestMigrateIssueIgnore(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE issue SET status = 'open', plan_id = NULL WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.IgnoreIssue(ctx, 1, "user:admin", json.RawMessage(`[]`)); err != nil {
+	if _, err := s.IgnoreIssue(ctx, 1, "user:admin", json.RawMessage(`[]`), json.RawMessage(`[]`)); err != nil {
 		t.Fatalf("ignore: %v", err)
 	}
 	if _, err := s.IgnoredOnce(ctx, "web1", "file:/etc/motd"); err != nil {

@@ -11,6 +11,8 @@
   import Issues from "./screens/Issues.svelte";
   import Login from "./screens/Login.svelte";
   import PlanView from "./screens/PlanView.svelte";
+  import Settings from "./screens/Settings.svelte";
+  import Rules from "./screens/Rules.svelte";
   import RevisionView from "./screens/RevisionView.svelte";
   import RunView from "./screens/RunView.svelte";
   import TargetForm from "./screens/TargetForm.svelte";
@@ -131,10 +133,17 @@
         href={href({ name: "targets" })}
         aria-current={navCurrent(["targets", "target-new", "target-edit"])}>Targets</a
       >
-      <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue"])}>Issues</a>
+      <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue", "rules"])}
+        >Issues</a
+      >
       <a href={href({ name: "history" })} aria-current={navCurrent(["history", "revision"])}
         >History</a
       >
+      {#if session?.tier === "admin"}
+        <a href={href({ name: "settings", tab: "tokens" })} aria-current={navCurrent(["settings"])}
+          >Settings</a
+        >
+      {/if}
     </nav>
   {/if}
   <div class="tools">
@@ -175,10 +184,14 @@
     <Issues {api} />
   {:else if route.name === "issue"}
     {#key route.id}<IssueView {api} id={route.id} />{/key}
+  {:else if route.name === "rules"}
+    <Rules {api} />
   {:else if route.name === "history"}
     <History {api} />
   {:else if route.name === "revision"}
     {#key route.id}<RevisionView {api} id={route.id} />{/key}
+  {:else if route.name === "settings"}
+    {#if session}<Settings {api} {session} tab={route.tab} />{/if}
   {:else}
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p>
@@ -238,6 +251,7 @@
   }
   .user {
     color: var(--color-text-muted);
+    white-space: nowrap;
   }
   .demo {
     margin: 0;

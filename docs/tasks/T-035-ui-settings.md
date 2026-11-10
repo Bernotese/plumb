@@ -28,4 +28,7 @@ A human manages API tokens and secrets and runs export and import in the web UI.
 - User management, password policy, scheduled backups.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Mock part done: branch `pl-frontend/T-035-ui-settings` (from `main` after T-034). Settings tabs Tokens, Secrets, Export and import; 8 operations in PlumbApi, HTTP and mock (D-120…D-124).
+- Tests: `make lint test` → pass (167 web tests; 18 new screen tests in `screens/settings.test.ts`, HTTP calls, router).
+- Pictures: branch `pl-frontend/T-035-screens`, in the PR.
+- E2E tokens and secrets done (branch `pl-frontend/T-034-T-035-e2e`, `web/e2e/slice2-settings.spec.ts`): token create → bearer works → revoke → 401; secret set, replace, delete, no value in API or page. Open: export/import e2e waits for T-033.

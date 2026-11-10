@@ -14,11 +14,17 @@ import (
 // or that a Rule covers (D-091, D-092).
 const ResolutionIgnore = "ignore"
 
+// ErrIssueChanged is returned by IgnoreIssue when the changes of the Issue
+// are not the ones the caller checked: a report came in between.
+var ErrIssueChanged = errors.New("store: the issue changed since it was read")
+
 // IgnoreIssue resolves an open Issue as "ignore" by a principal and
 // remembers its changes for its target and resource (D-091), in one
-// transaction. changes is the canonical JSON that later reports are
-// compared with. An Issue that is not open is ErrIssueNotOpen.
-func (s *Store) IgnoreIssue(ctx context.Context, id int64, by string, changes json.RawMessage) (Issue, error) {
+// transaction. checked is the changes column as the caller read and
+// checked it; when the row holds other changes now, nothing changes and
+// the error is ErrIssueChanged. changes is the canonical JSON that later
+// reports are compared with. An Issue that is not open is ErrIssueNotOpen.
+func (s *Store) IgnoreIssue(ctx context.Context, id int64, by string, checked, changes json.RawMessage) (Issue, error) {
 	var out Issue
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		now := s.now()
@@ -28,6 +34,9 @@ func (s *Store) IgnoreIssue(ctx context.Context, id int64, by string, changes js
 		}
 		if iss.Status != IssueOpen {
 			return ErrIssueNotOpen
+		}
+		if string(iss.Changes) != string(checked) {
+			return ErrIssueChanged
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE issue SET status = 'resolved', resolution = 'ignore', resolved_by = ?, resolved_at = ?, updated_at = ?
