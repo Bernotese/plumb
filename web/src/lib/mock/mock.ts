@@ -779,6 +779,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       const planTargets: Plan["targets"] = [];
       const humanOnly = new Set<"secret-binding" | "rule-change">();
+      const warnings: string[] = [];
       for (const doc of proposal.put ?? []) {
         if (doc.kind !== "Target") continue;
         const t = doc as TargetDoc;
@@ -791,11 +792,32 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           );
         }
         const old = targets.get(t.name)?.document.spec;
-        const resources = planTarget(old, t.spec, blocks);
+        let resources = planTarget(old, t.spec, blocks);
         const used = plannedSecrets(t.spec);
-        planTargets.push({ target: t.name, ...(used.length ? { secrets: used } : {}), resources });
         const before = bindings(old);
-        if ([...bindings(t.spec)].some((b) => !before.has(b))) humanOnly.add("secret-binding");
+        const fresh = [...bindings(t.spec)].filter((b) => !before.has(b));
+        if (fresh.length) humanOnly.add("secret-binding");
+        // A resource of an existing target with a new binding is not observed
+        // before the approval: create, unverified, disruptive (D-156).
+        if (old && fresh.length) {
+          const ids = new Set(fresh.map((b) => b.split(" ")[0] ?? ""));
+          const unverified = render(t.spec, blocks)
+            .filter((r) => ids.has(r.id))
+            .map((r) => ({
+              resource: r.id,
+              action: "create" as const,
+              risk: "disruptive" as Risk,
+              unverified: true,
+              changes: Object.entries(r.attrs)
+                .filter(([, v]) => hasMarker(v))
+                .map(([attr]) => ({ attr, sensitive: true as const, risk: "disruptive" as Risk })),
+            }));
+          resources = [...resources.filter((r) => !ids.has(r.resource)), ...unverified];
+          warnings.push(
+            `${t.name}: ${ids.size} resources get a new secret and are not observed before the approval (D-156).`,
+          );
+        }
+        planTargets.push({ target: t.name, ...(used.length ? { secrets: used } : {}), resources });
       }
       // Targets planned without a document change (a new secret value, D-090).
       for (const name of proposal.targets ?? []) {
@@ -836,7 +858,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         issue_id: null,
         reason: proposal.reason,
         targets: planTargets,
-        warnings: [],
+        warnings,
         human_only: [...humanOnly],
       });
       pendingDocs.set(p.id, proposal);

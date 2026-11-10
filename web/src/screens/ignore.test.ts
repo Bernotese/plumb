@@ -116,6 +116,12 @@ describe("PlanView", () => {
       "It gives a secret to web1 that web1 did not get before. web1 uses: app-db.",
     );
     expect(text()).toContain("changed (hidden)");
+    expect(text()).toContain("Not observed before the approval: this resource gets a new secret");
+    expect(plan.targets[0]?.resources.find((r) => r.unverified)).toMatchObject({
+      action: "create",
+      risk: "disruptive",
+    });
+    expect(plan.warnings[0]).toContain("not observed before the approval (D-156)");
     expect(document.body.innerHTML).not.toContain("");
   });
 
