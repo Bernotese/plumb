@@ -22,6 +22,7 @@ type Plan struct {
 	BaseRevision int64 // 0: the empty state
 	Origin       string
 	IssueID      int64 // 0: none
+	RollbackTo   int64 // the revision of a rollback (D-131); 0: none
 	Proposal     json.RawMessage
 	Changes      json.RawMessage
 	Risk         string
@@ -82,9 +83,9 @@ func jsonOr(v json.RawMessage, def string) string {
 func (s *Store) CreatePlan(ctx context.Context, p Plan) (Plan, error) {
 	created := s.now()
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO plan (base_revision, origin, issue_id, proposal, changes, risk, status, reason, author, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?) RETURNING id`,
-		nullID(p.BaseRevision), p.Origin, nullID(p.IssueID), jsonOr(p.Proposal, "{}"), jsonOr(p.Changes, "[]"),
+		`INSERT INTO plan (base_revision, origin, issue_id, rollback_to, proposal, changes, risk, status, reason, author, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?) RETURNING id`,
+		nullID(p.BaseRevision), p.Origin, nullID(p.IssueID), nullID(p.RollbackTo), jsonOr(p.Proposal, "{}"), jsonOr(p.Changes, "[]"),
 		p.Risk, p.Reason, p.Author, created).Scan(&p.ID)
 	if err != nil {
 		return Plan{}, fmt.Errorf("store: create plan: %w", err)
@@ -94,14 +95,14 @@ func (s *Store) CreatePlan(ctx context.Context, p Plan) (Plan, error) {
 	return p, nil
 }
 
-const planColumns = `id, COALESCE(base_revision, 0), origin, COALESCE(issue_id, 0), proposal, changes, risk, status,
+const planColumns = `id, COALESCE(base_revision, 0), origin, COALESCE(issue_id, 0), COALESCE(rollback_to, 0), proposal, changes, risk, status,
 	reason, author, COALESCE(approved_by, ''), created_at, approved_at`
 
 func scanPlan(row interface{ Scan(...any) error }) (Plan, error) {
 	var p Plan
 	var proposal, changes, created string
 	var approved sql.NullString
-	err := row.Scan(&p.ID, &p.BaseRevision, &p.Origin, &p.IssueID, &proposal, &changes, &p.Risk, &p.Status,
+	err := row.Scan(&p.ID, &p.BaseRevision, &p.Origin, &p.IssueID, &p.RollbackTo, &proposal, &changes, &p.Risk, &p.Status,
 		&p.Reason, &p.Author, &p.ApprovedBy, &created, &approved)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Plan{}, ErrNotFound

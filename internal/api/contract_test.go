@@ -54,7 +54,7 @@ func loadContract(t *testing.T) *contract {
 		t.Fatal(err)
 	}
 	// The document schemas the spec refers to (D-043).
-	for _, kind := range []string{"image", "block", "target"} {
+	for _, kind := range []string{"image", "block", "target", "rule"} {
 		b, err := os.ReadFile(filepath.Join("../state/schema", kind+".json"))
 		if err != nil {
 			t.Fatal(err)
@@ -279,6 +279,28 @@ func TestContract(t *testing.T) {
 	call(adm, "DELETE", "/api/v1/secrets/app-db", "/secrets/{name}", nil) // 404
 	call(tok, "DELETE", "/api/v1/secrets/other", "/secrets/{name}", nil)  // 403
 	call(e.anon(), "GET", "/api/v1/secrets", "/secrets", nil)             // 401
+
+	// Revisions (T-031): one more revision, then history, diff and rollback.
+	changed := call(adm, "POST", "/api/v1/plans", "/plans", map[string]any{"reason": "new text", "put": []state.Doc{targetDoc("web1", "changed")}})
+	call(adm, "POST", "/api/v1/plans/"+id(changed)+"/approve", "/plans/{id}/approve", nil)
+	e.eng.Wait()
+	headRev, _ := e.st.Head(e.ctx)
+	head := strconv.FormatInt(headRev.ID, 10)
+	call(readTok, "GET", "/api/v1/revisions", "/revisions", nil)
+	call(adm, "GET", "/api/v1/revisions?limit=1", "/revisions", nil)
+	call(e.anon(), "GET", "/api/v1/revisions", "/revisions", nil) // 401
+	call(readTok, "GET", "/api/v1/revisions/"+head+"/diff", "/revisions/{n}/diff", nil)
+	call(readTok, "GET", "/api/v1/revisions/"+head+"/diff?from=1", "/revisions/{n}/diff", nil)
+	call(readTok, "GET", "/api/v1/revisions/1/diff", "/revisions/{n}/diff", nil)
+	call(readTok, "GET", "/api/v1/revisions/999/diff", "/revisions/{n}/diff", nil)      // 404
+	call(readTok, "GET", "/api/v1/revisions/1/diff?from=x", "/revisions/{n}/diff", nil) // 400
+	rb := call(adm, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "back"})
+	call(adm, "DELETE", "/api/v1/plans/"+id(rb), "/plans/{id}", nil)
+	call(adm, "POST", "/api/v1/revisions/"+head+"/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "x"}) // 409 nothing-to-do
+	call(adm, "POST", "/api/v1/revisions/999/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "x"})      // 404
+	call(adm, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", map[string]string{})                     // 422
+	call(adm, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", []byte(`{`))                             // 400
+	call(readTok, "POST", "/api/v1/revisions/1/rollback", "/revisions/{n}/rollback", map[string]string{"reason": "x"})    // 403
 
 	// API tokens (T-030).
 	var newTok struct{ Token struct{ ID string } }

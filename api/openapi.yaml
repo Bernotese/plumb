@@ -1157,7 +1157,6 @@ paths:
     get:
       tags: [revisions]
       operationId: listRevisions
-      x-plumb-planned: T-031
       summary: List revisions, newest first
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -1197,8 +1196,7 @@ paths:
     get:
       tags: [revisions]
       operationId: diffRevision
-      x-plumb-planned: T-031
-      summary: Compare a revision with an earlier one
+      summary: Compare a revision with another one
       description: |
         Lists the documents that differ between revision `from` and revision `n`, with both
         versions (D-093). Without `from` the base is `n-1`; for revision 1 it is the empty state.
@@ -1265,7 +1263,6 @@ paths:
     post:
       tags: [revisions]
       operationId: rollbackRevision
-      x-plumb-planned: T-031
       summary: Plan a rollback to a revision
       description: |
         Builds a proposal that puts and deletes documents until the document set equals revision
@@ -2539,7 +2536,9 @@ components:
         id: { $ref: "#/components/schemas/Revision" }
         author:
           $ref: "#/components/schemas/Principal"
-          description: Who approved the Plan of this revision.
+          description: |
+            The author of the Plan that made this revision (D-128). The approver is
+            `approved_by` of that Plan.
         reason: { type: string }
         plan_id:
           $ref: "#/components/schemas/NullableId"

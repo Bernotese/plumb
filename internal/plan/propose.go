@@ -112,6 +112,9 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if err != nil {
 		return store.Plan{}, err
 	}
+	if in.Base != 0 && in.Base != baseRev {
+		return store.Plan{}, fmt.Errorf("plan: the head moved from revision %d to %d: %w", in.Base, baseRev, store.ErrPlanStale)
+	}
 	next, err := apply(base, in.Proposal)
 	if err != nil {
 		return store.Plan{}, err
@@ -171,7 +174,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	proposal, _ := json.Marshal(in.Proposal)
 	changes, _ := json.Marshal(plans)
 	p, err := e.st.CreatePlan(ctx, store.Plan{
-		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, Proposal: proposal,
+		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, RollbackTo: in.RollbackTo, Proposal: proposal,
 		Changes: changes, Risk: string(risk), Reason: in.Reason, Author: in.Author,
 	})
 	if err != nil {
