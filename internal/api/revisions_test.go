@@ -108,6 +108,20 @@ func TestRevisionHistoryAndRollback(t *testing.T) {
 	if code, body := applyTok.do("POST", "/api/v1/plans/"+itoa(pl.ID)+"/approve", nil); code != 403 || problemType(body) != "risk-too-high" {
 		t.Fatalf("token approves a destructive rollback: %d %s", code, body)
 	}
+	// A successful rollback request stores a pending Plan, with no apply side effects.
+	e.eng.Wait()
+	pending, err := e.st.GetPlan(e.ctx, pl.ID)
+	if err != nil || pending.Status != "pending" || pending.Origin != "rollback" {
+		t.Fatalf("pending rollback: %+v %v", pending, err)
+	}
+	headBefore, err := e.st.Head(e.ctx)
+	if err != nil || headBefore.ID != 3 {
+		t.Fatalf("rollback changed head before approval: %+v %v", headBefore, err)
+	}
+	runs, err := e.st.ListRuns(e.ctx, 0, 100)
+	if err != nil || len(runs) != 3 || len(e.drv.Guests()) != 2 {
+		t.Fatalf("rollback applied before approval: runs=%+v err=%v guests=%v", runs, err, e.drv.Guests())
+	}
 	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(pl.ID)+"/approve", nil); code != 202 {
 		t.Fatalf("approve rollback: %d %s", code, body)
 	}
