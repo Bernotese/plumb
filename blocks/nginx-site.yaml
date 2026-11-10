@@ -1,0 +1,58 @@
+kind: Block
+name: nginx-site
+spec:
+  title: Nginx site
+  description: >-
+    Create one Nginx site with a server file in sites-available and a link in sites-enabled.
+    Use it with the nginx Block.
+  after: [package:nginx]
+  restarts: [service:nginx]
+  params:
+    type: object
+    properties:
+      name:
+        type: string
+        title: Site name
+        description: File name in sites-available and sites-enabled.
+        default: site
+        pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+        not: {enum: [default]}
+      server_name:
+        type: string
+        title: Server name
+        default: site.lan
+        pattern: "^[A-Za-z0-9*_.-]+( [A-Za-z0-9*_.-]+)*$"
+        maxLength: 253
+      root:
+        type: string
+        title: Web root
+        default: /var/www/html
+        pattern: "^(/[A-Za-z0-9._-]+)+$"
+        not: {pattern: "(^|/)\\.\\.?(/|$)"}
+        maxLength: 255
+      state:
+        type: string
+        title: Enabled
+        description: present enables the site, absent disables it (removes the link; the file stays).
+        enum: [present, absent]
+        default: present
+  resources:
+    - file:
+        path: /etc/nginx/sites-available/{{ .name }}
+        content: |
+          server {
+              listen 80;
+              server_name {{ .server_name }};
+              root {{ .root }};
+              index index.html;
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+        mode: "0644"
+        owner: root
+        group: root
+    - symlink:
+        path: /etc/nginx/sites-enabled/{{ .name }}
+        target: /etc/nginx/sites-available/{{ .name }}
+        state: "{{ .state }}"
