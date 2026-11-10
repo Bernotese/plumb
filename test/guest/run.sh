@@ -4,7 +4,9 @@ cd "$(dirname "$0")/../.."
 tmp=$(mktemp -d)
 containers=()
 images=()
+test_pid=''
 cleanup() {
+  if [[ -n "$test_pid" ]]; then kill "$test_pid" >/dev/null 2>&1 || true; fi
   for name in "${containers[@]}"; do docker rm -f "$name" >/dev/null 2>&1 || true; done
   for image in "${images[@]}"; do docker rmi "$image" >/dev/null 2>&1 || true; done
   rm -rf "$tmp"
@@ -44,7 +46,12 @@ for distro in \
   fi
   echo "$distro systemd state: $state"
   if [[ "$state" == degraded ]]; then docker exec "$name" systemctl --failed --no-legend; fi
-  docker exec "$name" /guest.test -test.v -test.timeout=5m "$@"
+  docker exec "$name" /guest.test -test.v -test.timeout=5m "$@" &
+  test_pid=$!
+  test_status=0
+  wait "$test_pid" || test_status=$?
+  test_pid=''
+  if ((test_status != 0)); then exit "$test_status"; fi
   docker rm -f "$name" >/dev/null
 done
 cleanup
