@@ -2,7 +2,7 @@
 
 - **Owner:** pl-frontend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** M   · **Depends on:** T-006, T-011   · **Parallel with:** T-015
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** review
 
 ## Goal
 The UI works against the real controller.
@@ -34,4 +34,9 @@ The UI works against the real controller.
 - The open drift Issue needs a simulated agent that reports a drift (`link/linktest`). The pending Plan is a normal proposal that the seed does not approve.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-014-ui-real-api`, PR #28. `web/src/lib/http.ts`: `PlumbApi` over `/api/v1` (paging via `next`, problem+json → `ApiError`, failed fetch → `NetworkError`, 401 outside login → "session ended" and back to login). Every build uses it; the mock is only in `npm run dev:mock` (development) and the unit tests (prod `dist` is checked for mock code).
+- Event stream: named SSE events, dedupe by `seq`, own reconnect from the last `seq` with backoff when the browser gives up; run view, issue inbox and target list update live.
+- No password or token in browser storage (`storage.test.ts`: only `theme.ts` uses storage). Problem title and detail on every error.
+- Tests: `npm test` 81 pass; `make test-e2e` (Playwright, real login form, create target → plan → run → issue → revert → resolved → logout) passes locally and in CI; `make lint test build` pass.
+- Screenshots via the T-023 dev login (`serve --dev --dev-demo`), light and dark, on branch `pl-frontend/T-014-screens`.
+- Found: in `--dev`, a newly created target gets no simulated agent, so its run stays `running` (steps after `guest:config` pending). Server-side (seedDev starts agents only for web1/web2).

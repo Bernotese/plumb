@@ -580,9 +580,10 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       emit("issue.updated", `issue:${id}`, { plan_id: p.id });
       return p;
     },
-    events(since, onEvent) {
-      for (const e of log) if (e.seq > since) onEvent(e);
+    events(since, onEvent, onOpen) {
+      if (since !== undefined) for (const e of log) if (e.seq > since) onEvent(e);
       listeners.add(onEvent);
+      if (onOpen) queueMicrotask(onOpen);
       return () => listeners.delete(onEvent);
     },
     async idle() {

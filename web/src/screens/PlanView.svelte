@@ -129,12 +129,19 @@
               : "The service restarts because a resource it depends on changes."}
           </p>
         {/if}
-        <ChangeTable
-          changes={r.changes}
-          caption="Changes of {r.resource}"
-          fromLabel="Now on the guest"
-          toLabel="After the apply"
-        />
+        {#if r.changes.length === 0 && r.action === "create"}
+          <p class="muted">
+            Not observed yet: the guest does not exist. The agent observes and applies it at the
+            first boot, within the approved risk.
+          </p>
+        {:else}
+          <ChangeTable
+            changes={r.changes}
+            caption="Changes of {r.resource}"
+            fromLabel="Now on the guest"
+            toLabel="After the apply"
+          />
+        {/if}
       </section>
     {/each}
   {/each}
