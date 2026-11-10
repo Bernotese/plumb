@@ -1,0 +1,88 @@
+{
+  "target": "web1",
+  "kind": "vm",
+  "image": "ubuntu-26.04",
+  "guest": {
+    "id": "guest:config",
+    "type": "guest",
+    "block": "",
+    "attrs": {
+      "bridge": "vmbr0",
+      "cores": 2,
+      "disk": 20,
+      "ip": "dhcp",
+      "memory": 2048,
+      "ssh_keys": [],
+      "user": "plumb"
+    }
+  },
+  "resources": [
+    {
+      "id": "user:deploy",
+      "type": "user",
+      "block": "deploy-user",
+      "attrs": {
+        "groups": [
+          "sudo"
+        ],
+        "home": "/home/deploy",
+        "name": "deploy",
+        "shell": "/bin/bash",
+        "ssh_keys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake me@host"
+        ]
+      }
+    },
+    {
+      "id": "package:nginx",
+      "type": "package",
+      "block": "nginx",
+      "attrs": {
+        "name": "nginx"
+      }
+    },
+    {
+      "id": "directory:/var/www/html",
+      "type": "directory",
+      "block": "nginx",
+      "attrs": {
+        "group": "root",
+        "mode": "0755",
+        "owner": "root",
+        "path": "/var/www/html"
+      }
+    },
+    {
+      "id": "file:/etc/nginx/sites-enabled/default",
+      "type": "file",
+      "block": "nginx",
+      "attrs": {
+        "content": "server {\n  listen 8080;\n  server_name web1.lan www.lan web.lan;\n  root /var/www/html;\n}\n",
+        "path": "/etc/nginx/sites-enabled/default"
+      }
+    },
+    {
+      "id": "service:nginx",
+      "type": "service",
+      "block": "nginx",
+      "attrs": {
+        "name": "nginx",
+        "restart_on": [
+          "file:/etc/nginx/sites-enabled/default"
+        ]
+      }
+    },
+    {
+      "id": "file:/etc/motd",
+      "type": "file",
+      "block": "motd",
+      "attrs": {
+        "content": "WEB1 <PROD> & CO\n",
+        "group": "root",
+        "mode": "0600",
+        "owner": "root",
+        "path": "/etc/motd"
+      }
+    }
+  ]
+}
