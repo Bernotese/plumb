@@ -83,6 +83,9 @@ func fixture(t *testing.T) (*httptest.Server, string, *runner, string) {
 	write(t, root, "etc/group", fmt.Sprintf("root:x:%d:\n", os.Getgid()))
 	must(t, os.MkdirAll(filepath.Join(root, "home/deploy"), 0755))
 	must(t, os.MkdirAll(filepath.Join(root, "etc/nginx/sites-available"), 0755))
+	// The nginx package ships sites-enabled with a link to the default site.
+	must(t, os.MkdirAll(filepath.Join(root, "etc/nginx/sites-enabled"), 0755))
+	must(t, os.Symlink("/etc/nginx/sites-available/default", filepath.Join(root, "etc/nginx/sites-enabled/default")))
 	r := &runner{}
 	done := make(chan error, 1)
 	go func() {

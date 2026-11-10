@@ -252,3 +252,95 @@ func TestSymlinkedParentAsRoot(t *testing.T) {
 	}
 	converge(t, rsrc("user", "plumbevil", map[string]any{"state": "absent"}))
 }
+
+// T-020: the symlink resource as real root. The link is created, the second
+// apply has no change, and drift is found and repaired when the link is
+// missing, points elsewhere or is replaced by a file. A symlinked parent
+// is refused, and the link target is never followed.
+func TestSymlinkAsRoot(t *testing.T) {
+	const dir, link = "/srv/plumb-links", "/srv/plumb-links/current"
+	converge(t, rsrc("directory", dir, nil))
+	defer os.RemoveAll(dir)
+	want := rsrc("symlink", link, map[string]any{"target": "/root/plumb-link-secret"})
+	if err := os.WriteFile("/root/plumb-link-secret", []byte("TOP SECRET\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove("/root/plumb-link-secret")
+
+	if c := converge(t, want); wire.ActionOf(c) != wire.ActionCreate {
+		t.Fatalf("create: %+v", c)
+	}
+	if got := sh(t, "readlink", "--", link); got != "/root/plumb-link-secret" {
+		t.Fatalf("readlink = %q", got)
+	}
+	drift := func(name string, setup func(), attr string, risk wire.Risk) {
+		t.Helper()
+		setup()
+		c := plan(t, build(t, want))
+		if len(c) == 0 || c[0].Attr != attr || c[0].Risk != risk {
+			t.Fatalf("%s: plan %+v", name, c)
+		}
+		converge(t, want)
+		if got := sh(t, "readlink", "--", link); got != "/root/plumb-link-secret" {
+			t.Fatalf("%s: readlink = %q", name, got)
+		}
+	}
+	drift("missing", func() { sh(t, "rm", "--", link) }, wire.AttrState, wire.RiskReversible)
+	drift("elsewhere", func() { sh(t, "ln", "-sfn", "--", "/etc/hostname", link) }, "target", wire.RiskReversible)
+	drift("file", func() {
+		sh(t, "rm", "--", link)
+		if err := os.WriteFile(link, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}, "kind", wire.RiskDestructive)
+
+	// The target is never read, written or chowned.
+	if o := sh(t, "stat", "-c", "%U %a %s", "--", "/root/plumb-link-secret"); o != "root 600 11" {
+		t.Fatalf("target changed: %s", o)
+	}
+
+	if c := converge(t, rsrc("symlink", link, map[string]any{"state": "absent"})); wire.ActionOf(c) != wire.ActionDelete {
+		t.Fatalf("remove: %+v", c)
+	}
+
+	// A user swaps a parent for a symlink to /root.
+	converge(t, rsrc("user", "plumblink", nil))
+	defer os.RemoveAll("/home/plumblink") // userdel keeps the home
+	defer converge(t, rsrc("user", "plumblink", map[string]any{"state": "absent"}))
+	if err := os.Symlink("/root", "/home/plumblink/app"); err != nil {
+		t.Fatal(err)
+	}
+	r := build(t, rsrc("symlink", "/home/plumblink/app/plumb-link-secret", map[string]any{"target": "/etc/shadow"}))
+	if _, err := r.Observe(context.Background()); err == nil || !strings.Contains(err.Error(), "path component /home/plumblink/app is a symlink") {
+		t.Fatalf("Observe: %v", err)
+	}
+	if err := r.Apply(context.Background(), []wire.Change{{Attr: "kind", Risk: wire.RiskDestructive}, {Attr: "target", Risk: wire.RiskDestructive}}); err == nil {
+		t.Fatal("Apply followed the symlinked parent")
+	}
+	if b, _ := os.ReadFile("/root/plumb-link-secret"); string(b) != "TOP SECRET\n" {
+		t.Fatalf("outside file changed: %q", b)
+	}
+}
+
+// T-020: the nginx Block's default-site link (D-164). The distro link
+// converges with no change; default_site absent removes only the link,
+// and nginx accepts the configuration in both states.
+func TestNginxDefaultSiteAsRoot(t *testing.T) {
+	const link = "/etc/nginx/sites-enabled/default"
+	converge(t, rsrc("package", "nginx", nil))
+	if c := converge(t, rsrc("symlink", link, map[string]any{"target": "/etc/nginx/sites-available/default"})); len(c) != 0 {
+		t.Fatalf("default site link: %+v", c)
+	}
+	converge(t, rsrc("service", "nginx", map[string]any{"restart_on": []any{"symlink:" + link}}))
+	sh(t, "nginx", "-t")
+	converge(t, rsrc("symlink", link, map[string]any{"state": "absent"}))
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("link still there: %v", err)
+	}
+	if _, err := os.Stat("/etc/nginx/sites-available/default"); err != nil {
+		t.Fatalf("disabling removed the site file: %v", err)
+	}
+	sh(t, "nginx", "-t")
+	converge(t, rsrc("symlink", link, map[string]any{"target": "/etc/nginx/sites-available/default"}))
+	sh(t, "nginx", "-t")
+}

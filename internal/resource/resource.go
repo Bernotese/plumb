@@ -107,6 +107,7 @@ var types = map[string]Type{
 	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
 	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
 	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
+	"symlink":   {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
 }
 
 // Lookup returns the type with the given name.

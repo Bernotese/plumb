@@ -98,6 +98,7 @@ func TestBlocks(t *testing.T) {
 		"../internal/resource/schema/file.json",
 		"../internal/resource/schema/package.json",
 		"../internal/resource/schema/service.json",
+		"../internal/resource/schema/symlink.json", // T-020
 		"../internal/resource/schema/user.json",
 	} {
 		name := strings.TrimSuffix(filepath.Base(path), ".json")
