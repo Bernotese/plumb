@@ -1,7 +1,8 @@
 // Writes the response examples of the OpenAPI contract to a JSON file:
 // { "<operationId>": { "<status>": example } }. The mock API (T-006) is
 // built from these, so the mock and the contract cannot drift apart.
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { bundle, createConfig } from "@redocly/openapi-core";
 
 const [ref, out] = process.argv.slice(2);
@@ -24,5 +25,6 @@ for (const item of Object.values(doc.parsed.paths ?? {})) {
     }
   }
 }
+await mkdir(dirname(out), { recursive: true });
 await writeFile(out, JSON.stringify(result, null, 2) + "\n");
 console.log(`examples → ${out}`);
