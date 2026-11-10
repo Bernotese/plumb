@@ -61,10 +61,7 @@ func (l *limiter) blocked(r *http.Request) bool {
 		return false
 	}
 	probe := *c
-	if !probe.take(l.now(), l.rate, l.burst) {
-		return true
-	}
-	return false
+	return !probe.take(l.now(), l.rate, l.burst)
 }
 
 // maxClients bounds the memory of a limiter.
