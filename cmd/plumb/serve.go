@@ -257,7 +257,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	}()
 	if f.dev {
 		go func() {
-			if err := seedDev(ctx, st, eng, lk, drv.(*fake.Driver), f.devDemo, log); err != nil && ctx.Err() == nil {
+			if err := seedDev(ctx, st, events, eng, lk, drv.(*fake.Driver), f.devDemo, log); err != nil && ctx.Err() == nil {
 				log.Error("dev seed", "err", err)
 			}
 		}()

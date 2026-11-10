@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/api"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
+	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/plan"
@@ -63,25 +65,134 @@ func devDocs() []state.Doc {
 	return docs
 }
 
-// seedDev starts a simulated agent per dev target and, on an empty
-// store, plans and approves the seed documents (D-039). With demo it adds
-// the demo data of D-080: one open drift Issue and one
-// pending Plan.
-func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, drv *fake.Driver, demo bool, log *slog.Logger) error {
-	agents := map[string]*linktest.Agent{}
-	for _, t := range devTargets {
-		token := func() (string, bool) {
-			b, err := st.GetBinding(ctx, state.KindTarget, t)
-			if err != nil {
-				return "", false
-			}
-			boot, ok := drv.Bootstrap(driver.GuestID(b.Ref))
-			return boot.Token, ok
-		}
-		a := linktest.New(lk.Handler(), token)
-		agents[t] = a
-		go a.Run(ctx)
+// devAgents runs one simulated agent per bound target of --dev: the seed
+// targets and every target created through the API (T-024). It follows
+// the target bindings: a new binding starts an agent, a removed binding
+// stops it.
+type devAgents struct {
+	st  *store.Store
+	lk  *link.Link
+	drv *fake.Driver
+	log *slog.Logger
+
+	mu     sync.Mutex
+	agents map[string]*devAgent
+	wg     sync.WaitGroup
+}
+
+type devAgent struct {
+	a      *linktest.Agent
+	cancel context.CancelFunc
+}
+
+func newDevAgents(st *store.Store, lk *link.Link, drv *fake.Driver, log *slog.Logger) *devAgents {
+	return &devAgents{st: st, lk: lk, drv: drv, log: log, agents: map[string]*devAgent{}}
+}
+
+// get returns the agent of a target, or nil.
+func (d *devAgents) get(target string) *linktest.Agent {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if a := d.agents[target]; a != nil {
+		return a.a
 	}
+	return nil
+}
+
+// run syncs the agents on every event and every tick until ctx ends.
+// Then it stops all agents and waits for them.
+func (d *devAgents) run(ctx context.Context, events *event.Log) {
+	defer d.wg.Wait()
+	defer d.stopAll()
+	after, err := d.st.LastEventSeq(ctx)
+	if err != nil && ctx.Err() == nil {
+		d.log.Error("dev agents", "err", err)
+	}
+	sub := events.Subscribe(ctx, after)
+	tick := time.NewTicker(time.Second) // fallback; events are the trigger
+	defer tick.Stop()
+	for {
+		if err := d.sync(ctx); err != nil && ctx.Err() == nil {
+			d.log.Error("dev agents", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-sub.C:
+			if !ok {
+				if ctx.Err() == nil {
+					d.log.Error("dev agents: event stream closed", "err", sub.Err())
+				}
+				sub = &event.Subscription{} // nil channel: rely on the tick
+			}
+		case <-tick.C:
+		}
+	}
+}
+
+// sync starts an agent for each bound target and stops the others.
+func (d *devAgents) sync(ctx context.Context) error {
+	bs, err := d.st.Bindings(ctx, state.KindTarget)
+	if err != nil {
+		return err
+	}
+	bound := map[string]bool{}
+	for _, b := range bs {
+		bound[b.Name] = true
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for t, a := range d.agents {
+		if !bound[t] {
+			a.cancel()
+			delete(d.agents, t)
+			d.log.Info("dev agent stopped", "target", t)
+		}
+	}
+	for t := range bound {
+		if d.agents[t] == nil {
+			d.start(ctx, t)
+			d.log.Info("dev agent started", "target", t)
+		}
+	}
+	return nil
+}
+
+// start runs a simulated agent for target. d.mu is held.
+func (d *devAgents) start(ctx context.Context, target string) {
+	token := func() (string, bool) {
+		b, err := d.st.GetBinding(ctx, state.KindTarget, target)
+		if err != nil {
+			return "", false
+		}
+		boot, ok := d.drv.Bootstrap(driver.GuestID(b.Ref))
+		return boot.Token, ok
+	}
+	a := linktest.New(d.lk.Handler(), token)
+	actx, cancel := context.WithCancel(ctx)
+	d.agents[target] = &devAgent{a: a, cancel: cancel}
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		a.Run(actx)
+	}()
+}
+
+func (d *devAgents) stopAll() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for t, a := range d.agents {
+		a.cancel()
+		delete(d.agents, t)
+	}
+}
+
+// seedDev starts the simulated agents and, on an empty store, plans and
+// approves the seed documents (D-039). With demo it adds the demo data of
+// D-080: one open drift Issue and one pending Plan.
+func seedDev(ctx context.Context, st *store.Store, events *event.Log, eng *plan.Engine, lk *link.Link, drv *fake.Driver, demo bool, log *slog.Logger) error {
+	agents := newDevAgents(st, lk, drv, log)
+	go agents.run(ctx, events)
 	if _, err := st.Head(ctx); err == nil {
 		if demo {
 			log.Info("demo data skipped: store already seeded")
@@ -105,7 +216,7 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 }
 
 // seedDemo waits for the seed Run and adds the demo data of D-080.
-func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, agents map[string]*linktest.Agent, log *slog.Logger) error {
+func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, agents *devAgents, log *slog.Logger) error {
 	eng.Wait()
 	deadline := time.Now().Add(30 * time.Second)
 	for _, t := range devTargets {
@@ -121,7 +232,11 @@ func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.L
 		}
 	}
 	// An open drift Issue: someone edits the motd of web2.
-	if err := agents["web2"].Change(ctx, "file:/etc/motd", map[string]any{
+	web2 := agents.get("web2")
+	if web2 == nil {
+		return fmt.Errorf("dev demo: web2 has no agent")
+	}
+	if err := web2.Change(ctx, "file:/etc/motd", map[string]any{
 		"path": "/etc/motd", "content": "Edited by hand\n", "mode": "0644", "owner": "root", "group": "root"}); err != nil {
 		return err
 	}
