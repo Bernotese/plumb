@@ -14,10 +14,10 @@ Plumb can store documents as revisions and can render a Target into the flat res
 ## Acceptance criteria
 - [ ] `store`: opens the database (WAL, foreign keys on), runs migrations, and has typed methods for documents and revisions.
 - [ ] `state`: validates `Image`, `Block` and `Target` documents. Block parameters get their defaults. An unknown Block, image or parameter is an error with a clear path.
-- [ ] Render: value templates and `overrides`. A duplicate resource id is an error. A `restart_on` id that does not exist on the target is an error.
+- [ ] Render: value templates and `overrides`. A duplicate resource id is an error. Two uses of one Block without different `id`s are an error (D-048). A `restart_on` id that does not exist on the target is an error.
 - [ ] Templates have no access to files, environment or network. Only an allowlist of functions is available.
 - [ ] Rendering stops with an error after a time limit and an output size limit. A test proves it with `{{ range }}` over a huge loop.
-- [ ] Commit: a revision stores documents by content hash. Unchanged documents are shared. Revisions are never changed.
+- [ ] Commit: a revision stores documents by content hash (`state.Canonical` and `state.Hash` from T-003; never another form). Unchanged documents are shared. Revisions are never changed.
 - [ ] `Diff(a, b)` lists added, changed and removed documents between two revisions.
 - [ ] Tests: `go test ./internal/state/... ./internal/store/...` passes. Golden tests render at least three Blocks from `testdata`.
 

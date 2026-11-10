@@ -16,7 +16,7 @@ Plumb can import a cloud image, create a VM from it with the agent bootstrap, ch
 - [ ] Thin REST client with the standard library: token header, wait for async tasks, typed errors. TLS trusts a CA file (the host `pve-root-ca.pem`) or the system roots. It never skips verification.
 - [ ] `FetchImage`: `download-url` with the SHA-256 that is pinned in the Image document, create a VM with `import-from`, add the cloud-init drive, convert to a template.
 - [ ] `Create`: clone into pool `plumb`, set CPU, memory, disk, network and cloud-init fields, set `cicustom vendor=` to the static snippet, set the token as SMBIOS serial, start. The driver writes no file on the host.
-- [ ] Re-enroll: `Update` sets a new serial and keeps the other `smbios1` fields (the `uuid` must not change); the guest needs a stop and a start.
+- [ ] Re-enroll: `Update` with a `Bootstrap` sets a new serial and keeps the other `smbios1` fields (the `uuid` must not change); the guest needs a stop and a start.
 - [ ] `Observe`: config, config digest, power state, IP addresses. `Update`: cores, memory, bridge. `Power`. `Delete`.
 - [ ] `Diff` is pure and sets the risk: memory or cores without hotplug = `disruptive`, delete = `destructive`. It marks `ip`, bootstrap user and `disk` as create-only: a change of them is an error, not a change.
 - [ ] The driver touches only guests in its pool. It refuses any other VMID.

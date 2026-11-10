@@ -6,17 +6,10 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Bernotese/plumb/internal/wire"
-)
-
-// Kind is the kind of a guest.
-type Kind string
-
-const (
-	KindVM  Kind = "vm"
-	KindLXC Kind = "lxc"
 )
 
 // GuestID identifies a guest inside the driver (for Proxmox: the VMID).
@@ -29,7 +22,7 @@ type ImageRef string
 // ImageSpec is an Image document as the driver needs it.
 type ImageSpec struct {
 	Name   string
-	Kind   Kind
+	Kind   wire.Kind
 	URL    string
 	SHA256 string // pinned checksum; the driver must refuse any other file
 }
@@ -37,17 +30,17 @@ type ImageSpec struct {
 // GuestSpec holds the managed settings of a guest (resource guest:config).
 // The attribute names below are also the Attr values of the changes.
 type GuestSpec struct {
-	Name     string   // target name; create-only
-	Kind     Kind     // create-only
-	Image    ImageRef // create-only
-	Cores    int      // AttrCores
-	MemoryMB int      // AttrMemory
-	DiskGB   int      // AttrDisk; create-only in the first slice
-	Bridge   string   // AttrBridge
-	IP       string   // AttrIP: "dhcp" or CIDR; create-only
-	Gateway  string   // AttrGateway; create-only
-	User     string   // AttrUser: bootstrap user; create-only
-	SSHKeys  []string // AttrSSHKeys of the bootstrap user; create-only
+	Name     string    // target name; create-only
+	Kind     wire.Kind // create-only
+	Image    ImageRef  // create-only
+	Cores    int       // AttrCores
+	MemoryMB int       // AttrMemory
+	DiskGB   int       // AttrDisk; create-only in the first slice
+	Bridge   string    // AttrBridge
+	IP       string    // AttrIP: "dhcp" or CIDR; create-only
+	Gateway  string    // AttrGateway; create-only
+	User     string    // AttrUser: bootstrap user; create-only
+	SSHKeys  []string  // AttrSSHKeys of the bootstrap user; create-only
 }
 
 // Attribute names of guest:config changes.
@@ -60,15 +53,16 @@ const (
 	AttrGateway = "gateway"
 	AttrUser    = "user"
 	AttrSSHKeys = "ssh_keys"
-	// AttrEnrollToken is not part of GuestSpec. A change with this attribute
-	// asks Update to set a new enrollment token (re-enrollment, D-038).
-	// Change.To holds the token and Change.Changed is set; the token must
-	// never be stored in a Plan or an event.
+	// AttrEnrollToken is not part of GuestSpec. A Plan for re-enrollment
+	// (D-038) lists it as a sensitive change: {attr, sensitive, risk}.
+	// The token itself is never in a Change. It goes to Update as Bootstrap.
 	AttrEnrollToken = "enroll_token"
 )
 
-// Bootstrap is what a new guest needs to enroll its agent. How the token
+// Bootstrap is what a guest needs to enroll its agent. How the token
 // reaches the guest is the business of the driver (ARCHITECTURE §5).
+// A Bootstrap is a live secret: never log it, never store it, never put it
+// into a Change, a Plan or an event.
 type Bootstrap struct {
 	Token string // one-time enrollment token
 }
@@ -81,13 +75,13 @@ const (
 	PowerStopped Power = "stopped"
 )
 
-// Action is a power action.
-type Action string
+// PowerAction is a power action.
+type PowerAction string
 
 const (
-	ActionStart   Action = "start"
-	ActionStop    Action = "stop"    // clean shutdown, then hard stop after a timeout
-	ActionRestart Action = "restart" // stop, then start (a new token needs a cold start)
+	PowerStart   PowerAction = "start"
+	PowerStop    PowerAction = "stop"    // clean shutdown, then hard stop after a timeout
+	PowerRestart PowerAction = "restart" // stop, then start (a new token needs a cold start)
 )
 
 // GuestState is what Observe reads.
@@ -114,16 +108,18 @@ type Driver interface {
 	// risk of each change. It is pure. A change of a create-only setting
 	// is not a change: Diff returns a *CreateOnlyError.
 	Diff(desired GuestSpec, observed GuestState) ([]wire.Change, error)
-	// Update applies changes that Diff returned, or an AttrEnrollToken change.
-	Update(ctx context.Context, id GuestID, changes []wire.Change) error
+	// Update applies changes that Diff returned. boot is nil, except for
+	// re-enrollment: then Update also gives the guest the new token. The
+	// token takes effect at the next cold start (Power with PowerRestart).
+	Update(ctx context.Context, id GuestID, changes []wire.Change, boot *Bootstrap) error
 	// Power runs a power action.
-	Power(ctx context.Context, id GuestID, action Action) error
+	Power(ctx context.Context, id GuestID, action PowerAction) error
 	// Delete stops and removes the guest and its disks.
 	Delete(ctx context.Context, id GuestID) error
 }
 
 // ErrNotFound is returned when a guest or an image does not exist.
-var ErrNotFound = fmt.Errorf("driver: not found")
+var ErrNotFound = errors.New("driver: not found")
 
 // CreateOnlyError says that a setting cannot change after creation.
 type CreateOnlyError struct {
