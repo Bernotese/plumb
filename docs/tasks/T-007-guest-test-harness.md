@@ -14,7 +14,7 @@ The team can run resource tests inside real Debian and Ubuntu systems with one c
 
 ## Acceptance criteria
 - [ ] `make test-guest` builds the test binary on the host and runs it in a `debian:13` and an `ubuntu:26.04` container with systemd as PID 1.
-- [ ] The command fails when a test fails. It removes its containers in every case.
+- [x] The command fails when a test fails. It removes its containers in every case.
 - [ ] The sample test installs a small package and starts a service. It passes on both systems.
 - [x] A CI job runs `make test-guest`.
 - [x] Diff ≤ ~150 lines.
