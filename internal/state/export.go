@@ -90,6 +90,11 @@ func str(s string) *yaml.Node {
 	if strings.Contains(s, "\n") && literalSafe(s) {
 		n.Style = yaml.LiteralStyle
 	}
+	// YAML 1.1 readers take these as booleans; quote them for every reader.
+	switch strings.ToLower(s) {
+	case "y", "yes", "n", "no", "on", "off":
+		n.Style = yaml.DoubleQuotedStyle
+	}
 	return n
 }
 
@@ -288,6 +293,9 @@ func fromNode(n *yaml.Node, path string) (any, *ExportError) {
 		}
 		return fromNode(n.Content[0], path)
 	case yaml.MappingNode:
+		if n.ShortTag() != "!!map" {
+			return nil, &ExportError{Path: path, Msg: fmt.Sprintf("the YAML tag %s is not allowed", n.Tag)}
+		}
 		m := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k := n.Content[i]
@@ -308,6 +316,9 @@ func fromNode(n *yaml.Node, path string) (any, *ExportError) {
 		}
 		return m, nil
 	case yaml.SequenceNode:
+		if n.ShortTag() != "!!seq" {
+			return nil, &ExportError{Path: path, Msg: fmt.Sprintf("the YAML tag %s is not allowed", n.Tag)}
+		}
 		s := make([]any, len(n.Content))
 		for i, c := range n.Content {
 			v, err := fromNode(c, ptr(path, i))

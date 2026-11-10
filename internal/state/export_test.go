@@ -14,11 +14,12 @@ func exportDocs(t *testing.T) []Doc {
 	t.Helper()
 	block, _ := json.Marshal(map[string]any{"title": "Message of the day",
 		"params": map[string]any{"type": "object", "properties": map[string]any{
-			"text": map[string]any{"type": "string", "default": "Managed by Plumb."},
-			"pw":   map[string]any{"type": "string", "writeOnly": true}}},
-		"resources": []any{map[string]any{"file": map[string]any{"path": "/etc/motd", "content": "{{ .text }}\n-- managed \nline 3\n", "mode": "0644"}}}})
+			"text":  map[string]any{"type": "string", "default": "Managed by Plumb."},
+			"ratio": map[string]any{"type": "number", "default": 2.5},
+			"pw":    map[string]any{"type": "string", "writeOnly": true}}},
+		"resources": []any{map[string]any{"file": map[string]any{"path": "/etc/motd", "content": "{{ .text }}\n-- managed\nline 3\n", "mode": "0644"}}}})
 	target, _ := json.Marshal(map[string]any{"type": "vm", "image": "ubuntu",
-		"guest":  map[string]any{"cores": 2, "memory": 2048, "disk": 20.5e0, "bridge": "vmbr0"},
+		"guest":  map[string]any{"cores": 2, "memory": 2048, "disk": 20, "bridge": "vmbr0"},
 		"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "yes", "pw": map[string]any{"secret": "app-db"}}}}})
 	docs := []Doc{
 		{Kind: KindBlock, Name: "motd", Spec: block},
@@ -70,7 +71,7 @@ func TestExportGolden(t *testing.T) {
 // strings that a literal block cannot hold.
 func TestExportRoundTrip(t *testing.T) {
 	docs := exportDocs(t)
-	tricky := []string{"a NLb", "trailing space NLx", "tabTABinNL", " leadingNLx", "crCRNLlf", "endsNLNL", "NLstarts", "ümlaut ✓NLok", "yes", "123", "null", "~", "- dash", "key: value", "#hash", "'quote", "\"dq\"", ""}
+	tricky := []string{"a NLb", "trailing space NLx", "tabTABinNL", " leadingNLx", "crCRNLlf", "endsNLNL", "NLstarts", "ümlaut ✓NLok", "yes", "On", "N", "123", "null", "~", "- dash", "key: value", "#hash", "'quote", "\"dq\"", ""}
 	for i := range tricky {
 		tricky[i] = strings.NewReplacer("NL", "\n", "TAB", "\t", "CR", "\r").Replace(tricky[i])
 	}
