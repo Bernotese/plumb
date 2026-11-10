@@ -169,8 +169,16 @@ func TestSecretBadBodies(t *testing.T) {
 			t.Errorf("%q stored as %q", v, got["ok"].Text)
 		}
 	}
-	if code, body := adm.do("PUT", "/api/v1/secrets/ok", []byte(`{"value": "😀"}`)); code != 200 {
+	if code, body := adm.do("PUT", "/api/v1/secrets/ok", []byte(`{"value": "\ud83d\ude00"}`)); code != 200 {
 		t.Errorf("escaped pair: %d %s", code, body)
+	} else if got, _ := e.sec.Resolve(e.ctx, []string{"ok"}); got["ok"].Text != "😀" {
+		t.Errorf("escaped pair stored as %q", got["ok"].Text)
+	}
+	// QA-2: an escaped U+FFFD is a real character and is stored as sent.
+	if code, body := adm.do("PUT", "/api/v1/secrets/ok", []byte(`{"value": "\ufffd\uFFFD"}`)); code != 200 {
+		t.Errorf("escaped U+FFFD: %d %s", code, body)
+	} else if got, _ := e.sec.Resolve(e.ctx, []string{"ok"}); got["ok"].Text != "��" {
+		t.Errorf("escaped U+FFFD stored as %q", got["ok"].Text)
 	}
 	if code, _ := adm.do("PUT", "/api/v1/secrets/Bad_Name", map[string]string{"value": "x"}); code != 422 {
 		t.Errorf("bad name: %d", code)
