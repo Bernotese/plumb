@@ -40,6 +40,12 @@ func newUser(r wire.Resource, env Env) (Resource, error) {
 		u.a.Home = "/home/" + u.a.Name
 	}
 	u.a.Groups = sortedSet(u.a.Groups)
+	// The schema forbids this; the agent does not trust the wire.
+	for _, k := range u.a.SSHKeys {
+		if strings.ContainsAny(k, "\r\n\x00") {
+			return nil, fmt.Errorf("resource %s: an ssh key holds a line break", r.ID)
+		}
+	}
 	return u, nil
 }
 
@@ -77,8 +83,10 @@ func (u *user) Observe(_ context.Context) (State, error) {
 	}, nil
 }
 
-// Diff compares shell, home, groups and ssh_keys. Deleting the user is
-// destructive; every other change is reversible.
+// Diff compares shell, home, groups and ssh_keys. Create is reversible,
+// delete is destructive. An update that can take access away is disruptive
+// (D-054): it removes an entry from groups or ssh_keys, or it changes shell
+// or home. An update that only adds entries is reversible.
 func (u *user) Diff(observed State) []wire.Change {
 	if u.a.State == wire.StateAbsent {
 		if observed[wire.AttrState] == wire.StatePresent {
@@ -108,26 +116,37 @@ func (u *user) Diff(observed State) []wire.Change {
 	for _, attr := range []string{"shell", "home"} {
 		want := map[string]string{"shell": u.a.Shell, "home": u.a.Home}[attr]
 		if observed[attr] != want {
-			out = append(out, change(attr, observed[attr], want, wire.RiskReversible))
+			out = append(out, change(attr, observed[attr], want, wire.RiskDisruptive))
 		}
 	}
 	if cur := toStrings(observed["groups"]); !equalStrings(sortedSet(cur), u.a.Groups) {
-		out = append(out, change("groups", cur, u.a.Groups, wire.RiskReversible))
+		out = append(out, change("groups", cur, u.a.Groups, removalRisk(cur, u.a.Groups)))
 	}
 	// The order of keys does not matter; duplicates do not count.
 	if cur := toStrings(observed["ssh_keys"]); !equalStrings(sortedSet(cur), sortedSet(keys)) {
-		out = append(out, change("ssh_keys", cur, keys, wire.RiskReversible))
+		out = append(out, change("ssh_keys", cur, keys, removalRisk(cur, keys)))
 	}
 	return u.finish(out)
 }
 
 // Apply runs useradd, usermod or userdel and writes authorized_keys.
-// userdel keeps the home directory.
+// userdel keeps the home directory. A home change runs "usermod --home"
+// without --move-home: the files stay in the old directory. Plumb never
+// deletes an account with uid 0 or manages its keys.
 func (u *user) Apply(ctx context.Context, changes []wire.Change) error {
 	if len(changes) == 0 {
 		return nil
 	}
+	u.env.AccountLock.Lock()
+	defer u.env.AccountLock.Unlock()
 	name := u.a.Name
+	acc, exists, err := u.account()
+	if err != nil {
+		return err
+	}
+	if exists && acc.uid == 0 && (u.a.State == wire.StateAbsent || has(changes, "ssh_keys")) {
+		return fmt.Errorf("user %s has uid 0; Plumb does not delete it or manage its ssh keys", name)
+	}
 	if u.a.State == wire.StateAbsent {
 		_, err := u.run(ctx, "userdel", "--", name)
 		return err
@@ -271,4 +290,21 @@ func (u *user) writeKeys() error {
 		_ = r.Remove(tmp)
 	}
 	return err
+}
+
+// removalRisk is disruptive when want lacks an entry of cur, else reversible.
+func removalRisk(cur, want []string) wire.Risk {
+	for _, c := range cur {
+		found := false
+		for _, w := range want {
+			if c == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return wire.RiskDisruptive
+		}
+	}
+	return wire.RiskReversible
 }

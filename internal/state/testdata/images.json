@@ -1,0 +1,3 @@
+[
+  {"kind": "Image", "name": "ubuntu-26.04", "spec": {"type": "vm", "url": "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}}
+]

@@ -9,9 +9,7 @@ package resource
 import (
 	"context"
 	"embed"
-	"fmt"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/Bernotese/plumb/internal/wire"
@@ -63,56 +61,28 @@ type Env struct {
 	Run  Runner
 	// PackageLock serializes every package-manager call of one guest.
 	PackageLock *sync.Mutex
+	// AccountLock serializes useradd, usermod and userdel of one guest:
+	// Blocks apply in parallel, and the shadow tools lock /etc/passwd.
+	AccountLock *sync.Mutex
 }
 
 // MaxOutput is the longest Item.Output in bytes.
 const MaxOutput = 4096
 
+// HiddenOutput is the Item.Output of a resource with sensitive attributes.
+const HiddenOutput = "output hidden: the resource has sensitive attributes"
+
 // SafeOutput is the only way to build wire.Item.Output for a resource
-// (wire.Redact does not cover Output). It replaces every value of a sensitive
-// attribute, and every line of such a value with 4 or more characters, with
-// "[redacted]", and it cuts the text to MaxOutput bytes.
+// (wire.Redact does not cover Output). Command output and error texts are
+// untrusted: they can hold the desired secret and also the old value that
+// is on the guest now, which the controller never knows. So a resource with
+// sensitive attributes gets HiddenOutput instead of the text. For all other
+// resources the text is cut to MaxOutput bytes.
 func SafeOutput(r wire.Resource, text string) string {
-	for _, attr := range r.Sensitive {
-		for _, secret := range secretStrings(r.Attrs[attr]) {
-			text = strings.ReplaceAll(text, secret, "[redacted]")
-		}
+	if len(r.Sensitive) > 0 {
+		return HiddenOutput
 	}
 	return clip(text, MaxOutput)
-}
-
-// secretStrings lists the texts that must not appear in output, longest
-// first so that a full value is replaced before its lines.
-func secretStrings(v any) []string {
-	var out []string
-	add := func(s string) {
-		if s == "" {
-			return
-		}
-		out = append(out, s)
-		for _, line := range strings.Split(s, "\n") {
-			if line = strings.TrimSpace(line); len(line) >= 4 && line != s {
-				out = append(out, line)
-			}
-		}
-	}
-	switch v := v.(type) {
-	case nil:
-	case string:
-		add(v)
-	case []any:
-		for _, e := range v {
-			out = append(out, secretStrings(e)...)
-		}
-	case []string:
-		for _, e := range v {
-			add(e)
-		}
-	default:
-		add(fmt.Sprint(v))
-	}
-	sort.SliceStable(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
-	return out
 }
 
 // Factory builds a resource from its rendered form.

@@ -2,24 +2,24 @@ package resource
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
+	"io"
 	"os"
-	"path/filepath"
 	"strconv"
-	"syscall"
 
 	"github.com/Bernotese/plumb/internal/wire"
+	"golang.org/x/sys/unix"
 )
 
 // maxFileSize is the largest file that the file resource reads or writes.
 const maxFileSize = 4 << 20
 
-// file is a regular file with fixed content (schema/file.json).
+// file is a regular file with fixed content (schema/file.json). Its path
+// may hold no symlink in any component (D-054, fsx.go).
 type file struct {
 	base
-	a fileAttrs
+	a    fileAttrs
+	mode uint32
 }
 
 type fileAttrs struct {
@@ -36,43 +36,56 @@ func newFile(r wire.Resource, env Env) (Resource, error) {
 	if err := decode(r, "file", &f.a, func() string { return f.a.Path }); err != nil {
 		return nil, err
 	}
+	if _, err := splitPath(f.a.Path); err != nil {
+		return nil, fmt.Errorf("resource %s: %w", r.ID, err)
+	}
 	mode, err := parseMode(f.a.Mode)
 	if err != nil {
 		return nil, fmt.Errorf("resource %s: %w", r.ID, err)
 	}
-	f.a.Mode = mode
+	f.a.Mode, f.mode = fmt.Sprintf("%04o", mode), mode
 	if len(f.a.Content) > maxFileSize {
 		return nil, fmt.Errorf("resource %s: content is larger than %d bytes", r.ID, maxFileSize)
 	}
 	return f, nil
 }
 
-// Observe reads the file. It does not follow a symlink at the path.
+// Observe reads the file through a file descriptor. A missing parent
+// directory means the file is absent.
 func (f *file) Observe(_ context.Context) (State, error) {
-	p := f.path(f.a.Path)
-	fi, err := os.Lstat(p)
-	if errors.Is(err, fs.ErrNotExist) {
+	dfd, name, err := openParent(f.env.Root, f.a.Path)
+	if isNoParent(err) {
 		return absent(), nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file (%s)", f.a.Path, fi.Mode().Type())
+	defer unix.Close(dfd)
+	if _, ok, err := lstatAt(dfd, name, f.a.Path); err != nil || !ok {
+		if err != nil {
+			return nil, err
+		}
+		return absent(), nil
 	}
-	if fi.Size() > maxFileSize {
+	fd, st, err := openRegular(dfd, name, f.a.Path, unix.O_RDONLY)
+	if err != nil {
+		return nil, err
+	}
+	fh := os.NewFile(uintptr(fd), f.a.Path)
+	defer fh.Close()
+	if st.Size > maxFileSize {
 		return nil, fmt.Errorf("%s is larger than %d bytes", f.a.Path, maxFileSize)
 	}
-	data, err := os.ReadFile(p)
+	data, err := io.ReadAll(io.LimitReader(fh, maxFileSize+1))
 	if err != nil {
 		return nil, err
 	}
-	st, err := observeNode(f.env.Root, fi)
+	state, err := nodeState(f.env.Root, st)
 	if err != nil {
 		return nil, err
 	}
-	st["content"] = string(data)
-	return st, nil
+	state["content"] = string(data)
+	return state, nil
 }
 
 // Diff compares content, mode, owner and group. Deleting a file is
@@ -88,92 +101,48 @@ func (f *file) Diff(observed State) []wire.Change {
 	return f.finish(diffNode(observed, want, []string{"content", "mode", "owner", "group"}))
 }
 
-// Apply writes the file atomically (temp file and rename in the same
+// Apply writes the file atomically (temp file and renameat in the same
 // directory) when it is new or its content changed. The parent directory
 // must exist: manage it with a directory resource.
 func (f *file) Apply(_ context.Context, changes []wire.Change) error {
 	if len(changes) == 0 {
 		return nil
 	}
-	p := f.path(f.a.Path)
+	dfd, name, err := openParent(f.env.Root, f.a.Path)
+	if err != nil {
+		if isNoParent(err) {
+			return fmt.Errorf("parent directory of %s does not exist", f.a.Path)
+		}
+		return err
+	}
+	defer unix.Close(dfd)
 	if f.a.State == wire.StateAbsent {
-		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		st, ok, err := lstatAt(dfd, name, f.a.Path)
+		if err != nil || !ok {
 			return err
 		}
-		return nil
+		if err := checkRegular(st, f.a.Path); err != nil {
+			return err
+		}
+		return unix.Unlinkat(dfd, name, 0)
 	}
 	uid, gid, err := ownerIDs(f.env.Root, f.a.Owner, f.a.Group)
 	if err != nil {
 		return err
 	}
-	mode := toFileMode(f.a.Mode)
 	if has(changes, wire.AttrState) || has(changes, "content") {
-		return writeAtomic(p, []byte(f.a.Content), mode, uid, gid)
+		return writeAt(dfd, name, f.a.Path, []byte(f.a.Content), f.mode, uid, gid)
 	}
-	return setNode(p, changes, mode, uid, gid)
+	fd, _, err := openRegular(dfd, name, f.a.Path, unix.O_RDONLY)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	return setOwnerMode(fd, has(changes, "owner") || has(changes, "group"), uid, gid, f.mode)
 }
 
 // Watch returns the file path.
 func (f *file) Watch() []string { return []string{f.path(f.a.Path)} }
-
-// writeAtomic replaces path with a new file. A symlink at path is replaced,
-// not followed.
-func writeAtomic(path string, data []byte, mode os.FileMode, uid, gid int) error {
-	dir := filepath.Dir(path)
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return fmt.Errorf("parent directory %s does not exist", dir)
-	}
-	tmp, err := os.CreateTemp(dir, ".plumb-*")
-	if err != nil {
-		return err
-	}
-	ok := false
-	defer func() {
-		if !ok {
-			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		return err
-	}
-	if err := tmp.Chown(uid, gid); err != nil {
-		return err
-	}
-	// Chmod after Chown: chown clears the setuid and setgid bits.
-	if err := tmp.Chmod(mode); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return err
-	}
-	ok = true
-	return nil
-}
-
-// observeNode reads mode, owner and group of a file or directory.
-func observeNode(root string, fi fs.FileInfo) (State, error) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return nil, fmt.Errorf("%s: no owner information", fi.Name())
-	}
-	owner, grp, err := ownerNames(root, int(st.Uid), int(st.Gid))
-	if err != nil {
-		return nil, err
-	}
-	return State{
-		wire.AttrState: wire.StatePresent,
-		"mode":         formatMode(fi.Mode()),
-		"owner":        owner,
-		"group":        grp,
-	}, nil
-}
 
 // diffNode returns the changes for a file or directory that must be present.
 func diffNode(observed, want State, attrs []string) []wire.Change {
@@ -192,63 +161,11 @@ func diffNode(observed, want State, attrs []string) []wire.Change {
 	return out
 }
 
-// setNode applies mode, owner and group changes to an existing path.
-func setNode(path string, changes []wire.Change, mode os.FileMode, uid, gid int) error {
-	if has(changes, "owner") || has(changes, "group") {
-		if err := os.Lchown(path, uid, gid); err != nil {
-			return err
-		}
-	}
-	// Always set the mode after an owner change: chown clears setuid/setgid.
-	if has(changes, "mode") || has(changes, "owner") || has(changes, "group") {
-		fi, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if fi.Mode().Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink", path)
-		}
-		return os.Chmod(path, mode)
-	}
-	return nil
-}
-
-// parseMode normalizes an octal mode string to four digits.
-func parseMode(s string) (string, error) {
+// parseMode parses an octal mode string (3 or 4 digits).
+func parseMode(s string) (uint32, error) {
 	n, err := strconv.ParseUint(s, 8, 32)
 	if err != nil || n > 0o7777 {
-		return "", fmt.Errorf("bad mode %q", s)
+		return 0, fmt.Errorf("bad mode %q", s)
 	}
-	return fmt.Sprintf("%04o", n), nil
-}
-
-// toFileMode converts a normalized octal mode to an os.FileMode.
-func toFileMode(s string) os.FileMode {
-	n, _ := strconv.ParseUint(s, 8, 32)
-	m := os.FileMode(n & 0o777)
-	if n&0o4000 != 0 {
-		m |= os.ModeSetuid
-	}
-	if n&0o2000 != 0 {
-		m |= os.ModeSetgid
-	}
-	if n&0o1000 != 0 {
-		m |= os.ModeSticky
-	}
-	return m
-}
-
-// formatMode converts an os.FileMode to four octal digits.
-func formatMode(m os.FileMode) string {
-	n := uint32(m.Perm())
-	if m&os.ModeSetuid != 0 {
-		n |= 0o4000
-	}
-	if m&os.ModeSetgid != 0 {
-		n |= 0o2000
-	}
-	if m&os.ModeSticky != 0 {
-		n |= 0o1000
-	}
-	return fmt.Sprintf("%04o", n)
+	return uint32(n), nil
 }

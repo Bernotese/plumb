@@ -192,3 +192,30 @@ func TestFilesAndUser(t *testing.T) {
 		t.Fatal("user still exists")
 	}
 }
+
+// As real root: a symlinked parent that a user owns must not lead the
+// agent to a root-owned file outside it (D-054).
+func TestSymlinkedParentAsRoot(t *testing.T) {
+	converge(t, rsrc("user", "plumbevil", nil))
+	if err := os.WriteFile("/root/plumb-secret", []byte("TOP SECRET\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove("/root/plumb-secret")
+	if err := os.Symlink("/root", "/home/plumbevil/app"); err != nil {
+		t.Fatal(err)
+	}
+	r := build(t, rsrc("file", "/home/plumbevil/app/plumb-secret", map[string]any{"content": "x", "owner": "plumbevil"}))
+	if _, err := r.Observe(context.Background()); err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("Observe: %v", err)
+	}
+	if err := r.Apply(context.Background(), []wire.Change{{Attr: "content", Risk: wire.RiskReversible}}); err == nil {
+		t.Fatal("Apply followed the symlink")
+	}
+	if o := sh(t, "stat", "-c", "%U %a", "--", "/root/plumb-secret"); o != "root 600" {
+		t.Fatalf("outside file changed: %s", o)
+	}
+	if b, _ := os.ReadFile("/root/plumb-secret"); string(b) != "TOP SECRET\n" {
+		t.Fatalf("outside file content changed: %q", b)
+	}
+	converge(t, rsrc("user", "plumbevil", map[string]any{"state": "absent"}))
+}

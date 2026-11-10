@@ -29,9 +29,8 @@ Five resource types can observe, diff and apply inside a Debian or Ubuntu guest.
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-- Branch `pl-frontend/T-005-resources`. Five types in `internal/resource/{file,directory,package,service,user}.go`; shared code in `env.go` (`NewEnv`, `ExecRunner`, passwd/group parsing). Rules: D-054.
-- `Env.PackageLock` serializes every dpkg/apt call of a guest; apt waits for the dpkg lock (`DPkg::Lock::Timeout`), runs `apt-get update` once when an install fails.
-- Restart: `RestartChange(svc, changed)` gives one change however many `restart_on` resources changed; `service.Apply` restarts at most once, not after a start, not when it must stay stopped.
-- Sensitive: `Diff` compares locally, then `wire.Redact`; `Apply` takes values from the attributes, never from `To`. `SafeOutput` in `resource.go` redacts values and their lines in `Item.Output`.
-- Tests: `go test ./internal/resource/...` → pass (fake guest runner; fails any call without `--` before its operand; mutation checked). Coverage 84 %.
-- Guest tests: `test/guest/resource_test.go` (tag `guest`) compiles; run **pending** (no Docker access; T-007 harness not merged). LXD run was denied.
+- Branch `pl-frontend/T-005-resources`, PR #8. Five types in `internal/resource/{file,directory,package,service,user}.go`; shared code in `env.go`, `fsx.go`. Rules: D-054 (architect text).
+- Review fixes: no symlink in any path component (walk with `openat(O_NOFOLLOW)`, then fds only; hard links refused); minimal command env; `AccountLock`; `SafeOutput` hides all output of a sensitive resource (QA finding: old value); package name not ending in `-`; uid 0 guard; masked units; user updates that can take access away are `disruptive`.
+- Locks: `PackageLock` (dpkg/apt), `AccountLock` (shadow tools). `RestartChange` + one restart per apply.
+- Tests: `go test ./internal/resource/...` pass incl. QA branch (merged); symlink/hard-link/path tests; mutation checks for `--` and `O_NOFOLLOW`.
+- Guest tests (tag `guest`, incl. a root symlink test) compile; run **pending** (Docker, T-007).

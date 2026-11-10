@@ -24,6 +24,7 @@ A proposal becomes a Plan, an approved Plan becomes a Revision and a Run, and dr
 - [ ] `issue`: a drift report opens one Issue per target and resource, or updates the open one. `revert` creates a Plan. `accept` creates a Plan that writes an override. `accept` is refused for a sensitive attribute.
 - [ ] Proxmox level: a poll loop calls `Driver.Diff` when the config digest changed and reports drift on `guest:config`.
 - [ ] Tests: `go test ./internal/...` passes. One in-process test uses `driver/fake` and the real agent code: create target → approve → apply → change a file → Issue opens → `revert` closes it.
+- [ ] From the T-009 review (D-062): back `link.Config.Sensitive` with the head revision, cached per revision id. Test: after a controller restart, a drift report is still redacted.
 
 ## Out of scope
 - HTTP handlers and auth (T-011).
