@@ -11,8 +11,8 @@
   "properties": {
     "name": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9+.-]+$",
-      "description": "Package name."
+      "pattern": "^[a-z0-9][a-z0-9+.-]*[a-z0-9+]$",
+      "description": "Package name. It must not end in '-': apt reads \"foo-\" as \"remove foo\"."
     },
     "version": {
       "type": "string",

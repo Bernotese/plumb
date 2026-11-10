@@ -2,7 +2,7 @@
 
 - **Owner:** pl-frontend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** M   · **Depends on:** T-003; T-007 for the guest tests   · **Parallel with:** T-004, T-008, T-009
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** review (guest run pending: Docker access, T-007)
 
 ## Goal
 Five resource types can observe, diff and apply inside a Debian or Ubuntu guest.
@@ -29,4 +29,8 @@ Five resource types can observe, diff and apply inside a Debian or Ubuntu guest.
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-005-resources`, PR #8. Five types in `internal/resource/{file,directory,package,service,user}.go`; shared code in `env.go`, `fsx.go`. Rules: D-054 (architect text).
+- Review fixes: no symlink in any path component (walk with `openat(O_NOFOLLOW)`, then fds only; hard links refused); minimal command env; `AccountLock`; `SafeOutput` hides all output of a sensitive resource (QA finding: old value); package name not ending in `-`; uid 0 guard; masked units; user updates that can take access away are `disruptive`.
+- Locks: `PackageLock` (dpkg/apt), `AccountLock` (shadow tools). `RestartChange` + one restart per apply.
+- Tests: `go test ./internal/resource/...` pass incl. QA branch (merged); symlink/hard-link/path tests; mutation checks for `--` and `O_NOFOLLOW`.
+- Guest tests (tag `guest`, incl. a root symlink test) compile; run **pending** (Docker, T-007).

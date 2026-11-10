@@ -85,6 +85,8 @@ func TestSchemas(t *testing.T) {
 		{"package", `{"name":"nginx","strictness":"exact"}`, false}, // exact needs a version
 		{"package", `{"name":"nginx; rm -rf /"}`, false},
 		{"package", `{"name":"-o=Dpkg::x"}`, false}, // must not look like an option
+		{"package", `{"name":"nginx-"}`, false},     // apt reads "foo-" as "remove foo"
+		{"package", `{"name":"g++"}`, true},
 		{"service", `{"name":"nginx","state":"running","enabled":true,"restart_on":["file:/etc/nginx/sites-enabled/default"]}`, true},
 		{"service", `{"name":"nginx","restart_on":["not-an-id"]}`, false},
 		{"service", `{"name":"nginx","enabled":"yes"}`, false},
