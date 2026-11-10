@@ -14,6 +14,14 @@ export type Route =
 
 const NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
 
+/**
+ * Whether a hash is a route. In-page anchors such as "#main" (the skip
+ * link) are not routes and must not change the screen.
+ */
+export function isRouteHash(hash: string): boolean {
+  return hash === "" || hash === "#" || hash.startsWith("#/");
+}
+
 export function parse(hash: string): Route {
   const path = hash.replace(/^#/, "") || "/targets";
   const parts = path.split("/").filter(Boolean);

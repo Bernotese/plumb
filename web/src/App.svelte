@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import type { PlumbApi } from "./lib/client";
   import { createHttpApi } from "./lib/http";
-  import { go, href, parse, type Route } from "./lib/router";
+  import { go, href, isRouteHash, parse, type Route } from "./lib/router";
   import { applyTheme, loadTheme, type Theme } from "./lib/theme";
   import type { Session } from "./lib/types";
   import ChangePassword from "./screens/ChangePassword.svelte";
@@ -67,6 +67,7 @@
         .finally(() => (ready = true));
     });
     const onHash = () => {
+      if (!isRouteHash(location.hash)) return; // an in-page anchor, not a screen
       route = parse(location.hash);
       // Move focus to the new page title, so keyboard and screen-reader
       // users start at the top of the new screen.
@@ -111,7 +112,15 @@
   const navCurrent = (names: Route["name"][]) => (names.includes(route.name) ? "page" : undefined);
 </script>
 
-<a class="skip" href="#main">Skip to content</a>
+<a
+  class="skip"
+  href="#main"
+  onclick={(e) => {
+    // Move focus without touching the hash: the hash holds the route.
+    e.preventDefault();
+    document.getElementById("main")?.focus();
+  }}>Skip to content</a
+>
 <header>
   <a class="brand" href={href({ name: "targets" })}>Plumb</a>
   {#if screen === "app"}
