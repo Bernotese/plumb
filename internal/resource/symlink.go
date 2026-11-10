@@ -243,7 +243,7 @@ func symlinkAt(dirfd int, name, p, target, was string) error {
 	}
 	if was == "" {
 		if err := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_NOREPLACE); err != nil {
-			_ = unix.Unlinkat(dirfd, tmp, 0)
+			unlinkTempLink(dirfd, tmp)
 			if errors.Is(err, unix.EEXIST) {
 				return fmt.Errorf("%s changed while it was applied; plan again", p)
 			}
@@ -252,7 +252,7 @@ func symlinkAt(dirfd int, name, p, target, was string) error {
 		return unix.Fsync(dirfd)
 	}
 	if err := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_EXCHANGE); err != nil {
-		_ = unix.Unlinkat(dirfd, tmp, 0)
+		unlinkTempLink(dirfd, tmp)
 		if errors.Is(err, unix.ENOENT) {
 			return fmt.Errorf("%s changed while it was applied; plan again", p)
 		}
@@ -263,6 +263,14 @@ func symlinkAt(dirfd int, name, p, target, was string) error {
 		return err
 	}
 	return unix.Fsync(dirfd)
+}
+
+// unlinkTempLink removes dirfd/tmp only when it is a symlink: a node that
+// a writer of the directory swapped in under the temp name stays.
+func unlinkTempLink(dirfd int, tmp string) {
+	if kind, _, err := readLinkAt(dirfd, tmp, tmp); err == nil && kind == "symlink" {
+		_ = unix.Unlinkat(dirfd, tmp, 0)
+	}
 }
 
 // removeLinkAt removes the symlink dirfd/name: it moves the node aside and
@@ -303,6 +311,6 @@ func removeIfKind(dirfd int, tmp, name, p, want string) error {
 	if uerr := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_EXCHANGE); uerr != nil {
 		return fmt.Errorf("%s changed while it was applied; the old node is kept as %s", p, tmp)
 	}
-	_ = unix.Unlinkat(dirfd, tmp, 0) // our new link, back under tmp
+	unlinkTempLink(dirfd, tmp) // our new link, back under tmp
 	return fmt.Errorf("%s changed while it was applied; plan again", p)
 }
