@@ -7,7 +7,11 @@ export type Tone = "ok" | "warn" | "danger" | "info" | "muted";
 export function targetState(t: TargetView): { label: string; tone: Tone; detail: string } {
   const s = t.status;
   if (s.agent === "offline") {
-    return { label: "Offline", tone: "muted", detail: "The agent has not polled in the last 90 s." };
+    return {
+      label: "Offline",
+      tone: "muted",
+      detail: "The agent has not polled in the last 90 s.",
+    };
   }
   switch (s.phase) {
     case "ready":
@@ -57,10 +61,25 @@ export function valueText(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/** One change as text pairs for display: sensitive values are never shown. */
-export function changeView(c: Change): { attr: string; from: string; to: string; hidden: boolean } {
-  if (isSensitive(c)) return { attr: c.attr, from: "", to: "", hidden: true };
-  return { attr: c.attr, from: valueText(c.from), to: valueText(c.to), hidden: false };
+/** One change as text for display: sensitive values are never shown; a restart has no values. */
+export function changeView(c: Change): {
+  attr: string;
+  from: string;
+  to: string;
+  hidden: boolean;
+  restart: boolean;
+} {
+  if (isSensitive(c)) return { attr: c.attr, from: "", to: "", hidden: true, restart: false };
+  if (c.attr === "restart" && c.from === undefined && c.to === undefined) {
+    return { attr: c.attr, from: "", to: "", hidden: false, restart: true };
+  }
+  return {
+    attr: c.attr,
+    from: valueText(c.from),
+    to: valueText(c.to),
+    hidden: false,
+    restart: false,
+  };
 }
 
 export function formatTime(iso: string | null | undefined): string {
@@ -68,3 +87,6 @@ export function formatTime(iso: string | null | undefined): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
+
+/** Guest settings that cannot change after create in the first slice (D-025). */
+export const CREATE_ONLY = ["ip", "gateway", "user", "ssh_keys", "disk"] as const;

@@ -4,7 +4,8 @@
 // minimum/maximum, minLength/maxLength, pattern, minItems.
 // Everything is a pure function, so the screens stay thin.
 
-export type FieldKind = "text" | "textarea" | "number" | "integer" | "boolean" | "enum" | "list" | "unsupported";
+export type FieldKind =
+  "text" | "textarea" | "number" | "integer" | "boolean" | "enum" | "list" | "unsupported";
 
 export interface Field {
   name: string;
@@ -67,9 +68,23 @@ function kindOf(p: Prop): FieldKind {
   }
 }
 
-/** A label from a property name: "server_names" → "Server names". */
+const ACRONYMS: Record<string, string> = {
+  ip: "IP",
+  ssh: "SSH",
+  id: "ID",
+  url: "URL",
+  tls: "TLS",
+  dns: "DNS",
+  cpu: "CPU",
+};
+
+/** A label from a property name: "server_names" → "Server names", "ssh_keys" → "SSH keys". */
 export function humanize(name: string): string {
-  const s = name.replace(/_/g, " ");
+  const words = name
+    .split("_")
+    .filter(Boolean)
+    .map((w) => ACRONYMS[w] ?? w);
+  const s = words.join(" ");
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
@@ -78,7 +93,12 @@ export function fieldsOf(schema: ObjectSchema | undefined): Field[] {
   const required = new Set(schema?.required ?? []);
   return Object.entries(schema?.properties ?? {}).map(([name, raw]) => {
     const p = (raw ?? {}) as Prop;
-    const f: Field = { name, label: p.title ?? humanize(name), kind: kindOf(p), required: required.has(name) };
+    const f: Field = {
+      name,
+      label: p.title ?? humanize(name),
+      kind: kindOf(p),
+      required: required.has(name),
+    };
     if (p.description) f.description = p.description;
     if (p.default !== undefined) f.default = p.default;
     if (f.kind === "enum") f.options = (p.enum as string[]).slice();
@@ -127,7 +147,8 @@ function fieldError(f: Field, v: FieldValue | undefined): string | undefined {
   if (f.kind === "list") {
     const items = ((v as string[] | undefined) ?? []).map((s) => s.trim()).filter(Boolean);
     const min = f.minItems ?? (f.required ? 1 : 0);
-    if (items.length < min) return min === 1 ? "Add at least one entry." : `Add at least ${min} entries.`;
+    if (items.length < min)
+      return min === 1 ? "Add at least one entry." : `Add at least ${min} entries.`;
     return undefined;
   }
   const s = typeof v === "string" ? v : "";
@@ -141,8 +162,10 @@ function fieldError(f: Field, v: FieldValue | undefined): string | undefined {
     return undefined;
   }
   if (f.kind === "enum" && !f.options?.includes(s)) return "Choose one of the options.";
-  if (f.minLength !== undefined && s.length < f.minLength) return `Use at least ${f.minLength} characters.`;
-  if (f.maxLength !== undefined && s.length > f.maxLength) return `Use at most ${f.maxLength} characters.`;
+  if (f.minLength !== undefined && s.length < f.minLength)
+    return `Use at least ${f.minLength} characters.`;
+  if (f.maxLength !== undefined && s.length > f.maxLength)
+    return `Use at most ${f.maxLength} characters.`;
   if (f.pattern !== undefined) {
     let re: RegExp | undefined;
     try {

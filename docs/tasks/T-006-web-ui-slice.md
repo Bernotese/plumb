@@ -2,7 +2,7 @@
 
 - **Owner:** pl-frontend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** L (Claude)   · **Depends on:** T-017   · **Parallel with:** T-010, T-011
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** review
 
 ## Goal
 The user can see targets, create a target from an image and Blocks, read a plan, approve it, watch the run and handle an issue. This card works against a mock of the API.
@@ -29,4 +29,9 @@ The user can see targets, create a target from an image and Blocks, read a plan,
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-006-web-ui-slice`. Screens in `web/src/screens/` (login, forced password change, targets, new/edit target, plan, run, issues, issue); shared parts in `web/src/ui/`; logic in `web/src/lib/` (`client.ts` interface for T-014, `mock/`, `schemaForm.ts`, `router.ts`, `view.ts`, `theme.ts`).
+- Mock built from the contract examples (`npm run gen` also writes `examples.gen.json`); it renders Blocks, computes plans (restart, risk, create-only refusal), marks stale plans, simulates runs with events, resolves issues. Examples added to `api/openapi.yaml`: more targets (all four states), `web-app` Block (every widget), sensitive issue.
+- Guest form comes from `internal/state/schema/target.json` (D-043); create-only fields are read-only when editing. Multi-line text rule: D-056.
+- Keyboard: native controls only, skip link, focus moves to the page title on every route, labels on every input, live region for run steps. Light, dark and system theme.
+- Tests: `npm run lint` and `npm test` (58) pass; `make lint test build` pass. Screenshots of every screen, light and dark, linked in the PR.
+- Live run screenshot: `browser-shot --click` times out when the click navigates; live steps are covered by the mock test (event order, final states).

@@ -21,20 +21,19 @@ import type {
   TargetDoc,
   TargetView,
 } from "../types";
-import { maxRisk } from "../view";
+import { CREATE_ONLY, maxRisk } from "../view";
 import { example, exampleItems } from "./examples";
 
 /** Login of the mock (shown on the login screen in dev mode). */
 export const MOCK_USER = { username: "admin", password: "correct-horse-battery-staple" };
-
-/** Guest settings that cannot change after create in the first slice (D-025). */
-export const CREATE_ONLY = ["ip", "gateway", "user", "ssh_keys", "disk"] as const;
 
 export interface MockOptions {
   /** Delay between run steps in ms (default 600). */
   stepDelayMs?: number;
   /** Start signed in, password already changed (for screenshots and dev). */
   signedIn?: boolean;
+  /** Start signed in at the first login: the password change is due. */
+  firstLogin?: boolean;
 }
 
 export interface MockApi extends PlumbApi {
@@ -47,8 +46,20 @@ type Rendered = { id: string; type: string; attrs: Record<string, unknown> };
 const now = () => new Date().toISOString();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function problem(type: string, title: string, status: number, detail?: string, extra?: Partial<Problem>): ApiError {
-  return new ApiError({ type: `urn:plumb:problem:${type}`, title, status, ...(detail ? { detail } : {}), ...extra });
+function problem(
+  type: string,
+  title: string,
+  status: number,
+  detail?: string,
+  extra?: Partial<Problem>,
+): ApiError {
+  return new ApiError({
+    type: `urn:plumb:problem:${type}`,
+    title,
+    status,
+    ...(detail ? { detail } : {}),
+    ...extra,
+  });
 }
 
 /** Replaces `{{ .name }}` with the parameter value (Go text/template subset). */
@@ -63,14 +74,21 @@ export function renderValue(v: unknown, params: Record<string, unknown>): unknow
   return v;
 }
 
-const keyAttr: Record<string, string> = { file: "path", directory: "path", package: "name", service: "name", user: "name" };
+const keyAttr: Record<string, string> = {
+  file: "path",
+  directory: "path",
+  package: "name",
+  service: "name",
+  user: "name",
+};
 
 /** Renders the Blocks of a Target into a flat resource list. */
 export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): Rendered[] {
   const out: Rendered[] = [];
   for (const use of spec.blocks ?? []) {
     const block = blocks.get(use.use);
-    if (!block) throw problem("validation", "Validation failed", 422, `Block "${use.use}" does not exist.`);
+    if (!block)
+      throw problem("validation", "Validation failed", 422, `Block "${use.use}" does not exist.`);
     const params: Record<string, unknown> = {};
     for (const [k, s] of Object.entries(block.spec.params?.properties ?? {})) {
       const d = (s as { default?: unknown }).default;
@@ -90,7 +108,11 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-function resourcePlan(resource: string, action: ResourcePlan["action"], changes: Change[]): ResourcePlan {
+function resourcePlan(
+  resource: string,
+  action: ResourcePlan["action"],
+  changes: Change[],
+): ResourcePlan {
   return { resource, action, risk: maxRisk(changes.map((c) => c.risk)), changes };
 }
 
@@ -117,7 +139,12 @@ export function planTarget(
       if (same(og[attr], g[attr])) continue;
       if ((CREATE_ONLY as readonly string[]).includes(attr)) {
         throw problem("validation", "Validation failed", 422, undefined, {
-          errors: [{ pointer: `/put/0/spec/guest/${attr}`, message: `${attr} is create-only in this version. Create a new target instead.` }],
+          errors: [
+            {
+              pointer: `/put/0/spec/guest/${attr}`,
+              message: `${attr} is create-only in this version. Create a new target instead.`,
+            },
+          ],
         });
       }
       changes.push({ attr, from: og[attr], to: g[attr], risk: "disruptive" });
@@ -131,8 +158,11 @@ export function planTarget(
   for (const r of after) {
     const prev = before.get(r.id);
     if (!prev) {
-      const changes: Change[] = [{ attr: "state", from: "absent", to: "present", risk: "reversible" }];
-      for (const [attr, to] of Object.entries(r.attrs)) changes.push({ attr, to, risk: "reversible" });
+      const changes: Change[] = [
+        { attr: "state", from: "absent", to: "present", risk: "reversible" },
+      ];
+      for (const [attr, to] of Object.entries(r.attrs))
+        changes.push({ attr, to, risk: "reversible" });
       out.push(resourcePlan(r.id, "create", changes));
       continue;
     }
@@ -157,7 +187,11 @@ export function planTarget(
   const nextIds = new Set(after.map((r) => r.id));
   for (const id of before.keys()) {
     if (!nextIds.has(id)) {
-      out.push(resourcePlan(id, "delete", [{ attr: "state", from: "present", to: "absent", risk: "destructive" }]));
+      out.push(
+        resourcePlan(id, "delete", [
+          { attr: "state", from: "present", to: "absent", risk: "destructive" },
+        ]),
+      );
     }
   }
   return out;
@@ -171,12 +205,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   if (opts.signedIn) {
     session = { ...example("login", 200), must_change_password: false };
     mustChange = false;
+  } else if (opts.firstLogin) {
+    session = example("login", 200);
   }
 
   const images = exampleItems<ImageView>(example("listImages", 200));
   const blockViews = exampleItems<BlockView>(example("listBlocks", 200));
   const blocks = new Map(blockViews.map((b) => [b.document.name, b.document]));
-  const targets = new Map(exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]));
+  const targets = new Map(
+    exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]),
+  );
 
   const plans = new Map<number, Plan>();
   for (const p of [
@@ -188,9 +226,11 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     if (!plans.has(p.id)) plans.set(p.id, p);
   }
   const runs = new Map<number, Run>();
-  for (const r of [...exampleItems<Run>(example("listRuns", 200)), example("getRun", 200)]) runs.set(r.id, r);
+  for (const r of [...exampleItems<Run>(example("listRuns", 200)), example("getRun", 200)])
+    runs.set(r.id, r);
   const issues = new Map<number, Issue>();
-  for (const i of [...exampleItems<Issue>(example("listIssues", 200)), example("getIssue", 200)]) issues.set(i.id, i);
+  for (const i of [...exampleItems<Issue>(example("listIssues", 200)), example("getIssue", 200)])
+    issues.set(i.id, i);
   // Plan 15 (example) resolves issue 7.
   const i7 = issues.get(7);
   const p15 = plans.get(15);
@@ -200,7 +240,10 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     i7.actions = [];
   }
 
-  let head = Math.max(...[...targets.values()].map((t) => t.revision), ...[...plans.values()].map((p) => p.revision ?? 0));
+  let head = Math.max(
+    ...[...targets.values()].map((t) => t.revision),
+    ...[...plans.values()].map((p) => p.revision ?? 0),
+  );
   let nextPlan = Math.max(...plans.keys()) + 1;
   let nextRun = Math.max(...runs.keys()) + 1;
   let seq = 1100;
@@ -208,7 +251,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   const listeners = new Set<(e: PlumbEvent) => void>();
   const active = new Set<Promise<void>>();
 
-  function emit(type: PlumbEvent["type"], subject: string, data: Record<string, unknown>, actor = session?.principal ?? "system") {
+  function emit(
+    type: PlumbEvent["type"],
+    subject: string,
+    data: Record<string, unknown>,
+    actor = session?.principal ?? "system",
+  ) {
     const e: PlumbEvent = { seq: ++seq, type, time: now(), subject, actor, data };
     log.push(e);
     for (const l of listeners) l(e);
@@ -217,7 +265,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   function auth(): Session {
     if (!session) throw new ApiError(example("getSession", 401));
     if (mustChange) {
-      throw problem("password-change-required", "Password change required", 403, "Change your password first.");
+      throw problem(
+        "password-change-required",
+        "Password change required",
+        403,
+        "Change your password first.",
+      );
     }
     return session;
   }
@@ -228,9 +281,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     return p;
   }
 
-  function newPlan(fields: Pick<Plan, "origin" | "issue_id" | "reason" | "targets" | "warnings">): Plan {
+  function newPlan(
+    fields: Pick<Plan, "origin" | "issue_id" | "reason" | "targets" | "warnings">,
+  ): Plan {
     const s = auth();
-    const all = fields.targets.flatMap((t) => t.resources.flatMap((r) => r.changes.map((c) => c.risk)));
+    const all = fields.targets.flatMap((t) =>
+      t.resources.flatMap((r) => r.changes.map((c) => c.risk)),
+    );
     const p: Plan = {
       id: nextPlan++,
       status: "pending",
@@ -259,11 +316,19 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         await sleep(stepDelay);
         step.status = "running";
         step.started_at = now();
-        emit("run.step", `run:${run.id}`, { target: tr.target, resource: step.resource, status: "running" });
+        emit("run.step", `run:${run.id}`, {
+          target: tr.target,
+          resource: step.resource,
+          status: "running",
+        });
         await sleep(stepDelay);
         step.status = step.changes.length === 0 ? "unchanged" : "applied";
         step.finished_at = now();
-        emit("run.step", `run:${run.id}`, { target: tr.target, resource: step.resource, status: step.status });
+        emit("run.step", `run:${run.id}`, {
+          target: tr.target,
+          resource: step.resource,
+          status: step.status,
+        });
       }
       tr.status = "succeeded";
       if (target) target.status.phase = target.status.open_issues > 0 ? "drifted" : "ready";
@@ -280,7 +345,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       return { ...session, must_change_password: mustChange };
     },
     async login(username, pw) {
-      if (username !== MOCK_USER.username || pw !== password) throw new ApiError(example("login", 401));
+      if (username !== MOCK_USER.username || pw !== password)
+        throw new ApiError(example("login", 401));
       session = example("login", 200);
       session.must_change_password = mustChange;
       return structuredClone(session);
@@ -333,12 +399,23 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         if (doc.kind !== "Target") continue;
         const t = doc as TargetDoc;
         if (!images.some((i) => i.document.name === t.spec.image)) {
-          throw problem("validation", "Validation failed", 422, `Image "${t.spec.image}" does not exist.`);
+          throw problem(
+            "validation",
+            "Validation failed",
+            422,
+            `Image "${t.spec.image}" does not exist.`,
+          );
         }
         const resources = planTarget(targets.get(t.name)?.document.spec, t.spec, blocks);
         planTargets.push({ target: t.name, resources });
       }
-      const p = newPlan({ origin: "proposal", issue_id: null, reason: proposal.reason, targets: planTargets, warnings: [] });
+      const p = newPlan({
+        origin: "proposal",
+        issue_id: null,
+        reason: proposal.reason,
+        targets: planTargets,
+        warnings: [],
+      });
       pendingDocs.set(p.id, proposal);
       return p;
     },
@@ -356,7 +433,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         }
         throw new ApiError(example("approvePlan", 409));
       }
-      if (p.status !== "pending") throw problem("conflict", "Plan is not pending", 409, `Plan ${id} is ${p.status}.`);
+      if (p.status !== "pending")
+        throw problem("conflict", "Plan is not pending", 409, `Plan ${id} is ${p.status}.`);
       head += 1;
       p.status = "approved";
       p.approved_by = s.principal;
@@ -421,11 +499,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         const issue = p.issue_id ? issues.get(p.issue_id) : undefined;
         if (issue) {
           issue.status = "resolved";
-          issue.resolution = { action: p.origin === "accept" ? "accept" : "revert", by: s.principal, at: now() };
+          issue.resolution = {
+            action: p.origin === "accept" ? "accept" : "revert",
+            by: s.principal,
+            at: now(),
+          };
           const target = targets.get(issue.target);
           if (target) {
             target.status.open_issues = Math.max(0, target.status.open_issues - 1);
-            if (target.status.open_issues === 0 && target.status.phase === "drifted") target.status.phase = "ready";
+            if (target.status.open_issues === 0 && target.status.phase === "drifted")
+              target.status.phase = "ready";
           }
           emit("issue.resolved", `issue:${issue.id}`, { plan_id: p.id });
         }
@@ -455,20 +538,32 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
       if (issue.status !== "open" || !issue.actions.includes(action)) {
-        throw problem("conflict", "Action not allowed", 409, `Issue ${id} does not allow "${action}" now.`);
+        throw problem(
+          "conflict",
+          "Action not allowed",
+          409,
+          `Issue ${id} does not allow "${action}" now.`,
+        );
       }
       const changes: Change[] =
         action === "revert"
           ? issue.changes
-          : issue.changes.map((c) => ("sensitive" in c ? c : { attr: c.attr, from: c.to, to: c.from, risk: "read" as Risk }));
+          : issue.changes.map((c) =>
+              "sensitive" in c ? c : { attr: c.attr, from: c.to, to: c.from, risk: "read" as Risk },
+            );
       const p = newPlan({
         origin: action,
         issue_id: id,
-        reason: reason?.trim() || (action === "revert" ? "Revert drift." : "Accept the guest value."),
-        targets: [{ target: issue.target, resources: [resourcePlan(issue.resource, "update", changes)] }],
+        reason:
+          reason?.trim() || (action === "revert" ? "Revert drift." : "Accept the guest value."),
+        targets: [
+          { target: issue.target, resources: [resourcePlan(issue.resource, "update", changes)] },
+        ],
         warnings:
           action === "accept"
-            ? ["Accept writes the guest value into the Target as an override. The guest does not change."]
+            ? [
+                "Accept writes the guest value into the Target as an override. The guest does not change.",
+              ]
             : [],
       });
       issue.status = "resolving";

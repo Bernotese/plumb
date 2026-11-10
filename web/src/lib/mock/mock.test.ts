@@ -1,0 +1,210 @@
+import { describe, expect, it } from "vitest";
+import { ApiError } from "../api";
+import type { PlumbEvent, TargetDoc } from "../types";
+import { createMockApi, MOCK_USER, planTarget, render, renderValue } from "./mock";
+import { example, exampleItems } from "./examples";
+import type { BlockView } from "../types";
+
+const status = (e: unknown) => (e instanceof ApiError ? e.problem.status : 0);
+
+describe("mock api", () => {
+  it("forces a password change after the first login", async () => {
+    const api = createMockApi({ stepDelayMs: 0 });
+    await expect(api.listTargets()).rejects.toSatisfy((e) => status(e) === 401);
+    await expect(api.login("admin", "wrong")).rejects.toSatisfy((e) => status(e) === 401);
+    const s = await api.login(MOCK_USER.username, MOCK_USER.password);
+    expect(s.must_change_password).toBe(true);
+    await expect(api.listTargets()).rejects.toSatisfy((e) => status(e) === 403);
+    await expect(api.changePassword(MOCK_USER.password, "short")).rejects.toSatisfy(
+      (e) => status(e) === 422,
+    );
+    await api.changePassword(MOCK_USER.password, "a-long-new-password");
+    expect((await api.session()).must_change_password).toBe(false);
+    expect((await api.listTargets()).length).toBeGreaterThan(0);
+  });
+
+  it("serves the examples of the contract", async () => {
+    const api = createMockApi({ signedIn: true });
+    const names = (await api.listTargets()).map((t) => t.document.name).sort();
+    expect(names).toEqual(["backup1", "cache1", "db1", "web1"]);
+    expect((await api.getPlan(11)).status).toBe("stale");
+    const issue = (await api.listIssues()).find((i) => i.id === 9);
+    expect(issue?.changes[0]).toEqual({ attr: "content", sensitive: true, risk: "reversible" });
+    expect(issue?.actions).toEqual(["revert"]);
+  });
+
+  it("plans, approves and runs a new target with live events", async () => {
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
+    const doc: TargetDoc = {
+      kind: "Target",
+      name: "app1",
+      spec: {
+        type: "vm",
+        image: "debian-13",
+        guest: { cores: 2, memory: 2048, disk: 20, bridge: "vmbr0", ip: "dhcp" },
+        blocks: [{ use: "web-app", params: { server_names: ["app.example"], port: 9000 } }],
+      },
+    };
+    const plan = await api.createPlan({ reason: "New app", put: [doc] });
+    expect(plan.status).toBe("pending");
+    const resources = plan.targets[0]?.resources ?? [];
+    expect(resources.map((r) => `${r.action} ${r.resource}`)).toEqual([
+      "create guest:config",
+      "create package:nginx",
+      "create file:/etc/nginx/sites-enabled/app.conf",
+      "create service:nginx",
+    ]);
+    expect(resources[2]?.changes).toContainEqual({
+      attr: "content",
+      to: "server_name app.example;\n",
+      risk: "reversible",
+    });
+
+    const events: PlumbEvent[] = [];
+    const stop = api.events(0, (e) => events.push(e));
+    const run = await api.approvePlan(plan.id);
+    await api.idle();
+    stop();
+    const done = await api.getRun(run.id);
+    expect(done.status).toBe("succeeded");
+    expect(done.targets[0]?.steps.every((s) => s.status === "applied")).toBe(true);
+    const types = events.filter((e) => e.subject === `run:${run.id}`).map((e) => e.type);
+    expect(types[0]).toBe("run.started");
+    expect(types.at(-1)).toBe("run.finished");
+    expect(types.filter((t) => t === "run.step")).toHaveLength(8);
+    expect((await api.getTarget("app1")).document.spec.image).toBe("debian-13");
+  });
+
+  it("makes other pending plans stale and refuses to approve them", async () => {
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
+    const t = await api.getTarget("db1");
+    const a = await api.createPlan({
+      reason: "a",
+      put: [
+        {
+          ...t.document,
+          spec: { ...t.document.spec, guest: { ...t.document.spec.guest, cores: 8 } },
+        },
+      ],
+    });
+    const b = await api.createPlan({
+      reason: "b",
+      put: [
+        {
+          ...t.document,
+          spec: { ...t.document.spec, guest: { ...t.document.spec.guest, memory: 4096 } },
+        },
+      ],
+    });
+    expect(a.risk).toBe("disruptive");
+    await api.approvePlan(a.id);
+    await api.idle();
+    expect((await api.getPlan(b.id)).status).toBe("stale");
+    await expect(api.approvePlan(b.id)).rejects.toSatisfy((e) => status(e) === 409);
+    await expect(api.approvePlan(11)).rejects.toSatisfy((e) => status(e) === 409);
+  });
+
+  it("refuses a change of a create-only field", async () => {
+    const api = createMockApi({ signedIn: true });
+    const t = await api.getTarget("web1");
+    const spec = { ...t.document.spec, guest: { ...t.document.spec.guest, disk: 40 } };
+    await expect(
+      api.createPlan({ reason: "grow", put: [{ ...t.document, spec }] }),
+    ).rejects.toSatisfy(
+      (e) =>
+        status(e) === 422 &&
+        e instanceof ApiError &&
+        !!e.problem.errors?.[0]?.message.includes("create-only"),
+    );
+  });
+
+  it("reverts an issue through a plan; accept is refused for a sensitive change", async () => {
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
+    await expect(api.resolveIssue(9, "accept")).rejects.toSatisfy((e) => status(e) === 409);
+    const plan = await api.resolveIssue(9, "revert");
+    expect(plan).toMatchObject({ origin: "revert", issue_id: 9, status: "pending" });
+    expect(plan.targets[0]?.resources[0]?.changes[0]).toEqual({
+      attr: "content",
+      sensitive: true,
+      risk: "reversible",
+    });
+    expect((await api.getIssue(9)).status).toBe("resolving");
+    await api.approvePlan(plan.id);
+    await api.idle();
+    expect((await api.getIssue(9)).resolution?.action).toBe("revert");
+  });
+
+  it("accept makes a plan that changes nothing on the guest", async () => {
+    const api = createMockApi({ signedIn: true });
+    const plan = await api.resolveIssue(8, "accept");
+    expect(plan.warnings[0]).toContain("override");
+    expect(plan.targets[0]?.resources[0]?.changes.every((c) => c.risk === "read")).toBe(true);
+  });
+});
+
+describe("rendering", () => {
+  const blocks = new Map(
+    exampleItems<BlockView>(example("listBlocks", 200)).map((b) => [b.document.name, b.document]),
+  );
+
+  it("fills template values", () => {
+    expect(renderValue("hi {{ .name }}!", { name: "x" })).toBe("hi x!");
+    expect(renderValue(["{{ .a }}"], { a: ["b", "c"] })).toEqual(["b c"]);
+    expect(renderValue(5, {})).toBe(5);
+  });
+
+  it("uses Block defaults", () => {
+    const r = render(
+      {
+        type: "vm",
+        image: "i",
+        guest: { cores: 1, memory: 256, disk: 1, bridge: "b" },
+        blocks: [{ use: "motd" }],
+      },
+      blocks,
+    );
+    expect(r).toEqual([
+      {
+        id: "file:/etc/motd",
+        type: "file",
+        attrs: { path: "/etc/motd", content: "Managed by Plumb.\n", mode: "0644" },
+      },
+    ]);
+  });
+
+  it("shows the restart of a service whose config changes", () => {
+    const base = {
+      type: "vm" as const,
+      image: "i",
+      guest: { cores: 1, memory: 256, disk: 1, bridge: "b" },
+    };
+    const old = { ...base, blocks: [{ use: "web-app", params: { server_names: ["a"] } }] };
+    const next = { ...base, blocks: [{ use: "web-app", params: { server_names: ["a", "b"] } }] };
+    const plan = planTarget(old, next, blocks);
+    expect(plan.map((r) => `${r.action} ${r.resource} ${r.risk}`)).toEqual([
+      "update file:/etc/nginx/sites-enabled/app.conf reversible",
+      "restart service:nginx disruptive",
+    ]);
+  });
+
+  it("deletes the resources of a removed Block", () => {
+    const base = {
+      type: "vm" as const,
+      image: "i",
+      guest: { cores: 1, memory: 256, disk: 1, bridge: "b" },
+    };
+    const plan = planTarget(
+      { ...base, blocks: [{ use: "motd" }] },
+      { ...base, blocks: [] },
+      blocks,
+    );
+    expect(plan).toEqual([
+      {
+        resource: "file:/etc/motd",
+        action: "delete",
+        risk: "destructive",
+        changes: [{ attr: "state", from: "present", to: "absent", risk: "destructive" }],
+      },
+    ]);
+  });
+});

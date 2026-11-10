@@ -19,6 +19,7 @@ export function parse(hash: string): Route {
   const parts = path.split("/").filter(Boolean);
   const id = (s: string | undefined) => (s && /^[1-9][0-9]{0,15}$/.test(s) ? Number(s) : undefined);
   const [a, b, c] = parts;
+  if (parts.length === 0) return { name: "targets" };
   if (parts.length === 1 && a === "login") return { name: "login" };
   if (parts.length === 1 && a === "password") return { name: "password" };
   if (parts.length === 1 && a === "targets") return { name: "targets" };
@@ -26,10 +27,11 @@ export function parse(hash: string): Route {
   if (parts.length === 3 && a === "targets" && b && NAME.test(b) && c === "edit") {
     return { name: "target-edit", target: b };
   }
-  if (parts.length === 2 && a === "plans" && id(b)) return { name: "plan", id: id(b)! };
-  if (parts.length === 2 && a === "runs" && id(b)) return { name: "run", id: id(b)! };
+  const n = parts.length === 2 ? id(b) : undefined;
+  if (a === "plans" && n) return { name: "plan", id: n };
+  if (a === "runs" && n) return { name: "run", id: n };
   if (parts.length === 1 && a === "issues") return { name: "issues" };
-  if (parts.length === 2 && a === "issues" && id(b)) return { name: "issue", id: id(b)! };
+  if (a === "issues" && n) return { name: "issue", id: n };
   return { name: "not-found", path };
 }
 
