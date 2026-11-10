@@ -2,7 +2,7 @@
 
 - **Owner:** pl-backend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** L (Claude)   · **Depends on:** T-003, T-013; needs the test host   · **Parallel with:** host track: after T-013
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** proposed · **blocked** until `pl-lead` confirms the Proxmox test host (D-041)
 
 ## Goal
 Plumb can import a cloud image, create a VM from it with the agent bootstrap, change it, observe it and delete it on a real Proxmox host.

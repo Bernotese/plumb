@@ -15,7 +15,7 @@ The team has proof that the first slice works through the public API, with and w
 ## Acceptance criteria
 - [ ] This test uses only HTTP (`/api/v1`) with API tokens. The in-process test of T-010 stays the test of the core.
 - [ ] Without Proxmox (`make test`): create a target with `deploy-user`, `motd`, `nginx` → plan → approve → run succeeds → change the Nginx site file in the guest root → an Issue opens within 10 s → `revert` closes it and the Plan shows the Nginx restart → `accept` on a second drift creates a new revision.
-- [ ] Real host (`make test-pve`): the same path with a real Ubuntu 26.04 VM and a real Debian 13 VM, plus a reboot. Change the VM memory in Proxmox → an Issue opens on `guest:config`.
+- [ ] Real host (`make test-pve`; blocked until `pl-lead` confirms the test host, D-041 — report the part without Proxmox first): the same path with a real Ubuntu 26.04 VM and a real Debian 13 VM, plus a reboot. Change the VM memory in Proxmox → an Issue opens on `guest:config`.
 - [ ] The log file records commands, results and durations. No secrets in the log.
 - [ ] Each test file ≤ ~150 lines. Bugs go to `pl-lead` as short reports, not as fixes.
 

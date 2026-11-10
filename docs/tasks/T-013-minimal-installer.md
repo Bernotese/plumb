@@ -2,7 +2,7 @@
 
 - **Owner:** pl-backend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** M   · **Depends on:** user approval; needs the test host   · **Parallel with:** host track: before T-012
-- **Status:** proposed (do not start before the user approves the architecture)
+- **Status:** proposed · **blocked** until `pl-lead` confirms the Proxmox test host (D-041)
 
 ## Goal
 One script prepares a Proxmox host for Plumb, so the real-host tests and the first real run work.

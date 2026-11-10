@@ -111,7 +111,7 @@ Contract: `api/openapi.yaml` (OpenAPI 3.1, written first). Errors are `applicati
 | `GET /binary` | Agent binary for install and update. The pinned TLS link protects it |
 
 - The agent always dials out. A guest needs no open port. A target is online when it polled in the last 90 s.
-- Port 8444 uses a certificate from the **Plumb CA** (made at first start). Agents pin this CA. Port 8443 can use any certificate.
+- Port 8444 uses a certificate from the **Plumb CA** (made at first start). Agents pin this CA. Port 8443 also uses a Plumb CA certificate. The UI is for the LAN only (D-040).
 - Enrollment token: random 256 bit, bound to one target, single use, valid 15 minutes, stored as a hash.
 - **VM:** Proxmox cloud-init sets network and bootstrap user. `cicustom vendor=` points to one static snippet. The installer writes it once: root-owned, the same for all VMs, never deleted. It holds the CA, the URL and the install command, and no secret. The controller cannot write snippets and has no host mount. The token is the SMBIOS serial of the VM (`smbios1`). The agent reads it from `/sys/class/dmi/id/product_serial` (root only).
 - After enrollment the agent disables cloud-init (`/etc/cloud/cloud-init.disabled`). So a later change of the cloud-init data cannot run first-boot steps again.
@@ -160,10 +160,9 @@ Only the real-host level needs Proxmox. It is not part of CI. **The user must pr
 ## 10. Roadmap after the first slice (names only)
 Secret store UI · LXC targets · image builds with Blocks, seal, retention, schedule · full installer · export/import and backups · more resources · `command` resource · template features (`when`, `each`, `uses`, `after`, typed values) · signed image checksums · Docker Compose block · Block editor · ignore rules · API token UI · agent self-update · repair fallback (SSH) · MCP · AI help on issues.
 
-## 11. Open questions for the user (with recommendation)
-The decisions behind questions 2, 4 and 5 are marked "pending" in `docs/DECISIONS.md`.
-1. **Test host:** can you provide a Proxmox test host (§8)? Recommendation: a nested PVE VM used only for tests. Without it, the Proxmox driver and the installer stay untested.
-2. **Proxmox version:** is "PVE 9.1 or newer only" acceptable? Recommendation: yes. LXC enrollment needs the `env` option.
-3. **Exposure:** is the UI reachable only from the LAN? Recommendation: yes, with a certificate from the Plumb CA. A custom certificate comes later.
-4. **Master key:** a key file on a volume that backups skip, plus a recovery key that the installer prints once (recommended), or a passphrase at every start?
-5. **UI stack:** Svelte 5 (recommended, less code) or React (more widely known)? Both fit the architecture.
+## 11. User answers (2026-11-10) and open points
+1. **Test host:** it comes later, on 2026-11-11 at the earliest. Real-host work (T-012, T-013, real-host part of T-015) is blocked until `pl-lead` confirms the host (D-041). **This is the only open point.**
+2. **Proxmox version:** PVE 9.1 or newer only (D-032).
+3. **Exposure:** LAN only, with a certificate from the Plumb CA (D-040).
+4. **Master key:** a key file on a volume that backups skip, created at install. The installer shows a recovery key once. No passphrase at start (D-030).
+5. **UI stack:** Svelte 5 (D-019).

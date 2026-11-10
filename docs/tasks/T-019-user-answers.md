@@ -20,4 +20,7 @@ The pending decisions are final, so PR #1 can be approved and merged.
 - [ ] Same branch and PR (#1), one small commit, no force-push.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+T-019 done · branch `pl-architect/T-001-architecture` · PR #1 · tests: none (docs only)
+- D-019, D-030, D-032 are final (no "pending"). New: D-040 (LAN only, Plumb CA certificate), D-041 (test host later; blocked cards).
+- ARCHITECTURE §11 now shows the five answers. Only the test host is open.
+- Wave plan (T-001 card): explicit list of cards that start without the host. T-012, T-013 and the real-host part of T-015 are marked blocked.
