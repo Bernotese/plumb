@@ -15,6 +15,7 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 | T-005 resources | pl-frontend | PR #8: changes requested (2 must, security); fix by pl-frontend. Guest run **blocked: Docker access** |
 | T-018 agent loop + drift | pl-frontend | in progress (stacked on T-005) |
 | T-006, T-010, T-011, T-014, T-015 | see cards | later waves |
+| T-020 symlink resource type | tbd | backlog (after the slice) |
 | T-013 installer → T-012 Proxmox driver → real-host part of T-015 | pl-backend | **blocked: test host (D-041)** |
 
 ## Done
