@@ -12,8 +12,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | Card | Owner | State |
 |---|---|---|
 | T-015 slice acceptance, real-host part | pl-codex-qa | **test host ready** (the part without Proxmox is merged, PR #67) |
-| T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **test host ready** |
-| T-013 minimal installer | pl-backend | draft PR #26: approved incl. T-052; three dry runs on the test host changed nothing. **Real install running**: pl-backend runs it on the test host (D-180: user decision, test host only), then checks the host items |
+| T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. **Real-host part (22 items) running** on the test host. Next card after it: wire `plumb serve` to the driver (`serve` on main stops with "the Proxmox driver is not in this build yet") |
+| T-013 minimal installer | pl-backend | draft PR #26. **The installer works on the real host** (run 3, 2026-11-11): roles, ACLs, token, storages, LXC, key volume, `plumb key init`; a half-installed host is repaired. Two defects found by real runs and fixed (token ACL order; umask at `pct create`), plus S1. Passed: rights exact, LXC shape, file modes, no secret in state or journal. Open: negative token checks (running); repair run, UI + first login, agent unit need a `plumb serve` with the Proxmox driver (T-012). Before merge: S2 … S4 of pl-architect, `--remove` test |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 | T-044 order between Block uses (`after`), `restarts`, `nginx-site` | see child cards | plan approved (D-176). **On main**: contract (T-046, #78), web (T-049, #81 + #82), agent (T-048, #83), state + plan (T-047, #80). Running: T-050 Block `nginx-site` (pl-codex-fix). Then T-051 QA with the guest test (pl-codex-qa) |
 | T-052 installer: key volume + `plumb key init`, static LXC address | pl-backend | done on the T-013 branch, approved by pl-reviewer (PR #26, 9556b32) |
