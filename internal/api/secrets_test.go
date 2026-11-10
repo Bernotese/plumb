@@ -143,7 +143,9 @@ func TestSecretBadBodies(t *testing.T) {
 		{"no value", []byte(`{}`), 422},
 		{"empty", []byte(`{"value": ""}`), 422},
 		{"invalid utf-8", []byte("{\"value\": \"" + leak + "\xff\"}"), 422},
-		{"lone surrogate", []byte(`{"value": "` + leak + `\ud800"}`), 422},
+		{"lone high surrogate", []byte(`{"value": "\ud800"}`), 422},
+		{"lone low surrogate", []byte(`{"value": "\udc00"}`), 422},
+		{"literal replacement plus lone surrogate", []byte("{\"value\": \"�\\ud800\"}"), 422},
 		{"too long", []byte(`{"value": "` + strings.Repeat("x", secret.MaxValueBytes+1) + `"}`), 422},
 		{"too large body", []byte(`{"value": "` + strings.Repeat("x", 7*secret.MaxValueBytes) + `"}`), 413},
 	}
@@ -157,7 +159,7 @@ func TestSecretBadBodies(t *testing.T) {
 		}
 	}
 	// Real U+FFFD and surrogate pairs are kept.
-	for _, v := range []string{"a�b", "😀"} {
+	for _, v := range []string{"�", `\ud800`, "a�b", "😀"} {
 		if code, body := adm.do("PUT", "/api/v1/secrets/ok", map[string]string{"value": v}); code != 200 {
 			t.Errorf("%q: %d %s", v, code, body)
 		}
