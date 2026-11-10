@@ -20,7 +20,6 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
 | T-025 slice 2 plan | pl-architect | running. Then review (pl-reviewer), then user approval. No feature code before that |
-| T-026 port lost QA crash test (PR #16) | pl-codex-qa | running |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
 
 Merge order when Docker works: #5 (real run, digest pins) → #8 → #13 → #21, #27 → T-015.
@@ -40,6 +39,7 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-006: web UI slice, 8 screens (PR #19).
 - T-024: dev mode simulated agent for new targets (PR #30).
 - T-014: UI on the real API, Playwright e2e (PR #28).
+- T-026: QA crash recovery test ported to main (PR #31); stale PR #16 closed.
 
 ## Open for the user
 - Give `jannes` Docker access on the dev VM: `sudo usermod -aG docker jannes` and `sudo setfacl -m u:jannes:rw /var/run/docker.sock`.
