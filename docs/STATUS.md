@@ -19,11 +19,11 @@ Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --d
 | T-015 slice acceptance (HTTP) | pl-codex-qa | waits for T-018 on main; real-host part waits for the test host |
 | T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26: offline part statically approved (b72da53: 3 minors fixed, delta check with host changes). Real-host part (20 items) **blocked: test host** |
-| T-028 secret store | pl-backend | PR #37: review approve; open: U+FFFD fix (pl-codex-fix), key clearing, QA result, D-130 decision on row replay |
-| T-031 revision API | pl-backend | PR #39 (stacked on #37): review by pl-architect running; QA next |
-| T-029 secret references → T-032 ignore actions → T-033 export/import | pl-backend | next, after the PR #37 items |
-| T-034 UI history | pl-frontend | PR #35 (mock part): approved, QA merged in, delta check running; e2e part waits for T-031 on main |
-| T-035 UI settings → T-036 UI secret params + ignore | pl-frontend | T-035 running (stacked on T-034) |
+| T-031 revision API | pl-backend | PR #39 (base main): review approve, QA done; open: merge of main, delta check by pl-architect (D-128), CI |
+| T-029 secret references → T-032 ignore actions → T-033 export/import | pl-backend | T-029 running |
+| T-034 UI history, e2e part | pl-frontend | waits for T-031 on main |
+| T-035 UI settings | pl-frontend | PR #45 (mock part): review approve, QA PR #47; fix round open (autofill, field errors, wording, merge of main) |
+| T-036 UI secret params + ignore | pl-frontend | running (mock, stacked on T-035) |
 | T-037 slice 2 acceptance, leak hunt | pl-codex-qa | waits for T-029 … T-033 on main |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
@@ -48,6 +48,9 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-014: UI on the real API, Playwright e2e (PR #28).
 - T-025, T-027: slice 2 plan (PR #32) and API contract (PR #33), approved by the user (D-101).
 - T-030: token API (PR #34).
+- T-034 mock part: history UI (PR #35).
+- T-028: secret store (PR #37), D-102 … D-109, D-130.
+- D-131 Plan.rollback_to in the contract (PR #44); closed schemas (PR #46).
 - T-026: QA crash recovery test ported to main (PR #31); stale PR #16 closed.
 
 ## Open for the user
