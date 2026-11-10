@@ -129,6 +129,23 @@ func TestService(t *testing.T) {
 	}
 	converge(t, rsrc("service", "cron", nil))
 
+	const dropin = "/run/systemd/system/cron.service.d"
+	if err := os.MkdirAll(dropin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(dropin)
+		os.Remove("/run/plumb-starts")
+		sh(t, "systemctl", "daemon-reload")
+	})
+	if err := os.WriteFile(dropin+"/count.conf", []byte("[Service]\nExecStartPost=/bin/sh -c 'echo x >> /run/plumb-starts'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sh(t, "systemctl", "daemon-reload")
+	if err := os.WriteFile("/run/plumb-starts", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	// Two changed restart_on resources restart the service once.
 	svc := rsrc("service", "cron", map[string]any{"restart_on": []any{"file:/etc/a", "file:/etc/b"}})
 	rc, ok := resource.RestartChange(svc, []string{"file:/etc/a", "file:/etc/b"})
@@ -143,6 +160,9 @@ func TestService(t *testing.T) {
 	if before == after {
 		t.Fatal("service did not restart")
 	}
+	if starts, err := os.ReadFile("/run/plumb-starts"); err != nil || string(starts) != "x\n" {
+		t.Fatalf("want exactly one start, got %q: %v", starts, err)
+	}
 }
 
 func TestFilesAndUser(t *testing.T) {
@@ -156,6 +176,19 @@ func TestFilesAndUser(t *testing.T) {
 	}
 	if o := sh(t, "stat", "-c", "%U %a", "--", "/home/plumbtest/.ssh/authorized_keys"); o != "plumbtest 600" {
 		t.Fatalf("authorized_keys stat = %q", o)
+	}
+
+	changes := converge(t, rsrc("user", "plumbtest", map[string]any{"shell": "/bin/sh", "groups": []any{}}))
+	if len(changes) == 0 || wire.MaxRisk(changes) != wire.RiskDisruptive {
+		t.Fatalf("user update must be disruptive: %+v", changes)
+	}
+	if passwd := sh(t, "getent", "passwd", "plumbtest"); !strings.HasSuffix(passwd, ":/bin/sh") {
+		t.Fatalf("passwd = %q", passwd)
+	}
+	for _, group := range strings.Fields(sh(t, "id", "-nG", "--", "plumbtest")) {
+		if group == "adm" {
+			t.Fatal("user still belongs to adm")
+		}
 	}
 
 	converge(t, rsrc("directory", "/srv/plumb", map[string]any{"owner": "plumbtest", "group": "adm", "mode": "2750"}))

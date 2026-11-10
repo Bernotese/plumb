@@ -11,12 +11,23 @@ cleanup() {
   for image in "${images[@]}"; do docker rmi "$image" >/dev/null 2>&1 || true; done
   rm -rf "$tmp"
 }
+# Waiting on a child lets the signal traps interrupt every test binary.
+run_test() {
+  docker exec "$name" "$@" &
+  test_pid=$!
+  local status=0
+  wait "$test_pid" || status=$?
+  test_pid=''
+  return "$status"
+}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 run_id=${GUEST_RUN_ID:-$$}
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/guest.test" ./test/guest
+CGO_ENABLED=0 GOOS=linux go test -c -o "$tmp/resource.test" ./internal/resource
+CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/agent.test" ./internal/agent
 for distro in \
   debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 \
   ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c; do
@@ -27,10 +38,10 @@ for distro in \
   docker build --build-arg "DISTRO=$distro" -t "$image" test/guest
   containers+=("$name")
   # Privileged mode gives systemd a writable private cgroup on cgroup v2.
-  # Only the read-only test binary is mounted; host system paths need review.
+  # Only the read-only test directory is mounted; host system paths need review.
   docker run -d --name "$name" --privileged --cgroupns=private \
     --tmpfs /run --tmpfs /run/lock \
-    -v "$tmp/guest.test:/guest.test:ro" "$image"
+    -v "$tmp:/tests:ro" "$image"
   settings=$(docker inspect -f '{{.HostConfig.CgroupnsMode}} {{len .Mounts}}' "$name")
   if [[ "$settings" != "private 1" ]]; then echo "unexpected container settings: $settings" >&2; exit 1; fi
   ready=false
@@ -46,12 +57,11 @@ for distro in \
   fi
   echo "$distro systemd state: $state"
   if [[ "$state" == degraded ]]; then docker exec "$name" systemctl --failed --no-legend; fi
-  docker exec "$name" /guest.test -test.v -test.timeout=5m "$@" &
-  test_pid=$!
-  test_status=0
-  wait "$test_pid" || test_status=$?
-  test_pid=''
-  if ((test_status != 0)); then exit "$test_status"; fi
+  run_test /tests/guest.test -test.v -test.timeout=5m "$@"
+  # TestSymlinkRules includes the hard-link cases.
+  run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
+  # guest.test installs cron and refreshes the apt lists needed by agent.test.
+  run_test /tests/agent.test -test.v -test.timeout=1m -test.run '^TestGuest'
   docker rm -f "$name" >/dev/null
 done
 cleanup
