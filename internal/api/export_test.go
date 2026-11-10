@@ -278,3 +278,100 @@ func TestImportRuleHumanOnly(t *testing.T) {
 		t.Fatalf("token approves a rule import: %d %s", c, b)
 	}
 }
+
+// storeState is every secret with its version and value.
+func (e *env) storeState() map[string]string {
+	e.t.Helper()
+	list, err := e.sec.List(e.ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	names := make([]string, len(list))
+	for i, in := range list {
+		names[i] = in.Name
+	}
+	vals, err := e.sec.Resolve(e.ctx, names)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	out := map[string]string{}
+	for n, v := range vals {
+		out[n] = itoa(v.Version) + ":" + v.Text
+	}
+	return out
+}
+
+// Review T-033 must: an import that Propose refuses writes no secret,
+// neither a created nor an overwritten one (D-153).
+func TestImportRefusedWritesNothing(t *testing.T) {
+	e, adm := exportEnv(t, "file-value")
+	_, _, file := e.export(adm, exportPass)
+	createOnly := strings.Replace(file, "disk: 10", "disk: 20", 1)
+	if createOnly == file {
+		t.Fatal("the test file has no disk: 10")
+	}
+	for _, c := range []struct {
+		name  string
+		setup func()
+		req   map[string]any
+	}{
+		{"created", func() {
+			e.sec.SetUsage(nil)
+			if err := e.sec.Delete(e.ctx, "app-db"); err != nil {
+				t.Fatal(err)
+			}
+		}, map[string]any{"content": createOnly, "passphrase": exportPass}},
+		{"overwritten", func() {
+			adm.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": "live-value"})
+		}, map[string]any{"content": createOnly, "passphrase": exportPass, "overwrite": []string{"app-db"}}},
+	} {
+		c.setup()
+		before := e.storeState()
+		last, _ := e.st.LastEventSeq(e.ctx)
+		code, body := e.importFile(adm, c.req)
+		if code != 422 || !strings.Contains(string(body), "create") {
+			t.Fatalf("%s: %d %s", c.name, code, body)
+		}
+		if after := e.storeState(); len(after) != len(before) || after["app-db"] != before["app-db"] {
+			t.Fatalf("%s: the store changed: %v → %v", c.name, before, after)
+		}
+		evs, _ := e.st.EventsAfter(e.ctx, last, 100)
+		for _, ev := range evs {
+			if strings.HasPrefix(ev.Type, "secret.") {
+				t.Fatalf("%s: a refused import emitted %s", c.name, ev.Type)
+			}
+		}
+	}
+}
+
+// D-153 (b): a value that the import writes reaches no guest before the
+// approval; the Plan records the written version.
+func TestImportValueNotObserved(t *testing.T) {
+	e, adm := exportEnv(t, "file-value")
+	_, _, file := e.export(adm, exportPass)
+	adm.do("PUT", "/api/v1/secrets/app-db", map[string]string{"value": "live-value"})
+	changed := strings.Replace(file, "cores: 2", "cores: 3", 1)
+	a := e.agents["web1"]
+	skip := len(a.Bodies())
+	code, body := e.importFile(adm, map[string]any{"content": changed, "passphrase": exportPass, "overwrite": []string{"app-db"}})
+	if code != 201 {
+		t.Fatalf("import: %d %s", code, body)
+	}
+	if bodiesHold(a, skip, "file-value") {
+		t.Fatal("the imported value reached the guest before the approval")
+	}
+	var p planShape
+	json.Unmarshal(body, &p)
+	if u, _, ok := p.resource("file:/etc/app.env"); !ok || !u {
+		t.Fatalf("the resource with the imported value is observed: %s", body)
+	}
+	v, _ := e.sec.Versions(e.ctx, []string{"app-db"})
+	if !strings.Contains(string(body), `{"name":"app-db","version":`+itoa(v["app-db"])+`}`) {
+		t.Fatalf("planned version is not the written one (%d): %s", v["app-db"], body)
+	}
+	if c, b := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); c != 202 {
+		t.Fatalf("approve: %d %s", c, b)
+	}
+	e.eng.Wait()
+	e.waitGuest("web1", "file:/etc/app.env", "DB_PASSWORD=file-value\n")
+}

@@ -112,3 +112,27 @@ func TestBundleRefusedWithoutWork(t *testing.T) {
 		}
 	}
 }
+
+// Nit 2 of the T-033 review: the plaintext reader refuses what
+// encoding/json would change silently.
+func TestBundleStrictPlaintext(t *testing.T) {
+	bs := string(rune(92))
+	for name, raw := range map[string]string{
+		"duplicate name":   `{"a":"x","a":"y"}`,
+		"lone high":        `{"a":"x` + bs + `ud800"}`,
+		"lone low":         `{"a":"` + bs + `udc00"}`,
+		"number value":     `{"a":1}`,
+		"array":            `["a"]`,
+		"data after":       `{"a":"x"} {}`,
+		"high then escape": `{"a":"` + bs + `ud800` + bs + `n"}`,
+	} {
+		if _, ok := strictValues([]byte(raw)); ok {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	for _, raw := range []string{`{"a":"` + bs + `ud83d` + bs + `ude00"}`, `{"a":"` + bs + bs + `ud800"}`, `{}`, `{"a":"` + bs + `ufffd"}`} {
+		if _, ok := strictValues([]byte(raw)); !ok {
+			t.Errorf("%s refused", raw)
+		}
+	}
+}

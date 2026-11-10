@@ -152,7 +152,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		return store.Plan{}, err
 	}
 	// A touched target that refers to a missing secret is 422 (D-089).
-	if err := e.checkSecrets(ctx, next, names); err != nil {
+	if err := e.checkSecretsPresent(ctx, next, names, in.Imported); err != nil {
 		return store.Plan{}, err
 	}
 	plans := make([]TargetPlan, len(names))
@@ -173,6 +173,10 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 			}
 			fresh := newBindings(before, after)
 			binding[i] = len(fresh) > 0
+			// An imported value is not sent before the approval either.
+			for id := range usesAny(after, in.Imported) {
+				fresh[id] = true
+			}
 			plans[i], errs[i] = e.planTarget(ctx, next, t, contains(in.Proposal.Reenroll, t), fresh)
 		}()
 	}
@@ -188,6 +192,19 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	}
 	if err != nil {
 		return store.Plan{}, err
+	}
+
+	// Every check passed: now an import writes its secrets (D-153), and the
+	// Plan records the versions it wrote.
+	if in.BeforeStore != nil {
+		notes, err := in.BeforeStore(ctx)
+		if err != nil {
+			return store.Plan{}, err
+		}
+		in.Proposal.Notes = append(in.Proposal.Notes, notes...)
+		if err := e.refreshVersions(ctx, plans, in.Imported); err != nil {
+			return store.Plan{}, err
+		}
 	}
 
 	risk := wire.RiskRead

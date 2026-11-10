@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -366,4 +367,41 @@ func (e *Engine) SecretValues(ctx context.Context, target string) ([]string, err
 		out = append(out, v.Text)
 	}
 	return out, nil
+}
+
+// usesAny returns the ids of the resources of a render that use one of
+// the names.
+func usesAny(r *state.Rendered, names []string) map[string]bool {
+	out := map[string]bool{}
+	if r == nil || len(names) == 0 {
+		return out
+	}
+	for _, res := range r.All() {
+		for _, n := range state.ResourceSecrets(res) {
+			if slices.Contains(names, n) {
+				out[res.ID] = true
+			}
+		}
+	}
+	return out
+}
+
+// refreshVersions sets the planned version of the named secrets to their
+// version now (after an import wrote them).
+func (e *Engine) refreshVersions(ctx context.Context, plans []TargetPlan, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	have, err := e.versions(ctx, names)
+	if err != nil {
+		return err
+	}
+	for i := range plans {
+		for j := range plans[i].Secrets {
+			if v, ok := have[plans[i].Secrets[j].Name]; ok && slices.Contains(names, plans[i].Secrets[j].Name) {
+				plans[i].Secrets[j].Version = v
+			}
+		}
+	}
+	return nil
 }

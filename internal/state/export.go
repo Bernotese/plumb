@@ -299,6 +299,9 @@ func fromNode(n *yaml.Node, path string) (any, *ExportError) {
 		m := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k := n.Content[i]
+			if k.Anchor != "" || k.Kind == yaml.AliasNode {
+				return nil, &ExportError{Path: path, Msg: "YAML anchors and aliases are not allowed"}
+			}
 			if k.Kind != yaml.ScalarNode || (k.Tag != "!!str" && k.ShortTag() != "!!str") {
 				if k.ShortTag() == "!!merge" {
 					return nil, &ExportError{Path: path, Msg: "YAML merge keys are not allowed"}

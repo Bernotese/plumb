@@ -13,13 +13,11 @@ type ImportInput struct {
 	Replace bool // mode replace: documents that are not in the file are deleted
 	Reason  string
 	Author  string
-	// Bundled names the secrets that WriteSecrets creates; they count as
-	// existing for the missing-secret check.
-	Bundled []string
-	// WriteSecrets writes the secrets of the bundle and returns the
-	// warnings for the Plan. It runs only after the documents are valid
-	// and every reference resolves, so a refused import writes nothing.
-	// nil writes nothing.
+	// Write names the secrets of the bundle that the import creates or
+	// replaces. WriteSecrets writes them and returns the Plan warnings; it
+	// runs inside Propose after every check, so a refused import writes
+	// nothing (D-153). nil writes nothing.
+	Write        []string
 	WriteSecrets func(ctx context.Context) ([]string, error)
 }
 
@@ -48,15 +46,9 @@ func (e *Engine) Import(ctx context.Context, in ImportInput) (store.Plan, error)
 	if err != nil {
 		return store.Plan{}, err
 	}
-	if err := e.checkSecretsPresent(ctx, next, next.Targets(), in.Bundled); err != nil {
+	if err := e.checkSecretsPresent(ctx, next, next.Targets(), in.Write); err != nil {
 		return store.Plan{}, err
 	}
-	if in.WriteSecrets != nil {
-		notes, err := in.WriteSecrets(ctx)
-		if err != nil {
-			return store.Plan{}, err
-		}
-		p.Notes = notes
-	}
-	return e.Propose(ctx, Input{Proposal: p, Reason: in.Reason, Author: in.Author, Origin: OriginImport, Base: headID})
+	return e.Propose(ctx, Input{Proposal: p, Reason: in.Reason, Author: in.Author, Origin: OriginImport, Base: headID,
+		Imported: in.Write, BeforeStore: in.WriteSecrets})
 }

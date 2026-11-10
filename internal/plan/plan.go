@@ -65,6 +65,12 @@ type Input struct {
 	IssueID  int64
 	// RollbackTo is the revision of a rollback (D-131). Only Rollback sets it.
 	RollbackTo int64
+	// Imported names the secrets that an import writes (D-153). They
+	// count as present, a resource that uses one is not observed (as
+	// D-156), and BeforeStore writes them after every check, just before
+	// the Plan is stored. Its notes become Plan warnings.
+	Imported    []string
+	BeforeStore func(ctx context.Context) ([]string, error)
 	// Base, when not 0, is the head revision that the proposal was built
 	// against. Propose fails with store.ErrPlanStale when the head moved.
 	Base int64

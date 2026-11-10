@@ -227,20 +227,25 @@ func (s *Server) importState(w http.ResponseWriter, r *http.Request, p *principa
 			return
 		}
 	}
-	bundled := make([]string, 0, len(values))
-	for n := range values {
-		bundled = append(bundled, n)
-	}
-	sort.Strings(bundled)
-
-	write := func(ctx context.Context) ([]string, error) { return s.writeBundle(ctx, values, req.Overwrite, p.name) }
-	pl, err := s.cfg.Plans.Import(r.Context(), plan.ImportInput{Docs: file.Docs, Replace: req.Mode != "merge",
-		Reason: req.Reason, Author: p.name, Bundled: bundled, WriteSecrets: write})
-	for k := range values {
-		delete(values, k)
-	}
+	defer func() {
+		for k := range values {
+			delete(values, k)
+		}
+	}()
+	// Decide per secret first: a conflict is 409 before anything else.
+	bp, err := s.checkBundle(r.Context(), values, req.Overwrite, p.name)
 	var conflict *secretConflict
 	var se state.Errors
+	if err == nil {
+		pl, perr := s.cfg.Plans.Import(r.Context(), plan.ImportInput{Docs: file.Docs, Replace: req.Mode != "merge",
+			Reason: req.Reason, Author: p.name, Write: bp.names(),
+			WriteSecrets: func(ctx context.Context) ([]string, error) { return bp.write(ctx, s) }})
+		if perr == nil {
+			s.writePlan(w, r, http.StatusCreated, pl)
+			return
+		}
+		err = perr
+	}
 	switch {
 	case errors.As(err, &conflict):
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:secret-conflict", Title: "Secrets exist with another value", Status: http.StatusConflict,
@@ -250,11 +255,9 @@ func (s *Server) importState(w http.ResponseWriter, r *http.Request, p *principa
 	case errors.As(err, &se): // through ProposalError.Unwrap too
 		s.importErrors(w, file, se)
 		return
-	case err != nil:
+	default:
 		s.fail(w, err)
-		return
 	}
-	s.writePlan(w, r, http.StatusCreated, pl)
 }
 
 // importErrors writes the document errors of an import. A pointer into
@@ -277,13 +280,24 @@ func (s *Server) importErrors(w http.ResponseWriter, file *state.ExportFile, se 
 		Status: http.StatusUnprocessableEntity, Detail: "The documents of the file are not valid.", Errors: fe})
 }
 
-// writeBundle writes the secrets of a bundle (D-095): a missing name is
+// bundlePlan is what an import does with the secrets of its bundle.
+type bundlePlan struct {
+	values  map[string]string
+	create  []string
+	replace []string
+	by      string
+}
+
+// names returns the names that the import writes.
+func (b *bundlePlan) names() []string { return append(append([]string{}, b.create...), b.replace...) }
+
+// checkBundle decides per secret of the bundle (D-095): a missing name is
 // created, an equal value is skipped (no new version), another value is a
-// conflict unless overwrite names it. On a conflict nothing is written.
-// It returns the warnings of the Plan.
-func (s *Server) writeBundle(ctx context.Context, values map[string]string, overwrite []string, by string) ([]string, error) {
+// conflict unless overwrite names it. It writes nothing.
+func (s *Server) checkBundle(ctx context.Context, values map[string]string, overwrite []string, by string) (*bundlePlan, error) {
+	bp := &bundlePlan{values: values, by: by}
 	if len(values) == 0 {
-		return nil, nil
+		return bp, nil
 	}
 	names := make([]string, 0, len(values))
 	for n := range values {
@@ -304,42 +318,50 @@ func (s *Server) writeBundle(ctx context.Context, values map[string]string, over
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		for k := range current {
+			delete(current, k)
+		}
+	}()
 	allowed := map[string]bool{}
 	for _, n := range overwrite {
 		allowed[n] = true
 	}
-	var create, replace, conflicts []string
+	var conflicts []string
 	for _, n := range names {
 		cur, exists := current[n]
 		switch {
 		case !exists:
-			create = append(create, n)
+			bp.create = append(bp.create, n)
 		case cur.Text == values[n]:
 		case allowed[n]:
-			replace = append(replace, n)
+			bp.replace = append(bp.replace, n)
 		default:
 			conflicts = append(conflicts, n)
 		}
 	}
-	for k := range current {
-		delete(current, k)
-	}
 	if len(conflicts) > 0 {
 		return nil, &secretConflict{names: conflicts}
 	}
+	return bp, nil
+}
+
+// write writes the secrets. Propose calls it after every check, just
+// before the Plan is stored (D-153). It returns the Plan warnings.
+func (b *bundlePlan) write(ctx context.Context, s *Server) ([]string, error) {
 	var notes []string
-	for _, n := range create {
-		if _, err := s.cfg.Secrets.Put(ctx, n, values[n], by); err != nil {
+	for _, n := range b.create {
+		if _, err := s.cfg.Secrets.Put(ctx, n, b.values[n], b.by); err != nil {
 			return nil, err
 		}
-		s.emitSecret(ctx, n, by)
+		s.emitSecret(ctx, n, b.by)
 		notes = append(notes, fmt.Sprintf("The import created secret %q.", n))
 	}
-	for _, n := range replace {
-		if _, err := s.cfg.Secrets.Put(ctx, n, values[n], by); err != nil {
+	for _, n := range b.replace {
+		if _, err := s.cfg.Secrets.Put(ctx, n, b.values[n], b.by); err != nil {
 			return nil, err
 		}
-		s.emitSecret(ctx, n, by)
+		s.emitSecret(ctx, n, b.by)
 		if err := s.cfg.Plans.SecretChanged(ctx, n); err != nil {
 			return nil, err
 		}

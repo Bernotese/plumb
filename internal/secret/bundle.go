@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -140,8 +141,8 @@ func openBundle(b Bundle, passphrase string) (map[string]string, error) {
 		return nil, ErrBundlePassphrase
 	}
 	defer clear(plain)
-	var values map[string]string
-	if err := json.Unmarshal(plain, &values); err != nil {
+	values, ok := strictValues(plain)
+	if !ok {
 		return nil, ErrBundleFormat
 	}
 	for name, v := range values {
@@ -173,4 +174,80 @@ func (s *Store) All(ctx context.Context) (map[string]string, error) {
 		out[n] = v.Text
 	}
 	return out, nil
+}
+
+// strictValues reads the bundle plaintext {"name": "value", …}: one
+// object, string values, no name twice and no lone surrogate escape
+// (encoding/json would keep the last name and turn a lone surrogate into
+// U+FFFD silently, D-107).
+func strictValues(raw []byte) (map[string]string, bool) {
+	if hasLoneSurrogate(raw) {
+		return nil, false
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	out := map[string]string{}
+	for dec.More() {
+		k, err := dec.Token()
+		name, isStr := k.(string)
+		if err != nil || !isStr {
+			return nil, false
+		}
+		if _, dup := out[name]; dup {
+			return nil, false
+		}
+		var v string
+		if err := dec.Decode(&v); err != nil {
+			return nil, false
+		}
+		out[name] = v
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := dec.Token(); err == nil {
+		return nil, false // data after the object
+	}
+	return out, true
+}
+
+// hasLoneSurrogate reports a \uD800…\uDFFF escape that is not a valid pair.
+func hasLoneSurrogate(raw []byte) bool {
+	hex := func(b []byte) (uint64, bool) {
+		v, err := strconv.ParseUint(string(b), 16, 16)
+		return v, err == nil
+	}
+	for i := 0; i+1 < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if raw[i+1] != 'u' {
+			i++ // \\, \" and the other escapes
+			continue
+		}
+		if i+6 > len(raw) {
+			return false
+		}
+		c, ok := hex(raw[i+2 : i+6])
+		if !ok {
+			continue
+		}
+		switch {
+		case c >= 0xDC00 && c <= 0xDFFF:
+			return true
+		case c >= 0xD800 && c <= 0xDBFF:
+			if i+12 > len(raw) || raw[i+6] != '\\' || raw[i+7] != 'u' {
+				return true
+			}
+			if low, ok := hex(raw[i+8 : i+12]); !ok || low < 0xDC00 || low > 0xDFFF {
+				return true
+			}
+			i += 11
+		default:
+			i += 5
+		}
+	}
+	return false
 }
