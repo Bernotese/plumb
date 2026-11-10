@@ -278,6 +278,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		if accept {
 			v.Actions = append([]string{"accept"}, v.Actions...)
 		}
+		// The list does not depend on the caller; the server checks who
+		// may ignore (D-091, D-092).
+		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
 	}
 	if i.Status == store.IssueResolved {
 		v.Resolution = &resolutionView{Action: i.Resolution, By: i.ResolvedBy, At: i.ResolvedAt.UTC()}

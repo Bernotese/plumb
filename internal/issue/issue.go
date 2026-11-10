@@ -39,6 +39,7 @@ type Service struct {
 	st     *store.Store
 	events *event.Log
 	plans  *plan.Engine
+	rules  ruleCache
 }
 
 // New returns the Issue service.
@@ -58,10 +59,34 @@ func (s *Service) emit(ctx context.Context, typ string, id int64, actor string, 
 // open one. An unchanged item resolves an open Issue as "gone".
 func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) error {
 	actor := "agent:" + target
+	var rules []state.Rule
 	for _, it := range rep.Items {
 		switch it.Status {
 		case wire.StatusDiffers:
-			raw, err := json.Marshal(it.Changes)
+			if rules == nil {
+				var err error
+				if rules, err = s.headRules(ctx); err != nil {
+					return err
+				}
+			}
+			// Rules drop what they cover; the drop is recorded (D-092).
+			kept, dropped := filterRules(rules, target, it.Resource, it.Changes)
+			if err := s.recordDropped(ctx, target, it.Resource, dropped); err != nil {
+				return err
+			}
+			if len(kept) == 0 {
+				if err := s.dropIssue(ctx, target, it.Resource); err != nil {
+					return err
+				}
+				continue
+			}
+			// "Ignore once" covers exactly these changes (D-091).
+			if ok, err := s.ignoredOnce(ctx, rules, target, it.Resource, kept); err != nil {
+				return err
+			} else if ok {
+				continue
+			}
+			raw, err := json.Marshal(kept)
 			if err != nil {
 				return err
 			}
@@ -73,8 +98,15 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 			if opened {
 				typ = "issue.opened"
 			}
-			s.emit(ctx, typ, iss.ID, actor, map[string]any{"target": target, "resource": it.Resource, "risk": wire.MaxRisk(it.Changes)})
+			s.emit(ctx, typ, iss.ID, actor, map[string]any{"target": target, "resource": it.Resource, "risk": wire.MaxRisk(kept)})
 		case wire.StatusUnchanged:
+			// No drift: an ignore and its record end (D-091, D-092).
+			if err := s.st.ForgetIgnoreOnce(ctx, target, it.Resource); err != nil {
+				return err
+			}
+			if err := s.st.ForgetIgnoredDrift(ctx, target, it.Resource); err != nil {
+				return err
+			}
 			iss, err := s.st.OpenIssue(ctx, target, it.Resource)
 			if errors.Is(err, store.ErrNotFound) {
 				continue
@@ -94,10 +126,32 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 	return nil
 }
 
+// dropIssue resolves the open Issue of a target and resource as "ignore"
+// by system: a rule covers all of its drift now (D-092).
+func (s *Service) dropIssue(ctx context.Context, target, resource string) error {
+	iss, err := s.st.OpenIssue(ctx, target, resource)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil || iss.Status != store.IssueOpen {
+		return err
+	}
+	if err := s.st.ResolveIssue(ctx, iss.ID, store.ResolutionIgnore, "system"); err != nil {
+		return err
+	}
+	s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": store.ResolutionIgnore})
+	return nil
+}
+
 // Resolve creates the Plan that resolves an open Issue. revert plans the
 // target back to the desired state. accept writes the observed values as
 // overrides of the Target (ARCHITECTURE §6).
 func (s *Service) Resolve(ctx context.Context, id int64, action, principal string) (store.Plan, error) {
+	return s.ResolveWithRule(ctx, id, action, principal, RuleScope{})
+}
+
+// ResolveWithRule is Resolve with the scope of the Rule for ignore_rule.
+func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, principal string, scope RuleScope) (store.Plan, error) {
 	iss, err := s.st.GetIssue(ctx, id)
 	if err != nil {
 		return store.Plan{}, err
@@ -123,6 +177,10 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, principal strin
 			return store.Plan{}, err
 		}
 		in.Proposal.Put = []state.Doc{doc}
+	case ActionIgnoreRule:
+		if in, err = ruleProposal(iss, scope, principal); err != nil {
+			return store.Plan{}, err
+		}
 	default:
 		return store.Plan{}, fmt.Errorf("issue: unknown action %q", action)
 	}
@@ -227,21 +285,33 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 // of a resolving Plan succeeded, its Issues are resolved; otherwise they
 // are open again.
 func (s *Service) PlanDone(ctx context.Context, planID int64, ok bool) {
+	p, err := s.st.GetPlan(ctx, planID)
+	if err != nil {
+		return
+	}
+	if p.Status == store.PlanApproved {
+		// The revision committed: its rules apply to open Issues (D-092),
+		// and a succeeded Run ends "Ignore once" of what it applied (D-091).
+		defer s.applyRules(ctx, p.ApprovedBy)
+		if ok {
+			s.forgetApplied(ctx, p)
+		}
+	}
 	issues, err := s.st.IssuesOfPlan(ctx, planID)
 	if err != nil || len(issues) == 0 {
 		return
 	}
-	p, err := s.st.GetPlan(ctx, planID)
-	if err != nil {
-		return
+	resolution := p.Origin
+	if resolution == plan.OriginIgnoreRule {
+		resolution = store.ResolutionIgnore // D-092
 	}
 	for _, iss := range issues {
 		if iss.Status != store.IssueResolving {
 			continue
 		}
 		if ok {
-			if err := s.st.ResolveIssue(ctx, iss.ID, p.Origin, p.ApprovedBy); err == nil {
-				s.emit(ctx, "issue.resolved", iss.ID, p.ApprovedBy, map[string]any{"resolution": p.Origin, "plan": planID})
+			if err := s.st.ResolveIssue(ctx, iss.ID, resolution, p.ApprovedBy); err == nil {
+				s.emit(ctx, "issue.resolved", iss.ID, p.ApprovedBy, map[string]any{"resolution": resolution, "plan": planID})
 			}
 		} else if err := s.st.ReopenIssue(ctx, iss.ID); err == nil {
 			s.emit(ctx, "issue.updated", iss.ID, "system", map[string]any{"status": store.IssueOpen, "plan": planID})
