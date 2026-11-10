@@ -251,6 +251,7 @@
   }
   .user {
     color: var(--color-text-muted);
+    white-space: nowrap;
   }
   .demo {
     margin: 0;

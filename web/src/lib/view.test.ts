@@ -156,7 +156,7 @@ describe("humanOnlyReasons (D-099)", () => {
       ],
     } satisfies Plan;
     expect(humanOnlyReasons(plan)).toEqual([
-      "It gives secret app-db to web1.",
+      "It gives a secret to web1 that web1 did not get before. web1 uses: app-db.",
       "It adds, changes or removes an ignore rule.",
     ]);
   });

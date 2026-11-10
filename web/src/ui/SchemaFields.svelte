@@ -74,7 +74,7 @@
           invalid={!!errors[f.name]}
         />
       {:else}
-        <label for={fid(f)}>
+        <label for={f.kind === "secret" && !api ? undefined : fid(f)}>
           {f.label}{#if f.required}<span aria-hidden="true"> *</span>{/if}
         </label>
         {#if f.kind === "secret"}

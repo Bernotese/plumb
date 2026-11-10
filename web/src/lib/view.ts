@@ -126,10 +126,12 @@ export function humanOnlyReasons(plan: Plan): string[] {
     if (given.length === 0) {
       out.push("It gives a secret to a target that did not get it before.");
     }
+    // The contract does not say which binding is new, so the text names
+    // what the target uses, not what it gets (review #48).
     for (const t of given) {
       const names = (t.secrets ?? []).map((s) => s.name);
       out.push(
-        `It gives secret${names.length === 1 ? "" : "s"} ${names.join(", ")} to ${t.target}.`,
+        `It gives a secret to ${t.target} that ${t.target} did not get before. ${t.target} uses: ${names.join(", ")}.`,
       );
     }
   }

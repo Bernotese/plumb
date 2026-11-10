@@ -849,6 +849,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     async approvePlan(id) {
       const s = auth();
       const p = findPlan(id);
+      // Only a person approves a human-only Plan (D-099; QA T-036 F2).
+      if (p.status === "pending" && (p.human_only?.length ?? 0) > 0 && s.tier !== "admin") {
+        throw problem(
+          "human-required",
+          "Human session required",
+          403,
+          "Only a person can approve this plan.",
+        );
+      }
       if (p.status === "stale" || (p.status === "pending" && p.base_revision !== head)) {
         if (p.status !== "stale") {
           p.status = "stale";

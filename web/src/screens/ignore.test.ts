@@ -112,7 +112,9 @@ describe("PlanView", () => {
     await until(() => text().includes("Uses secrets"));
     expect(text()).toContain("Uses secrets: app-db (version 4). Values are never shown.");
     expect(text()).toContain("Only a person can approve this plan.");
-    expect(text()).toContain("It gives secret app-db to web1.");
+    expect(text()).toContain(
+      "It gives a secret to web1 that web1 did not get before. web1 uses: app-db.",
+    );
     expect(text()).toContain("changed (hidden)");
     expect(document.body.innerHTML).not.toContain("");
   });
@@ -134,6 +136,36 @@ describe("PlanView", () => {
   });
 });
 
+describe("SecretPicker", () => {
+  it("refuses to create a secret with an existing name (review #48)", async () => {
+    const api = adminApi();
+    const put = vi.spyOn(api, "putSecret");
+    show(TargetForm, { api });
+    const picker = await newTargetWithApp();
+    button("New secret")?.click();
+    await until(() => document.activeElement?.id === "use-0-db_password-new-name");
+    type("#use-0-db_password-new-name", "app-db");
+    type("#use-0-db_password-new-value", "would-replace-the-live-value");
+    button("Create secret")?.click();
+    const err = await until(() => document.querySelector("#use-0-db_password-new-name-error"));
+    expect(err.textContent).toContain("A secret with this name exists.");
+    expect(put).not.toHaveBeenCalled();
+    expect(el("#use-0-db_password-new-name").getAttribute("aria-invalid")).toBe("true");
+    expect(picker.value).toBe("");
+  });
+});
+
+describe("mock rules (QA T-036 F2)", () => {
+  it("a token cannot approve a human-only plan", async () => {
+    const api = createMockApi({ token: true, stepDelayMs: 0 });
+    const p = await api.resolveIssue(8, "ignore_rule");
+    expect(p.human_only).toEqual(["rule-change"]);
+    await expect(api.approvePlan(p.id)).rejects.toMatchObject({
+      problem: { type: "urn:plumb:problem:human-required", status: 403 },
+    });
+  });
+});
+
 describe("IssueView", () => {
   it("ignores once with a reason and shows the issue as ignored", async () => {
     const api = adminApi();
@@ -142,6 +174,11 @@ describe("IssueView", () => {
     await until(() => button("Ignore once"));
     type("#resolve-reason", "Known manual change.");
     button("Ignore once")?.click();
+    const confirm = await until(() => button("Ignore this drift"));
+    await until(() => document.activeElement === confirm);
+    expect(text()).toContain("no screen can undo it");
+    expect(ignore).not.toHaveBeenCalled();
+    confirm.click();
     await until(() => document.querySelector('[role="status"]'));
     expect(ignore).toHaveBeenCalledWith(8, "Known manual change.");
     expect(text()).toContain("Ignored once.");
@@ -154,6 +191,7 @@ describe("IssueView", () => {
     show(IssueView, { api, id: 8 });
     await until(() => button("Ignore once"));
     button("Ignore once")?.click();
+    (await until(() => button("Ignore this drift"))).click();
     const alert = await until(() => document.querySelector('[role="alert"]'));
     expect(alert.textContent).toContain("Human session required.");
     expect(alert.textContent).toContain("cannot revert this drift, so it cannot ignore it");
