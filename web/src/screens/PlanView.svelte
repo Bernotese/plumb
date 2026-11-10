@@ -3,7 +3,7 @@
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import type { Plan } from "../lib/types";
-  import { formatTime } from "../lib/view";
+  import { formatTime, humanOnlyReasons } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ChangeTable from "../ui/ChangeTable.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
@@ -35,6 +35,14 @@
       ? plan.targets.flatMap((t) => t.resources).filter((r) => r.action === "restart").length
       : 0,
   );
+  const originText: Partial<Record<Plan["origin"], string>> = {
+    rollback: "Rollback to an earlier revision",
+    import: "Import of an export file",
+    ignore_rule: "Ignore rule for an issue",
+    accept: "Accept the guest value of an issue",
+    revert: "Revert drift of an issue",
+    reenroll: "Re-enroll a target",
+  };
   const actionLabel = {
     create: "Create",
     update: "Change",
@@ -90,6 +98,18 @@
           ? `, ${restarts} restart${restarts === 1 ? "" : "s"}`
           : ""}
       </dd>
+      {#if plan.origin !== "proposal"}
+        <dt>Origin</dt>
+        <dd>
+          {#if plan.origin === "rollback" && plan.rollback_to}
+            Rollback to <a href={href({ name: "revision", id: plan.rollback_to })}
+              >revision {plan.rollback_to}</a
+            >
+          {:else}
+            {originText[plan.origin] ?? plan.origin}
+          {/if}
+        </dd>
+      {/if}
       {#if plan.issue_id}
         <dt>Issue</dt>
         <dd>
@@ -100,12 +120,32 @@
     </dl>
   </div>
 
+  {@const why = humanOnlyReasons(plan)}
+  {#if why.length && plan.status === "pending"}
+    <div class="banner info" role="note">
+      <strong>Only a person can approve this plan.</strong> An API token cannot.
+      <ul class="why">
+        {#each why as w, i (i)}<li>{w}</li>{/each}
+      </ul>
+    </div>
+  {/if}
+
   {#each plan.warnings as w, i (i)}
     <p class="banner warn">{w}</p>
   {/each}
 
   {#each plan.targets as t (t.target)}
     <h2>Target <span class="mono">{t.target}</span></h2>
+    {#if t.secrets?.length}
+      <p class="uses">
+        Uses secrets:
+        {#each t.secrets as sec, i (sec.name)}{i ? ", " : ""}<span class="mono">{sec.name}</span>
+          <span class="muted">(version {sec.version})</span>{/each}. Values are never shown.
+      </p>
+    {/if}
+    {#if t.resources.length === 0}
+      <p class="muted">No resource changes on this target.</p>
+    {/if}
     {#each t.resources as r, i (i)}
       <section
         class="card resource"
@@ -129,12 +169,26 @@
               : "The service restarts because a resource it depends on changes."}
           </p>
         {/if}
-        <ChangeTable
-          changes={r.changes}
-          caption="Changes of {r.resource}"
-          fromLabel="Now on the guest"
-          toLabel="After the apply"
-        />
+        {#if r.changes.length === 0 && r.action === "create"}
+          <p class="muted">
+            Not observed yet: the guest does not exist. The agent observes and applies it at the
+            first boot, within the approved risk.
+          </p>
+        {:else}
+          {#if r.unverified}
+            <p class="muted">
+              Not observed before the approval: this resource gets a new secret (or a value that the
+              import writes), so Plumb does not send the value before you approve. The agent
+              observes it at the apply, within the approved risk.
+            </p>
+          {/if}
+          <ChangeTable
+            changes={r.changes}
+            caption="Changes of {r.resource}"
+            fromLabel="Now on the guest"
+            toLabel="After the apply"
+          />
+        {/if}
       </section>
     {/each}
   {/each}
@@ -160,6 +214,13 @@
 {/if}
 
 <style>
+  .why {
+    margin: var(--space-1) 0 0;
+    padding-left: var(--space-6);
+  }
+  .uses {
+    margin: 0 0 var(--space-2);
+  }
   .facts {
     display: grid;
     grid-template-columns: max-content 1fr;

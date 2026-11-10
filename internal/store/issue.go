@@ -160,7 +160,7 @@ func (s *Store) ReopenIssue(ctx context.Context, id int64) error {
 	return err
 }
 
-// ResolveIssue closes an Issue. resolution is accept, revert or gone.
+// ResolveIssue closes an Issue. resolution is accept, revert, gone or ignore.
 func (s *Store) ResolveIssue(ctx context.Context, id int64, resolution, by string) error {
 	now := s.now()
 	res, err := s.db.ExecContext(ctx,

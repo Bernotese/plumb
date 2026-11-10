@@ -3,7 +3,12 @@
   import type { Session } from "../lib/types";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
-  let { api, onlogin, hint }: { api: PlumbApi; onlogin: (s: Session) => void; hint?: string } =
+  let {
+    api,
+    onlogin,
+    hint,
+    notice,
+  }: { api: PlumbApi; onlogin: (s: Session) => void; hint?: string; notice?: string | undefined } =
     $props();
   let username = $state("");
   let password = $state("");
@@ -26,6 +31,7 @@
 
 <div class="narrow">
   <h1 id="page-title" tabindex="-1">Log in to Plumb</h1>
+  {#if notice}<p class="banner warn" role="status">{notice}</p>{/if}
   <ProblemBox {error} />
   <form class="card" onsubmit={submit}>
     <div class="field">
