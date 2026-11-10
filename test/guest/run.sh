@@ -58,8 +58,14 @@ for distro in \
   echo "$distro systemd state: $state"
   if [[ "$state" == degraded ]]; then docker exec "$name" systemctl --failed --no-legend; fi
   run_test /tests/guest.test -test.v -test.timeout=5m "$@"
+<<<<<<< HEAD
   run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|HardLink|WriteAt'
+  # guest.test installs cron and refreshes the apt lists needed by agent.test.
   run_test /tests/agent.test -test.v -test.timeout=1m -test.run '^TestGuest'
+=======
+  # TestSymlinkRules includes the hard-link cases.
+  run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
+>>>>>>> pl-codex-qa/T-007-root-resources
   docker rm -f "$name" >/dev/null
 done
 cleanup

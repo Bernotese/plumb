@@ -176,6 +176,9 @@ func TestGuestAgentLoop(t *testing.T) {
 			t.Fatalf("apply item: %+v", it)
 		}
 	}
+	if out, err := exec.Command("systemctl", "is-active", "--quiet", "--", "cron.service").CombinedOutput(); err != nil {
+		t.Fatalf("cron is not active after apply: %s: %v", out, err)
+	}
 	quiet := func() {
 		t.Helper()
 		select {
