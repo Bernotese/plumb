@@ -8,6 +8,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "PLUMB_");
   return {
     plugins: [svelte()],
+    // Screen tests mount components in happy-dom: they need Svelte's client build.
+    ...(process.env["VITEST"] ? { resolve: { conditions: ["browser"] } } : {}),
     build: {
       outDir: "dist",
       emptyOutDir: true,

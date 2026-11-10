@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"runtime/pprof"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -56,9 +57,11 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		done <- err
 	}()
 	var base, login string
+	var printed lockedBuffer // everything the server prints, for the bearer check
 	sc := bufio.NewScanner(pr)
 	for login == "" && sc.Scan() {
 		line := sc.Text()
+		printed.Write([]byte(line + "\n"))
 		if rest, ok := strings.CutPrefix(line, "Plumb listens on "); ok {
 			base, _, _ = strings.Cut(rest, " ")
 		}
@@ -66,7 +69,7 @@ func TestDevAgentForNewTarget(t *testing.T) {
 			login = rest
 		}
 	}
-	go io.Copy(io.Discard, pr)
+	go io.Copy(&printed, pr)
 	if base == "" || login == "" {
 		t.Fatalf("no listen address or login link (%v)", sc.Err())
 	}
@@ -119,6 +122,20 @@ func TestDevAgentForNewTarget(t *testing.T) {
 	})
 	eventually(t, "2 seed agents", 5*time.Second, func() bool { return devAgentRuns() == 2 })
 
+	// --dev-demo seeds one plan token; the server never prints its bearer (T-030).
+	var toks struct {
+		Items []struct{ ID, Tier string }
+	}
+	eventually(t, "demo token", 10*time.Second, func() bool {
+		return call("GET", "/api/v1/tokens", nil, &toks) == 200 && len(toks.Items) == 1
+	})
+	if toks.Items[0].Tier != "plan" {
+		t.Errorf("demo token: %+v, want one plan token", toks.Items)
+	}
+	if out := printed.String(); strings.Contains(out, toks.Items[0].ID+".") {
+		t.Errorf("the server printed the demo bearer: %s", out)
+	}
+
 	apply := func(reason string, body map[string]any) {
 		t.Helper()
 		body["reason"] = reason
@@ -158,4 +175,22 @@ func TestDevAgentForNewTarget(t *testing.T) {
 	if n := devAgentRuns(); n != 0 {
 		t.Fatalf("after shutdown: %d agents run", n)
 	}
+}
+
+// lockedBuffer is a bytes.Buffer for one writer goroutine and one reader.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
