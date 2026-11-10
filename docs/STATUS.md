@@ -39,6 +39,7 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - T-028: secret store (PR #37), D-102 … D-109, D-130.
 - T-035 mock part: settings UI (PR #45).
 - T-034, T-035 e2e on the real API (PR #51).
+- Two flaky tests fixed, both test-side, no product bug (PR #75, #76; D-166).
 - T-020: resource type symlink, nginx default site as a link, D-162 … D-165 (PR #73).
 - T-043: agent refuses an unsafe state directory at start, D-161 (PR #72).
 - T-042: agent loop as root in a real guest; start-up cleanup; apt stderr canary (PR #69, #70).
