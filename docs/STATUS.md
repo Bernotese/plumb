@@ -11,7 +11,7 @@ Architecture. **No feature code** until `docs/ARCHITECTURE.md` is reviewed by `p
 |---|---|---|
 | T-001 architecture + first task cards | pl-architect | done, PR #1 open |
 | T-002 architecture review (incl. security) | pl-reviewer | done: changes needed (4 must) |
-| T-016 architecture rework | pl-architect | in progress |
+| T-016 architecture rework | pl-architect | done (937479e), second review by pl-reviewer running |
 
 ## Done
 - 2026-11-10 · Team setup, auto mode, GitHub remote, model split.
