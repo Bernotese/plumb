@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,11 @@ type Config struct {
 	// reads the store, never this package's memory. nil knows nothing
 	// (D-062).
 	Sensitive func(ctx context.Context, target, resourceID string) (attrs []string, known bool, err error)
+	// SecretValues returns the clear secret values of the head render of a
+	// target. link masks them, and the values it sent, as substrings in
+	// every Output, Error and change value of a report, so the masking
+	// survives a restart (D-062). nil knows none.
+	SecretValues func(ctx context.Context, target string) ([]string, error)
 	// OnReport receives every report after validation and wire.Redact.
 	// An error makes the agent retry the report later (503).
 	OnReport func(ctx context.Context, d Delivery) error
@@ -475,13 +481,17 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 		ts.sensitive = map[string][]string{} // the watch list is the full desired list
 		ts.secrets = map[string][]string{}
 	}
-	for _, res := range withResources.Resources {
+	withValues := wire.BodyResources(body) // json "-" fields are only here
+	for i, res := range withResources.Resources {
 		ts.sensitive[res.ID] = append([]string{}, res.Sensitive...)
 		var values []string
 		for _, attr := range res.Sensitive {
 			if v, ok := res.Attrs[attr].(string); ok && len(v) >= minMaskLen {
 				values = append(values, v)
 			}
+		}
+		if i < len(withValues) && withValues[i].ID == res.ID {
+			values = append(values, withValues[i].SecretValues...)
 		}
 		ts.secrets[res.ID] = values
 	}
@@ -562,6 +572,18 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The secret values of the head render (D-062: no memory needed).
+	var headValues []string
+	if l.cfg.SecretValues != nil && reportHasText(rep) {
+		v, err := l.cfg.SecretValues(r.Context(), agent.Target)
+		if err != nil {
+			l.log.Error("secret lookup", "target", agent.Target, "err", err)
+			writeError(w, http.StatusServiceUnavailable, "try again")
+			return
+		}
+		headValues = v
+	}
+
 	// A result or progress must answer a command that this target got.
 	l.mu.Lock()
 	ts := l.target(agent.Target)
@@ -595,18 +617,24 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		it.Changes = wire.Redact(attrs, it.Changes)
-		secrets = append(secrets, ts.secrets[it.Resource]...)
 	}
+	// Every value link sent to this target, for every resource: an agent
+	// can print a secret in the output of another resource (T-029 QA).
+	secrets = append(secrets, headValues...)
 	for _, v := range ts.secrets {
-		if rep.Error != "" {
-			secrets = append(secrets, v...)
-		}
+		secrets = append(secrets, v...)
 	}
 	l.mu.Unlock()
-	// Defence in depth (review T-009): sensitive desired values that link
-	// sent never pass in Output or Error, even if the agent has a bug.
+	// Defence in depth (review T-009, T-029 QA): a secret value never
+	// passes in Output, Error or a change value, also as a part of a longer
+	// text, even if the agent has a bug.
+	secrets = maskList(secrets)
 	for i := range rep.Items {
 		rep.Items[i].Output = mask(rep.Items[i].Output, secrets)
+		for j := range rep.Items[i].Changes {
+			c := &rep.Items[i].Changes[j]
+			c.From, c.To = maskValue(c.From, secrets), maskValue(c.To, secrets)
+		}
 	}
 	rep.Error = mask(rep.Error, secrets)
 
@@ -630,18 +658,70 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// minMaskLen is the shortest value that mask replaces; shorter values
-// would blank out ordinary text.
+// minMaskLen is the shortest sensitive attribute value that link keeps
+// for masking. A secret value itself is masked at every length: a short
+// password blanks out ordinary text, which is safer than a leak.
 const minMaskLen = 4
+
+// maskList removes empty and duplicate values and sorts the longest
+// first, so a value that contains another is masked whole.
+func maskList(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range values {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
+	return out
+}
 
 // mask replaces every secret value in s.
 func mask(s string, secrets []string) string {
 	for _, v := range secrets {
-		if s != "" && len(v) >= minMaskLen {
-			s = strings.ReplaceAll(s, v, "[redacted]")
+		if s == "" {
+			break
 		}
+		s = strings.ReplaceAll(s, v, "[redacted]")
 	}
 	return s
+}
+
+// maskValue masks every string inside a change value.
+func maskValue(v any, secrets []string) any {
+	switch v := v.(type) {
+	case string:
+		return mask(v, secrets)
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = maskValue(e, secrets)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = maskValue(e, secrets)
+		}
+		return out
+	}
+	return v
+}
+
+// reportHasText reports whether a report has an Output, an Error or a
+// change value that a secret could be in.
+func reportHasText(rep wire.Report) bool {
+	if rep.Error != "" {
+		return true
+	}
+	for _, it := range rep.Items {
+		if it.Output != "" || len(it.Changes) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // validateReport checks a report against the wire types and limits.

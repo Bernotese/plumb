@@ -19,8 +19,15 @@ info:
     - Errors are `application/problem+json` (RFC 9457) with a `urn:plumb:problem:<code>` type.
     - Lists return `{items, next}`. `next` is an opaque cursor; pass it as `cursor` to get the
       next page. `next` is `null` on the last page.
-    - Every change goes through a Plan: propose (`POST /plans`), review, approve. Re-enroll and
-      the issue actions `accept` and `revert` also return a Plan.
+    - Every change goes through a Plan: propose (`POST /plans`), review, approve. Re-enroll,
+      rollback, import and the issue actions `accept`, `revert` and `ignore_rule` also return a
+      Plan. The one exception is the issue action `ignore_once`: it changes neither the state nor
+      a guest (D-091).
+    - No operation returns a secret value. Documents refer to a secret as `{secret: <name>}`
+      (D-088). A change of a secret value is a sensitive change.
+    - A Plan with a non-empty `human_only` can be approved by a human session only (D-099).
+    - An operation with `x-plumb-planned: <card>` is part of the contract, but this server does
+      not serve it yet. The card adds the handler and removes the mark.
 
     Authentication (`components.securitySchemes`):
     - `session`: cookie of a human user (`POST /session`). Every call that changes data must send
@@ -55,6 +62,16 @@ tags:
     description: Execution of approved plans.
   - name: issues
     description: Drift issues and their resolution.
+  - name: rules
+    description: Rule documents of the desired state (ignore drift by rule).
+  - name: revisions
+    description: Revision history, diff and rollback.
+  - name: secrets
+    description: Write-only secret store.
+  - name: tokens
+    description: API token management, for humans only.
+  - name: state
+    description: Export and import of the desired state.
   - name: events
     description: Server-sent event stream.
 
@@ -592,8 +609,10 @@ paths:
       description: |
         Validates and renders the proposal, observes the affected targets and stores a Plan with
         one entry per changed resource. A proposal that cannot be planned gets no Plan: 422 when
-        a document is invalid or changes a create-only field (`ip`, `gateway`, `user`,
-        `ssh_keys`, `disk`), 409 when the base revision moved.
+        a document is invalid, changes a create-only field (`ip`, `gateway`, `user`,
+        `ssh_keys`, `disk`) or refers to a missing secret, 409 when the base revision moved.
+        `targets` plans targets without a document change, for example after a new secret value
+        (D-090).
       security:
         - session: []
         - token: [plan]
@@ -717,8 +736,9 @@ paths:
       summary: Approve a plan and start its run
       description: |
         Commits the Revision and starts a Run. An `apply` token can approve up to its `max_risk`
-        (`reversible` or `disruptive`). Only a human session approves a `destructive` Plan. A
-        stale Plan returns 409.
+        (`reversible` or `disruptive`). Only a human session approves a `destructive` Plan or a
+        Plan with a non-empty `human_only` (403 `human-required`, D-099). A stale Plan returns
+        409; a Plan is also stale when a secret that it uses has another version (D-089).
       security:
         - session: []
         - token: [apply]
@@ -955,8 +975,18 @@ paths:
       summary: Resolve an issue
       description: |
         `accept` and `revert` create a Plan; the issue is `resolving` until its Run succeeds.
-        `accept` is not offered for a sensitive change. Allowed actions are in `Issue.actions`.
-        Ignore actions come later with the `Rule` kind (D-044).
+        `accept` is not offered for a sensitive change. Allowed actions are in `Issue.actions`;
+        the list does not depend on the caller.
+
+        `ignore_rule` creates a Plan that puts one `Rule` (origin `ignore_rule`, D-092). `rule`
+        in the request sets its scope. Only a human session approves this Plan (D-099). The
+        issue resolves as `ignore` when the revision commits.
+
+        `ignore_once` answers 200 with the resolved Issue and makes no Plan (D-091). A later
+        report with equal changes opens no Issue, until the resource reports no drift or a Run
+        applies it. Who may call it: a human session; an `apply` token when every change of the
+        Issue has a risk up to its `max_risk` and none is sensitive. Every other token gets 403
+        `human-required` or `risk-too-high`.
       security:
         - session: []
         - token: [plan]
@@ -967,8 +997,29 @@ paths:
             schema: { $ref: "#/components/schemas/ResolveRequest" }
             example: { action: revert, reason: Undo the manual edit. }
       responses:
+        # T-025 question 3 (open): who may use `ignore_once`. The rule is in the description
+        # above and in D-091. Another answer changes only that text.
+        "200":
+          description: The resolved Issue, for `ignore_once`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+              example:
+                id: 7
+                target: web1
+                resource: "file:/etc/motd"
+                status: resolved
+                risk: reversible
+                opened_at: "2026-11-10T09:10:12Z"
+                updated_at: "2026-11-10T09:16:00Z"
+                changes:
+                  - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
+                actions: []
+                plan_id: null
+                resolution: { action: ignore, by: "user:admin", at: "2026-11-10T09:16:00Z" }
+                comments: []
         "201":
-          description: The Plan that resolves the issue.
+          description: The Plan that resolves the issue, for `accept`, `revert` and `ignore_rule`.
           headers:
             Location: { $ref: "#/components/headers/Location" }
           content:
@@ -1034,6 +1085,630 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /rules:
+    get:
+      tags: [rules]
+      operationId: listRules
+      summary: List rules
+      description: |
+        Rules of the head revision (D-092). A rule makes the controller drop matching drift at
+        intake. A rule is a document: create, change and delete it with a proposal
+        (`POST /plans`) or with the issue action `ignore_rule`. Only a human session approves a
+        Plan that changes a rule (D-099).
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of rules from the head revision.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/RuleView" }
+              example:
+                items:
+                  - revision: 9
+                    document:
+                      kind: Rule
+                      name: ignore-web1-motd
+                      spec: { action: ignore, target: web1, resource: "file:/etc/motd", attrs: [content] }
+                  - revision: 10
+                    document:
+                      kind: Rule
+                      name: ignore-all-apt-periodic
+                      spec: { action: ignore, target: "*", resource: "file:/etc/apt/apt.conf.d/20auto-upgrades" }
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /rules/{name}:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    get:
+      tags: [rules]
+      operationId: getRule
+      summary: Read one rule
+      responses:
+        "200":
+          description: The rule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleView" }
+              example:
+                revision: 9
+                document:
+                  kind: Rule
+                  name: ignore-web1-motd
+                  spec: { action: ignore, target: web1, resource: "file:/etc/motd", attrs: [content] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /revisions:
+    get:
+      tags: [revisions]
+      operationId: listRevisions
+      summary: List revisions, newest first
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of revisions. The first item of the first page is the head.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/RevisionInfo" }
+              example:
+                items:
+                  - id: 7
+                    author: "user:admin"
+                    reason: Add MOTD to web1.
+                    plan_id: 12
+                    created_at: "2026-11-10T09:00:03Z"
+                    documents: 6
+                  - id: 6
+                    author: "token:tok_ci"
+                    reason: Raise memory of db1.
+                    plan_id: 11
+                    created_at: "2026-11-09T18:20:44Z"
+                    documents: 6
+                next: MTE
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /revisions/{n}/diff:
+    parameters:
+      - $ref: "#/components/parameters/RevisionN"
+    get:
+      tags: [revisions]
+      operationId: diffRevision
+      summary: Compare a revision with another one
+      description: |
+        Lists the documents that differ between revision `from` and revision `n`, with both
+        versions (D-093). Without `from` the base is `n-1`; for revision 1 it is the empty state.
+        Documents hold secret references, never secret values, so the diff shows no value.
+      parameters:
+        - name: from
+          in: query
+          description: The base revision. Default `n-1`.
+          schema: { $ref: "#/components/schemas/Revision" }
+          example: 6
+      responses:
+        "200":
+          description: The changed documents, sorted by kind and name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevisionDiff" }
+              example:
+                from: 6
+                to: 7
+                changes:
+                  - kind: Block
+                    name: motd
+                    op: added
+                    before: null
+                    after:
+                      kind: Block
+                      name: motd
+                      spec:
+                        description: Message of the day.
+                        params:
+                          type: object
+                          properties:
+                            text: { type: string, default: Managed by Plumb. }
+                        resources:
+                          - file: { path: /etc/motd, content: "{{ .text }}\n", mode: "0644" }
+                  - kind: Target
+                    name: web1
+                    op: changed
+                    before:
+                      kind: Target
+                      name: web1
+                      spec:
+                        type: vm
+                        image: ubuntu-26.04
+                        guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0, ip: dhcp }
+                        blocks: []
+                        overrides: {}
+                    after:
+                      kind: Target
+                      name: web1
+                      spec:
+                        type: vm
+                        image: ubuntu-26.04
+                        guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0, ip: dhcp }
+                        blocks: [{ use: motd, params: { text: "Hello from Plumb" } }]
+                        overrides: {}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /revisions/{n}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/RevisionN"
+    post:
+      tags: [revisions]
+      operationId: rollbackRevision
+      summary: Plan a rollback to a revision
+      description: |
+        Builds a proposal that puts and deletes documents until the document set equals revision
+        `n`, and returns its Plan (origin `rollback`). Nothing changes before the approval. The
+        Plan follows every rule of `POST /plans`. Secret values have no history and do not roll
+        back (D-093). A rollback that brings back a secret binding or changes a rule can be
+        approved by a human session only (`Plan.human_only`, D-099). The Plan records `n` as
+        `rollback_to` (D-131).
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RollbackRequest" }
+            example: { reason: The MOTD change was wrong. }
+      responses:
+        "201":
+          description: The rollback Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 16
+                origin: rollback
+                rollback_to: 6
+                issue_id: null
+                status: pending
+                risk: reversible
+                reason: The MOTD change was wrong.
+                author: "user:admin"
+                created_at: "2026-11-10T09:20:00Z"
+                base_revision: 7
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                human_only: []
+                targets:
+                  - target: web1
+                    secrets: []
+                    resources: []
+                warnings:
+                  - "file:/etc/motd on web1 is no longer managed. Plumb does not delete it on the guest."
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The document set of revision `n` equals the head (`nothing-to-do`), or the head moved
+            while the Plan was made.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "urn:plumb:problem:nothing-to-do"
+                title: Nothing to do
+                status: 409
+                detail: Revision 7 has the same documents as the head revision.
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /secrets:
+    get:
+      tags: [secrets]
+      operationId: listSecrets
+      summary: List secrets (names only)
+      description: |
+        Names and metadata of all secrets, sorted by name. No operation of this API returns a
+        secret value (D-030, D-087). `used_by` lists the targets of the head revision that
+        refer to the secret.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of secret metadata.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/SecretInfo" }
+              example:
+                items:
+                  - name: app-db
+                    version: 4
+                    updated_by: "user:admin"
+                    updated_at: "2026-11-10T08:40:00Z"
+                    used_by: [web1]
+                  - name: deploy-key
+                    version: 2
+                    updated_by: "user:admin"
+                    updated_at: "2026-11-09T17:05:10Z"
+                    used_by: []
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /secrets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/SecretName"
+    put:
+      tags: [secrets]
+      operationId: putSecret
+      summary: Create a secret or replace its value
+      description: |
+        Stores the value encrypted (D-087). Human session only. A new value changes no guest by
+        itself, and it makes pending Plans that use the secret stale (D-089). To send it to the
+        guests, plan the targets of `used_by` with `Proposal.targets` (D-090).
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecretValue" }
+            example: { value: "<the secret value>" }
+      responses:
+        "200":
+          description: The metadata of the secret after the write.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretInfo" }
+              example:
+                name: app-db
+                version: 5
+                updated_by: "user:admin"
+                updated_at: "2026-11-10T09:25:00Z"
+                used_by: [web1]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      tags: [secrets]
+      operationId: deleteSecret
+      summary: Delete a secret
+      description: |
+        Human session only. A secret that the head revision or a pending Plan uses cannot be
+        deleted: 409 `secret-in-use` with `targets` and `plans`.
+      security:
+        - session: []
+      responses:
+        "204":
+          description: Deleted.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The secret is in use (`secret-in-use`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "urn:plumb:problem:secret-in-use"
+                title: Secret is in use
+                status: 409
+                detail: Secret "app-db" is used by 1 target and 1 pending Plan.
+                targets: [web1]
+                plans: [16]
+
+  /tokens:
+    get:
+      tags: [tokens]
+      operationId: listTokens
+      summary: List API tokens, newest first
+      description: Human session only. Revoked tokens stay in the list. No bearer value or hash is returned.
+      security:
+        - session: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of tokens.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/Token" }
+              example:
+                items:
+                  - id: tok_claude
+                    name: Claude (plans and comments)
+                    tier: plan
+                    max_risk: null
+                    created_by: "user:admin"
+                    created_at: "2026-11-10T08:00:00Z"
+                    last_used_at: "2026-11-10T09:13:02Z"
+                    revoked_at: null
+                  - id: tok_ci
+                    name: CI deploy
+                    tier: apply
+                    max_risk: reversible
+                    created_by: "user:admin"
+                    created_at: "2026-11-09T12:00:00Z"
+                    last_used_at: null
+                    revoked_at: "2026-11-09T18:30:00Z"
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [tokens]
+      operationId: createToken
+      summary: Create an API token
+      description: |
+        Human session only. The answer holds the bearer value once; Plumb stores only a hash.
+        Only an `apply` token has a `max_risk` (D-046). An `apply` token is root-equivalent on
+        the guests.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenRequest" }
+            example: { name: CI deploy, tier: apply, max_risk: reversible }
+      responses:
+        "201":
+          description: The token and its bearer value.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenCreated" }
+              example:
+                token:
+                  id: tok_ci
+                  name: CI deploy
+                  tier: apply
+                  max_risk: reversible
+                  created_by: "user:admin"
+                  created_at: "2026-11-10T09:30:00Z"
+                  last_used_at: null
+                  revoked_at: null
+                bearer: "tok_ci.<secret part, shown once>"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /tokens/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TokenId"
+    delete:
+      tags: [tokens]
+      operationId: revokeToken
+      summary: Revoke an API token
+      description: |
+        Human session only. The token fails at its next call and its open event streams end
+        (D-070). The row stays in the list with `revoked_at`. Revoking a revoked token is 204.
+      security:
+        - session: []
+      responses:
+        "204":
+          description: Revoked.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /export:
+    get:
+      tags: [state]
+      operationId: exportState
+      summary: Export the desired state without secret values
+      description: |
+        One YAML stream of the head revision (D-094): a header document `kind: Export`, then
+        every document sorted by kind and name. The header lists the names of all secrets; the
+        file holds no secret value.
+      responses:
+        "200":
+          description: The export file.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+          content:
+            application/yaml:
+              schema: { type: string }
+              example: |
+                kind: Export
+                format: 1
+                revision: 7
+                exported_at: "2026-11-10T09:30:00Z"
+                version: 0.2.0
+                secrets: [app-db]
+                ---
+                kind: Block
+                name: motd
+                spec:
+                  description: Message of the day.
+                  params:
+                    type: object
+                    properties:
+                      text: {type: string, default: Managed by Plumb.}
+                  resources:
+                    - file: {path: /etc/motd, content: "{{ .text }}\n", mode: "0644"}
+                ---
+                kind: Target
+                name: web1
+                spec:
+                  type: vm
+                  image: ubuntu-26.04
+                  guest: {cores: 2, memory: 2048, disk: 20, bridge: vmbr0, ip: dhcp}
+                  blocks:
+                    - {use: motd, params: {text: Hello from Plumb}}
+                  overrides: {}
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [state]
+      operationId: exportStateWithSecrets
+      summary: Export the desired state with an encrypted secret bundle
+      description: |
+        Human session only. The same file as `GET /export` plus a last document
+        `kind: SecretBundle`: all secret values, encrypted with a key from the passphrase
+        (argon2id with the fixed parameters of format 1, AES-256-GCM; D-094). 429 when the
+        argon2 slots are busy.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExportRequest" }
+            example: { passphrase: "<a passphrase of 12 or more characters>" }
+      responses:
+        "200":
+          description: The export file with the secret bundle.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+          content:
+            application/yaml:
+              schema: { type: string }
+              example: |
+                kind: Export
+                format: 1
+                revision: 7
+                exported_at: "2026-11-10T09:30:00Z"
+                version: 0.2.0
+                secrets: [app-db]
+                ---
+                kind: Target
+                name: web1
+                spec:
+                  type: vm
+                  image: ubuntu-26.04
+                  guest: {cores: 2, memory: 2048, disk: 20, bridge: vmbr0, ip: dhcp}
+                  blocks:
+                    - {use: app, params: {db_password: {secret: app-db}}}
+                  overrides: {}
+                ---
+                kind: SecretBundle
+                kdf: {name: argon2id, time: 3, memory_kib: 65536, threads: 4}
+                salt: "<base64>"
+                nonce: "<base64>"
+                data: "<base64 ciphertext>"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /import:
+    post:
+      tags: [state]
+      operationId: importState
+      summary: Plan an import of an export file
+      description: |
+        Human session only. Reads an export file and returns a Plan (origin `import`). Nothing
+        in the desired state changes before the approval (D-095). Mode `replace` deletes the
+        documents that are not in the file; `merge` only puts.
+
+        Secrets: with a `passphrase`, the secrets of the bundle that do not exist yet are
+        created at once. A secret that exists with the same value is skipped. A secret that
+        exists with another value stops the import with 409 `secret-conflict` and nothing is
+        written, unless `overwrite` names it. Created and overwritten names are in
+        `Plan.warnings`; they stay when the Plan is dropped.
+
+        422: an invalid document, an unknown `format`, YAML anchors or aliases, a wrong
+        passphrase, a name in `overwrite` that is not in the bundle, or a reference to a missing
+        secret (`secrets` lists the names). 400: a body above 8 MiB. 429: the argon2 slots are
+        busy.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportRequest" }
+            example:
+              reason: Restore the state of 2026-11-09.
+              mode: replace
+              content: "kind: Export\nformat: 1\nrevision: 7\nexported_at: \"2026-11-10T09:30:00Z\"\nversion: 0.2.0\nsecrets: []\n---\nkind: Target\nname: cache1\nspec:\n  type: vm\n  image: ubuntu-26.04\n  guest: {cores: 1, memory: 1024, disk: 10, bridge: vmbr0, ip: dhcp}\n  blocks: []\n  overrides: {}\n"
+      responses:
+        "201":
+          description: The import Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 17
+                origin: import
+                issue_id: null
+                status: pending
+                risk: destructive
+                reason: Restore the state of 2026-11-09.
+                author: "user:admin"
+                created_at: "2026-11-10T09:40:00Z"
+                base_revision: 7
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                human_only: []
+                targets:
+                  - target: web1
+                    resources:
+                      - resource: "guest:config"
+                        action: delete
+                        risk: destructive
+                        changes:
+                          - { attr: state, from: present, to: absent, risk: destructive }
+                warnings: []
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            A secret of the bundle exists with another value and is not in `overwrite`
+            (`secret-conflict`), or the head moved while the Plan was made.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "urn:plumb:problem:secret-conflict"
+                title: Secrets exist with another value
+                status: 409
+                detail: 1 secret of the file differs from the stored value. Nothing was written. Name it in "overwrite" to replace it.
+                secrets: [app-db]
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   /events:
     get:
       tags: [events]
@@ -1088,22 +1763,26 @@ components:
         Human session (`POST /session`) with tier `admin`. `HttpOnly`, `Secure`,
         `SameSite=Strict`. In `plumb serve --dev` (plain HTTP) the cookie is `plumb_session`
         without `Secure`. Every call that changes data, login included, must send a matching
-        `Origin` header. Only a session approves `destructive` Plans and manages tokens, secrets
-        and import.
+        `Origin` header. Only a session approves `destructive` Plans and Plans with
+        `human_only` (D-099), and manages tokens, secrets, export with secrets and import.
     token:
       type: http
       scheme: bearer
       description: |
-        API token. Tiers: `read` < `plan` (propose, comment, resolve) < `apply` (approve up to
-        the token's `max_risk`: `reversible` or `disruptive`). No token has `admin` (D-046). The
-        roles listed on an operation are the minimum tier. An `apply` token is root-equivalent
-        on guests.
+        API token. Tiers: `read` < `plan` (propose, comment, resolve with a Plan) < `apply`
+        (approve, and `ignore_once`, up to the token's `max_risk`: `reversible` or `disruptive`).
+        No token has `admin` (D-046). The roles listed on an operation are the minimum tier. An
+        `apply` token is root-equivalent on guests.
 
   headers:
     Location:
       description: URL of the created resource.
       schema: { type: string }
       example: /api/v1/plans/12
+    NoStore:
+      description: Always `no-store`. The body holds a credential or the whole state.
+      schema: { type: string, const: no-store }
+      example: no-store
 
   parameters:
     DocName:
@@ -1134,6 +1813,27 @@ components:
       description: Issue id.
       schema: { $ref: "#/components/schemas/Id" }
       example: 7
+    RevisionN:
+      name: n
+      in: path
+      required: true
+      description: Revision number.
+      schema: { $ref: "#/components/schemas/Revision" }
+      example: 7
+    SecretName:
+      name: name
+      in: path
+      required: true
+      description: Secret name.
+      schema: { $ref: "#/components/schemas/Name" }
+      example: app-db
+    TokenId:
+      name: id
+      in: path
+      required: true
+      description: Token id (the public part of the bearer value).
+      schema: { type: string, minLength: 1, maxLength: 64 }
+      example: tok_ci
     Limit:
       name: limit
       in: query
@@ -1193,7 +1893,8 @@ components:
     Conflict:
       description: |
         The object is in a state that does not allow the action: a stale Plan, a moved head
-        revision, or an issue that is not open.
+        revision, or an issue that is not open. Slice 2 codes: `secret-in-use`,
+        `secret-conflict`, `nothing-to-do`.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -1288,12 +1989,26 @@ components:
           description: Field errors for 422. `pointer` is a JSON Pointer into the request body.
           items:
             type: object
+            additionalProperties: false
             required: [pointer, message]
             properties:
               pointer: { type: string }
               message: { type: string }
+        targets:
+          type: array
+          description: Targets that use the secret, for `secret-in-use`.
+          items: { $ref: "#/components/schemas/Name" }
+        plans:
+          type: array
+          description: Pending Plans that use the secret, for `secret-in-use`.
+          items: { $ref: "#/components/schemas/Id" }
+        secrets:
+          type: array
+          description: Secret names, for `secret-conflict` and for a 422 about missing secrets.
+          items: { $ref: "#/components/schemas/Name" }
     Page:
       type: object
+      additionalProperties: false
       required: [items, next]
       properties:
         items: { type: array }
@@ -1303,6 +2018,7 @@ components:
 
     Session:
       type: object
+      additionalProperties: false
       required: [principal, must_change_password, tier, expires_at]
       properties:
         principal: { $ref: "#/components/schemas/Principal" }
@@ -1320,12 +2036,14 @@ components:
           description: Session expiry. `null` for a token without expiry.
     LoginRequest:
       type: object
+      additionalProperties: false
       required: [username, password]
       properties:
         username: { type: string, minLength: 1, maxLength: 64 }
         password: { type: string, minLength: 1, maxLength: 1024, format: password }
     ChangePasswordRequest:
       type: object
+      additionalProperties: false
       required: [current_password, new_password]
       properties:
         current_password: { type: string, minLength: 1, maxLength: 1024, format: password }
@@ -1339,23 +2057,28 @@ components:
       $ref: "../internal/state/schema/block.json"
     Target:
       $ref: "../internal/state/schema/target.json"
+    Rule:
+      $ref: "../internal/state/schema/rule.json"
     Document:
       description: A document of the State (`kind`, `name`, `spec`).
       oneOf:
         - $ref: "#/components/schemas/Image"
         - $ref: "#/components/schemas/Block"
         - $ref: "#/components/schemas/Target"
+        - $ref: "#/components/schemas/Rule"
     DocumentKind:
       type: string
-      enum: [Image, Block, Target]
+      enum: [Image, Block, Target, Rule]
     DocumentRef:
       type: object
+      additionalProperties: false
       required: [kind, name]
       properties:
         kind: { $ref: "#/components/schemas/DocumentKind" }
         name: { $ref: "#/components/schemas/Name" }
     ImageView:
       type: object
+      additionalProperties: false
       description: An Image of the head revision.
       required: [revision, document]
       properties:
@@ -1365,6 +2088,7 @@ components:
         document: { $ref: "#/components/schemas/Image" }
     BlockView:
       type: object
+      additionalProperties: false
       description: A Block of the head revision.
       required: [revision, document]
       properties:
@@ -1372,8 +2096,19 @@ components:
           $ref: "#/components/schemas/Revision"
           description: The revision that last changed this document.
         document: { $ref: "#/components/schemas/Block" }
+    RuleView:
+      type: object
+      additionalProperties: false
+      description: A Rule of the head revision.
+      required: [revision, document]
+      properties:
+        revision:
+          $ref: "#/components/schemas/Revision"
+          description: The revision that last changed this document.
+        document: { $ref: "#/components/schemas/Rule" }
     TargetView:
       type: object
+      additionalProperties: false
       description: A Target of the head revision plus its live status.
       required: [revision, document, status]
       properties:
@@ -1384,6 +2119,7 @@ components:
         status: { $ref: "#/components/schemas/TargetStatus" }
     TargetStatus:
       type: object
+      additionalProperties: false
       description: Live status. It is not part of the desired state.
       required: [phase, agent, power, open_issues]
       properties:
@@ -1411,9 +2147,30 @@ components:
           description: Newest revision applied to this target.
         open_issues: { type: integer, minimum: 0 }
         last_run_id: { $ref: "#/components/schemas/NullableId" }
+        ignored_drift:
+          type: array
+          description: |
+            Drift that a rule dropped at intake and that is still there (D-092). Missing means
+            none. It makes an ignore visible.
+          items: { $ref: "#/components/schemas/IgnoredDrift" }
+    IgnoredDrift:
+      type: object
+      additionalProperties: false
+      required: [resource, rule, attrs, last_seen]
+      properties:
+        resource: { type: string, examples: ["file:/etc/motd"] }
+        rule:
+          $ref: "#/components/schemas/Name"
+          description: The Rule that dropped it.
+        attrs:
+          type: array
+          description: The attributes that differ. No values.
+          items: { type: string }
+        last_seen: { $ref: "#/components/schemas/Time" }
 
     Proposal:
       type: object
+      additionalProperties: false
       required: [reason]
       properties:
         reason: { type: string, minLength: 1, maxLength: 2000 }
@@ -1423,12 +2180,26 @@ components:
         delete:
           type: array
           items: { $ref: "#/components/schemas/DocumentRef" }
+        targets:
+          type: array
+          description: |
+            Targets to plan also when their documents do not change. Use it to send a new secret
+            value to the targets of `SecretInfo.used_by` (D-090).
+          items: { $ref: "#/components/schemas/Name" }
+    RollbackRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 2000 }
     ReasonRequest:
       type: object
+      additionalProperties: false
       properties:
         reason: { type: string, maxLength: 2000 }
     ApproveRequest:
       type: object
+      additionalProperties: false
       properties:
         comment: { type: string, maxLength: 2000 }
 
@@ -1445,6 +2216,7 @@ components:
             from: { description: The value in the guest now. Missing when not there. }
             to: { description: The desired value. Missing when it must not be there. }
             risk: { $ref: "#/components/schemas/Risk" }
+            ignored: { $ref: "#/components/schemas/IgnoredFlag" }
           additionalProperties: false
         - type: object
           required: [attr, sensitive, risk]
@@ -1452,7 +2224,16 @@ components:
             attr: { type: string }
             sensitive: { const: true }
             risk: { $ref: "#/components/schemas/Risk" }
+            ignored: { $ref: "#/components/schemas/IgnoredFlag" }
           additionalProperties: false
+    # T-025 question 1 (open): today a rule hides the Issue only, and a Plan still shows and
+    # applies the difference with this flag. If a rule must also stop the apply, this flag
+    # changes its meaning to "not applied"; no other shape changes.
+    IgnoredFlag:
+      type: boolean
+      description: |
+        Only in a Plan: a Rule ignores this drift (D-092). The Plan still shows the change, and
+        an apply still overwrites it. Missing means `false`.
     Action:
       type: string
       enum: [create, update, delete, restart]
@@ -1466,6 +2247,7 @@ components:
         the result). `stale`: the head moved before approval.
     Plan:
       type: object
+      additionalProperties: false
       required:
         - id
         - origin
@@ -1486,11 +2268,20 @@ components:
         id: { $ref: "#/components/schemas/Id" }
         origin:
           type: string
-          enum: [proposal, revert, accept, reenroll]
+          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule]
           description: What made the Plan.
         issue_id:
           $ref: "#/components/schemas/NullableId"
-          description: The issue, for `revert` and `accept`.
+          description: The issue, for `revert`, `accept` and `ignore_rule`.
+        rollback_to:
+          type: [integer, "null"]
+          format: int64
+          minimum: 1
+          description: |
+            The revision `n` of `POST /revisions/{n}/rollback` (D-131). Set when `origin` is
+            `rollback`; missing or `null` for every other origin. The server sets it; no request
+            can send it. The Plan was built against `base_revision`, so the revision that an
+            approval commits has the same documents as revision `rollback_to`.
         status: { $ref: "#/components/schemas/PlanStatus" }
         risk: { $ref: "#/components/schemas/Risk" }
         reason: { type: string }
@@ -1510,18 +2301,46 @@ components:
           items: { $ref: "#/components/schemas/TargetPlan" }
         warnings:
           type: array
-          description: For example "cannot detect drift" for a `command` resource.
+          description: |
+            For example "cannot detect drift" for a `command` resource, or the names of the
+            secrets that an import wrote.
           items: { type: string }
+        human_only:
+          type: array
+          description: |
+            Reasons why only a human session can approve this Plan (D-099). Missing or empty for
+            a normal Plan. `secret-binding`: a target and resource gets a secret that it did not
+            get in the base revision. `rule-change`: the Plan puts, changes or deletes a Rule.
+            The server computes it from the content of the proposal, for every origin.
+          items:
+            type: string
+            enum: [secret-binding, rule-change]
+    PlannedSecret:
+      type: object
+      additionalProperties: false
+      description: A secret that a target gets, with the version that the Plan was made with.
+      required: [name, version]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        version: { type: integer, format: int64, minimum: 1 }
     TargetPlan:
       type: object
+      additionalProperties: false
       required: [target, resources]
       properties:
         target: { $ref: "#/components/schemas/Name" }
+        secrets:
+          type: array
+          description: |
+            The secrets that the desired state of this target uses (D-089). Missing means none.
+            The Plan is stale when one of them has another version or is gone.
+          items: { $ref: "#/components/schemas/PlannedSecret" }
         resources:
           type: array
           items: { $ref: "#/components/schemas/ResourcePlan" }
     ResourcePlan:
       type: object
+      additionalProperties: false
       required: [resource, action, risk, changes]
       properties:
         resource:
@@ -1536,8 +2355,10 @@ components:
         unverified:
           type: boolean
           description: |
-            A resource of a new target. Nobody could observe it, so `changes` is empty; it is
-            verified at the first apply after the first boot (D-066).
+            A resource of a new target, or a resource of an existing target that gets a new secret
+            binding (D-156). Nobody observed it, so `changes` is empty, except one
+            `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
+            verified at the first apply (D-066, D-075).
 
     RunStatus:
       type: string
@@ -1548,6 +2369,7 @@ components:
       description: "`refused`: a change was above the approved risk."
     Run:
       type: object
+      additionalProperties: false
       description: A Run starts at approval. Who approved is on the Plan.
       required: [id, plan_id, revision, status, started_at, finished_at, targets]
       properties:
@@ -1562,6 +2384,7 @@ components:
           items: { $ref: "#/components/schemas/TargetRun" }
     TargetRun:
       type: object
+      additionalProperties: false
       required: [target, status, steps]
       properties:
         target: { $ref: "#/components/schemas/Name" }
@@ -1571,6 +2394,7 @@ components:
           items: { $ref: "#/components/schemas/RunStep" }
     RunStep:
       type: object
+      additionalProperties: false
       required: [resource, action, status, changes, output, started_at, finished_at]
       properties:
         resource: { type: string }
@@ -1594,10 +2418,13 @@ components:
       enum: [open, resolving, resolved]
     IssueAction:
       type: string
-      enum: [accept, revert]
-      description: First-slice actions (D-044). Ignore actions come with the `Rule` kind.
+      enum: [accept, revert, ignore_once, ignore_rule]
+      description: |
+        `accept` and `revert` (D-068), `ignore_once` (D-091), `ignore_rule` (D-092). See
+        `POST /issues/{id}/resolve` for who may use them.
     Issue:
       type: object
+      additionalProperties: false
       description: |
         Drift of one resource on one target. Drift on `guest:config` comes from Proxmox, all
         other drift from the agent.
@@ -1634,7 +2461,7 @@ components:
           items: { $ref: "#/components/schemas/IssueAction" }
         plan_id:
           $ref: "#/components/schemas/NullableId"
-          description: The Plan that resolves it (`accept`, `revert`).
+          description: The Plan that resolves it (`accept`, `revert`, `ignore_rule`).
         resolution:
           oneOf:
             - $ref: "#/components/schemas/Resolution"
@@ -1644,22 +2471,43 @@ components:
           items: { $ref: "#/components/schemas/Comment" }
     Resolution:
       type: object
+      additionalProperties: false
       required: [action, by, at]
       properties:
         action:
           type: string
-          enum: [accept, revert, gone]
-          description: "`gone`: the drift went away by itself; `by` is `system`."
+          enum: [accept, revert, gone, ignore]
+          description: |
+            `gone`: the drift went away by itself; `by` is `system`. `ignore`: by `ignore_once`
+            or by a Rule.
         by: { $ref: "#/components/schemas/Principal" }
         at: { $ref: "#/components/schemas/Time" }
     ResolveRequest:
       type: object
+      additionalProperties: false
       required: [action]
       properties:
         action: { $ref: "#/components/schemas/IssueAction" }
         reason: { type: string, maxLength: 2000 }
+        rule:
+          type: object
+          description: Only for `ignore_rule`. The scope of the new Rule. The server names it.
+          additionalProperties: false
+          properties:
+            all_targets:
+              type: boolean
+              default: false
+              description: "`true`: the rule is for every target (`target: \"*\"`). Default: the target of the issue."
+            attrs:
+              type: array
+              minItems: 1
+              maxItems: 50
+              uniqueItems: true
+              description: Attributes to ignore. Default is every attribute of the resource.
+              items: { type: string, minLength: 1, maxLength: 100 }
     Comment:
       type: object
+      additionalProperties: false
       required: [id, author, body, created_at]
       properties:
         id: { $ref: "#/components/schemas/Id" }
@@ -1668,12 +2516,187 @@ components:
         created_at: { $ref: "#/components/schemas/Time" }
     CommentRequest:
       type: object
+      additionalProperties: false
       required: [body]
       properties:
         body: { type: string, minLength: 1, maxLength: 10000 }
 
+    RevisionInfo:
+      type: object
+      additionalProperties: false
+      description: One committed revision (provenance, D-008).
+      required: [id, author, reason, plan_id, created_at, documents]
+      properties:
+        id: { $ref: "#/components/schemas/Revision" }
+        author:
+          $ref: "#/components/schemas/Principal"
+          description: |
+            The author of the Plan that made this revision (D-128). The approver is
+            `approved_by` of that Plan.
+        reason: { type: string }
+        plan_id:
+          $ref: "#/components/schemas/NullableId"
+          description: The Plan that made it. `null` for a seeded revision.
+        created_at: { $ref: "#/components/schemas/Time" }
+        documents:
+          type: integer
+          minimum: 0
+          description: Number of documents in the revision.
+    RevisionDiff:
+      type: object
+      additionalProperties: false
+      required: [from, to, changes]
+      properties:
+        from:
+          type: [integer, "null"]
+          description: The base revision. `null` is the empty state (before revision 1).
+        to: { $ref: "#/components/schemas/Revision" }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/DocumentChange" }
+    DocumentChange:
+      type: object
+      additionalProperties: false
+      required: [kind, name, op, before, after]
+      properties:
+        kind: { $ref: "#/components/schemas/DocumentKind" }
+        name: { $ref: "#/components/schemas/Name" }
+        op:
+          type: string
+          enum: [added, changed, removed]
+        before:
+          description: The document in `from`. `null` for `added`.
+          oneOf:
+            - $ref: "#/components/schemas/Document"
+            - type: "null"
+        after:
+          description: The document in `to`. `null` for `removed`.
+          oneOf:
+            - $ref: "#/components/schemas/Document"
+            - type: "null"
+
+    SecretInfo:
+      type: object
+      description: Metadata of a secret. There is no schema with a readable secret value.
+      required: [name, version, updated_by, updated_at, used_by]
+      additionalProperties: false
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Changes with every write. It comes from one counter for all secrets, so it is not a
+            count of the writes of this secret (D-087).
+        updated_by: { $ref: "#/components/schemas/Principal" }
+        updated_at: { $ref: "#/components/schemas/Time" }
+        used_by:
+          type: array
+          description: Targets of the head revision that refer to the secret.
+          items: { $ref: "#/components/schemas/Name" }
+    SecretValue:
+      type: object
+      required: [value]
+      additionalProperties: false
+      properties:
+        value:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 65536
+          description: UTF-8 text, at most 65536 bytes. Plumb never returns it.
+
+    Tier:
+      type: string
+      enum: [read, plan, apply]
+      description: Token tier (D-046).
+    Token:
+      type: object
+      description: An API token without its bearer value.
+      required: [id, name, tier, max_risk, created_by, created_at, last_used_at, revoked_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: Public part of the token. Its principal is `token:<id>`.
+          examples: [tok_ci]
+        name: { type: string }
+        tier: { $ref: "#/components/schemas/Tier" }
+        max_risk:
+          type: [string, "null"]
+          enum: [reversible, disruptive, null]
+          description: Only for tier `apply`; `null` for the other tiers.
+        created_by: { $ref: "#/components/schemas/Principal" }
+        created_at: { $ref: "#/components/schemas/Time" }
+        last_used_at: { $ref: "#/components/schemas/NullableTime" }
+        revoked_at: { $ref: "#/components/schemas/NullableTime" }
+    TokenRequest:
+      type: object
+      required: [name, tier]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        tier: { $ref: "#/components/schemas/Tier" }
+        max_risk:
+          type: string
+          enum: [reversible, disruptive]
+          description: Required for tier `apply`, not allowed for the other tiers (422).
+    TokenCreated:
+      type: object
+      required: [token, bearer]
+      additionalProperties: false
+      properties:
+        token: { $ref: "#/components/schemas/Token" }
+        bearer:
+          type: string
+          description: The bearer value `<id>.<secret>`. Shown once; Plumb stores only a hash.
+
+    ExportRequest:
+      type: object
+      required: [passphrase]
+      additionalProperties: false
+      properties:
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 12
+          maxLength: 1024
+    ImportRequest:
+      type: object
+      required: [content, reason]
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 8388608
+          description: "The text of an export file (YAML stream, `format: 1`)."
+        mode:
+          type: string
+          enum: [replace, merge]
+          default: replace
+          description: "`replace`: documents that are not in the file are deleted. `merge`: only put."
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 1024
+          description: Opens the `SecretBundle` of the file. Without it no secret is written.
+        overwrite:
+          type: array
+          description: |
+            Names of existing secrets that the import may replace with the value of the bundle.
+            Default: none (D-095).
+          items: { $ref: "#/components/schemas/Name" }
+        reason: { type: string, minLength: 1, maxLength: 2000 }
+
     Event:
       type: object
+      additionalProperties: false
       description: One entry of the append-only event log.
       required: [seq, type, time, subject, actor, data]
       properties:
@@ -1692,10 +2715,14 @@ components:
             - issue.resolved
             - target.status
             - revision.committed
+            - token.created
+            - token.revoked
+            - secret.updated
+            - secret.deleted
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string
-          pattern: "^(plan|run|issue|target|revision):.+$"
+          pattern: "^(plan|run|issue|target|revision|token|secret):.+$"
           description: "`<kind>:<id or name>`, for example `plan:12` or `target:web1`."
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }

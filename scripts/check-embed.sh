@@ -5,7 +5,9 @@ set -eu
 plumb=$1
 agent=$2
 work=$(mktemp -d)
-trap 'kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
+# Wait for plumb to exit before removing its data: dev mode (simulated
+# agents, T-024) still writes there while it shuts down.
+trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
 
 api=127.0.0.1:${PLUMB_CHECK_PORT:-18443}
 agents=127.0.0.1:${PLUMB_CHECK_AGENT_PORT:-18444}

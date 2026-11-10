@@ -15,6 +15,7 @@ import (
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/link"
+	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -26,6 +27,10 @@ const (
 	OriginRevert   = "revert"
 	OriginAccept   = "accept"
 	OriginReenroll = "reenroll"
+	// Slice 2 (migration plan_origin, D-096).
+	OriginRollback   = "rollback"
+	OriginImport     = "import"
+	OriginIgnoreRule = "ignore_rule"
 )
 
 // DocKey names a document.
@@ -45,6 +50,10 @@ type Proposal struct {
 	// Reenroll lists targets that get a new enrollment token and a
 	// restart (D-038). Their agents may be offline.
 	Reenroll []string `json:"reenroll,omitempty"`
+	// Notes are warnings of the Plan that come from its origin, for
+	// example the secrets that an import wrote (D-095). They stay with the
+	// stored proposal, also when the Plan is dropped.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // Input is a request to plan.
@@ -54,6 +63,17 @@ type Input struct {
 	Author   string // principal
 	Origin   string // default OriginProposal
 	IssueID  int64
+	// RollbackTo is the revision of a rollback (D-131). Only Rollback sets it.
+	RollbackTo int64
+	// Imported names the secrets that an import writes (D-153). They
+	// count as present, a resource that uses one is not observed (as
+	// D-156), and BeforeStore writes them after every check, just before
+	// the Plan is stored. Its notes become Plan warnings.
+	Imported    []string
+	BeforeStore func(ctx context.Context) ([]string, error)
+	// Base, when not 0, is the head revision that the proposal was built
+	// against. Propose fails with store.ErrPlanStale when the head moved.
+	Base int64
 }
 
 // TargetPlan is the planned work on one target. The Plan stores a list
@@ -64,6 +84,9 @@ type TargetPlan struct {
 	// "reenroll" or "" (no guest change).
 	Guest     string           `json:"guest,omitempty"`
 	Resources []ResourceChange `json:"resources"`
+	// Secrets are the secrets of the desired state of this target, with
+	// the versions that the Plan was made with (D-089).
+	Secrets []PlannedSecret `json:"secrets,omitempty"`
 }
 
 // ResourceChange is the planned change of one resource.
@@ -102,6 +125,9 @@ type Config struct {
 	Events *event.Log
 	Agents Agents
 	Driver driver.Driver
+	// Secrets is the secret store. nil: no secret exists, and a target
+	// that refers to one cannot be planned.
+	Secrets *secret.Store
 	// OnDrift receives drift reports of agents and of the guest poll.
 	// The issue package handles them.
 	OnDrift func(ctx context.Context, target string, rep wire.Report) error
@@ -266,7 +292,18 @@ func (e *Engine) sendWatch(ctx context.Context, target string) error {
 	if err != nil || r == nil {
 		return err
 	}
-	_, err = e.cfg.Agents.Send(target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources})
+	return e.watch(ctx, target, r)
+}
+
+// watch sends the desired list of a render with the current secret
+// values. When a secret is missing it sends nothing: a marker or an empty
+// value never reaches a guest (D-089).
+func (e *Engine) watch(ctx context.Context, target string, r *state.Rendered) error {
+	body, _, err := e.withSecrets(ctx, r.Resources, nil)
+	if err != nil {
+		return fmt.Errorf("plan: watch list of %s not sent: %w", target, err)
+	}
+	_, err = e.cfg.Agents.Send(target, wire.CommandWatch, wire.WatchBody{Resources: body})
 	return err
 }
 

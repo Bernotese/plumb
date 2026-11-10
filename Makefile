@@ -11,7 +11,7 @@ GO_FILES     = $(shell find . -name '*.go' -not -path '*/node_modules/*')
 # npm ci runs only when the lock file changed; npm writes this file on every install.
 WEB_DEPS     = web/node_modules/.package-lock.json
 
-.PHONY: build check-embed build-web test test-go test-race test-web lint lint-go lint-sh lint-web test-guest test-pve clean
+.PHONY: build check-embed build-web test test-go test-race test-web test-e2e lint lint-go lint-sh lint-web test-guest test-pve clean
 
 ## build: web UI and both static binaries → bin/
 build: build-web
@@ -44,6 +44,11 @@ test-race:
 ## test-web: unit tests of the web UI (vitest)
 test-web: $(WEB_DEPS)
 	cd web && npm test
+
+## test-e2e: Playwright test of the UI against plumb serve --dev --dev-demo
+## (needs `make build` and a Chromium: cd web && npx playwright install --with-deps chromium)
+test-e2e: build
+	cd web && npx playwright test
 
 ## lint: all linters
 lint: lint-go lint-sh lint-web

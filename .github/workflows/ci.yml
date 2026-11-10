@@ -40,3 +40,7 @@ jobs:
           bin/plumb-agent version
       - name: plumb embeds the UI and the agent
         run: make check-embed
+      - name: Browser for the end-to-end test
+        run: cd web && npx playwright install --with-deps chromium
+      - name: End-to-end test (UI on the real API)
+        run: make test-e2e

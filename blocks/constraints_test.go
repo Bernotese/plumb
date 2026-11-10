@@ -71,7 +71,8 @@ func TestStarterParameterMetadataAndTemplates(t *testing.T) {
 				if param["type"] != "string" || !ok || title == "" {
 					t.Errorf("%s needs a string type and title", name)
 				}
-				if name != "ssh_key" && param["default"] == nil {
+				// A secret parameter (writeOnly) has no default by rule (D-088).
+				if name != "ssh_key" && param["writeOnly"] != true && param["default"] == nil {
 					t.Errorf("%s needs a default", name)
 				}
 			}
