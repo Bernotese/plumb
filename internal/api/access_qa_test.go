@@ -32,6 +32,15 @@ func TestTierMatrixCoversContract(t *testing.T) {
 					break
 				}
 			}
+			// A slice 2 operation that is in the contract before its handler
+			// (T-027) names the card that adds it. That card adds the matrix
+			// row and removes the mark; a mark with a row is stale.
+			if card, planned := op["x-plumb-planned"].(string); planned {
+				if found != nil {
+					t.Errorf("%s %s is in the tier matrix but still has x-plumb-planned: %s", method, path, card)
+				}
+				continue
+			}
 			if found == nil {
 				t.Errorf("tier matrix omits %s %s", method, path)
 				continue

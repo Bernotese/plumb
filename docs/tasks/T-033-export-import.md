@@ -14,6 +14,7 @@ A user can export the desired state as one readable YAML file and import it into
 `internal/state/export.go` (encode, decode, limits) · `internal/secret/bundle.go` (passphrase bundle) · `internal/api/*` · `internal/plan/*` (origin `import`) · tests, `internal/state/testdata/export/*`
 
 ## Acceptance criteria
+- [ ] The operations of this card lose `x-plumb-planned` in `api/openapi.yaml` and get their rows in the tier matrix of `internal/api` (D-100).
 - [ ] Export format of D-094. The output is stable: the same revision gives the same bytes, except the time in the header.
 - [ ] `GET /export` (tier `read`) holds no secret value. `POST /export` (human session, passphrase ≥ 12 characters) adds the `SecretBundle`. Both answers send `Cache-Control: no-store`.
 - [ ] The bundle names the fixed argon2id parameters of format 1 (D-094). An import refuses a bundle with any other parameter before it runs argon2id, and runs it in the argon2 slots of D-070 (429 when they are busy).

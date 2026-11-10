@@ -14,6 +14,7 @@ A human manages API tokens and secrets and runs export and import in the web UI.
 `web/src/screens/Settings.svelte`, `Tokens.svelte`, `Secrets.svelte`, `ExportImport.svelte` · router, nav, client · `web/e2e/*`
 
 ## Acceptance criteria
+- [ ] The card adds its operations to `PlumbApi` (`web/src/lib/client.ts`), the HTTP client and the mock. The mock data comes from the contract examples (`example(op, code)`).
 - [ ] **Tokens:** list (name, tier, max risk, created, last used, revoked). Create form: `max_risk` only for tier `apply`. The bearer is shown once with a copy button and a "you cannot see it again" note; it is not kept in any store or URL. Revoke asks for confirmation. A note says that an `apply` token is root on the guests (§7).
 - [ ] **Secrets:** list (name, version, changed by, changed at, used by). Set and replace with a password field (`autocomplete="off"`; multi-line switch for keys). A value is never shown again and never kept after the request. Delete is disabled with a reason while targets use the secret.
 - [ ] After a replace with `used_by` targets, the screen offers "Plan the change for N targets" (`Proposal.targets`) and opens the Plan view (D-090).

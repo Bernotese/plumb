@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/doc/rule.json",
+  "title": "Rule",
+  "description": "A rule about drift. The controller drops matching drift at intake (D-092). Only a human approves a Plan that changes a Rule (D-099).",
+  "type": "object",
+  "required": ["kind", "name", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "const": "Rule" },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+      "description": "Unique per kind. Lower case letters, digits, '-' and '.'."
+    },
+    "spec": {
+      "type": "object",
+      "required": ["action", "target", "resource"],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "ignore",
+          "description": "What the rule does. 'ignore': matching drift opens no Issue. A Plan still shows and applies the difference."
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^(\\*|[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?)$",
+          "description": "Name of a Target, or '*' for every target, also future ones."
+        },
+        "resource": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*:.+$",
+          "maxLength": 4096,
+          "description": "Exact resource id 'type:key', for example 'file:/etc/motd'. No patterns."
+        },
+        "attrs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "description": "Attributes that the rule covers. Default: every attribute of the resource."
+        }
+      }
+    }
+  }
+}

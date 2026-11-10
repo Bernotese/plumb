@@ -545,7 +545,9 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       auth();
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
-      if (issue.status !== "open" || !issue.actions.includes(action)) {
+      // The ignore actions of slice 2 (D-091, D-092) come to the mock with T-036.
+      const known = action === "accept" || action === "revert";
+      if (issue.status !== "open" || !known || !issue.actions.includes(action)) {
         throw problem(
           "conflict",
           "Action not allowed",

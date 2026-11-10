@@ -15,6 +15,7 @@ A user can ignore one drift, or ignore a kind of drift for good with a `Rule` do
 `internal/issue/*` · `internal/state/*` (kind `Rule`, validation) · `internal/store/issue.go`, `migrations/0005_issue_ignore.sql` · `internal/api/*` (`/rules`, resolve answers, approval check, `ignored_drift` in the target view) · `internal/plan/*` (origin `ignore_rule`, `human_only: rule-change`, `Change.ignored` in Plans) · tests
 
 ## Acceptance criteria
+- [ ] The operations of this card lose `x-plumb-planned` in `api/openapi.yaml` and get their rows in the tier matrix of `internal/api` (D-100).
 - [ ] Who may `ignore_once` (D-091): a human session; an `apply` token only when every change of the Issue has a risk up to its `max_risk` and none is sensitive. A `plan` or `read` token gets 403 `human-required`; an `apply` token over its limit gets 403 `risk-too-high`; a sensitive or `destructive` change is human-only.
 - [ ] `ignore_once` (D-091): 200 with the Issue, `resolved`, resolution `ignore`, no Plan, no revision. An equal later report opens no Issue. A report with other changes opens one. After `unchanged` or an apply of the resource, the same drift opens an Issue again.
 - [ ] `ignore_rule` (D-092): 201 with a Plan (origin `ignore_rule`, risk `read`, no target change) that puts one `Rule`. The Issue is `resolving`; it resolves as `ignore` when the revision commits and is `open` again when the Plan is dropped or stale.

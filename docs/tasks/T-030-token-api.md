@@ -14,6 +14,7 @@ A human can list, create and revoke API tokens through `/api/v1/tokens`.
 `internal/store/auth.go` (`Tokens` list) · `internal/api/handlers.go` (+ `tokens.go`) · `cmd/plumb/dev.go` (demo token) · tests
 
 ## Acceptance criteria
+- [ ] The operations of this card lose `x-plumb-planned` in `api/openapi.yaml` and get their rows in the tier matrix of `internal/api` (D-100).
 - [ ] `GET /tokens`, `POST /tokens`, `DELETE /tokens/{id}` per the contract. Human session only: every token tier gets 403 `human-required`.
 - [ ] The bearer value is in the `POST` answer only. No list, log, event or error holds it or its hash.
 - [ ] A revoked token fails at its next call (401), and its open event streams end at once (D-070). Revoke is soft: the row stays for the history of "who approved".

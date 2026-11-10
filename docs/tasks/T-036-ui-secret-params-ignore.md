@@ -14,6 +14,7 @@ The target form takes secrets for secret parameters. The issue view offers "Igno
 `web/src/lib/schemaForm.ts` (+ test) · `web/src/ui/SchemaFields.svelte`, `SecretPicker.svelte` · `web/src/screens/IssueView.svelte`, `Issues.svelte`, `Rules.svelte`, `PlanView.svelte` · `web/e2e/*`
 
 ## Acceptance criteria
+- [ ] The card adds its operations to `PlumbApi` (`web/src/lib/client.ts`), the HTTP client and the mock. The mock data comes from the contract examples (`example(op, code)`).
 - [ ] A `writeOnly` string parameter renders as a secret picker: choose an existing secret or create one in place. The form saves `{secret: name}` and never a literal (D-088).
 - [ ] The Plan view shows "uses secrets: …" per target and shows a sensitive change as "changed (hidden)". For `human_only` it says why only a human can approve ("gives secret X to web1", "changes an ignore rule"). It marks a change with `ignored: true` as "a rule ignores this drift; this apply overwrites it".
 - [ ] Issue view: "Ignore once" (reason, then the Issue is resolved) and "Ignore by rule" (this target or all targets; all attributes or the changed ones; opens the Plan view). Buttons follow `Issue.actions`.
