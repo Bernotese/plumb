@@ -1,7 +1,7 @@
 # Architecture
 
 Plumb is one controller service plus one small agent in every guest. This file is the contract for all agents.
-Reasons for each choice: `docs/DECISIONS.md` D-018 … D-041. Terms: `docs/BRIEF.md` §3. Proxmox facts were checked against the PVE 9.2 API schema.
+Reasons for each choice: `docs/DECISIONS.md` D-018 … D-044. Terms: `docs/BRIEF.md` §3. Proxmox facts were checked against the PVE 9.2 API schema.
 
 ## 1. Overview
 ```
@@ -54,7 +54,7 @@ type Driver interface {              // internal/driver – runs in the controll
 
 ## 3. Data model (D-021, D-026, D-027)
 - The State is a set of **documents**: `kind`, `name`, `spec`. Kinds: `Image`, `Block`, `Target`, `Rule` (later).
-- Documents are YAML in the export and JSON in the database. JSON Schema 2020-12 is the only schema language. It validates documents and defines Block parameters. The UI builds forms from it.
+- Documents are YAML in the export and JSON in the database. JSON Schema 2020-12 is the only schema language. It validates documents and defines Block parameters. The UI builds forms from it. The schema files in `internal/` are the only source; the OpenAPI file refers to them (D-043).
 - A **Revision** is an immutable, numbered set of documents. Documents are stored once by content hash, so unchanged documents are shared. The newest revision is the desired state.
 ```yaml
 kind: Block                          # blocks/deploy-user.yaml
@@ -96,7 +96,7 @@ spec:
 | `POST /plans`, `GET /plans/{id}`, `POST /plans/{id}/approve` | Propose, read, approve |
 | `GET /runs/{id}` | Result per target and resource |
 | `GET /revisions`, `GET /revisions/{n}/diff`, `POST /revisions/{n}/rollback` | History. Rollback returns a Plan |
-| `GET /issues`, `POST /issues/{id}/resolve`, `POST /issues/{id}/comments` | Actions: `accept`, `revert`, `ignore_once`, `ignore_rule` |
+| `GET /issues`, `POST /issues/{id}/resolve`, `POST /issues/{id}/comments` | Actions: `accept`, `revert`. Later: `ignore_once`, `ignore_rule` (D-044) |
 | `GET /events?since=<seq>` | Server-sent events, resumable |
 | `GET/POST/DELETE /tokens`, `PUT /secrets/{name}`, `GET /export`, `POST /import` | Admin |
 
@@ -154,7 +154,7 @@ Only the real-host level needs Proxmox. It is not part of CI. **The user must pr
 - Layout: `cmd/plumb`, `cmd/plumb-agent` (flags only) · `internal/<package>` (§2, tests next to the code) · `api/openapi.yaml` · `blocks/*.yaml` (embedded) · `web/` (`web/dist` is embedded) · `install/install.sh` · `test/` (guest and real-host harness).
 - Go: `gofmt`, `go vet`, `staticcheck`, `CGO_ENABLED=0`, `log/slog`, wrapped errors, `context` first, table tests. No `util` package.
 - Go dependencies (a new one needs a decision line): `modernc.org/sqlite`, `go.yaml.in/yaml`, `santhosh-tekuri/jsonschema`, `golang.org/x/crypto`, `golang.org/x/sys`. No web framework, no ORM, no Proxmox SDK.
-- Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types. Web dependencies (same rule): `svelte`, `vite`, `typescript`, `openapi-typescript`, `vitest`, `@playwright/test`, and the lint tools.
+- Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types. Web dependencies (same rule): `svelte`, `vite`, `typescript`, `openapi-typescript`, `vitest`, `@playwright/test`. Build and lint tools are free as `devDependencies` (D-042).
 - Run: `make build` (UI + both binaries) · `make test` · `make lint` · `make test-guest` · `make test-pve` · `bin/plumb serve --dev` (fake driver only, simulated agents, seeded data, plain HTTP with a cookie without `Secure`; for development and screenshots only).
 
 ## 10. Roadmap after the first slice (names only)

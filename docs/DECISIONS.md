@@ -1,6 +1,6 @@
 # Decisions (one line each: ID · date · decision · why)
 
-Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions at the end (next: D-042).
+Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions at the end (next: D-045).
 
 - D-001 · 2026-11-10 · Scope is a homelab with one Proxmox host; no other hypervisors or clouds · user brief §4.1
 - D-002 · 2026-11-10 · Guest OS is Debian stable and current Ubuntu LTS only · user brief §4.2
@@ -43,3 +43,6 @@ Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions 
 - D-039 · 2026-11-10 · `plumb serve --dev` uses the fake driver only, plain HTTP and a session cookie without `Secure`; without `--dev` plain HTTP is refused · `browser-shot` and Playwright use a non-localhost HTTP address; dev mode can never touch a real Proxmox host
 - D-040 · 2026-11-10 · Plumb is an internal application: the UI and API are for the LAN only, and port 8443 uses a certificate from the Plumb CA. A custom certificate can come later · user answer Q3; no internet-facing hardening or ACME needed now
 - D-041 · 2026-11-10 · The Proxmox test host comes later (2026-11-11 at the earliest). T-012, T-013 and the real-host part of T-015 are blocked until `pl-lead` confirms the host; no other card may depend on it · user answer Q1; the slice is built and tested on `driver/fake` first
+- D-042 · 2026-11-10 · Web tooling: a `devDependency` that only builds, checks or lints (for example `@sveltejs/vite-plugin-svelte`, `@tsconfig/svelte`, `globals`, `@redocly/openapi-core`) needs no own decision line; every runtime `dependency` of the web app still needs one · the allowlist of D-035 exists to keep shipped code small and reviewed; tools that never reach the user's browser do not need that gate
+- D-043 · 2026-11-10 · The JSON Schemas in `internal/state/schema` (documents) and `internal/resource/schema` (resource attributes) are the only source for these shapes. They are closed (`additionalProperties: false`). `api/openapi.yaml` refers to them with `$ref` and does not copy them · one schema source (D-026); a typo in a document is an error in every client
+- D-044 · 2026-11-10 · First-slice issue actions are `accept` and `revert` only. `ignore_once` and `ignore_rule` come with the `Rule` kind · the slice API must not offer what the server cannot do (review of T-017)
