@@ -29,6 +29,10 @@ export interface PlumbApi {
   listIssues(): Promise<Issue[]>;
   getIssue(id: number): Promise<Issue>;
   resolveIssue(id: number, action: IssueAction, reason?: string): Promise<Plan>;
-  /** Subscribes to the event stream after `since`; returns the unsubscribe function. */
-  events(since: number, onEvent: (e: PlumbEvent) => void): () => void;
+  /**
+   * Subscribes to the event stream: events after `since`, or only new ones
+   * when `since` is undefined. Reconnects by itself. Returns the unsubscribe
+   * function.
+   */
+  events(since: number | undefined, onEvent: (e: PlumbEvent) => void): () => void;
 }

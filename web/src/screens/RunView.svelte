@@ -22,11 +22,25 @@
     skipped: "muted",
   };
 
+  // The server adds steps while the run goes on: a step that the snapshot
+  // does not have yet loads the run again (at most every 300 ms).
+  let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+  function reloadSoon() {
+    if (reloadTimer) return;
+    reloadTimer = setTimeout(() => {
+      reloadTimer = undefined;
+      void api.getRun(id).then((r) => (run = r));
+    }, 300);
+  }
+
   function onEvent(e: PlumbEvent) {
     if (e.subject !== `run:${id}` || !run) return;
+    const d = e.data as { target?: string; resource?: string; status?: string };
     if (applyStepEvent(run, e)) {
-      const d = e.data as { target?: string; resource?: string; status?: string };
       announce = `${d.resource} on ${d.target}: ${d.status}`;
+    } else if (e.type === "run.step") {
+      announce = `${d.resource} on ${d.target}: ${d.status}`;
+      reloadSoon();
     } else if (e.type === "run.finished") {
       void api.getRun(id).then((r) => {
         run = r;
@@ -39,7 +53,7 @@
     // Subscribe first and buffer, so no step event is lost while the
     // snapshot loads; then apply the buffer to the snapshot.
     let buffer: PlumbEvent[] | null = [];
-    const stop = api.events(0, (e: PlumbEvent) => (buffer ? buffer.push(e) : onEvent(e)));
+    const stop = api.events(undefined, (e: PlumbEvent) => (buffer ? buffer.push(e) : onEvent(e)));
     api.getRun(id).then(
       (r) => {
         run = r;
@@ -49,7 +63,10 @@
       },
       (e: unknown) => (error = e),
     );
-    return stop;
+    return () => {
+      stop();
+      clearTimeout(reloadTimer);
+    };
   });
 </script>
 

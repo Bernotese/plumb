@@ -13,11 +13,17 @@
   let filter = $state<"open" | "resolving" | "resolved" | "all">("open");
   const tone: Record<Issue["status"], Tone> = { open: "warn", resolving: "info", resolved: "ok" };
 
-  $effect(() => {
+  const load = () =>
     api.listIssues().then(
       (i) => (issues = i),
       (e: unknown) => (error = e),
     );
+  $effect(() => {
+    void load();
+    // The inbox follows the event stream: no reload needed.
+    return api.events(undefined, (e) => {
+      if (e.type.startsWith("issue.")) void load();
+    });
   });
   const shown = $derived(issues?.filter((i) => filter === "all" || i.status === filter) ?? []);
 </script>

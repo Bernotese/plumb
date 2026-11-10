@@ -576,7 +576,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       return p;
     },
     events(since, onEvent) {
-      for (const e of log) if (e.seq > since) onEvent(e);
+      if (since !== undefined) for (const e of log) if (e.seq > since) onEvent(e);
       listeners.add(onEvent);
       return () => listeners.delete(onEvent);
     },

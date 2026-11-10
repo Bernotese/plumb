@@ -10,11 +10,18 @@
   let targets = $state<TargetView[] | null>(null);
   let error = $state<unknown>(null);
 
-  $effect(() => {
+  const load = () =>
     api.listTargets().then(
       (t) => (targets = t.sort((a, b) => a.document.name.localeCompare(b.document.name))),
       (e: unknown) => (error = e),
     );
+  $effect(() => {
+    void load();
+    // Status changes arrive as events: the list follows them.
+    return api.events(undefined, (e) => {
+      if (e.type === "target.status" || e.type === "run.finished" || e.type.startsWith("issue."))
+        void load();
+    });
   });
 </script>
 
