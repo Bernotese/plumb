@@ -4,21 +4,25 @@ Product: **Plumb** – self-hosted infrastructure controller for a Proxmox homel
 (Naming: the product is "Plumb". The herdr workspace and local folder are still called `plump`.)
 
 ## Phase
-Architecture. **No feature code** until `docs/ARCHITECTURE.md` is reviewed by `pl-reviewer` and approved by the user.
+First slice: one VM, from an image, configured by the agent, drift as an issue. Architecture approved by the user on 2026-11-10 (PR #1).
+Wave plan: `docs/tasks/T-001-architecture.md`, Plan section.
 
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-001 architecture + first task cards | pl-architect | done, PR #1 open |
-| T-002 architecture review (incl. security) | pl-reviewer | done: changes needed (4 must) |
-| T-016 architecture rework | pl-architect | done, second review: approve |
-| T-019 record user answers | pl-architect | in progress |
+| T-003 Go scaffold + contracts | pl-architect | in progress (wave 0) |
+| T-017 OpenAPI + web skeleton | pl-frontend | in progress (wave 0), merge after T-003 |
+| T-004 state/store → T-009 link/events/fake driver | pl-backend | waits for T-003 |
+| T-005 resources → T-018 agent loop | pl-frontend | waits for T-003, T-017 |
+| T-007 guest test harness | pl-codex-qa | waits for T-003 |
+| T-008 starter blocks | pl-codex-fix | waits for T-003 |
+| T-006, T-010, T-011, T-014, T-015 | see cards | later waves |
+| T-013 installer → T-012 Proxmox driver → real-host part of T-015 | pl-backend | **blocked: test host (D-041)** |
 
 ## Done
 - 2026-11-10 · Team setup, auto mode, GitHub remote, model split.
 - 2026-11-10 · Brief stored, decisions D-001 … D-017 seeded.
+- 2026-11-10 · T-001, T-002, T-016, T-019: architecture, review (approve), decisions D-018 … D-041, slice cards. Merged as a9b4579.
 
 ## Open for the user
-- Provide the Proxmox test host (PVE ≥ 9.1; needs: ARCHITECTURE §8). Planned from 2026-11-11. Blocks T-012 and T-013.
-- Questions 2–5 answered on 2026-11-10 (see T-019).
-- Approve the architecture (PR #1). Review verdict: approve.
+- Provide the Proxmox test host (PVE ≥ 9.1; needs: ARCHITECTURE §8). Planned from 2026-11-11.
