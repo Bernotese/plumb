@@ -93,7 +93,11 @@ func TestGuestAgentLoop(t *testing.T) {
 	if err := os.Mkdir(bad.Config.StateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(bad); err == nil || !strings.Contains(err.Error(), "mode 0700") {
+	badAgent, err := New(bad) // New logs cleanup errors; persistence must refuse the directory.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := badAgent.state.saveCredential("refuse"); err == nil || !strings.Contains(err.Error(), "mode 0700") {
 		t.Fatalf("accepted state_dir mode 0755 as root: %v", err)
 	}
 	if mode(t, bad.Config.StateDir) != 0o755 {
