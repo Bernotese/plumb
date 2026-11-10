@@ -119,6 +119,11 @@ func New(opt Options) (*Agent, error) {
 		listChanged: make(chan struct{}, 1),
 		applyDone:   make(chan []string, 64),
 	}
+	// An unsafe state dir stops the start: it would hold the credential and
+	// clear secret values (D-159, D-161). A cleanup error only warns.
+	if err := a.state.ensure(); err != nil {
+		return nil, err
+	}
 	if err := a.state.cleanStaleTemps(); err != nil {
 		a.log.Warn("could not clean stale agent state temp files", "error", err)
 	}

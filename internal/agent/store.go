@@ -21,15 +21,22 @@ const (
 	desiredFile    = "desired.json"
 )
 
+// Tests replace these: removeFile to force a cleanup error, agentUID to
+// test the owner check without root.
+var (
+	removeFile = os.Remove
+	agentUID   = os.Geteuid
+)
+
 // stateDir stores the agent's files.
 type stateDir struct{ dir string }
 
 func (s stateDir) path(name string) string { return filepath.Join(s.dir, name) }
 
 // ensure creates the state dir with mode 0700, or checks an existing one:
-// a real directory (no symlink) owned by the agent's user with no group or
-// other permissions. It never changes an existing directory, so a wrong
-// state_dir cannot break the guest.
+// a real directory (no symlink) owned by the agent's user with mode 0700.
+// It never changes an existing directory, so a wrong state_dir cannot break
+// the guest; New refuses to start instead (D-161).
 func (s stateDir) ensure() error {
 	fi, err := os.Lstat(s.dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -44,11 +51,23 @@ func (s stateDir) ensure() error {
 	if err != nil {
 		return err
 	}
+	uid := agentUID()
+	var problem string
 	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !fi.IsDir() || !ok || int(st.Uid) != os.Geteuid() || fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("state dir %s must be a directory owned by the agent user with mode 0700", s.dir)
+	switch {
+	case fi.Mode()&fs.ModeSymlink != 0:
+		problem = "is a symlink"
+	case !fi.IsDir():
+		problem = "is not a directory"
+	case !ok || int(st.Uid) != uid:
+		problem = "is not owned by the agent user"
+	case fi.Mode().Perm() != 0o700:
+		problem = fmt.Sprintf("has mode %04o", fi.Mode().Perm())
+	default:
+		return nil
 	}
-	return nil
+	return fmt.Errorf("state dir %s %s: it must be a real directory owned by uid %d with mode 0700 (fix: chown %d %s && chmod 0700 %s, or set state_dir to a new path)",
+		s.dir, problem, uid, uid, s.dir, s.dir)
 }
 
 func (s stateDir) cleanStaleTemps() error {
@@ -71,7 +90,7 @@ func (s stateDir) cleanStaleTemps() error {
 			continue
 		}
 		if info.Mode().IsRegular() {
-			if err := os.Remove(s.path(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := removeFile(s.path(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				errs = errors.Join(errs, err)
 			}
 		}
