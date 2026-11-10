@@ -42,6 +42,23 @@ describe("http api", () => {
     ]);
   });
 
+  it("calls the revision operations (T-034)", async () => {
+    const f = fakeFetch(() => Response.json({ items: [], next: null }));
+    const api = createHttpApi({ fetch: f.fn });
+    await api.listRevisions();
+    await api.listRevisions("a b", 2);
+    await api.diffRevision(7);
+    await api.diffRevision(7, 3);
+    await api.rollbackRevision(6, "Wrong MOTD.");
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["GET", "/api/v1/revisions?limit=50", undefined],
+      ["GET", "/api/v1/revisions?limit=2&cursor=a%20b", undefined],
+      ["GET", "/api/v1/revisions/7/diff", undefined],
+      ["GET", "/api/v1/revisions/7/diff?from=3", undefined],
+      ["POST", "/api/v1/revisions/6/rollback", { reason: "Wrong MOTD." }],
+    ]);
+  });
+
   it("sends the right method and body", async () => {
     const f = fakeFetch((c) =>
       c.method === "DELETE" || c.method === "PUT"
