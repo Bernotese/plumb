@@ -23,3 +23,7 @@ The contract of T-044 is on `main`, so T-047, T-048 and T-049 can run in paralle
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+pl-architect/T-046-after-contract · PR #78 · tests: `make lint test` → pass; `npm run gen`, `npm run check:api` → pass.
+`wire.Order` returns `[][]Edge` (index = position in the list; `Edge{To, Kind}`) or an `*OrderError` (`Reason`, `IDs`, `Blocks`; the text names the full cycle). `wire.RestartOn` reads `[]any` and `[]string`.
+Guard: `validate.go` refuses `spec.after` and `spec.restarts` ("not available yet") with a test (`TestAfterAndRestartsNotAvailableYet`). T-047 removes both.
+`web/src/lib/api.gen.ts` is generated and not in git. Mutations of `Order`: 6, all caught (PR text).
