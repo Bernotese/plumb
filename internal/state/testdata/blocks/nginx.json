@@ -1,0 +1,22 @@
+{
+  "kind": "Block",
+  "name": "nginx",
+  "spec": {
+    "title": "Nginx static site",
+    "params": {
+      "type": "object",
+      "properties": {
+        "server_name": {"type": "string", "title": "Server name", "default": "_"},
+        "port": {"type": "integer", "title": "Port", "minimum": 1, "maximum": 65535, "default": 80},
+        "root": {"type": "string", "title": "Web root", "default": "/var/www/html"},
+        "aliases": {"type": "array", "title": "More names", "items": {"type": "string"}, "default": []}
+      }
+    },
+    "resources": [
+      {"package": {"name": "nginx"}},
+      {"directory": {"path": "{{ .root }}", "mode": "0755", "owner": "root", "group": "root"}},
+      {"file": {"path": "/etc/nginx/sites-enabled/default", "content": "server {\n  listen {{ .port }};\n  server_name {{ .server_name }}{{ range .aliases }} {{ . }}{{ end }};\n  root {{ .root }};\n}\n"}},
+      {"service": {"name": "nginx", "restart_on": ["file:/etc/nginx/sites-enabled/default"]}}
+    ]
+  }
+}

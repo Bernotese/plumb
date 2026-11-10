@@ -60,6 +60,8 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 - Only `pl-lead` merges into `main` (after QA + review, `gh pr merge --squash` or local merge + push) and removes worktrees.
 - Forbidden: force-push, deleting remote branches, changing repo settings/secrets. These are blocked by the permission rules.
 - Tests must pass on your branch before you report done. If you cannot test, say why.
+- New decisions: do not edit `docs/DECISIONS.md` in a PR (it conflicted on almost every merge). Write them to `docs/decisions/T-NNN.md` in your PR, one line each, same format, with the numbers `pl-lead` gave you. `pl-lead` appends them to `docs/DECISIONS.md` after the merge.
+- Before you report a PR as ready: merge `origin/main` into your branch. GitHub runs no CI on a conflicting PR.
 
 ## Permissions
 - Claude agents run in **auto mode** (`.claude/settings.json`): installs, git (commit, branch, push), `gh pr …` are pre-allowed; truly risky actions (force-push, repo deletion/settings, sudo, deleting home/system paths, reading credentials) are denied.

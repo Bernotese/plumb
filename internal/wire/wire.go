@@ -4,7 +4,10 @@
 // for ids and risk order, and it imports no other Plumb package.
 package wire
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Risk is the risk class of one change (ARCHITECTURE §4).
 type Risk string
@@ -68,6 +71,10 @@ type Resource struct {
 	// Sensitive names the attributes whose value came from a secret.
 	// The agent never reports a value or a hash for them (D-037); see Redact.
 	Sensitive []string `json:"sensitive,omitempty"`
+	// SecretValues are the clear secret values inside Attrs. They never go
+	// on the wire (json "-"); the controller keeps them in memory only, to
+	// mask them in every agent output and error (D-062, T-029 QA).
+	SecretValues []string `json:"-"`
 }
 
 // Kind is the kind of a target.
@@ -92,6 +99,9 @@ type Change struct {
 	// "changed"; no value and no hash of it leaves the guest (D-037).
 	Sensitive bool `json:"sensitive,omitempty"`
 	Risk      Risk `json:"risk"`
+	// Ignored is set only by the controller, in a Plan: a Rule ignores this
+	// drift (D-092). The Plan still applies it. An agent never sets it.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // Redact enforces the sensitive rule on changes that come from outside the
@@ -108,6 +118,7 @@ func Redact(sensitive []string, changes []Change) []Change {
 		if c.Sensitive || contains(sensitive, c.Attr) {
 			c = Change{Attr: c.Attr, Sensitive: true, Risk: c.Risk}
 		}
+		c.Ignored = false // only the controller marks a change as ignored (D-092)
 		out[i] = c
 	}
 	return out
@@ -189,4 +200,51 @@ func ID(typ, key string) string { return typ + ":" + key }
 func SplitID(id string) (typ, key string, ok bool) {
 	typ, key, found := strings.Cut(id, ":")
 	return typ, key, found && typ != "" && key != ""
+}
+
+// Covers reports whether every change in now is also in planned: same
+// attr, from, to and risk. When either side is sensitive, only attr and
+// risk are compared. Values are compared in their JSON form, so an int
+// equals a float64 or json.Number of the same value. Order does not
+// matter. This is the one rule of D-075 for the controller and the agent.
+func Covers(planned, now []Change) bool {
+	for _, c := range now {
+		found := false
+		for _, p := range planned {
+			if sameChange(p, c) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func sameChange(a, b Change) bool {
+	if a.Attr != b.Attr || a.Risk != b.Risk {
+		return false
+	}
+	if a.Sensitive || b.Sensitive {
+		return true
+	}
+	return jsonForm(a.From) == jsonForm(b.From) && jsonForm(a.To) == jsonForm(b.To)
+}
+
+// jsonForm returns the normal JSON text of a value: decoded and encoded
+// again, so numbers are float64 and object keys are sorted. A missing
+// value is "null".
+func jsonForm(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return "\x00invalid"
+	}
+	var back any
+	if err := json.Unmarshal(raw, &back); err != nil {
+		return "\x00invalid"
+	}
+	out, _ := json.Marshal(back)
+	return string(out)
 }

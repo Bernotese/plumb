@@ -1,0 +1,46 @@
+{
+  "target": "two-motds",
+  "kind": "vm",
+  "image": "ubuntu-26.04",
+  "guest": {
+    "id": "guest:config",
+    "type": "guest",
+    "block": "",
+    "attrs": {
+      "bridge": "vmbr1",
+      "cores": 1,
+      "disk": 8,
+      "gateway": "10.0.0.1",
+      "ip": "10.0.0.9/24",
+      "memory": 512,
+      "ssh_keys": [],
+      "user": "plumb"
+    }
+  },
+  "resources": [
+    {
+      "id": "file:/etc/motd",
+      "type": "file",
+      "block": "motd",
+      "attrs": {
+        "content": "Managed by Plumb\n",
+        "group": "root",
+        "mode": "0644",
+        "owner": "root",
+        "path": "/etc/motd"
+      }
+    },
+    {
+      "id": "file:/etc/issue",
+      "type": "file",
+      "block": "issue",
+      "attrs": {
+        "content": "Hello\n",
+        "group": "root",
+        "mode": "0644",
+        "owner": "root",
+        "path": "/etc/issue"
+      }
+    }
+  ]
+}
