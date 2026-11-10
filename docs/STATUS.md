@@ -10,18 +10,18 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part done (22 items to verify on host), static review queued. Real-host part **blocked: test host** |
+| T-012 Proxmox VM driver | pl-backend | draft PR #20: static review fixes pushed (b5408a1), re-review running. Real-host part **blocked: test host** |
 | T-021 flow test with the real agent | pl-codex-qa | draft PR #21: done, green; review queued; merges after #8, #13 |
 | T-022 agent: 4xx on drift flush | pl-codex-fix | waits for T-018 |
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
 | T-005 resources | pl-frontend | PR #8: static review approve (ea35c1e); merge after the first real guest run. **Blocked: Docker access** |
 | T-018 agent loop + drift | pl-frontend | PR #13 (stacked on #8): static review approve (29aa0a4); merge after #8 and the first real guest run. **Blocked: Docker access** |
-| T-006 web UI slice (mock API) | pl-frontend | PR #19: review running, QA queued |
-| T-014 UI on the real API | pl-frontend | in progress (stacked on T-006) |
-| T-023 dev login + demo data (D-080) | pl-backend | PR #23: QA + review running |
+| T-006 web UI slice (mock API) | pl-frontend | PR #19: review fixes pushed (dbf2ceb); QA found 3 more (PR #24), fix by pl-frontend; then re-review |
+| T-014 UI on the real API | pl-frontend | branch pushed, no code yet; after the T-006 fixes |
+| T-023 dev login + demo data (D-080) | pl-backend | PR #23: review approve; QA fixes by pl-codex-qa (sync user, /dev/ 404 guard), then delta review |
 | T-015 slice acceptance | pl-codex-qa | after T-021 |
 | T-020 symlink resource type | tbd | backlog (after the slice) |
-| T-013 minimal installer | pl-backend | offline part in progress (dry-run mode). Real-host part **blocked: test host** |
+| T-013 minimal installer | pl-backend | offline part in progress (branch at 20c19df: install.sh draft with dry-run). Real-host part **blocked: test host** |
 
 ## Done
 - 2026-11-10 · Team setup, auto mode, GitHub remote, model split.
