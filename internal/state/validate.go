@@ -588,6 +588,17 @@ func (s *Set) checkTarget(name string) Errors {
 	} else if img.Type != t.Type {
 		errs = append(errs, errf("/spec/image", "Image %q is for %s, the Target is %s", t.Image, img.Type, t.Type))
 	}
+	// guest and overrides never hold a reference, at any depth (D-088).
+	if at := findRef(t.Guest, "/spec/guest"); at != "" {
+		errs = append(errs, errf(at, "guest settings cannot hold a secret reference (D-088)"))
+	}
+	for id, attrs := range t.Overrides {
+		for attr, v := range attrs {
+			if at := findRef(v, ptr("/spec/overrides", id, attr)); at != "" {
+				errs = append(errs, errf(at, "an override cannot hold a secret reference (D-088)"))
+			}
+		}
+	}
 	ids := map[string]int{}
 	for i, use := range t.Blocks {
 		path := ptr("/spec/blocks", i)
@@ -619,6 +630,11 @@ func (s *Set) checkTarget(name string) Errors {
 				errs = append(errs, errf(ppath, "a secret reference is {secret: <name>} with a secret name and nothing else"))
 			case !b.secrets[p] && isRef:
 				errs = append(errs, errf(ppath, "parameter %q of Block %q takes no secret reference; only a parameter with type string and writeOnly: true does", p, use.Use))
+			case !b.secrets[p]:
+				// No reference inside a list or object either (D-088, D-139).
+				if at := findRef(use.Params[p], ppath); at != "" {
+					errs = append(errs, errf(at, "a secret reference must be the whole value of a secret parameter (type string, writeOnly: true); it cannot be inside a list or an object"))
+				}
 			}
 		}
 		sort.Strings(unknown)

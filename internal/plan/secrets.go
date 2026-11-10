@@ -317,3 +317,40 @@ func plannedOrEmpty(p []PlannedSecret) []PlannedSecret {
 	}
 	return p
 }
+
+// SecretValues is the link.Config.SecretValues of the controller: the
+// clear values of the secrets in the head render of a target, so link can
+// mask them in every report, also after a restart (D-062). A missing
+// secret has no value to leak and is left out.
+func (e *Engine) SecretValues(ctx context.Context, target string) ([]string, error) {
+	r, err := e.headRender(ctx, target)
+	if err != nil || r == nil || e.cfg.Secrets == nil {
+		return nil, err
+	}
+	names := state.SecretNames(r)
+	if len(names) == 0 {
+		return nil, nil
+	}
+	have, err := e.versions(ctx, names)
+	if err != nil {
+		return nil, err
+	}
+	var present []string
+	for _, n := range names {
+		if _, ok := have[n]; ok {
+			present = append(present, n)
+		}
+	}
+	if len(present) == 0 {
+		return nil, nil
+	}
+	vals, err := e.cfg.Secrets.Resolve(ctx, present)
+	if err != nil { // also a secret deleted meanwhile: link answers 503, the agent retries
+		return nil, err
+	}
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		out = append(out, v.Text)
+	}
+	return out, nil
+}

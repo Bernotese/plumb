@@ -71,6 +71,10 @@ type Resource struct {
 	// Sensitive names the attributes whose value came from a secret.
 	// The agent never reports a value or a hash for them (D-037); see Redact.
 	Sensitive []string `json:"sensitive,omitempty"`
+	// SecretValues are the clear secret values inside Attrs. They never go
+	// on the wire (json "-"); the controller keeps them in memory only, to
+	// mask them in every agent output and error (D-062, T-029 QA).
+	SecretValues []string `json:"-"`
 }
 
 // Kind is the kind of a target.

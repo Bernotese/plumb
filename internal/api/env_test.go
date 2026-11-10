@@ -74,8 +74,9 @@ func newEnv(t *testing.T, dev bool) *env {
 		t.Fatal(err)
 	}
 	e.link, err = link.New(link.Config{Dir: filepath.Join(dir, "link"), Store: st, Events: e.events, Logger: log,
-		OnReport:  func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
-		Sensitive: func(ctx context.Context, tg, id string) ([]string, bool, error) { return eng.Sensitive(ctx, tg, id) }})
+		OnReport:     func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
+		Sensitive:    func(ctx context.Context, tg, id string) ([]string, bool, error) { return eng.Sensitive(ctx, tg, id) },
+		SecretValues: func(ctx context.Context, tg string) ([]string, error) { return eng.SecretValues(ctx, tg) }})
 	if err != nil {
 		t.Fatal(err)
 	}

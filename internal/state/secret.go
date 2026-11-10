@@ -202,6 +202,10 @@ func WithSecrets(rs []wire.Resource, values map[string]string) ([]wire.Resource,
 		}
 		r.Attrs = attrs.(map[string]any)
 		r.Sensitive = append([]string(nil), r.Sensitive...)
+		r.SecretValues = nil
+		for _, n := range ResourceSecrets(rs[i]) {
+			r.SecretValues = append(r.SecretValues, values[n])
+		}
 		out[i] = r
 	}
 	return out, nil
@@ -399,3 +403,27 @@ func sortedAnyKeys(m map[string]any) []string {
 }
 
 func sortedParams(m map[string]any) []string { return sortedAnyKeys(m) }
+
+// findRef returns the pointer of the first map inside v that has a
+// "secret" key, or "". Such a map is a secret reference, or looks like
+// one; only the whole value of a secret parameter may be one (D-139).
+func findRef(v any, path string) string {
+	switch v := v.(type) {
+	case map[string]any:
+		if _, ok := v["secret"]; ok {
+			return path
+		}
+		for _, k := range sortedAnyKeys(v) {
+			if p := findRef(v[k], ptr(path, k)); p != "" {
+				return p
+			}
+		}
+	case []any:
+		for i, e := range v {
+			if p := findRef(e, ptr(path, i)); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
