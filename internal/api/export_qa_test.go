@@ -16,6 +16,7 @@ import (
 )
 
 // Compare logical SQLite content, including ciphertext, counters and events.
+// Only agent.last_seen_at is left out (see below).
 func qaImportDB(t *testing.T, e *env, tables ...string) string {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(e.dir, "plumb.db")+"?mode=ro")
@@ -58,6 +59,14 @@ func qaImportDB(t *testing.T, e *env, tables ...string) string {
 			}
 			if err := rows.Scan(ptrs...); err != nil {
 				t.Fatal(err)
+			}
+			for i, col := range cols {
+				// agent.last_seen_at is the link heartbeat: every poll of a
+				// running agent writes it (link.handlePoll → TouchAgent),
+				// independent of any API request. Not import content (T-045).
+				if table == "agent" && col == "last_seen_at" {
+					vals[i] = nil
+				}
 			}
 			raw, err := json.Marshal(vals)
 			if err != nil {

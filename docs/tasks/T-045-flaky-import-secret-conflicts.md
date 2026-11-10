@@ -21,3 +21,6 @@ Found by pl-architect in the PR #75 review: `internal/api/export_test.go:246` "s
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+pl-backend/T-045-flaky-import-secret-conflicts · tests: `go test ./internal/api -run '^TestImportSecretConflicts$' -count=60` × 8 parallel → 0/480 fail (before: 78/320); `make lint test` → pass.
+Write in between: `agent.last_seen_at`, by `link.handlePoll` → `store.TouchAgent` on every poll of the fake agent (`env.agent`). All 156 diff lines were this column. Case (b): not import content; the import path never calls `Link.Send`. Fix: `qaImportDB` blanks only that column. D-166.
+Other snapshot tests (`TestImportRefuses`, `TestQAImportRejectedDBUnchanged`, `TestQAImportApprovalBoundaryAndExactRoundTrip`, `TestSlice2TokenAndImportBoundaries`) use the same helper and get the same fix; on main they had 0/960 fails under the same load (window not hit). `link_test.dumpDB` is a leak check, not affected.
