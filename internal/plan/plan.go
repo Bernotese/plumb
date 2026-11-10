@@ -1,0 +1,338 @@
+// Package plan is the one change flow of Plumb (ARCHITECTURE §4, D-022):
+// proposal → Plan → approval → Revision + Run. It also routes agent
+// reports, backs the redaction lists of link with the head revision
+// (D-062) and polls the Proxmox level for drift (§6).
+package plan
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/event"
+	"github.com/Bernotese/plumb/internal/link"
+	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
+)
+
+// Origins of a Plan (the plan.origin column).
+const (
+	OriginProposal = "proposal"
+	OriginRevert   = "revert"
+	OriginAccept   = "accept"
+	OriginReenroll = "reenroll"
+)
+
+// DocKey names a document.
+type DocKey struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
+// Proposal is what a client wants to change. It is stored with the Plan,
+// so approval rebuilds exactly the planned document set.
+type Proposal struct {
+	Put    []state.Doc `json:"put,omitempty"`
+	Delete []DocKey    `json:"delete,omitempty"`
+	// Targets are planned even when their documents do not change
+	// (revert of drift).
+	Targets []string `json:"targets,omitempty"`
+	// Reenroll lists targets that get a new enrollment token and a
+	// restart (D-038). Their agents may be offline.
+	Reenroll []string `json:"reenroll,omitempty"`
+}
+
+// Input is a request to plan.
+type Input struct {
+	Proposal Proposal
+	Reason   string
+	Author   string // principal
+	Origin   string // default OriginProposal
+	IssueID  int64
+}
+
+// TargetPlan is the planned work on one target. The Plan stores a list
+// of these as its changes (migration 0001: [{target, resources}]).
+type TargetPlan struct {
+	Target string `json:"target"`
+	// Guest is what happens to the guest: "create", "update", "delete",
+	// "reenroll" or "" (no guest change).
+	Guest     string           `json:"guest,omitempty"`
+	Resources []ResourceChange `json:"resources"`
+}
+
+// ResourceChange is the planned change of one resource.
+type ResourceChange struct {
+	Resource string        `json:"resource"`
+	Action   wire.Action   `json:"action,omitempty"`
+	Changes  []wire.Change `json:"changes,omitempty"`
+	Risk     wire.Risk     `json:"risk"`
+	// Unverified marks a resource of a new target: the guest does not
+	// exist yet, so nobody could observe it. It is verified at the first
+	// apply after the first boot.
+	Unverified bool `json:"unverified,omitempty"`
+}
+
+// risk is the highest risk of a target plan.
+func (t TargetPlan) risk() wire.Risk {
+	r := wire.RiskRead
+	for _, c := range t.Resources {
+		if c.Risk.Exceeds(r) {
+			r = c.Risk
+		}
+	}
+	return r
+}
+
+// Agents is what the engine needs from link. *link.Link implements it.
+type Agents interface {
+	Send(target string, typ wire.CommandType, body any) (string, error)
+	Online(target string) bool
+	NewEnrollToken(ctx context.Context, target string) (string, time.Time, error)
+}
+
+// Config configures an Engine.
+type Config struct {
+	Store  *store.Store
+	Events *event.Log
+	Agents Agents
+	Driver driver.Driver
+	// OnDrift receives drift reports of agents and of the guest poll.
+	// The issue package handles them.
+	OnDrift func(ctx context.Context, target string, rep wire.Report) error
+	// OnPlanDone is called when the Run of a Plan ended (ok = succeeded)
+	// or a pending Plan went stale (ok = false).
+	OnPlanDone func(ctx context.Context, planID int64, ok bool)
+	// Timeouts. Defaults: observe 60 s, enroll 10 min, apply 15 min.
+	ObserveTimeout time.Duration
+	EnrollTimeout  time.Duration
+	ApplyTimeout   time.Duration
+	Logger         *slog.Logger
+}
+
+// Engine runs the change flow.
+type Engine struct {
+	cfg Config
+	st  *store.Store
+	log *slog.Logger
+
+	ctx    context.Context // runs live as long as the engine
+	cancel context.CancelFunc
+	runs   sync.WaitGroup
+
+	mu      sync.Mutex
+	results map[string]chan wire.Report // command id → reports
+	busy    map[string]int              // targets with a running Run
+	cache   *sensitiveCache
+}
+
+// New returns an Engine. Close stops its Runs.
+func New(cfg Config) (*Engine, error) {
+	if cfg.Store == nil || cfg.Agents == nil || cfg.Driver == nil {
+		return nil, errors.New("plan: Store, Agents and Driver are required")
+	}
+	if cfg.ObserveTimeout == 0 {
+		cfg.ObserveTimeout = time.Minute
+	}
+	if cfg.EnrollTimeout == 0 {
+		cfg.EnrollTimeout = 10 * time.Minute
+	}
+	if cfg.ApplyTimeout == 0 {
+		cfg.ApplyTimeout = 15 * time.Minute
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
+		results: map[string]chan wire.Report{}, busy: map[string]int{}}, nil
+}
+
+// Close cancels all Runs and waits for them.
+func (e *Engine) Close() {
+	e.cancel()
+	e.runs.Wait()
+}
+
+// Wait waits until no Run is active. For tests.
+func (e *Engine) Wait() { e.runs.Wait() }
+
+func (e *Engine) emit(ctx context.Context, typ, subject, actor string, data any) {
+	if e.cfg.Events == nil {
+		return
+	}
+	if _, err := e.cfg.Events.Emit(ctx, typ, subject, actor, data); err != nil {
+		e.log.Error("event", "type", typ, "err", err)
+	}
+}
+
+// --- reports ---
+
+// HandleReport is the link.Config.OnReport of the controller. link has
+// validated and redacted the report. Results and progress go to the
+// waiting Run or Plan; drift goes to OnDrift; a hello makes the engine
+// send the watch list again (D-061: after a restart of either side).
+func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
+	switch d.Report.Type {
+	case wire.ReportResult, wire.ReportProgress:
+		select {
+		case e.resultChan(d.Report.CommandID) <- d.Report:
+		default: // nobody reads (the waiter timed out); drop it
+		}
+		return nil
+	case wire.ReportDrift:
+		if e.cfg.OnDrift != nil {
+			return e.cfg.OnDrift(ctx, d.Target, d.Report)
+		}
+		return nil
+	case wire.ReportHello:
+		return e.sendWatch(ctx, d.Target)
+	}
+	return nil
+}
+
+// resultChan returns the report channel of a command. Whoever comes
+// first, the waiter or the report, creates it.
+func (e *Engine) resultChan(id string) chan wire.Report {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ch, ok := e.results[id]
+	if !ok {
+		ch = make(chan wire.Report, 1024)
+		e.results[id] = ch
+	}
+	return ch
+}
+
+func (e *Engine) dropChan(id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.results, id)
+}
+
+// ErrTimeout is returned when an agent did not answer in time.
+var ErrTimeout = errors.New("plan: the agent did not answer in time")
+
+// command sends a command and waits for its result. progress sees every
+// progress report. A lost command (D-061) ends in ErrTimeout.
+func (e *Engine) command(ctx context.Context, target string, typ wire.CommandType, body any,
+	timeout time.Duration, progress func(wire.Report)) (wire.Report, error) {
+	id, err := e.cfg.Agents.Send(target, typ, body)
+	if err != nil {
+		return wire.Report{}, err
+	}
+	ch := e.resultChan(id)
+	defer e.dropChan(id)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case rep := <-ch:
+			if rep.Type == wire.ReportProgress {
+				if progress != nil {
+					progress(rep)
+				}
+				continue
+			}
+			if rep.Error != "" {
+				return rep, fmt.Errorf("plan: agent of %s: %s", target, rep.Error)
+			}
+			return rep, nil
+		case <-timer.C:
+			return wire.Report{}, fmt.Errorf("%w (%s, %v)", ErrTimeout, target, timeout)
+		case <-ctx.Done():
+			return wire.Report{}, ctx.Err()
+		}
+	}
+}
+
+// sendWatch sends the full desired list of the head revision to a target.
+func (e *Engine) sendWatch(ctx context.Context, target string) error {
+	r, err := e.headRender(ctx, target)
+	if err != nil || r == nil {
+		return err
+	}
+	_, err = e.cfg.Agents.Send(target, wire.CommandWatch, wire.WatchBody{Resources: r.Resources})
+	return err
+}
+
+// --- head revision cache (D-062) ---
+
+// sensitiveCache holds the renders of one head revision. A new head
+// replaces it; rendering is costly (D-052), so it is never done per report.
+type sensitiveCache struct {
+	rev     int64
+	set     *state.Set
+	renders map[string]*state.Rendered
+}
+
+// headRender returns the render of a target in the head revision, or nil
+// when there is no revision or no such target.
+func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered, error) {
+	head, err := e.st.Head(ctx)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.mu.Lock()
+	c := e.cache
+	e.mu.Unlock()
+	if c == nil || c.rev != head.ID {
+		set, err := state.Load(ctx, e.st, head.ID)
+		if err != nil {
+			return nil, err
+		}
+		c = &sensitiveCache{rev: head.ID, set: set, renders: map[string]*state.Rendered{}}
+		e.mu.Lock()
+		e.cache = c
+		e.mu.Unlock()
+	}
+	e.mu.Lock()
+	r, ok := c.renders[target]
+	e.mu.Unlock()
+	if ok {
+		return r, nil
+	}
+	if !contains(c.set.Targets(), target) {
+		return nil, nil
+	}
+	r, err = c.set.Render(target)
+	if err != nil {
+		return nil, err
+	}
+	e.mu.Lock()
+	c.renders[target] = r
+	e.mu.Unlock()
+	return r, nil
+}
+
+// Sensitive is the link.Config.Sensitive of the controller: the sensitive
+// attributes of a resource in the head revision.
+func (e *Engine) Sensitive(ctx context.Context, target, resourceID string) ([]string, bool, error) {
+	r, err := e.headRender(ctx, target)
+	if err != nil || r == nil {
+		return nil, false, err
+	}
+	for _, res := range r.All() {
+		if res.ID == resourceID {
+			return res.Sensitive, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
