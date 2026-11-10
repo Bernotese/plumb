@@ -50,7 +50,8 @@ for distro in \
   if [[ "$settings" != "private 1" ]]; then echo "unexpected container settings: $settings" >&2; exit 1; fi
   ready=false
   for ((attempt=0; attempt<60; attempt++)); do
-    state=$(docker exec "$name" systemctl is-system-running 2>/dev/null || true)
+    run_test systemctl is-system-running >"$tmp/systemd-state" 2>/dev/null || true
+    state=$(<"$tmp/systemd-state")
     if [[ "$state" == running || "$state" == degraded ]]; then ready=true; break; fi
     sleep 1
   done
@@ -60,7 +61,7 @@ for distro in \
     exit 1
   fi
   echo "$distro systemd state: $state"
-  if [[ "$state" == degraded ]]; then docker exec "$name" systemctl --failed --no-legend; fi
+  if [[ "$state" == degraded ]]; then run_test systemctl --failed --no-legend; fi
   run_test /tests/guest.test -test.v -test.timeout=5m "$@"
   # TestSymlinkRules includes the hard-link cases.
   run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
