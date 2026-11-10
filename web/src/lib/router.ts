@@ -10,6 +10,7 @@ export type Route =
   | { name: "run"; id: number }
   | { name: "issues" }
   | { name: "issue"; id: number }
+  | { name: "rules" }
   | { name: "history" }
   | { name: "revision"; id: number }
   | { name: "settings"; tab: SettingsTab }
@@ -45,6 +46,7 @@ export function parse(hash: string): Route {
   if (a === "plans" && n) return { name: "plan", id: n };
   if (a === "runs" && n) return { name: "run", id: n };
   if (parts.length === 1 && a === "issues") return { name: "issues" };
+  if (parts.length === 2 && a === "issues" && b === "rules") return { name: "rules" };
   if (a === "issues" && n) return { name: "issue", id: n };
   if (parts.length === 1 && a === "history") return { name: "history" };
   if (a === "revisions" && n) return { name: "revision", id: n };
@@ -74,6 +76,8 @@ export function href(r: Route): string {
       return "#/issues";
     case "issue":
       return `#/issues/${r.id}`;
+    case "rules":
+      return "#/issues/rules";
     case "history":
       return "#/history";
     case "revision":

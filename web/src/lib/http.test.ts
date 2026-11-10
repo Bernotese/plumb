@@ -104,6 +104,27 @@ describe("http api", () => {
     expect(accepts[8]).toBe("application/json");
   });
 
+  it("calls the ignore operations and the rules (T-036)", async () => {
+    const f = fakeFetch(() => Response.json({ items: [], next: null }));
+    const api = createHttpApi({ fetch: f.fn });
+    await api.ignoreOnce(8);
+    await api.ignoreOnce(8, "Known.");
+    await api.resolveIssue(9, "ignore_rule", undefined, { all_targets: true, attrs: ["content"] });
+    await api.resolveIssue(9, "revert", "r");
+    await api.listRules();
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["POST", "/api/v1/issues/8/resolve", { action: "ignore_once" }],
+      ["POST", "/api/v1/issues/8/resolve", { action: "ignore_once", reason: "Known." }],
+      [
+        "POST",
+        "/api/v1/issues/9/resolve",
+        { action: "ignore_rule", rule: { all_targets: true, attrs: ["content"] } },
+      ],
+      ["POST", "/api/v1/issues/9/resolve", { action: "revert", reason: "r" }],
+      ["GET", "/api/v1/rules?limit=200", undefined],
+    ]);
+  });
+
   it("sends the right method and body", async () => {
     const f = fakeFetch((c) =>
       c.method === "DELETE" || c.method === "PUT"

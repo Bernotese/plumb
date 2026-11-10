@@ -11,6 +11,7 @@ const routes: Route[] = [
   { name: "run", id: 3 },
   { name: "issues" },
   { name: "issue", id: 7 },
+  { name: "rules" },
   { name: "history" },
   { name: "revision", id: 7 },
   { name: "settings", tab: "tokens" },

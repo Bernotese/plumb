@@ -13,6 +13,7 @@ import type {
   PlumbEvent,
   RevisionDiff,
   RevisionInfo,
+  RuleView,
   Run,
   SecretInfo,
   Session,
@@ -137,8 +138,18 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     getRun: (id) => call<Run>("GET", `/runs/${id}`),
     listIssues: async () => (await all<Issue>("/issues")).sort((a, b) => b.id - a.id),
     getIssue: (id) => call<Issue>("GET", `/issues/${id}`),
-    resolveIssue: (id, action, reason) =>
-      call<Plan>("POST", `/issues/${id}/resolve`, reason ? { action, reason } : { action }),
+    resolveIssue: (id, action, reason, rule) =>
+      call<Plan>("POST", `/issues/${id}/resolve`, {
+        action,
+        ...(reason ? { reason } : {}),
+        ...(rule ? { rule } : {}),
+      }),
+    ignoreOnce: (id, reason) =>
+      call<Issue>("POST", `/issues/${id}/resolve`, {
+        action: "ignore_once",
+        ...(reason ? { reason } : {}),
+      }),
+    listRules: () => all<RuleView>("/rules"),
     listRevisions: (cursor, limit = 50) =>
       call<PageOf<RevisionInfo>>(
         "GET",

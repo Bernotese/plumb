@@ -10,13 +10,14 @@ import type {
   ImageView,
   Change,
   Issue,
-  IssueAction,
   Plan,
   PlumbEvent,
   Problem,
   Proposal,
   ResourcePlan,
   RevisionInfo,
+  RuleDoc,
+  RuleView,
   Risk,
   Run,
   ImportRequest,
@@ -30,6 +31,7 @@ import type {
 } from "../types";
 import { CREATE_ONLY, maxRisk } from "../view";
 import { toYaml } from "../yaml";
+import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
 
 /** Banner of a mock build. */
@@ -75,11 +77,26 @@ function problem(
   });
 }
 
+/** A secret reference renders as a marker, never as a value (D-088). */
+export const marker = (name: string) => `\ue000${name}\ue001`;
+const MARKER = /\ue000([^\ue001]*)\ue001/g;
+const hasMarker = (v: unknown) => typeof v === "string" && v.includes("\ue000");
+
+/** Secret names in the rendered attributes of a resource. */
+export function secretsIn(attrs: Record<string, unknown>): string[] {
+  const out = new Set<string>();
+  for (const v of Object.values(attrs))
+    if (typeof v === "string") for (const m of v.matchAll(MARKER)) out.add(m[1] ?? "");
+  return [...out];
+}
+
 /** Replaces `{{ .name }}` with the parameter value (Go text/template subset). */
 export function renderValue(v: unknown, params: Record<string, unknown>): unknown {
   if (typeof v === "string") {
     return v.replace(/\{\{\s*\.(\w+)\s*\}\}/g, (_, k: string) => {
       const p = params[k];
+      const ref = secretName(p);
+      if (ref !== undefined) return marker(ref);
       return Array.isArray(p) ? p.join(" ") : p === undefined ? "" : String(p);
     });
   }
@@ -122,6 +139,15 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** A change; an attribute with a secret marker is sensitive and has no values (D-089). */
+function change(attr: string, from: unknown, to: unknown, risk: Risk): Change {
+  if (hasMarker(from) || hasMarker(to)) return { attr, sensitive: true, risk };
+  const c: Change = { attr, risk };
+  if (from !== undefined) c.from = from;
+  if (to !== undefined) c.to = to;
+  return c;
+}
 
 function resourcePlan(
   resource: string,
@@ -188,14 +214,14 @@ export function planTarget(
         { attr: "state", from: "absent", to: "present", risk: "reversible" },
       ];
       for (const [attr, to] of Object.entries(r.attrs))
-        changes.push({ attr, to, risk: "reversible" });
+        changes.push(change(attr, undefined, to, "reversible"));
       out.push(resourcePlan(r.id, "create", changes));
       continue;
     }
     const changes: Change[] = [];
     for (const attr of new Set([...Object.keys(prev.attrs), ...Object.keys(r.attrs)])) {
       if (!same(prev.attrs[attr], r.attrs[attr])) {
-        changes.push({ attr, from: prev.attrs[attr], to: r.attrs[attr], risk: "reversible" });
+        changes.push(change(attr, prev.attrs[attr], r.attrs[attr], "reversible"));
       }
     }
     if (changes.length) {
@@ -242,6 +268,38 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]),
   );
 
+  // Slice 2 demo data that the examples of the list operations do not show
+  // (D-140): the Block "app" with a secret parameter, as in the
+  // exportStateWithSecrets example (`db_password: {secret: app-db}`), and
+  // the ignore actions on open Issues (served from T-032).
+  const appBlock: BlockDoc = {
+    kind: "Block",
+    name: "app",
+    spec: {
+      title: "App database config",
+      description: "Writes the database settings of the app. The password is a secret.",
+      params: {
+        type: "object",
+        required: ["db_password"],
+        properties: {
+          db_host: { type: "string", title: "Database host", default: "db1" },
+          db_password: { type: "string", title: "Database password", writeOnly: true },
+        },
+      },
+      resources: [
+        {
+          file: {
+            path: "/etc/app/db.conf",
+            content: "host={{ .db_host }}\npassword={{ .db_password }}\n",
+            mode: "0600",
+          },
+        },
+      ],
+    },
+  } as BlockDoc;
+  blockViews.push({ revision: 7, document: appBlock });
+  blocks.set(appBlock.name, appBlock);
+
   const plans = new Map<number, Plan>();
   for (const p of [
     ...exampleItems<Plan>(example("listPlans", 200)),
@@ -257,6 +315,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   const issues = new Map<number, Issue>();
   for (const i of [...exampleItems<Issue>(example("listIssues", 200)), example("getIssue", 200)])
     issues.set(i.id, i);
+  for (const i of issues.values())
+    if (i.status === "open") i.actions = [...i.actions, "ignore_once", "ignore_rule"];
   // Plan 15 (example) resolves issue 7.
   const i7 = issues.get(7);
   const p15 = plans.get(15);
@@ -281,6 +341,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     ...images.map((i) => i.document),
     ...blockViews.map((b) => b.document),
     ...[...targets.values()].map((t) => t.document),
+    ...exampleItems<RuleView>(example("listRules", 200)).map((r) => r.document),
   ] as StateDocument[])
     headDocs.set(docKey(d), d);
   const revisions = new Map<number, { info: RevisionInfo; docs: Snapshot }>();
@@ -411,6 +472,99 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     return s;
   }
 
+  // Rules and secrets in plans (T-036, D-089, D-092, D-099).
+  function headRules(): RuleDoc[] {
+    return [...findRevision(head).docs.values()].filter((d) => d.kind === "Rule") as RuleDoc[];
+  }
+  const ruleMatches = (r: RuleDoc, target: string, resource: string, attr?: string) =>
+    (r.spec.target === "*" || r.spec.target === target) &&
+    r.spec.resource === resource &&
+    (attr === undefined || !r.spec.attrs || r.spec.attrs.includes(attr));
+
+  /** Marks the changes that a rule of the head ignores; the apply still writes them. */
+  function markIgnored(tp: { target: string; resources: ResourcePlan[] }) {
+    const rules = headRules();
+    for (const r of tp.resources)
+      for (const c of r.changes)
+        if (rules.some((rule) => ruleMatches(rule, tp.target, r.resource, c.attr)))
+          c.ignored = true;
+  }
+
+  /** Pairs "resource secret" that a target spec binds. */
+  function bindings(spec: TargetDoc["spec"] | undefined): Set<string> {
+    const out = new Set<string>();
+    if (!spec) return out;
+    for (const r of render(spec, blocks))
+      for (const n of secretsIn(r.attrs)) out.add(`${r.id} ${n}`);
+    return out;
+  }
+
+  /** TargetPlan.secrets of a spec; a missing secret is 422 (D-089). */
+  function plannedSecrets(spec: TargetDoc["spec"]) {
+    const names = [...new Set([...bindings(spec)].map((b) => b.split(" ")[1] ?? ""))].sort();
+    const missing = names.filter((n) => !secrets.has(n));
+    if (missing.length) {
+      throw problem("validation", "Validation failed", 422, "Secrets do not exist.", {
+        secrets: missing,
+      });
+    }
+    return names.map((name) => ({ name, version: secrets.get(name)?.version ?? 1 }));
+  }
+
+  /** The revision that last changed a document of the head. */
+  function lastChanged(key: string): number {
+    let at = head;
+    const now = JSON.stringify(findRevision(head).docs.get(key));
+    for (const id of [...revisions.keys()].sort((a, b) => b - a)) {
+      if (JSON.stringify(revisions.get(id)?.docs.get(key)) !== now) break;
+      at = id;
+    }
+    return at;
+  }
+
+  /**
+   * After a commit: open Issues (and the one the Plan resolves) that a rule
+   * fully covers resolve as `ignore`; targets record the dropped drift.
+   */
+  function applyRules(by: string, planId: number) {
+    const rules = headRules();
+    for (const t of targets.values()) {
+      const kept = (t.status.ignored_drift ?? []).filter((d) =>
+        rules.some((r) => r.name === d.rule),
+      );
+      if (kept.length) t.status.ignored_drift = kept;
+      else delete t.status.ignored_drift;
+    }
+    for (const issue of issues.values()) {
+      const mine = issue.status === "resolving" && issue.plan_id === planId;
+      if (issue.status !== "open" && !mine) continue;
+      const rule = rules.find((r) =>
+        issue.changes.every((c) => ruleMatches(r, issue.target, issue.resource, c.attr)),
+      );
+      if (!rule) continue;
+      issue.status = "resolved";
+      issue.actions = [];
+      issue.resolution = { action: "ignore", by, at: now() };
+      const target = targets.get(issue.target);
+      if (target) {
+        target.status.open_issues = Math.max(0, target.status.open_issues - 1);
+        if (target.status.open_issues === 0 && target.status.phase === "drifted")
+          target.status.phase = "ready";
+        const list = (target.status.ignored_drift ?? []).filter(
+          (d) => d.resource !== issue.resource,
+        );
+        list.push({
+          resource: issue.resource,
+          rule: rule.name,
+          attrs: issue.changes.map((c) => c.attr),
+          last_seen: issue.updated_at,
+        });
+        target.status.ignored_drift = list;
+      }
+      emit("issue.resolved", `issue:${issue.id}`, { plan_id: planId });
+    }
+  }
+
   function findPlan(id: number): Plan {
     const p = plans.get(id);
     if (!p) throw problem("not-found", "Not found", 404, `Plan ${id} does not exist.`);
@@ -418,7 +572,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   }
 
   function newPlan(
-    fields: Pick<Plan, "origin" | "issue_id" | "reason" | "targets" | "warnings">,
+    fields: Pick<Plan, "origin" | "issue_id" | "reason" | "targets" | "warnings"> &
+      Partial<Pick<Plan, "human_only">>,
   ): Plan {
     const s = auth();
     const all = fields.targets.flatMap((t) =>
@@ -622,7 +777,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           errors: [{ pointer: "/reason", message: "A reason is required." }],
         });
       }
-      const planTargets = [];
+      const planTargets: Plan["targets"] = [];
+      const humanOnly = new Set<"secret-binding" | "rule-change">();
       for (const doc of proposal.put ?? []) {
         if (doc.kind !== "Target") continue;
         const t = doc as TargetDoc;
@@ -634,31 +790,54 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
             `Image "${t.spec.image}" does not exist.`,
           );
         }
-        const resources = planTarget(targets.get(t.name)?.document.spec, t.spec, blocks);
-        planTargets.push({ target: t.name, resources });
+        const old = targets.get(t.name)?.document.spec;
+        const resources = planTarget(old, t.spec, blocks);
+        const used = plannedSecrets(t.spec);
+        planTargets.push({ target: t.name, ...(used.length ? { secrets: used } : {}), resources });
+        const before = bindings(old);
+        if ([...bindings(t.spec)].some((b) => !before.has(b))) humanOnly.add("secret-binding");
       }
-      // Targets planned without a document change (a new secret value, D-090):
-      // the mock renders no secrets, so it shows one hidden change per target.
+      // Targets planned without a document change (a new secret value, D-090).
       for (const name of proposal.targets ?? []) {
         if (planTargets.some((t) => t.target === name)) continue;
-        if (!targets.has(name)) {
+        const t = targets.get(name);
+        if (!t) {
           throw problem("validation", "Validation failed", 422, `Target "${name}" does not exist.`);
         }
-        planTargets.push({
-          target: name,
-          resources: [
-            resourcePlan("file:/etc/plumb/secrets", "update", [
-              { attr: "content", sensitive: true, risk: "reversible" },
-            ]),
-          ],
-        });
+        const used = plannedSecrets(t.document.spec);
+        const rendered = render(t.document.spec, blocks).filter((r) => secretsIn(r.attrs).length);
+        // The examples bind no secret to a target; the mock then shows one hidden change.
+        const resources = rendered.length
+          ? rendered.map((r) =>
+              resourcePlan(
+                r.id,
+                "update",
+                Object.entries(r.attrs)
+                  .filter(([, v]) => hasMarker(v))
+                  .map(([attr]) => ({
+                    attr,
+                    sensitive: true as const,
+                    risk: "reversible" as Risk,
+                  })),
+              ),
+            )
+          : [
+              resourcePlan("file:/etc/plumb/secrets", "update", [
+                { attr: "content", sensitive: true, risk: "reversible" },
+              ]),
+            ];
+        planTargets.push({ target: name, ...(used.length ? { secrets: used } : {}), resources });
       }
+      for (const d of [...(proposal.put ?? []), ...(proposal.delete ?? [])])
+        if (d.kind === "Rule") humanOnly.add("rule-change");
+      planTargets.forEach(markIgnored);
       const p = newPlan({
         origin: "proposal",
         issue_id: null,
         reason: proposal.reason,
         targets: planTargets,
         warnings: [],
+        human_only: [...humanOnly],
       });
       pendingDocs.set(p.id, proposal);
       return p;
@@ -670,6 +849,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     async approvePlan(id) {
       const s = auth();
       const p = findPlan(id);
+      // Only a person approves a human-only Plan (D-099; QA T-036 F2).
+      if (p.status === "pending" && (p.human_only?.length ?? 0) > 0 && s.tier !== "admin") {
+        throw problem(
+          "human-required",
+          "Human session required",
+          403,
+          "Only a person can approve this plan.",
+        );
+      }
       if (p.status === "stale" || (p.status === "pending" && p.base_revision !== head)) {
         if (p.status !== "stale") {
           p.status = "stale";
@@ -764,7 +952,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           view.status.applied_revision = head;
           targets.set(t.name, view);
         }
-        const issue = p.issue_id ? issues.get(p.issue_id) : undefined;
+        // An ignore_rule Plan resolves its issue in applyRules below.
+        const issue = p.issue_id && p.origin !== "ignore_rule" ? issues.get(p.issue_id) : undefined;
         if (issue) {
           issue.status = "resolved";
           issue.resolution = {
@@ -780,6 +969,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           }
           emit("issue.resolved", `issue:${issue.id}`, { plan_id: p.id });
         }
+        applyRules(s.principal, p.id);
       });
       active.add(job);
       void job.finally(() => active.delete(job));
@@ -801,13 +991,11 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       if (!i) throw new ApiError(example("getIssue", 404));
       return structuredClone(i);
     },
-    async resolveIssue(id, action: IssueAction, reason) {
+    async resolveIssue(id, action, reason, rule) {
       auth();
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
-      // The ignore actions of slice 2 (D-091, D-092) come to the mock with T-036.
-      const known = action === "accept" || action === "revert";
-      if (issue.status !== "open" || !known || !issue.actions.includes(action)) {
+      if (issue.status !== "open" || !issue.actions.includes(action)) {
         throw problem(
           "conflict",
           "Action not allowed",
@@ -815,32 +1003,116 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           `Issue ${id} does not allow "${action}" now.`,
         );
       }
-      const changes: Change[] =
-        action === "revert"
-          ? issue.changes
-          : issue.changes.map((c) =>
-              "sensitive" in c ? c : { attr: c.attr, from: c.to, to: c.from, risk: "read" as Risk },
-            );
-      const p = newPlan({
-        origin: action,
-        issue_id: id,
-        reason:
-          reason?.trim() || (action === "revert" ? "Revert drift." : "Accept the guest value."),
-        targets: [
-          { target: issue.target, resources: [resourcePlan(issue.resource, "update", changes)] },
-        ],
-        warnings:
-          action === "accept"
-            ? [
-                "Accept writes the guest value into the Target as an override. The guest does not change.",
-              ]
-            : [],
-      });
+      let p: Plan;
+      if (action === "ignore_rule") {
+        // One Rule through a Plan (D-092); only a person approves it (D-099).
+        const all = rule?.all_targets === true;
+        const slug = issue.resource.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+        const base = `ignore-${all ? "all" : issue.target}-${slug}`.slice(0, 55).replace(/-+$/, "");
+        const taken = new Set(headRules().map((r) => r.name));
+        let name = base;
+        for (let n = 2; taken.has(name); n++) name = `${base}-${n}`;
+        const doc: RuleDoc = {
+          kind: "Rule",
+          name,
+          spec: {
+            action: "ignore",
+            target: all ? "*" : issue.target,
+            resource: issue.resource,
+            ...(rule?.attrs?.length ? { attrs: rule.attrs } : {}),
+          },
+        };
+        p = newPlan({
+          origin: "ignore_rule",
+          issue_id: id,
+          reason: reason?.trim() || `Ignore drift of ${issue.resource}.`,
+          targets: [],
+          warnings: [],
+          human_only: ["rule-change"],
+        });
+        pendingDocs.set(p.id, { reason: p.reason, put: [doc as StateDocument] });
+      } else {
+        const changes: Change[] =
+          action === "revert"
+            ? structuredClone(issue.changes)
+            : issue.changes.map((c) =>
+                "sensitive" in c
+                  ? c
+                  : { attr: c.attr, from: c.to, to: c.from, risk: "read" as Risk },
+              );
+        const tp = {
+          target: issue.target,
+          resources: [resourcePlan(issue.resource, "update", changes)],
+        };
+        markIgnored(tp);
+        p = newPlan({
+          origin: action,
+          issue_id: id,
+          reason:
+            reason?.trim() || (action === "revert" ? "Revert drift." : "Accept the guest value."),
+          targets: [tp],
+          warnings:
+            action === "accept"
+              ? [
+                  "Accept writes the guest value into the Target as an override. The guest does not change.",
+                ]
+              : [],
+        });
+      }
       issue.status = "resolving";
       issue.plan_id = p.id;
       issue.actions = [];
       emit("issue.updated", `issue:${id}`, { plan_id: p.id });
       return p;
+    },
+    async ignoreOnce(id) {
+      const s = auth();
+      const issue = issues.get(id);
+      if (!issue) throw new ApiError(example("getIssue", 404));
+      // A person, or an apply token within its max risk and without sensitive changes (D-091).
+      if (s.tier !== "admin") {
+        const order: Risk[] = ["read", "reversible", "disruptive", "destructive"];
+        const within =
+          s.tier === "apply" &&
+          !issue.changes.some((c) => "sensitive" in c) &&
+          order.indexOf(issue.risk) <= order.indexOf(s.max_risk ?? "read");
+        if (!within) {
+          throw s.tier === "apply"
+            ? problem(
+                "risk-too-high",
+                "Risk exceeds token limit",
+                403,
+                "This token cannot revert this drift, so it cannot ignore it.",
+              )
+            : problem(
+                "human-required",
+                "Human session required",
+                403,
+                "This token cannot revert this drift, so it cannot ignore it. Ask a person.",
+              );
+        }
+      }
+      if (issue.status !== "open" || !issue.actions.includes("ignore_once")) {
+        throw problem("conflict", "Action not allowed", 409, `Issue ${id} is not open.`);
+      }
+      issue.status = "resolved";
+      issue.actions = [];
+      issue.updated_at = now();
+      issue.resolution = { action: "ignore", by: s.principal, at: now() };
+      const target = targets.get(issue.target);
+      if (target) {
+        target.status.open_issues = Math.max(0, target.status.open_issues - 1);
+        if (target.status.open_issues === 0 && target.status.phase === "drifted")
+          target.status.phase = "ready";
+      }
+      emit("issue.resolved", `issue:${id}`, {});
+      return structuredClone(issue);
+    },
+    async listRules() {
+      auth();
+      return headRules()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((document) => structuredClone({ revision: lastChanged(docKey(document)), document }));
     },
     async listRevisions(cursor, limit = 50) {
       auth();
