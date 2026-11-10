@@ -10,10 +10,11 @@ Wave plan: `docs/tasks/T-001-architecture.md`, Plan section. Secret store is not
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-004 state/store | pl-backend | PR #7: QA + review running |
+| T-004 state/store | pl-backend | PR #7: review approve, QA found 1 bug (PR #9); fixes by pl-backend pending |
 | T-009 link/events/fake driver | pl-backend | in progress (stacked on T-004) |
 | T-007 guest test harness | pl-codex-qa | PR #5: static review approve; merge after the first real run. **Blocked: Docker access (user action)** |
-| T-005 resources → T-018 agent loop | pl-frontend | T-005 in progress |
+| T-005 resources | pl-frontend | PR #8: QA + review running; guest run **blocked: Docker access** |
+| T-018 agent loop + drift | pl-frontend | in progress (stacked on T-005) |
 | T-006, T-010, T-011, T-014, T-015 | see cards | later waves |
 | T-013 installer → T-012 Proxmox driver → real-host part of T-015 | pl-backend | **blocked: test host (D-041)** |
 
