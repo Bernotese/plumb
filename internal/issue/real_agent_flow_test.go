@@ -176,6 +176,10 @@ func TestRealAgentCreateDriftRevertAndUnplannedChange(t *testing.T) {
 	secretTarget := target("web1", "planned", 10)
 	secretTarget.Spec = json.RawMessage(strings.Replace(string(secretTarget.Spec), `"blocks":[`, `"blocks":[{"use":"secret-file","params":{"password":{"secret":"password"}}},`, 1))
 	rule := doc(state.KindRule, "ignore-secret", `{"action":"ignore","target":"web1","resource":"file:/etc/secret","attrs":["content"]}`)
+	// Discard earlier commands so only this proposal can satisfy sawObserve.
+	for len(commands) > 0 {
+		<-commands
+	}
 	p = e.propose(plan.Proposal{Put: []state.Doc{secretBlock, secretTarget, rule}})
 	found, restartPlanned := false, false
 	for _, rc := range changes(t, p)["web1"].Resources {
