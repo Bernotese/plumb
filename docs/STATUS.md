@@ -15,7 +15,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **test host ready** |
 | T-013 minimal installer | pl-backend | draft PR #26: approved incl. T-052; three dry runs on the test host changed nothing. **Real install running**: pl-backend runs it on the test host (D-180: user decision, test host only), then checks the host items |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
-| T-044 order between Block uses (`after`), `restarts`, `nginx-site` | see child cards | plan approved (D-176); contract merged (T-046, PR #78); web merged (T-049, PR #81 holds #79; one review fix open at pl-codex-fix: index keys in the `after` / `restart_by` lists, not reachable until T-047 is on main). Running: T-047 state + plan (pl-architect), T-048 agent (pl-backend). Then T-050 Block, T-051 QA |
+| T-044 order between Block uses (`after`), `restarts`, `nginx-site` | see child cards | plan approved (D-176). On main: contract (T-046, PR #78), web (T-049, PR #81 + fix #82). T-047 state + plan: PR #80 approved, **must merge together with T-048** (the agent on main ignores `after`). T-048 agent: 80 % by pl-backend (555b94a), pl-frontend finishes it. Then T-050 Block, T-051 QA |
 | T-052 installer: key volume + `plumb key init`, static LXC address | pl-backend | done on the T-013 branch, approved by pl-reviewer (PR #26, 9556b32) |
 
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
