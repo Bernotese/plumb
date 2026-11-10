@@ -100,7 +100,7 @@
     </dl>
   </div>
 
-  {#each plan.warnings as w (w)}
+  {#each plan.warnings as w, i (i)}
     <p class="banner warn">{w}</p>
   {/each}
 

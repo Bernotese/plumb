@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldsOf, humanize, initialValues, toParams, validate } from "./schemaForm";
+import { fieldsOf, humanize, initialValues, mergeParams, toParams, validate } from "./schemaForm";
 
 const schema = {
   type: "object",
@@ -96,5 +96,26 @@ describe("schema form", () => {
 
   it("handles a missing schema", () => {
     expect(fieldsOf(undefined)).toEqual([]);
+  });
+});
+
+describe("mergeParams", () => {
+  const fields = fieldsOf({
+    properties: {
+      name: { type: "string" },
+      opt: { type: "string" },
+      nested: { type: "object" },
+    },
+  });
+  it("keeps what the form cannot show and replaces what it owns", () => {
+    const stored = { name: "old", opt: "x", nested: { a: 1 }, unknown_key: [1, 2] };
+    const values = initialValues(fields, stored);
+    values["name"] = "new";
+    values["opt"] = ""; // cleared by the user: removed
+    expect(mergeParams(stored, fields, values)).toEqual({
+      name: "new",
+      nested: { a: 1 },
+      unknown_key: [1, 2],
+    });
   });
 });

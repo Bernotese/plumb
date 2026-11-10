@@ -208,3 +208,19 @@ export function toParams(fields: Field[], values: Values): Record<string, unknow
   }
   return out;
 }
+
+/**
+ * Parameters for a save: the stored object, with the fields that the form
+ * owns replaced by the form values. Keys the form cannot show (unsupported
+ * types, keys not in the schema) keep their stored value, so an edit never
+ * drops them silently.
+ */
+export function mergeParams(
+  stored: Record<string, unknown>,
+  fields: Field[],
+  values: Values,
+): Record<string, unknown> {
+  const owned = new Set(fields.filter((f) => f.kind !== "unsupported").map((f) => f.name));
+  const kept = Object.fromEntries(Object.entries(stored).filter(([k]) => !owned.has(k)));
+  return { ...kept, ...toParams(fields, values) };
+}

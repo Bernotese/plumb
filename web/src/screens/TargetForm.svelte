@@ -5,7 +5,7 @@
   import {
     fieldsOf,
     initialValues,
-    toParams,
+    mergeParams,
     validate,
     type Field,
     type Values,
@@ -29,6 +29,8 @@
     id: string;
     fields: Field[];
     values: Values;
+    /** The stored parameters; keys the form cannot show are kept on save. */
+    stored: Record<string, unknown>;
     errors: Record<string, string>;
   }
 
@@ -55,7 +57,15 @@
   function makeUse(use: string, id = "", params: Record<string, unknown> = {}): Use {
     const schema = blockByName(use)?.document.spec.params;
     const fields = fieldsOf(schema);
-    return { key: nextKey++, use, id, fields, values: initialValues(fields, params), errors: {} };
+    return {
+      key: nextKey++,
+      use,
+      id,
+      fields,
+      values: initialValues(fields, params),
+      stored: params,
+      errors: {},
+    };
   }
 
   $effect(() => {
@@ -142,11 +152,15 @@
     const spec: TargetSpec = {
       type: "vm",
       image,
-      guest: toParams(guestFields, guest) as TargetSpec["guest"],
+      guest: mergeParams(
+        existing?.document.spec.guest ?? {},
+        guestFields,
+        guest,
+      ) as TargetSpec["guest"],
       blocks: uses.map((u) => ({
         use: u.use,
         ...(u.id.trim() ? { id: u.id.trim() } : {}),
-        params: toParams(u.fields, u.values),
+        params: mergeParams(u.stored, u.fields, u.values),
       })),
       overrides: existing?.document.spec.overrides ?? {},
     };

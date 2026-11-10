@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TargetView } from "./types";
-import { changeView, maxRisk, targetState, valueText } from "./view";
+import { applyStepEvent, changeView, maxRisk, targetState, valueText } from "./view";
 
 function target(
   phase: TargetView["status"]["phase"],
@@ -71,5 +71,39 @@ describe("changes", () => {
   it("finds the highest risk", () => {
     expect(maxRisk([])).toBe("read");
     expect(maxRisk(["reversible", "destructive", "disruptive"])).toBe("destructive");
+  });
+});
+
+describe("applyStepEvent", () => {
+  const run = () => ({
+    id: 3,
+    targets: [{ target: "web1", steps: [{ resource: "file:/a", status: "pending" }] }],
+  });
+  it("updates the matching step only", () => {
+    const r = run();
+    expect(
+      applyStepEvent(r, {
+        type: "run.step",
+        subject: "run:3",
+        data: { target: "web1", resource: "file:/a", status: "applied" },
+      }),
+    ).toBe(true);
+    expect(r.targets[0]?.steps[0]?.status).toBe("applied");
+    expect(
+      applyStepEvent(r, {
+        type: "run.step",
+        subject: "run:4",
+        data: { target: "web1", resource: "file:/a", status: "failed" },
+      }),
+    ).toBe(false);
+    expect(applyStepEvent(r, { type: "run.finished", subject: "run:3", data: {} })).toBe(false);
+    expect(
+      applyStepEvent(r, {
+        type: "run.step",
+        subject: "run:3",
+        data: { target: "x", resource: "file:/a", status: "failed" },
+      }),
+    ).toBe(false);
+    expect(r.targets[0]?.steps[0]?.status).toBe("applied");
   });
 });

@@ -2,7 +2,7 @@
   import type { PlumbApi } from "../lib/client";
   import { href } from "../lib/router";
   import type { PlumbEvent, Run } from "../lib/types";
-  import { formatTime, type Tone } from "../lib/view";
+  import { applyStepEvent, formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
@@ -22,30 +22,34 @@
     skipped: "muted",
   };
 
+  function onEvent(e: PlumbEvent) {
+    if (e.subject !== `run:${id}` || !run) return;
+    if (applyStepEvent(run, e)) {
+      const d = e.data as { target?: string; resource?: string; status?: string };
+      announce = `${d.resource} on ${d.target}: ${d.status}`;
+    } else if (e.type === "run.finished") {
+      void api.getRun(id).then((r) => {
+        run = r;
+        announce = `Run ${id} ${r.status}.`;
+      });
+    }
+  }
+
   $effect(() => {
+    // Subscribe first and buffer, so no step event is lost while the
+    // snapshot loads; then apply the buffer to the snapshot.
+    let buffer: PlumbEvent[] | null = [];
+    const stop = api.events(0, (e: PlumbEvent) => (buffer ? buffer.push(e) : onEvent(e)));
     api.getRun(id).then(
-      (r) => (run = r),
+      (r) => {
+        run = r;
+        const queued = buffer ?? [];
+        buffer = null;
+        queued.forEach(onEvent);
+      },
       (e: unknown) => (error = e),
     );
-    // Live steps from the event stream (only events of this run).
-    return api.events(0, (e: PlumbEvent) => {
-      if (e.subject !== `run:${id}` || !run) return;
-      if (e.type === "run.step") {
-        const d = e.data as { target?: string; resource?: string; status?: string };
-        const step = run.targets
-          .find((t) => t.target === d.target)
-          ?.steps.find((s) => s.resource === d.resource);
-        if (step && d.status) {
-          step.status = d.status as typeof step.status;
-          announce = `${d.resource} on ${d.target}: ${d.status}`;
-        }
-      } else if (e.type === "run.finished") {
-        void api.getRun(id).then((r) => {
-          run = r;
-          announce = `Run ${id} ${r.status}.`;
-        });
-      }
-    });
+    return stop;
   });
 </script>
 
