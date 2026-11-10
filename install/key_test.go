@@ -202,3 +202,17 @@ func TestLXCAddress(t *testing.T) {
 		}
 	}
 }
+
+// Proxmox refuses an ACL for a token that does not exist yet (test host,
+// T-013 step 3): the token is made before any ACL.
+func TestTokenBeforeACLs(t *testing.T) {
+	h := newHost(t)
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("install: %d %s %s", code, out, errOut)
+	}
+	calls := h.calls()
+	token, acl := index(calls, "pveum user token add"), index(calls, "pveum acl modify")
+	if token < 0 || acl < 0 || token > acl {
+		t.Errorf("token add at %d, first acl modify at %d", token, acl)
+	}
+}

@@ -503,6 +503,14 @@ ensure_pool_user_roles() {
 	if ! query pveum user list --output-format json | json_has userid "$PVE_USER"; then
 		run pveum user add "$PVE_USER" --comment "Plumb controller (API token only, no password)"
 	fi
+}
+
+# ensure_acls gives user and token the planned ACLs and removes the others.
+# It runs after ensure_token: Proxmox refuses an ACL for a token that does
+# not exist yet ("no such token"; test host, T-013 step 3), and a replaced
+# token has lost the ACLs of the old one.
+ensure_acls() {
+	local role
 	for role in "${ROLE_NAMES[@]}"; do
 		local propagate=0
 		[[ $role == PlumbGuests ]] && propagate=1 # pool members inherit
@@ -842,6 +850,7 @@ do_install() {
 	ensure_snippet_storage
 	[[ -n $LXC_ID ]] || LXC_ID=$(state_get lxc_id)
 	ensure_token
+	ensure_acls
 	ensure_lxc
 	local ip ca
 	ip=$(lxc_ip)

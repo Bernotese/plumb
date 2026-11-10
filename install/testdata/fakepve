@@ -96,6 +96,15 @@ pveum)
 			esac
 			shift 2
 		done
+		# Like Proxmox: an ACL needs an existing user or token.
+		if [[ $op == modify && $type == token ]] && ! has "token.${ugid#*!}"; then
+			echo "ACL update failed: no such token '${ugid#*!}' for user '${ugid%%!*}'" >&2
+			exit 255
+		fi
+		if [[ $op == modify && $type == user ]] && ! has "user.$ugid"; then
+			echo "ACL update failed: no such user '$ugid'" >&2
+			exit 255
+		fi
 		touch "$st/acl"
 		grep -vxF "$path $ugid $role $type" "$st/acl" >"$st/acl.new" || true
 		mv "$st/acl.new" "$st/acl"
