@@ -43,9 +43,9 @@ lint-go:
 lint-web:
 	@echo "lint-web: stub, filled by T-017"
 
-## test-guest: resource tests inside Debian and Ubuntu containers (stub; T-007 fills it)
+## test-guest: resource tests in privileged Debian and Ubuntu systemd containers
 test-guest:
-	@echo "test-guest: not implemented yet (T-007)"; exit 1
+	bash test/guest/run.sh
 
 ## test-pve: tests against a real Proxmox host (stub; T-012 and T-013 fill it)
 test-pve:
