@@ -52,22 +52,25 @@ func (s stateDir) ensure() error {
 		return err
 	}
 	uid := agentUID()
-	var problem string
+	// A symlink or a non-directory cannot be repaired in place: only a new
+	// state_dir helps. Owner and mode can be fixed with chown and chmod.
+	var problem, fix string
+	repair := fmt.Sprintf("chown %d %s && chmod 0700 %s, or set state_dir to a new path", uid, s.dir, s.dir)
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	switch {
 	case fi.Mode()&fs.ModeSymlink != 0:
-		problem = "is a symlink"
+		problem, fix = "is a symlink", "set state_dir to a new path"
 	case !fi.IsDir():
-		problem = "is not a directory"
+		problem, fix = "is not a directory", "set state_dir to a new path"
 	case !ok || int(st.Uid) != uid:
-		problem = "is not owned by the agent user"
+		problem, fix = "is not owned by the agent user", repair
 	case fi.Mode().Perm() != 0o700:
-		problem = fmt.Sprintf("has mode %04o", fi.Mode().Perm())
+		problem, fix = fmt.Sprintf("has mode %04o", fi.Mode().Perm()), repair
 	default:
 		return nil
 	}
-	return fmt.Errorf("state dir %s %s: it must be a real directory owned by uid %d with mode 0700 (fix: chown %d %s && chmod 0700 %s, or set state_dir to a new path)",
-		s.dir, problem, uid, uid, s.dir, s.dir)
+	return fmt.Errorf("state dir %s %s: it must be a real directory owned by uid %d with mode 0700 (fix: %s)",
+		s.dir, problem, uid, fix)
 }
 
 func (s stateDir) cleanStaleTemps() error {

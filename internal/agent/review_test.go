@@ -305,7 +305,7 @@ func TestNewRefusesUnsafeStateDir(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := newAgent(link)
-		if err == nil || !strings.Contains(err.Error(), link+" is a symlink") || !strings.Contains(err.Error(), "fix:") {
+		if err == nil || !strings.Contains(err.Error(), link+" is a symlink") || !strings.Contains(err.Error(), "(fix: set state_dir to a new path)") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -314,7 +314,7 @@ func TestNewRefusesUnsafeStateDir(t *testing.T) {
 		if err := os.WriteFile(file, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := newAgent(file); err == nil || !strings.Contains(err.Error(), file+" is not a directory") {
+		if err := newAgent(file); err == nil || !strings.Contains(err.Error(), file+" is not a directory") || !strings.Contains(err.Error(), "(fix: set state_dir to a new path)") {
 			t.Fatalf("err = %v", err)
 		}
 	})
