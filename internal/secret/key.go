@@ -52,7 +52,9 @@ func (k Key) CheckValue() []byte { return k.derive(PurposeKeyCheck) }
 
 // Matches reports in constant time whether a stored check value belongs to k.
 func (k Key) Matches(check []byte) bool {
-	return subtle.ConstantTimeCompare(k.CheckValue(), check) == 1
+	cv := k.CheckValue()
+	defer clear(cv)
+	return subtle.ConstantTimeCompare(cv, check) == 1
 }
 
 // --- recovery key (D-086, D-103) ---
@@ -80,6 +82,7 @@ func checksum(b []byte) []byte {
 func (k Key) Recovery() string {
 	raw := append(append([]byte{}, k.b[:]...), checksum(k.b[:])...)
 	enc := recoveryEncoding.EncodeToString(raw)
+	clear(raw)
 	var groups []string
 	for i := 0; i < len(enc); i += 4 {
 		groups = append(groups, enc[i:min(i+4, len(enc))])
@@ -104,6 +107,7 @@ func ParseRecovery(s string) (Key, error) {
 		return Key{}, ErrRecoveryKey
 	}
 	raw, err := recoveryEncoding.DecodeString(clean)
+	defer clear(raw) // the key bytes; the input string cannot be cleared
 	if err != nil || len(raw) != KeySize+checksumSize {
 		return Key{}, ErrRecoveryKey
 	}

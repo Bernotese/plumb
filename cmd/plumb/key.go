@@ -104,20 +104,7 @@ func checkKeyPlace(f keyFlags) error {
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("the key directory %s does not exist; mount the key volume (backup=0) there first", dir)
 	}
-	// The database is <data>/plumb.db. Before the first start the data
-	// directory may not exist yet: compare with its nearest parent.
-	db := f.data
-	for {
-		if _, err := os.Stat(db); err == nil {
-			break
-		}
-		parent := filepath.Dir(db)
-		if parent == db {
-			break
-		}
-		db = parent
-	}
-	same, err := sameFileSystem(dir, db)
+	same, err := sameFileSystem(dir, nearestExisting(f.data))
 	if err != nil {
 		return err
 	}
@@ -125,6 +112,22 @@ func checkKeyPlace(f keyFlags) error {
 		return fmt.Errorf("the key directory %s is on the same file system as the database (%s); the key would be in every backup. Mount the key volume (backup=0) at %s", dir, f.data, dir)
 	}
 	return nil
+}
+
+// nearestExisting returns path, or its nearest parent that exists. The
+// database is <data>/plumb.db; before the first start the data directory
+// may not exist yet.
+func nearestExisting(path string) string {
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path
+		}
+		path = parent
+	}
 }
 
 func keyInit(f keyFlags, kio keyIO) error {

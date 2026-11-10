@@ -146,6 +146,12 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		if key, err = loadServeKey(f.keyFile); err != nil {
 			return err
 		}
+		// plumb key init refuses this place; a key file copied here later
+		// is in every backup of the database (D-030).
+		if same, err := sameFileSystem(filepath.Dir(f.keyFile), nearestExisting(f.data)); err == nil && same {
+			log.Warn("the master key file is on the file system of the database, so backups hold it; move it to the key volume (backup=0)",
+				"key_file", f.keyFile, "data", f.data)
+		}
 	}
 	var drv driver.Driver
 	switch f.driver {

@@ -110,7 +110,12 @@ func Open(ctx context.Context, st *store.Store, k Key) (*Store, error) {
 	case !k.Matches(check):
 		return nil, ErrWrongKey
 	}
-	block, err := aes.NewCipher(k.derive(PurposeSecretStore))
+	// Go keeps no reference to the key slice after NewCipher (it expands
+	// the key), so the derived bytes are cleared at once. Strings and the
+	// expanded key schedule cannot be cleared.
+	sk := k.derive(PurposeSecretStore)
+	block, err := aes.NewCipher(sk)
+	clear(sk)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +157,9 @@ func (s *Store) seal(name, value string) store.SealFunc {
 		if _, err := rand.Read(nonce); err != nil {
 			return nil, nil, err
 		}
-		return nonce, s.aead.Seal(nil, nonce, []byte(value), additionalData(name, version)), nil
+		plain := []byte(value)
+		defer clear(plain)
+		return nonce, s.aead.Seal(nil, nonce, plain, additionalData(name, version)), nil
 	}
 }
 
@@ -160,11 +167,12 @@ func (s *Store) open(r store.SecretRow) (string, error) {
 	if len(r.Nonce) != nonceSize {
 		return "", ErrCorrupt
 	}
-	clear, err := s.aead.Open(nil, r.Nonce, r.Ciphertext, additionalData(r.Name, r.Version))
+	plain, err := s.aead.Open(nil, r.Nonce, r.Ciphertext, additionalData(r.Name, r.Version))
 	if err != nil {
 		return "", ErrCorrupt
 	}
-	return string(clear), nil
+	defer clear(plain)
+	return string(plain), nil
 }
 
 // Put creates a secret or replaces its value. by is the principal.
@@ -230,6 +238,7 @@ func (s *Store) List(ctx context.Context) ([]Info, error) {
 // Resolve returns the clear values of the named secrets. It returns
 // *MissingError when a name does not exist and ErrCorrupt when a row does
 // not open. Only plan calls it (T-029); never log or return its result.
+// A complete old row put back opens with its old version (accepted, D-130).
 func (s *Store) Resolve(ctx context.Context, names []string) (map[string]Value, error) {
 	uniq := map[string]bool{}
 	for _, n := range names {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -141,9 +142,17 @@ func TestSecretBadBodies(t *testing.T) {
 		{"two objects", []byte(`{"value": "x"} {"value": "` + leak + `"}`), 400},
 		{"number", []byte(`{"value": 1}`), 400},
 		{"no value", []byte(`{}`), 422},
+		{"null value", []byte(`{"value": null}`), 422},
+		{"duplicate key", []byte(`{"value": "x", "value": "` + leak + `"}`), 400},
+		{"key in another case", []byte(`{"VALUE": "` + leak + `"}`), 400},
+		{"case-variant second key", []byte(`{"value": "x", "Value": "` + leak + `"}`), 400},
+		{"array", []byte(`["` + leak + `"]`), 400},
+		{"trailing comma", []byte(`{"value": "x",}`), 400},
 		{"empty", []byte(`{"value": ""}`), 422},
 		{"invalid utf-8", []byte("{\"value\": \"" + leak + "\xff\"}"), 422},
-		{"lone surrogate", []byte(`{"value": "` + leak + `\ud800"}`), 422},
+		{"lone high surrogate", []byte(`{"value": "\ud800"}`), 422},
+		{"lone low surrogate", []byte(`{"value": "\udc00"}`), 422},
+		{"literal replacement plus lone surrogate", []byte("{\"value\": \"�\\ud800\"}"), 422},
 		{"too long", []byte(`{"value": "` + strings.Repeat("x", secret.MaxValueBytes+1) + `"}`), 422},
 		{"too large body", []byte(`{"value": "` + strings.Repeat("x", 7*secret.MaxValueBytes) + `"}`), 413},
 	}
@@ -157,7 +166,7 @@ func TestSecretBadBodies(t *testing.T) {
 		}
 	}
 	// Real U+FFFD and surrogate pairs are kept.
-	for _, v := range []string{"a�b", "😀"} {
+	for _, v := range []string{"�", `\ud800`, "a�b", "😀"} {
 		if code, body := adm.do("PUT", "/api/v1/secrets/ok", map[string]string{"value": v}); code != 200 {
 			t.Errorf("%q: %d %s", v, code, body)
 		}
@@ -166,8 +175,16 @@ func TestSecretBadBodies(t *testing.T) {
 			t.Errorf("%q stored as %q", v, got["ok"].Text)
 		}
 	}
-	if code, body := adm.do("PUT", "/api/v1/secrets/ok", []byte(`{"value": "😀"}`)); code != 200 {
+	if code, body := adm.do("PUT", "/api/v1/secrets/ok", []byte(`{"value": "\ud83d\ude00"}`)); code != 200 {
 		t.Errorf("escaped pair: %d %s", code, body)
+	} else if got, _ := e.sec.Resolve(e.ctx, []string{"ok"}); got["ok"].Text != "😀" {
+		t.Errorf("escaped pair stored as %q", got["ok"].Text)
+	}
+	// QA-2: an escaped U+FFFD is a real character and is stored as sent.
+	if code, body := adm.do("PUT", "/api/v1/secrets/ok", []byte(`{"value": "\ufffd\uFFFD"}`)); code != 200 {
+		t.Errorf("escaped U+FFFD: %d %s", code, body)
+	} else if got, _ := e.sec.Resolve(e.ctx, []string{"ok"}); got["ok"].Text != "��" {
+		t.Errorf("escaped U+FFFD stored as %q", got["ok"].Text)
 	}
 	if code, _ := adm.do("PUT", "/api/v1/secrets/Bad_Name", map[string]string{"value": "x"}); code != 422 {
 		t.Errorf("bad name: %d", code)
@@ -208,5 +225,46 @@ func TestSecretNeedsPasswordChange(t *testing.T) {
 	first := e.login("admin", e.password)
 	if code, body := first.do("PUT", "/api/v1/secrets/a", map[string]string{"value": "x"}); code != 403 || problemType(body) != "password-change-required" {
 		t.Fatalf("put: %d %s", code, body)
+	}
+}
+
+func TestSecretFailureDoesNotLeak(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	var logs bytes.Buffer
+	e.srv.log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	before, err := e.st.LastEventSeq(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.sec.SetUsage(func(context.Context) (map[string]secret.Usage, error) {
+		return nil, errors.New("qa usage lookup unavailable")
+	})
+	code, body := adm.do("PUT", "/api/v1/secrets/failure", map[string]string{"value": testValue})
+	if code != 500 || problemType(body) != "internal" {
+		t.Fatalf("put: %d %s", code, body)
+	}
+	if !strings.Contains(logs.String(), "qa usage lookup unavailable") {
+		t.Fatal("error path did not log")
+	}
+	for _, response := range e.seen {
+		if bytes.Contains(response, []byte(testValue)) {
+			t.Fatal("value in response")
+		}
+	}
+	if strings.Contains(logs.String(), testValue) {
+		t.Fatal("value in error log")
+	}
+	events, err := e.st.EventsAfter(e.ctx, before, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("failed put emitted %d events", len(events))
+	}
+	e.sec.SetUsage(nil)
+	list, err := e.sec.List(e.ctx)
+	if err != nil || len(list) != 0 {
+		t.Fatalf("failed put persisted metadata: %v", err)
 	}
 }

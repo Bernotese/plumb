@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"os/signal"
 	"syscall"
 	"unsafe"
 )
@@ -31,7 +32,8 @@ func setTermios(fd uintptr, t *syscall.Termios) error {
 }
 
 // readHidden reads one line from the terminal f with echo off. The echo
-// comes back also when the read fails.
+// comes back also when the read fails, and on Ctrl-C or SIGTERM during
+// the prompt (then the process exits with 130).
 func readHidden(f *os.File) (string, error) {
 	old, err := getTermios(f.Fd())
 	if err != nil {
@@ -40,6 +42,19 @@ func readHidden(f *os.File) (string, error) {
 	quiet := *old
 	quiet.Lflag &^= syscall.ECHO
 	quiet.Lflag |= syscall.ICANON | syscall.ECHONL
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	defer close(done)
+	defer signal.Stop(sig)
+	go func() {
+		select {
+		case <-sig:
+			setTermios(f.Fd(), old)
+			os.Exit(130)
+		case <-done:
+		}
+	}()
 	if err := setTermios(f.Fd(), &quiet); err != nil {
 		return "", err
 	}

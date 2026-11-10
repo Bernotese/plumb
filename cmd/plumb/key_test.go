@@ -298,3 +298,90 @@ func TestDevKey(t *testing.T) {
 		t.Fatalf("wrong key: %v", err)
 	}
 }
+
+// Review nit 4: a key file on the file system of the database gives a
+// warning at start; one on the key volume does not.
+func TestServeWarnsKeyOnDatabaseFS(t *testing.T) {
+	data := t.TempDir()
+	os.Mkdir(filepath.Join(data, "key"), 0o700)
+	secret.WriteKeyFile(defaultKeyFile(data), secret.NewKey())
+	var out, errOut bytes.Buffer
+	serve(context.Background(), []string{"--data", data}, &out, &errOut)
+	if !strings.Contains(errOut.String(), "backups hold it") {
+		t.Errorf("no warning: %q", errOut.String())
+	}
+	keyFile := filepath.Join(otherFS(t), "master.key")
+	secret.WriteKeyFile(keyFile, secret.NewKey())
+	errOut.Reset()
+	serve(context.Background(), []string{"--data", t.TempDir(), "--key-file", keyFile}, &out, &errOut)
+	if strings.Contains(errOut.String(), "backups hold it") {
+		t.Errorf("warning for a key on its own file system: %q", errOut.String())
+	}
+}
+
+func TestProductionStartupRefusesKeyWithoutChangingFiles(t *testing.T) {
+	data := t.TempDir()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(data, "plumb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := secret.NewKey()
+	sec, err := secret.Open(ctx, st, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sec.Put(ctx, "present", "qa-startup-value", "system"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(data, "key"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := secret.WriteKeyFile(defaultKeyFile(data), k); err != nil {
+		t.Fatal(err)
+	}
+	keyFile := defaultKeyFile(data)
+	original, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, missing := range []bool{false, true} {
+		if missing {
+			if err := os.Remove(keyFile); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err := os.WriteFile(keyFile, bytes.Repeat([]byte{42}, secret.KeySize), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var out, errOut bytes.Buffer
+		// Exercise the production key path with the fake driver directly:
+		// the production CLI currently stops at the unimplemented Proxmox driver.
+		err := runServer(context.Background(), serveFlags{data: data, driver: "fake"}, &out,
+			slog.New(slog.NewTextHandler(&errOut, nil)))
+		if missing {
+			if err == nil || !strings.Contains(err.Error(), "plumb key init") || !strings.Contains(err.Error(), "plumb key restore") {
+				t.Fatalf("missing key: %v", err)
+			}
+		} else if !errors.Is(err, secret.ErrWrongKey) {
+			t.Fatalf("wrong key: %v", err)
+		}
+		if missing {
+			if _, err := os.Stat(keyFile); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("serve created a key")
+			}
+		} else {
+			got, err := os.ReadFile(keyFile)
+			if err != nil || !bytes.Equal(got, bytes.Repeat([]byte{42}, secret.KeySize)) {
+				t.Fatal("serve replaced the wrong key")
+			}
+		}
+		if strings.Contains(out.String()+errOut.String(), string(original)) || recoveryPattern.MatchString(out.String()+errOut.String()) {
+			t.Fatal("key in serve output")
+		}
+	}
+}

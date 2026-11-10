@@ -361,3 +361,75 @@ func TestKeyFile(t *testing.T) {
 		t.Fatal("purpose keys are not separate")
 	}
 }
+
+// Scan physical SQLite files, including the WAL and pages left by replacement
+// and deletion. Checking only the current ciphertext column misses those paths.
+func TestSecretAbsentFromDatabaseFiles(t *testing.T) {
+	e := newEnv(t)
+	values := []string{"qa-original-value-7a9f4d62", "qa-replacement-value-5b8e3c10"}
+	var seq int
+	var schema, path string
+	if err := e.db.QueryRowContext(e.ctx, `PRAGMA database_list`).Scan(&seq, &schema, &path); err != nil {
+		t.Fatal(err)
+	}
+	scan := func() {
+		t.Helper()
+		files, err := filepath.Glob(path + "*")
+		if err != nil || len(files) == 0 {
+			t.Fatalf("database files: %v", err)
+		}
+		for _, file := range files {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, value := range values {
+				if bytes.Contains(b, []byte(value)) {
+					t.Errorf("clear value in %s", filepath.Base(file))
+				}
+			}
+		}
+	}
+	e.put("qa-db", values[0])
+	scan()
+	e.put("qa-db", values[1])
+	scan()
+	if err := e.s.Delete(e.ctx, "qa-db"); err != nil {
+		t.Fatal(err)
+	}
+	scan()
+	e.exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	scan()
+	if err := e.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scan()
+}
+
+// D-130 pins QA-1: a complete old row of the same name (version, nonce
+// and ciphertext) written back into the database opens with the old value
+// and the old version. This is accepted: a database restore does the same
+// on purpose, a mark in the database comes back with the backup, and who
+// can write the database can add a session and set any value anyway. The
+// old version makes a Plan of the newer version stale (D-089).
+func TestCompleteOldRowResolves(t *testing.T) {
+	for _, afterDelete := range []bool{true, false} {
+		e := newEnv(t)
+		e.put("a", "old-value")
+		old := e.row("a")
+		if afterDelete {
+			if err := e.s.Delete(e.ctx, "a"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		newer := e.put("a", "new-value")
+		e.exec(`UPDATE secret SET version = ?, nonce = ?, ciphertext = ? WHERE name = 'a'`, old.version, old.nonce, old.ct)
+		got, err := e.resolve("a")
+		if err != nil || got["a"] != (Value{Version: old.version, Text: "old-value"}) || old.version >= newer.Version {
+			t.Fatalf("afterDelete=%v: %+v %v (newer version %d)", afterDelete, got, err, newer.Version)
+		}
+	}
+}

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -83,34 +83,85 @@ func secretBody(w http.ResponseWriter, r *http.Request) (string, bool) {
 		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "The body could not be read.")
 		return "", false
 	}
-	var req struct {
-		Value *string `json:"value"`
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil || dec.More() {
+	value, ok := valueObject(raw)
+	if !ok {
 		problem(w, http.StatusBadRequest, "bad-request", "Bad request", `The body must be one JSON object {"value": "<text>"} and nothing else.`)
 		return "", false
 	}
-	if req.Value == nil {
+	if value == nil {
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
 			Detail: "value is required.", Errors: []fieldError{{Pointer: "/value", Message: "required"}}})
 		return "", false
 	}
 	// encoding/json silently replaces invalid UTF-8 and lone surrogates
 	// with U+FFFD. A value must arrive exactly as sent, so refuse both.
-	if !utf8.Valid(raw) || strings.Count(*req.Value, "�") > replacementsSent(raw) || !secret.ValidValue(*req.Value) {
+	if !utf8.Valid(raw) || hasLoneSurrogateEscape(raw) || !secret.ValidValue(*value) {
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed", Status: http.StatusUnprocessableEntity,
 			Detail: "value must be UTF-8 text of 1 to 65536 bytes.", Errors: []fieldError{{Pointer: "/value", Message: "UTF-8 text of 1 to 65536 bytes"}}})
 		return "", false
 	}
-	return *req.Value, true
+	return *value, true
 }
 
-// replacementsSent counts the U+FFFD characters that the client really
-// sent: literal or as the escape �.
-func replacementsSent(raw []byte) int {
-	return bytes.Count(raw, []byte("�")) + bytes.Count(bytes.ToLower(raw), []byte(`�`))
+// valueObject reads {"value": <string or null>} or {}. Unlike a struct
+// decode it refuses a second key and a key in another case ("VALUE"):
+// encoding/json would match those too and keep the last one, so the
+// stored value could differ from the one a reader of the body sees.
+func valueObject(raw []byte) (*string, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	var value *string
+	if dec.More() {
+		if key, err := dec.Token(); err != nil || key != "value" {
+			return nil, false
+		}
+		if err := dec.Decode(&value); err != nil {
+			return nil, false
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return value, true
+}
+
+// encoding/json accepts lone surrogate escapes and replaces them with U+FFFD.
+func hasLoneSurrogateEscape(raw []byte) bool {
+	for i := 0; i+1 < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if raw[i+1] == '\\' {
+			i++
+			continue
+		}
+		if raw[i+1] != 'u' || i+6 > len(raw) {
+			continue
+		}
+		code, err := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
+		if err != nil {
+			continue
+		}
+		if code >= 0xDC00 && code <= 0xDFFF {
+			return true
+		}
+		if code >= 0xD800 && code <= 0xDBFF {
+			if i+12 > len(raw) || raw[i+6] != '\\' || raw[i+7] != 'u' {
+				return true
+			}
+			low, err := strconv.ParseUint(string(raw[i+8:i+12]), 16, 16)
+			if err != nil || low < 0xDC00 || low > 0xDFFF {
+				return true
+			}
+			i += 11
+		}
+	}
+	return false
 }
 
 func (s *Server) putSecret(w http.ResponseWriter, r *http.Request, p *principal) {

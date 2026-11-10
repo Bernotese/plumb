@@ -27,7 +27,7 @@ Plumb stores secrets encrypted under the master key. A human can set, list and d
 - [x] Stays inside approved decisions (D-086, D-087). Stdlib and `golang.org/x/crypto` only.
 
 ## Tests
-- Unit: round trip; wrong key; changed ciphertext, nonce, name or version fails; swapped rows fail; a row of a deleted secret put back under a new secret of the same name fails; two (name, version) pairs never give the same additional data; limits; recovery key round trip and bad checksum; key file modes.
+- Unit: round trip; wrong key; changed ciphertext, nonce, name or version fails; swapped rows fail; a row of a deleted secret put back under a new secret of the same name fails; a complete old row of the same name put back (after a delete, and over a newer value) resolves with the old value and the old version (accepted, D-130); two (name, version) pairs never give the same additional data; limits; recovery key round trip and bad checksum; key file modes.
 - Start: `serve` without a key file exits non-zero on an empty database and creates no file; the captured output of `serve` never holds the recovery key; `key init` without a terminal, with an existing file, and on the database file system is refused.
 - API: tier table for the three operations; `GET /secrets` body never holds the value; contract test covers the new operations.
 - `make lint test` passes.
