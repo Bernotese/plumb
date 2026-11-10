@@ -3,6 +3,7 @@ package link
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -47,7 +48,15 @@ func (b *bucket) take(now time.Time, rate time.Duration, burst int) bool {
 func clientIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		ip = r.RemoteAddr
+	}
+	if addr, err := netip.ParseAddr(ip); err == nil {
+		addr = addr.Unmap()
+		if addr.Is6() {
+			// One IPv6 host can rotate addresses within its assigned /64.
+			return netip.PrefixFrom(addr.WithZone(""), 64).Masked().String()
+		}
+		return addr.String()
 	}
 	return ip
 }

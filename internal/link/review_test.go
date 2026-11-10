@@ -201,13 +201,25 @@ func TestCAHalfMissingAndDirMode(t *testing.T) {
 func TestFailedAuthLimit(t *testing.T) {
 	f := newFixture(t)
 	good := f.agent("web1")
-	for range 25 { // the burst is 20 failures
-		f.do("GET", wire.PathPoll, "bad.cred", nil)
+	for i := range 25 { // the burst is 20 failures
+		want := http.StatusUnauthorized
+		if i >= 20 {
+			want = http.StatusTooManyRequests
+		}
+		if code, _ := f.do("GET", wire.PathPoll, "bad.cred", nil); code != want {
+			t.Fatalf("failed auth %d: got %d, want %d", i+1, code, want)
+		}
 	}
-	// The blocked client is refused even with a good credential: no
-	// lookup happens, and the answer does not tell why.
-	if code, _ := f.do("GET", wire.PathPoll, good, nil); code != 401 {
-		t.Errorf("blocked client: %d, want 401", code)
+	// A valid agent sharing the blocked IP must back off, not re-enroll.
+	for method, path := range map[string]string{"GET": wire.PathPoll, "POST": wire.PathReport} {
+		req := httptest.NewRequest(method, path, nil)
+		req.RemoteAddr = "10.0.0.7:5000"
+		req.Header.Set("Authorization", "Bearer "+good)
+		rec := httptest.NewRecorder()
+		f.srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "3" {
+			t.Errorf("blocked %s: status %d, Retry-After %q", method, rec.Code, rec.Header().Get("Retry-After"))
+		}
 	}
 	// Another client is not affected.
 	req := httptest.NewRequest("GET", wire.PathPoll, nil)
@@ -218,7 +230,7 @@ func TestFailedAuthLimit(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("other client: %d", rec.Code)
 	}
-	f.clock.add(time.Minute)
+	f.clock.add(3 * time.Second)
 	if code, _ := f.do("GET", wire.PathPoll, good, nil); code != 204 {
 		t.Errorf("after refill: %d", code)
 	}

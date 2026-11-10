@@ -29,5 +29,8 @@ The agent can enroll, run commands from the controller and report drift.
 
 ## Plan (architect, optional)
 
+Protocol status rule: 401 means revoked credentials and triggers re-enrollment.
+429 (honor Retry-After) and 503 mean back off and retry with the current credential.
+
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
