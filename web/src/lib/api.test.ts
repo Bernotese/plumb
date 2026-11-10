@@ -9,8 +9,8 @@ describe("buildUrl", () => {
     [
       "/issues",
       undefined,
-      { state: "open", limit: 10, cursor: undefined },
-      "/api/v1/issues?state=open&limit=10",
+      { status: "open", limit: 10, cursor: undefined },
+      "/api/v1/issues?status=open&limit=10",
     ],
   ] as const)("%s %o %o → %s", (path, params, query, want) => {
     expect(buildUrl(path, params, query)).toBe(want);

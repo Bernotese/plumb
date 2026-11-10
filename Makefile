@@ -19,7 +19,7 @@ build: build-web
 	$(GO_BUILD) -o bin/plumb-agent ./cmd/plumb-agent
 
 $(WEB_DEPS): web/package.json web/package-lock.json
-	cd web && npm ci
+	cd web && npm ci --ignore-scripts
 	@touch $@
 
 ## build-web: generate API types and build the web UI into web/dist (embedded by package web)

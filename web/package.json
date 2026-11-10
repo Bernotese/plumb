@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "gen": "openapi-typescript ../api/openapi.yaml --output src/lib/api.gen.ts",
+    "gen": "openapi-typescript ../api/openapi.yaml --default-non-nullable=false --empty-objects-unknown --output src/lib/api.gen.ts",
     "check:api": "node scripts/check-openapi.mjs ../api/openapi.yaml",
     "dev": "npm run gen && vite",
     "build": "npm run gen && vite build && touch dist/.gitkeep",

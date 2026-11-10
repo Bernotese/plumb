@@ -375,8 +375,9 @@ paths:
       operationId: reenrollTarget
       summary: Propose a re-enrollment
       description: |
-        Creates a Plan that sets a new enrollment token and restarts the guest (risk
-        `disruptive`, D-038). Nothing happens until the Plan is approved.
+        Creates a Plan that restarts the guest with a new enrollment token (risk `disruptive`,
+        D-038). The token is never a change: the driver passes it as `Bootstrap` (D-047).
+        Nothing happens until the Plan is approved.
       security:
         - session: []
         - token: [plan]
@@ -398,7 +399,7 @@ paths:
                 id: 14
                 origin: reenroll
                 issue_id: null
-                state: pending
+                status: pending
                 risk: disruptive
                 reason: Agent credential lost after disk restore.
                 author: "user:admin"
@@ -411,11 +412,6 @@ paths:
                 targets:
                   - target: web1
                     resources:
-                      - resource: "guest:config"
-                        action: update
-                        risk: disruptive
-                        changes:
-                          - { attr: enroll_token, sensitive: true, risk: disruptive }
                       - resource: "guest:config"
                         action: restart
                         risk: disruptive
@@ -433,10 +429,10 @@ paths:
       summary: List plans, newest first
       description: Items are full Plans, the same as `GET /plans/{id}`.
       parameters:
-        - name: state
+        - name: status
           in: query
-          description: Only plans in this state.
-          schema: { $ref: "#/components/schemas/PlanState" }
+          description: Only plans with this status.
+          schema: { $ref: "#/components/schemas/PlanStatus" }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
@@ -456,7 +452,7 @@ paths:
                   - id: 12
                     origin: proposal
                     issue_id: null
-                    state: approved
+                    status: approved
                     risk: reversible
                     reason: Add MOTD to web1.
                     author: "token:tok_claude"
@@ -473,6 +469,7 @@ paths:
                             action: create
                             risk: reversible
                             changes:
+                              - { attr: state, from: absent, to: present, risk: reversible }
                               - { attr: content, to: "Hello from Plumb\n", risk: reversible }
                     warnings: []
                 next: MTE
@@ -519,7 +516,7 @@ paths:
                 id: 12
                 origin: proposal
                 issue_id: null
-                state: pending
+                status: pending
                 risk: reversible
                 reason: Add MOTD to web1.
                 author: "token:tok_claude"
@@ -536,6 +533,7 @@ paths:
                         action: create
                         risk: reversible
                         changes:
+                          - { attr: state, from: absent, to: present, risk: reversible }
                           - { attr: content, to: "Hello from Plumb\n", risk: reversible }
                           - { attr: mode, to: "0644", risk: reversible }
                 warnings: []
@@ -561,7 +559,7 @@ paths:
                 id: 11
                 origin: proposal
                 issue_id: null
-                state: stale
+                status: stale
                 risk: destructive
                 reason: Remove old test VM.
                 author: "user:admin"
@@ -578,8 +576,7 @@ paths:
                         action: delete
                         risk: destructive
                         changes:
-                          - { attr: cores, from: 2, risk: destructive }
-                          - { attr: memory, from: 1024, risk: destructive }
+                          - { attr: state, from: present, to: absent, risk: destructive }
                 warnings: ["Head revision moved to 7. Propose again."]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -616,17 +613,18 @@ paths:
                 id: 3
                 plan_id: 12
                 revision: 7
-                state: running
+                status: running
                 started_at: "2026-11-10T09:00:03Z"
                 finished_at: null
                 targets:
                   - target: web1
-                    state: running
+                    status: running
                     steps:
                       - resource: "file:/etc/motd"
                         action: create
-                        state: pending
+                        status: pending
                         changes:
+                          - { attr: state, from: absent, to: present, risk: reversible }
                           - { attr: content, to: "Hello from Plumb\n", risk: reversible }
                         output: ""
                         started_at: null
@@ -662,17 +660,18 @@ paths:
                   - id: 3
                     plan_id: 12
                     revision: 7
-                    state: succeeded
+                    status: succeeded
                     started_at: "2026-11-10T09:00:03Z"
                     finished_at: "2026-11-10T09:00:09Z"
                     targets:
                       - target: web1
-                        state: succeeded
+                        status: succeeded
                         steps:
                           - resource: "file:/etc/motd"
                             action: create
-                            state: applied
+                            status: applied
                             changes:
+                              - { attr: state, from: absent, to: present, risk: reversible }
                               - { attr: content, to: "Hello from Plumb\n", risk: reversible }
                             output: ""
                             started_at: "2026-11-10T09:00:05Z"
@@ -697,25 +696,25 @@ paths:
                 id: 4
                 plan_id: 13
                 revision: 8
-                state: failed
+                status: failed
                 started_at: "2026-11-10T09:30:03Z"
                 finished_at: "2026-11-10T09:30:41Z"
                 targets:
                   - target: web1
-                    state: failed
+                    status: failed
                     steps:
                       - resource: "file:/etc/motd"
-                        action: update
-                        state: unchanged
+                        action: null
+                        status: unchanged
                         changes: []
                         output: ""
                         started_at: "2026-11-10T09:30:05Z"
                         finished_at: "2026-11-10T09:30:05Z"
                       - resource: "package:nginx"
                         action: create
-                        state: failed
+                        status: failed
                         changes:
-                          - { attr: state, to: present, risk: reversible }
+                          - { attr: state, from: absent, to: present, risk: reversible }
                         output: "apt-get install nginx: exit status 100"
                         started_at: "2026-11-10T09:30:05Z"
                         finished_at: "2026-11-10T09:30:41Z"
@@ -729,10 +728,10 @@ paths:
       operationId: listIssues
       summary: List issues, newest first
       parameters:
-        - name: state
+        - name: status
           in: query
-          description: Only issues in this state. Default is all states.
-          schema: { $ref: "#/components/schemas/IssueState" }
+          description: Only issues with this status. Default is all.
+          schema: { $ref: "#/components/schemas/IssueStatus" }
         - name: target
           in: query
           description: Only issues of this target.
@@ -756,7 +755,7 @@ paths:
                   - id: 7
                     target: web1
                     resource: "file:/etc/motd"
-                    state: open
+                    status: open
                     risk: reversible
                     opened_at: "2026-11-10T09:10:12Z"
                     updated_at: "2026-11-10T09:10:12Z"
@@ -786,7 +785,7 @@ paths:
                 id: 8
                 target: web1
                 resource: "user:deploy"
-                state: open
+                status: open
                 risk: reversible
                 opened_at: "2026-11-10T09:12:40Z"
                 updated_at: "2026-11-10T09:13:02Z"
@@ -839,7 +838,7 @@ paths:
                 id: 15
                 origin: revert
                 issue_id: 7
-                state: pending
+                status: pending
                 risk: reversible
                 reason: Undo the manual edit.
                 author: "user:admin"
@@ -926,7 +925,7 @@ paths:
               example: |
                 id: 1042
                 event: run.step
-                data: {"seq":1042,"type":"run.step","time":"2026-11-10T09:00:05Z","subject":"run:3","actor":"agent:web1","data":{"target":"web1","resource":"file:/etc/motd","state":"applied"}}
+                data: {"seq":1042,"type":"run.step","time":"2026-11-10T09:00:05Z","subject":"run:3","actor":"agent:web1","data":{"target":"web1","resource":"file:/etc/motd","status":"applied"}}
 
                 id: 1043
                 event: issue.opened
@@ -1314,11 +1313,11 @@ components:
       enum: [create, update, delete, restart]
       description: Derived from the changes by `wire.ActionOf`.
 
-    PlanState:
+    PlanStatus:
       type: string
       enum: [pending, approved, stale]
       description: |
-        `pending`: waits for approval. `approved`: revision committed, Run started (its state is
+        `pending`: waits for approval. `approved`: revision committed, Run started (its status is
         the result). `stale`: the head moved before approval.
     Plan:
       type: object
@@ -1326,7 +1325,7 @@ components:
         - id
         - origin
         - issue_id
-        - state
+        - status
         - risk
         - reason
         - author
@@ -1347,7 +1346,7 @@ components:
         issue_id:
           $ref: "#/components/schemas/NullableId"
           description: The issue, for `revert` and `accept`.
-        state: { $ref: "#/components/schemas/PlanState" }
+        status: { $ref: "#/components/schemas/PlanStatus" }
         risk: { $ref: "#/components/schemas/Risk" }
         reason: { type: string }
         author: { $ref: "#/components/schemas/Principal" }
@@ -1390,22 +1389,22 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Change" }
 
-    RunState:
+    RunStatus:
       type: string
       enum: [running, succeeded, failed]
-    StepState:
+    StepStatus:
       type: string
       enum: [pending, running, unchanged, applied, failed, refused, skipped]
       description: "`refused`: a change was above the approved risk."
     Run:
       type: object
       description: A Run starts at approval. Who approved is on the Plan.
-      required: [id, plan_id, revision, state, started_at, finished_at, targets]
+      required: [id, plan_id, revision, status, started_at, finished_at, targets]
       properties:
         id: { $ref: "#/components/schemas/Id" }
         plan_id: { $ref: "#/components/schemas/Id" }
         revision: { $ref: "#/components/schemas/Revision" }
-        state: { $ref: "#/components/schemas/RunState" }
+        status: { $ref: "#/components/schemas/RunStatus" }
         started_at: { $ref: "#/components/schemas/Time" }
         finished_at: { $ref: "#/components/schemas/NullableTime" }
         targets:
@@ -1413,20 +1412,24 @@ components:
           items: { $ref: "#/components/schemas/TargetRun" }
     TargetRun:
       type: object
-      required: [target, state, steps]
+      required: [target, status, steps]
       properties:
         target: { $ref: "#/components/schemas/Name" }
-        state: { $ref: "#/components/schemas/RunState" }
+        status: { $ref: "#/components/schemas/RunStatus" }
         steps:
           type: array
           items: { $ref: "#/components/schemas/RunStep" }
     RunStep:
       type: object
-      required: [resource, action, state, changes, output, started_at, finished_at]
+      required: [resource, action, status, changes, output, started_at, finished_at]
       properties:
         resource: { type: string }
-        action: { $ref: "#/components/schemas/Action" }
-        state: { $ref: "#/components/schemas/StepState" }
+        action:
+          oneOf:
+            - $ref: "#/components/schemas/Action"
+            - type: "null"
+          description: "`null` when `changes` is empty (`wire.ActionNone`)."
+        status: { $ref: "#/components/schemas/StepStatus" }
         changes:
           type: array
           items: { $ref: "#/components/schemas/Change" }
@@ -1436,7 +1439,7 @@ components:
         started_at: { $ref: "#/components/schemas/NullableTime" }
         finished_at: { $ref: "#/components/schemas/NullableTime" }
 
-    IssueState:
+    IssueStatus:
       type: string
       enum: [open, resolving, resolved]
     IssueAction:
@@ -1452,7 +1455,7 @@ components:
         - id
         - target
         - resource
-        - state
+        - status
         - risk
         - opened_at
         - updated_at
@@ -1465,7 +1468,7 @@ components:
         id: { $ref: "#/components/schemas/Id" }
         target: { $ref: "#/components/schemas/Name" }
         resource: { type: string, examples: ["file:/etc/motd"] }
-        state: { $ref: "#/components/schemas/IssueState" }
+        status: { $ref: "#/components/schemas/IssueStatus" }
         risk:
           $ref: "#/components/schemas/Risk"
           description: Risk of a revert (the highest risk in `changes`).
