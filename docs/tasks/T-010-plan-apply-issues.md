@@ -41,4 +41,5 @@ A proposal becomes a Plan, an approved Plan becomes a Revision and a Run, and dr
 - issue: Intake (one Issue per target+resource, gone), Resolve revert/accept (D-068), PlanDone.
 - store: plans, runs, steps, issues, bindings; ApprovePlan in one transaction.
 - Tests use driver/fake + the real link + `link/linktest` (a fake agent that speaks the wire protocol): create → approve → apply → drift → revert, accept, gone, offline, create-only, stale, failed target, restart change, re-enroll after token expiry, guest drift, no secret in DB/events also after a controller restart.
+- Review fixes: `Engine.Recover` at start (B1); D-075 controller side, re-enroll = watch only (B2; wire commit 56e0a68 for T-018); targets reserved per Run, `ErrTargetBusy` (M1); m1–m4; no watch on `hello` while a Run works on the target. QA PR #16 merged; step writes survive a cancel.
 - **Waits for T-018:** the same flow test with the real agent code (`internal/agent`) instead of `linktest`; `Resource.Sensitive` lists come with the secret store, so the head-revision source of D-062 is tested only with empty lists.

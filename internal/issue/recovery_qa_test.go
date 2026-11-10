@@ -36,7 +36,9 @@ func TestConcurrentApprovalAppliesOnce(t *testing.T) {
 	for range 2 {
 		if err := <-results; err == nil {
 			wins++
-		} else if !errors.Is(err, store.ErrPlanNotPending) {
+		} else if !errors.Is(err, store.ErrPlanNotPending) && !errors.Is(err, plan.ErrTargetBusy) {
+			// Since review T-010 M1 the loser can also meet the target
+			// reservation of the winner first; both refusals are correct.
 			t.Errorf("duplicate approval: %v", err)
 		}
 	}

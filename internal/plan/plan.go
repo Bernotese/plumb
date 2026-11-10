@@ -197,6 +197,15 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		}
 		return nil
 	case wire.ReportHello:
+		// A Run that works on the target sends the watch list when it is
+		// done; a watch before the first apply would report every resource
+		// of a new guest as drift.
+		e.mu.Lock()
+		busy := e.busy[d.Target] > 0
+		e.mu.Unlock()
+		if busy {
+			return nil
+		}
 		return e.sendWatch(ctx, d.Target)
 	}
 	return nil

@@ -168,3 +168,57 @@ func TestResolveRules(t *testing.T) {
 		t.Errorf("accept of an image drift: %v", err)
 	}
 }
+
+// D-075: an apply changes only what the approved Plan shows.
+func TestApplyOnlyPlanned(t *testing.T) {
+	e := newEnv(t)
+	e.seed("web1")
+	put := func(text string) state.Doc {
+		return doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},`+
+			`"blocks":[{"use":"motd","params":{"text":"`+text+`"}},{"use":"web"}]}`)
+	}
+	if run := e.approve(e.propose(plan.Proposal{Put: []state.Doc{put("hello web1")}}).ID); run.Status != "succeeded" {
+		t.Fatal(run.Status)
+	}
+	a := e.agents["web1"]
+
+	// The Plan changes /etc/motd only.
+	p := e.propose(plan.Proposal{Put: []state.Doc{put("new text")}})
+	if c := changes(t, p)["web1"].Resources; len(c) != 1 || c[0].Resource != "file:/etc/motd" {
+		t.Fatalf("plan: %+v", c)
+	}
+	// Before the approval, someone edits the site file.
+	edited := map[string]any{"path": "/etc/nginx/site", "content": "edited"}
+	a.Change(e.ctx, "file:/etc/nginx/site", edited)
+	site := e.openIssue("web1", "file:/etc/nginx/site")
+
+	run := e.approve(p.ID)
+	steps, _ := e.st.Steps(e.ctx, run.ID)
+	status := map[string]string{}
+	for _, s := range steps {
+		status[s.Resource] = s.Status
+	}
+	if run.Status != "failed" || status["file:/etc/nginx/site"] != "refused" || status["file:/etc/motd"] != "applied" {
+		t.Errorf("run %s, steps %v", run.Status, status)
+	}
+	if g := a.Guest("file:/etc/nginx/site"); g["content"] != "edited" {
+		t.Errorf("the unplanned drift was overwritten: %v", g)
+	}
+	if got, _ := e.st.GetIssue(e.ctx, site.ID); got.Status != store.IssueOpen {
+		t.Errorf("the drift Issue: %+v; want it open, not gone", got)
+	}
+
+	// A planned resource whose guest value changed since the Plan is refused too.
+	p2 := e.propose(plan.Proposal{Put: []state.Doc{put("third")}})
+	a.Change(e.ctx, "file:/etc/motd", map[string]any{"path": "/etc/motd", "content": "someone else", "mode": "0644"})
+	run2 := e.approve(p2.ID)
+	steps, _ = e.st.Steps(e.ctx, run2.ID)
+	for _, s := range steps {
+		if s.Resource == "file:/etc/motd" && s.Status != "refused" {
+			t.Errorf("motd with another from: %s", s.Status)
+		}
+	}
+	if g := a.Guest("file:/etc/motd"); g["content"] != "someone else" {
+		t.Errorf("motd was overwritten: %v", g)
+	}
+}

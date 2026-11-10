@@ -253,9 +253,20 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 	}
 	switch cmd.Type {
 	case wire.CommandWatch:
+		// Like the real agent: store the list and report what differs now
+		// (open drift is reported again after a watch, T-018).
 		a.mu.Lock()
 		a.watch = body.Resources
+		var drift []wire.Item
+		for _, it := range a.observeAll(body.Resources) {
+			if it.Status == wire.StatusDiffers {
+				drift = append(drift, it)
+			}
+		}
 		a.mu.Unlock()
+		if len(drift) > 0 {
+			a.report(ctx, wire.Report{Type: wire.ReportDrift, Items: drift})
+		}
 	case wire.CommandObserve:
 		a.mu.Lock()
 		items := a.observeAll(body.Resources)
@@ -327,19 +338,39 @@ func norm(v any) any {
 	return out
 }
 
+// apply follows the agent rule of D-075: a resource changes only when its
+// new difference is covered by the planned changes (or it is unverified),
+// and never above max_risk.
 func (a *Agent) apply(ctx context.Context, id string, body wire.ApplyBody) {
-	a.mu.Lock()
-	items := a.observeAll(body.Resources)
 	byID := map[string]wire.Resource{}
 	for _, r := range body.Resources {
 		byID[r.ID] = r
 	}
+	plans := map[string]wire.Planned{}
+	for _, p := range body.Planned {
+		if _, ok := byID[p.Resource]; !ok {
+			a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: id, Error: "planned resource " + p.Resource + " is not in the resources"})
+			return
+		}
+		if _, dup := plans[p.Resource]; dup {
+			a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: id, Error: "resource " + p.Resource + " is planned twice"})
+			return
+		}
+		plans[p.Resource] = p
+	}
+	a.mu.Lock()
+	items := a.observeAll(body.Resources)
 	a.mu.Unlock()
 	for i := range items {
 		it := &items[i]
 		a.report(ctx, wire.Report{Type: wire.ReportProgress, CommandID: id,
 			Items: []wire.Item{{Resource: it.Resource, Status: wire.StatusRunning}}})
 		if it.Status == wire.StatusUnchanged {
+			continue
+		}
+		if p, ok := plans[it.Resource]; !ok || (!p.Unverified && !wire.Covers(p.Changes, it.Changes)) {
+			it.Status = wire.StatusRefused
+			it.Output = "the guest differs from the approved Plan; plan again"
 			continue
 		}
 		if wire.MaxRisk(it.Changes).Exceeds(body.MaxRisk) {
