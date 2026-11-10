@@ -15,7 +15,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-012 Proxmox VM driver | pl-backend | draft PR #20 (f055a3c, in line with main): offline part statically approved. Real-host part (22 items) **blocked: test host** |
 | T-013 minimal installer | pl-backend | draft PR #26 (eed5009, in line with main): offline part statically approved. Real-host part (20 items) **blocked: test host**. Follow-up: key volume + `plumb key init` (D-086), see card |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Blocked: test host** |
-| T-020 symlink resource type | pl-frontend | running |
+| T-020 symlink resource type | pl-frontend | PR #73: symlink resource good; rework running (`nginx-site` leaves the PR, 3 should items, 1 QA race finding); then delta review |
+| T-044 order between Block uses (`after`), then `nginx-site` | pl-architect plans | backlog; changes the agent, needs a user go |
 
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
 
