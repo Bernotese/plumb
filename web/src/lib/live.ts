@@ -56,20 +56,28 @@ export function liveSnapshot<T>(o: LiveOptions<T>): Live {
     o.load().then(
       (snapshot) => {
         loading--;
-        if (stopped || gen < shown) return; // an older answer: drop it
-        shown = gen;
-        o.onSnapshot(snapshot);
-        if (loading === 0) {
-          const queued = buffer;
-          buffer = [];
-          for (const e of queued) o.onEvent?.(e, live);
-        }
+        if (!stopped && gen > shown) {
+          shown = gen;
+          o.onSnapshot(snapshot);
+        } // else an older answer: dropped
+        settle();
       },
       (err: unknown) => {
         loading--;
         if (!stopped) o.onError?.(err);
+        settle();
       },
     );
+  }
+
+  // Every load end (shown, dropped or failed) checks the buffer: when no
+  // load is in flight and a snapshot is shown, the buffered events are
+  // applied to it in order (T-014 re-review m5).
+  function settle() {
+    if (stopped || loading > 0 || shown === 0) return;
+    const queued = buffer;
+    buffer = [];
+    for (const e of queued) o.onEvent?.(e, live);
   }
 
   const unsubscribe = o.subscribe(

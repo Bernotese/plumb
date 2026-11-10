@@ -101,4 +101,49 @@ describe("liveSnapshot", () => {
     expect(load).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
+
+  it("flushes the buffer in order when an older answer is dropped (m5)", async () => {
+    const resolvers: ((v: string) => void)[] = [];
+    const load = vi.fn(() => new Promise<string>((r) => resolvers.push(r)));
+    const s = stream();
+    const applied: number[] = [];
+    liveSnapshot({
+      load,
+      subscribe: s.subscribe,
+      onSnapshot: () => {},
+      onEvent: (e) => applied.push(e.seq),
+    });
+    s.open(); // two loads overlap
+    s.emit(ev(7));
+    resolvers[1]?.("new");
+    await tick();
+    resolvers[0]?.("old"); // dropped: the buffer must still be flushed
+    await tick();
+    s.emit(ev(8));
+    expect(applied).toEqual([7, 8]);
+  });
+
+  it("flushes the buffer when a later load fails", async () => {
+    let call = 0;
+    const load = vi.fn(() =>
+      ++call === 2 ? Promise.reject(new Error("down")) : Promise.resolve("ok"),
+    );
+    const s = stream();
+    const applied: number[] = [];
+    const errors: unknown[] = [];
+    liveSnapshot({
+      load,
+      subscribe: s.subscribe,
+      onSnapshot: () => {},
+      onEvent: (e) => applied.push(e.seq),
+      onError: (e) => errors.push(e),
+    });
+    await tick(); // first snapshot shown
+    s.open(); // second load fails
+    s.emit(ev(3));
+    await tick();
+    s.emit(ev(4));
+    expect(errors).toHaveLength(1);
+    expect(applied).toEqual([3, 4]);
+  });
 });
