@@ -23,6 +23,7 @@ Everything the slice can do is reachable through the documented API, with login,
 - [ ] Contract test: it takes the response schemas from `api/openapi.yaml` and validates real responses with `santhosh-tekuri/jsonschema`. No new dependency.
 - [ ] Tests: `go test ./internal/api/...` passes: every tier against every endpoint, plus the contract test.
 - [ ] From T-017 QA: `cmd/plumb` imports package `web` and serves the embedded UI at `/` (T-017 only built the embed package). Test: `GET /` returns the built `index.html`; unknown non-API paths fall back to it.
+- [ ] From the T-017 contract check: `Event.type` in `api/openapi.yaml` is a closed enum. Add every new event type there first.
 
 ## Out of scope
 - Token management UI, secrets, export/import endpoints.
