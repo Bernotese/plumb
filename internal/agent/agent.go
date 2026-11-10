@@ -165,11 +165,19 @@ func (a *Agent) Run(ctx context.Context) error {
 				connected = a.connError(ctx, err, &b, connected)
 				continue
 			}
+			// The backoff is reset only after a successful poll or result:
+			// an error after a working hello must not loop at BackoffMin.
 			connected = true
-			b.reset()
 		}
 		if pending != nil {
 			if err := a.send(ctx, *pending); err != nil {
+				if permanent(err) {
+					// The link does not know the command any more (for example
+					// after a controller restart). Drop it and poll again.
+					a.log.Warn("result refused for good; dropped", "command", pending.CommandID, "err", err)
+					pending = nil
+					continue
+				}
 				if errors.Is(err, errUnauthorized) {
 					a.log.Warn("result dropped after 401", "command", pending.CommandID)
 					pending = nil

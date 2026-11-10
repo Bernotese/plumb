@@ -24,6 +24,23 @@ var errUnauthorized = errors.New("controller answered 401")
 // maxRetryAfter bounds a Retry-After from the controller.
 const maxRetryAfter = 10 * time.Minute
 
+// statusError is any other non-2xx answer.
+type statusError struct {
+	Status int
+	Msg    string
+}
+
+func (e *statusError) Error() string { return e.Msg }
+
+// permanent reports whether the controller refused the request for good:
+// a 4xx other than 401, 408 and 429. Sending the same request again cannot
+// work (for example 409 "unknown command id" after a controller restart).
+func permanent(err error) bool {
+	var se *statusError
+	return errors.As(err, &se) && se.Status >= 400 && se.Status < 500 &&
+		se.Status != http.StatusUnauthorized && se.Status != http.StatusRequestTimeout && se.Status != http.StatusTooManyRequests
+}
+
 // busyError is a 429 or 503: the controller is busy. The agent keeps its
 // credential and waits at least RetryAfter (D-055).
 type busyError struct {
@@ -127,7 +144,8 @@ func (c *client) do(ctx context.Context, method, path, cred string, in, out any)
 		return resp.StatusCode, nil
 	default:
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return resp.StatusCode, fmt.Errorf("%s %s: %s %s", method, path, resp.Status, strings.TrimSpace(string(msg)))
+		return resp.StatusCode, &statusError{Status: resp.StatusCode,
+			Msg: fmt.Sprintf("%s %s: %s %s", method, path, resp.Status, strings.TrimSpace(string(msg)))}
 	}
 }
 

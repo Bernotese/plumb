@@ -201,3 +201,43 @@ func TestRetryAfterParse(t *testing.T) {
 		}
 	}
 }
+
+// N1: after a controller restart the link answers the pending result with
+// 409. The agent drops it, keeps the link and polls again.
+func TestResultRefusedForGood(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok-1")
+	startAgent(t, ctl, ca, "tok-1")
+	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) == 1 })
+	ctl.mu.Lock()
+	ctl.resultCode = http.StatusConflict
+	ctl.mu.Unlock()
+	ctl.send(t, "o1", wire.CommandObserve, wire.ObserveBody{})
+	waitFor(t, "o1 taken", func() bool { return len(ctl.commands) == 0 })
+	time.Sleep(200 * time.Millisecond)
+	ctl.mu.Lock()
+	ctl.resultCode = 0
+	ctl.mu.Unlock()
+	ctl.send(t, "o2", wire.CommandObserve, wire.ObserveBody{})
+	ctl.result(t, "o2")
+	if n := len(ctl.reportsOf(wire.ReportHello)); n > 2 {
+		t.Fatalf("hello reports = %d, want at most one extra", n)
+	}
+}
+
+// N1: an error after a working hello must not loop at BackoffMin.
+func TestHelloRateIsBounded(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok-1")
+	startAgent(t, ctl, ca, "tok-1")
+	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) == 1 })
+	ctl.mu.Lock()
+	ctl.pollFail, ctl.failCode = 1000, http.StatusInternalServerError // every poll fails, hellos work
+	ctl.mu.Unlock()
+	time.Sleep(time.Second)
+	// BackoffMax is 50 ms with jitter: about 20-40 rounds per second. A
+	// backoff reset after every hello gives 100 or more.
+	if n := len(ctl.reportsOf(wire.ReportHello)); n > 45 {
+		t.Fatalf("%d hellos in 1 s: the backoff is reset too early", n)
+	}
+}

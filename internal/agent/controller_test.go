@@ -80,6 +80,7 @@ type controller struct {
 	failCode    int            // default 503
 	retryAfter  string         // Retry-After of a failed poll or report
 	reportFail  int            // answer this many reports with failCode
+	resultCode  int            // when set, answer every result report with it
 	pollTimes   []time.Time
 	reports     []wire.Report
 	commands    chan wire.Command
@@ -167,6 +168,11 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.mu.Lock()
+		if c.resultCode != 0 && rep.Type == wire.ReportResult {
+			w.WriteHeader(c.resultCode)
+			c.mu.Unlock()
+			return
+		}
 		if c.reportFail > 0 && rep.Type == wire.ReportResult {
 			c.reportFail--
 			failWith()

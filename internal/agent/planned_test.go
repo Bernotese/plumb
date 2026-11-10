@@ -119,3 +119,26 @@ func TestApplyBodyChecks(t *testing.T) {
 		}
 	}
 }
+
+// A planned (not unverified) restart is covered: the restart change has no values.
+func TestPlannedRestartIsCovered(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok-1")
+	ta := startAgent(t, ctl, ca, "tok-1")
+	write(t, filepath.Join(ta.root, "srv/nginx.conf"), "old\n")
+	conf := fileRes("web", "/srv/nginx.conf", map[string]any{"content": "new\n"})
+	svc := wire.Resource{ID: "service:nginx", Type: "service", Block: "web",
+		Attrs: map[string]any{"name": "nginx", "restart_on": []any{conf.ID}}}
+	ctl.send(t, "a1", wire.CommandApply, wire.ApplyBody{Resources: []wire.Resource{conf, svc}, MaxRisk: wire.RiskDisruptive,
+		Planned: []wire.Planned{
+			{Resource: conf.ID, Changes: []wire.Change{{Attr: "content", From: "old\n", To: "new\n", Risk: wire.RiskReversible}}},
+			{Resource: svc.ID, Changes: []wire.Change{{Attr: wire.AttrRestart, Risk: wire.RiskDisruptive}}},
+		}})
+	rep := ctl.result(t, "a1")
+	if rep.Items[0].Status != wire.StatusApplied || rep.Items[1].Status != wire.StatusApplied {
+		t.Fatalf("items = %+v", rep.Items)
+	}
+	if ta.runner.count("systemctl", "restart") != 1 {
+		t.Fatal("service did not restart once")
+	}
+}
