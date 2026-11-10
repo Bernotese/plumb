@@ -48,11 +48,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, _ *principal) {
 		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "username and password are required.")
 		return
 	}
-	keys := []string{"user:" + req.Username, clientKey(r)}
-	if wait := s.logins.blocked(keys...); wait > 0 {
-		secs := int(wait.Seconds()) + 1
-		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		problem(w, http.StatusTooManyRequests, "rate-limited", "Too many attempts", "Try again in "+strconv.Itoa(secs)+" seconds.")
+	ip := clientKey(r)
+	pair := "user:" + req.Username + "|" + ip
+	if wait := max(s.loginPair.blocked(pair), s.loginIP.blocked(ip), s.loginUser.blocked("user:"+req.Username)); wait > 0 {
+		tooMany(w, wait)
 		return
 	}
 	u, err := s.st.UserByName(r.Context(), req.Username)
@@ -60,19 +59,28 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, _ *principal) {
 	if err == nil {
 		hash = u.PasswordHash
 	}
-	if !VerifyPassword(req.Password, hash) || err != nil {
-		s.logins.fail(keys...)
+	var good bool
+	if !s.withHashSlot(func() { good = VerifyPassword(req.Password, hash) }) {
+		tooMany(w, time.Second)
+		return
+	}
+	if !good || err != nil {
+		s.loginPair.fail(pair)
+		s.loginIP.fail(ip)
+		if err == nil { // only real users get a user key (review m4)
+			s.loginUser.fail("user:" + req.Username)
+		}
 		problem(w, http.StatusUnauthorized, "unauthenticated", "Authentication required", "Wrong user name or password.")
 		return
 	}
-	s.logins.reset(keys[0])
+	s.loginPair.reset(pair)
 	id := randomText(32)
 	sess := store.Session{IDHash: sha256Hex(id), UserID: u.ID, ExpiresAt: s.now().Add(s.cfg.SessionTTL)}
 	if err := s.st.CreateSession(r.Context(), sess); err != nil {
 		s.internal(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: id, Path: "/", Expires: sess.ExpiresAt,
+	http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: id, Path: "/", Expires: sess.ExpiresAt,
 		HttpOnly: true, Secure: !s.cfg.Dev, SameSite: http.SameSiteStrictMode})
 	p := &principal{name: "user:" + u.Name, tier: TierAdmin, user: &u, session: &sess, mustChange: u.MustChangePassword}
 	writeJSON(w, http.StatusOK, p.view())
@@ -83,7 +91,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, p *principal) {
 		s.internal(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
+	http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: !s.cfg.Dev, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -102,13 +110,18 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p *princ
 		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "current_password and new_password are required.")
 		return
 	}
-	keys := []string{"user:" + p.user.Name, clientKey(r)}
-	if s.logins.blocked(keys...) > 0 {
-		problem(w, http.StatusTooManyRequests, "rate-limited", "Too many attempts", "Try again later.")
+	pair := "user:" + p.user.Name + "|" + clientKey(r)
+	if wait := s.loginPair.blocked(pair); wait > 0 {
+		tooMany(w, wait)
 		return
 	}
-	if !VerifyPassword(req.CurrentPassword, p.user.PasswordHash) {
-		s.logins.fail(keys...)
+	var good bool
+	if !s.withHashSlot(func() { good = VerifyPassword(req.CurrentPassword, p.user.PasswordHash) }) {
+		tooMany(w, time.Second)
+		return
+	}
+	if !good {
+		s.loginPair.fail(pair)
 		problem(w, http.StatusUnauthorized, "unauthenticated", "Authentication required", "The current password is wrong.")
 		return
 	}
@@ -124,7 +137,12 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p *princ
 		return
 	}
 	// Other sessions of the user end; this one stays.
-	if err := s.st.SetPassword(r.Context(), p.user.ID, HashPassword(req.NewPassword, s.cfg.PasswordParams), p.session.IDHash); err != nil {
+	var hash string
+	if !s.withHashSlot(func() { hash = HashPassword(req.NewPassword, s.cfg.PasswordParams) }) {
+		tooMany(w, time.Second)
+		return
+	}
+	if err := s.st.SetPassword(r.Context(), p.user.ID, hash, p.session.IDHash); err != nil {
 		s.internal(w, err)
 		return
 	}
@@ -134,4 +152,14 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p *princ
 func (s *Server) internal(w http.ResponseWriter, err error) {
 	s.log.Error("api", "err", err)
 	problem(w, http.StatusInternalServerError, "internal", "Internal error", "")
+}
+
+// tooMany answers 429 with Retry-After.
+func tooMany(w http.ResponseWriter, wait time.Duration) {
+	secs := int(wait.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	problem(w, http.StatusTooManyRequests, "rate-limited", "Too many attempts", "Try again in "+strconv.Itoa(secs)+" seconds.")
 }

@@ -144,6 +144,9 @@ type failures struct {
 	first time.Time
 }
 
+// maxLimiterKeys bounds the keys of one limiter.
+const maxLimiterKeys = 10000
+
 func newFailLimiter(now func() time.Time, max int, window time.Duration) *failLimiter {
 	return &failLimiter{now: now, max: max, window: window, keys: map[string]*failures{}}
 }
@@ -174,11 +177,21 @@ func (l *failLimiter) fail(keys ...string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	if len(l.keys) > 100000 { // bound the memory
+	if len(l.keys) >= maxLimiterKeys { // bound the memory (review T-011 m4)
 		for k, f := range l.keys {
 			if now.Sub(f.first) >= l.window {
 				delete(l.keys, k)
 			}
+		}
+		for len(l.keys) >= maxLimiterKeys { // still full: drop the oldest
+			var oldest string
+			var at time.Time
+			for k, f := range l.keys {
+				if oldest == "" || f.first.Before(at) {
+					oldest, at = k, f.first
+				}
+			}
+			delete(l.keys, oldest)
 		}
 	}
 	for _, k := range keys {

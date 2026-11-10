@@ -102,7 +102,7 @@ paths:
             Set-Cookie:
               description: The session cookie.
               schema: { type: string }
-              example: plumb_session=Qm9n...; Path=/; HttpOnly; Secure; SameSite=Strict
+              example: __Host-plumb_session=Qm9n...; Path=/; HttpOnly; Secure; SameSite=Strict
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
@@ -147,6 +147,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /images:
     get:
@@ -920,6 +921,8 @@ paths:
         A `text/event-stream`. Each message has `id` (the event `seq`), `event` (the type) and
         `data` (an `Event` as JSON). Resume with `since` or the `Last-Event-ID` header. The server
         sends a comment line every 15 s as keep-alive. Payloads never hold secret values.
+        The stream ends when the session ends or the token is revoked. A principal can hold 8
+        streams at a time; more get 429.
       parameters:
         - name: since
           in: query
@@ -948,18 +951,21 @@ paths:
                 event: issue.opened
                 data: {"seq":1043,"type":"issue.opened","time":"2026-11-10T09:10:12Z","subject":"issue:7","actor":"agent:web1","data":{"target":"web1","resource":"file:/etc/motd"}}
 
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
 components:
   securitySchemes:
     session:
       type: apiKey
       in: cookie
-      name: plumb_session
+      name: __Host-plumb_session
       description: |
         Human session (`POST /session`) with tier `admin`. `HttpOnly`, `Secure`,
-        `SameSite=Strict`. Every call that changes data, login included, must send a matching
+        `SameSite=Strict`. In `plumb serve --dev` (plain HTTP) the cookie is `plumb_session`
+        without `Secure`. Every call that changes data, login included, must send a matching
         `Origin` header. Only a session approves `destructive` Plans and manages tokens, secrets
         and import.
     token:
@@ -1087,7 +1093,7 @@ components:
               - pointer: /put/0/spec/guest/disk
                 message: disk is create-only in this version. Create a new target instead.
     TooManyRequests:
-      description: Too many failed logins.
+      description: Too many failed logins, or too many requests of one kind at a time.
       headers:
         Retry-After:
           description: Seconds to wait.
