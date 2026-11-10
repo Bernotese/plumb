@@ -1,0 +1,26 @@
+kind: Block
+name: deploy-user
+spec:
+  title: Deployment user
+  description: Create a user for deployments and install its SSH public key.
+  params:
+    type: object
+    required:
+      - ssh_key
+    properties:
+      name:
+        type: string
+        title: User name
+        default: deploy
+        pattern: "^[a-z_][a-z0-9_-]{0,31}$"
+        not: {enum: [root]}
+      ssh_key:
+        type: string
+        title: SSH public key
+        pattern: '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com) [A-Za-z0-9+/=]+( [^\r\n]*)?$'
+  resources:
+    - user:
+        name: "{{ .name }}"
+        shell: /bin/bash
+        ssh_keys:
+          - "{{ .ssh_key }}"

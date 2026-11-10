@@ -1,0 +1,38 @@
+kind: Block
+name: nginx
+spec:
+  title: Nginx web server
+  description: Install Nginx and overwrite the distro default site. Changes restart Nginx (not reload).
+  params:
+    type: object
+    properties:
+      server_name:
+        type: string
+        title: Server name
+        default: _
+        pattern: "^[A-Za-z0-9*_.-]+( [A-Za-z0-9*_.-]+)*$"
+        maxLength: 253
+  resources:
+    - package:
+        name: nginx
+    - file:
+        path: /etc/nginx/sites-available/default
+        content: |
+          server {
+              listen 80 default_server;
+              root /var/www/html;
+              index index.html;
+              server_name {{ .server_name }};
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+        mode: "0644"
+        owner: root
+        group: root
+    - service:
+        name: nginx
+        state: running
+        enabled: true
+        restart_on:
+          - file:/etc/nginx/sites-available/default
