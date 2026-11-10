@@ -342,3 +342,33 @@ func TestStoppedRunLeavesState(t *testing.T) {
 		}
 	}
 }
+
+// Review S1: a failed pct start leaves an LXC that the state names; the
+// next run starts it and makes no second LXC.
+func TestFailedStartKeepsOneLXC(t *testing.T) {
+	h := newHost(t)
+	if code, _, _ := h.run(append(asRoot, "FAKE_FAIL=pct start"), "--yes", "--plumb-binary", h.plumb); code == 0 {
+		t.Fatal("the run did not stop")
+	}
+	st, _ := os.ReadFile(h.stateF)
+	if !strings.Contains(string(st), "lxc_id=105\n") {
+		t.Fatalf("state after the failed start:\n%s", st)
+	}
+	h.resetCalls()
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("second run: %d %s %s", code, out, errOut)
+	}
+	calls := h.calls()
+	if index(calls, "pct create") >= 0 {
+		t.Error("the second run made another LXC")
+	}
+	if index(calls, "pct start 105") < 0 {
+		t.Error("the kept, stopped LXC was not started")
+	}
+	// A running kept LXC is not started again.
+	h.resetCalls()
+	h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+	if index(h.calls(), "pct start") >= 0 {
+		t.Error("a running LXC was started again")
+	}
+}

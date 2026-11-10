@@ -671,6 +671,10 @@ ensure_lxc() {
 			say "LXC $LXC_ID exists; it is kept."
 			LXC_NEW=0
 			LXC_OURS=1
+			# A run that stopped after pct create left it stopped (review S1).
+			if [[ $(query pct status "$LXC_ID" 2>/dev/null) == *stopped* ]]; then
+				run pct start "$LXC_ID"
+			fi
 			return 0
 			;;
 		foreign)
@@ -691,9 +695,12 @@ ensure_lxc() {
 		--cores 2 --memory 1024 --swap 512 --rootfs "$DISK_STORAGE:8" \
 		--mp0 "$DISK_STORAGE:$KEY_VOLUME_GB,mp=$KEY_DIR,backup=0" --net0 "$net" --onboot 1 --ostype debian \
 		--description "$LXC_MARKER Plumb controller, made by install.sh"
-	run pct start "$LXC_ID"
+	# The state names the LXC before anything else can fail, so a failed
+	# start never leads to a second LXC on the next run (review S1).
 	LXC_NEW=1
 	LXC_OURS=1
+	state_put
+	run pct start "$LXC_ID"
 }
 
 lxc_ip() {
