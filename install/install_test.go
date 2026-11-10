@@ -18,7 +18,7 @@ import (
 const fakeSecret = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
 
 // fakeNames are the commands that testdata/fakepve plays.
-var fakeNames = []string{"pveversion", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install"}
+var fakeNames = []string{"pveversion", "dpkg-query", "dpkg", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install"}
 
 type host struct {
 	t       *testing.T
@@ -69,7 +69,7 @@ func newHost(t *testing.T) *host {
 // run runs install.sh with stdin closed (no terminal).
 func (h *host) run(env []string, args ...string) (int, string, string) {
 	h.t.Helper()
-	cmd := exec.Command("bash", append([]string{"install.sh", "--snippet-dir", h.snippet}, args...)...)
+	cmd := exec.Command("bash", append([]string{"install.sh", "--snippet-dir", h.snippet, "--image-dir", h.images()}, args...)...)
 	cmd.Env = append(append([]string{}, h.env...), env...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
@@ -83,13 +83,15 @@ func (h *host) run(env []string, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+func (h *host) images() string { return filepath.Join(filepath.Dir(h.state), "images") }
+
 func (h *host) calls() []string {
 	b, _ := os.ReadFile(filepath.Join(h.state, "calls"))
 	return strings.Split(strings.TrimSpace(string(b)), "\n")
 }
 
 // mutating reports a fake call that changes the host.
-var mutating = regexp.MustCompile(`^(pveum (pool (add|delete)|role (add|modify|delete)|user (add|delete)|acl|user token (add|remove))|` +
+var mutating = regexp.MustCompile(`^(pveum (pool (add|delete)|role (add|modify|delete)|user (add|delete)|acl (modify|delete)|user token (add|remove))|` +
 	`pvesm (add|set|remove)|pveam (update|download)|pct (create|start|stop|destroy|push|pull|exec [0-9]+ -- (install|sh|chown|systemctl))|install )`)
 
 func TestDryRunChangesNothing(t *testing.T) {
@@ -111,12 +113,12 @@ func TestDryRunChangesNothing(t *testing.T) {
 		"+ pveum acl modify /storage/plumb-snippets --tokens plumb@pve\\!plumb --roles PlumbSnippets --propagate 0",
 		"+ pveum user token add plumb@pve plumb --privsep 1",
 		"+ pvesm add dir plumb-snippets --path " + h.snippet + " --content snippets --shared 0",
-		"+ pvesm set local --content iso\\,vztmpl\\,backup\\,import",
+		"+ pvesm add dir plumb-images --path " + h.images() + " --content import --shared 0",
 		"+ pveam download local debian-13-standard_13.1-2_amd64.tar.zst",
 		"+ pct create 105 local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst --hostname plumb --unprivileged 1",
 		"+ pct push 105 " + h.plumb + " /usr/local/bin/plumb --perms 0755",
 		"/etc/plumb/plumb.env --perms 0600",
-		"+ pct exec 105 -- systemctl enable --now plumb.service",
+		"+ pct exec 105 -- systemctl restart plumb.service",
 		"--- snippet " + h.snippet + "/snippets/plumb-vendor.yaml ---",
 	} {
 		if !strings.Contains(out, want) {
@@ -140,12 +142,12 @@ func TestRights(t *testing.T) {
 	_, out, _ := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
 	rights := out[:strings.Index(out, "+ ")]
 	want := map[string]string{
-		"/pool/plumb":                   "VM.Allocate VM.Audit VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt Pool.Audit",
+		"/pool/plumb":                   "VM.Allocate VM.Audit VM.Clone VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt Pool.Audit",
 		"/storage/local-lvm":            "Datastore.AllocateSpace Datastore.Audit",
-		"/storage/local":                "Datastore.AllocateTemplate Datastore.Audit",
-		"/storage/plumb-snippets":       "Datastore.Audit",
+		"/storage/plumb-images":         "Datastore.AllocateTemplate Datastore.Audit",
+		"/storage/plumb-snippets":       "Datastore.AllocateSpace",
 		"/sdn/zones/localnetwork/vmbr0": "SDN.Use",
-		"/nodes/pve1":                   "Sys.Audit Sys.AccessNetwork",
+		"/nodes/pve1":                   "Sys.AccessNetwork",
 	}
 	for path, privs := range want {
 		re := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(path) + ` +Plumb\w+ +` + regexp.QuoteMeta(privs) + `$`)
@@ -165,7 +167,7 @@ func TestRights(t *testing.T) {
 		t.Errorf("%d rights lines, want %d", len(granted), len(want))
 	}
 	all := strings.Join(granted, "\n")
-	for _, bad := range []string{"Sys.Modify", "Permissions.Modify", "Pool.Allocate", "Sys.Console", "VM.Console", "VM.Monitor", "VM.GuestAgent", "Realm.", "User.Modify", "VM.Backup", "VM.Snapshot", "VM.Migrate", "Datastore.Allocate "} {
+	for _, bad := range []string{"Sys.Audit", "VM.Config.CDROM", "Sys.Modify", "Permissions.Modify", "Pool.Allocate", "Sys.Console", "VM.Console", "VM.Monitor", "VM.GuestAgent", "Realm.", "User.Modify", "VM.Backup", "VM.Snapshot", "VM.Migrate", "Datastore.Allocate "} {
 		if strings.Contains(all+" ", bad) {
 			t.Errorf("forbidden right %s granted", bad)
 		}
@@ -365,5 +367,228 @@ func TestBashSyntax(t *testing.T) {
 		if out, err := exec.Command("bash", "-n", f).CombinedOutput(); err != nil {
 			t.Errorf("%s: %v %s", f, err, out)
 		}
+	}
+}
+
+// installed runs a real install against the fakes and returns the root env.
+func (h *host) installed() []string {
+	h.t.Helper()
+	root := []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "TMPDIR=" + h.tmpDir()}
+	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		h.t.Fatalf("install: %d\n%s\n%s", code, out, errOut)
+	}
+	os.Remove(filepath.Join(h.state, "calls"))
+	return root
+}
+
+func (h *host) tmpDir() string {
+	d := filepath.Join(filepath.Dir(h.state), "tmp")
+	os.MkdirAll(d, 0o700)
+	return d
+}
+
+func (h *host) changed() []string {
+	var out []string
+	for _, c := range h.calls() {
+		if mutating.MatchString(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Review T-013 #1: --remove never deletes a directory from the command
+// line, and keeps a directory that holds other files.
+func TestRemoveSnippetDir(t *testing.T) {
+	h := newHost(t)
+	root := h.installed()
+	code, out, errOut := h.run(root, "--remove", "--yes", "--dry-run", "--snippet-dir", "/etc")
+	if code == 0 || !strings.Contains(errOut, "is not the directory of the install") || strings.Contains(out, "rm -rf") {
+		t.Errorf("--snippet-dir /etc: %d %q %q", code, out, errOut)
+	}
+	if c := h.changed(); len(c) != 0 {
+		t.Errorf("changed: %v", c)
+	}
+	other := filepath.Join(h.snippet, "snippets", "someone-else.yaml")
+	os.WriteFile(other, []byte("x"), 0o644)
+	cmd := exec.Command("bash", "install.sh", "--remove", "--yes") // no --snippet-dir: from the state file
+	cmd.Env = append(append([]string{}, h.env...), root...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("remove: %v %s", err, out)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("a file the script did not make was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.snippet, "snippets", "plumb-vendor.yaml")); !os.IsNotExist(err) {
+		t.Errorf("the vendor snippet stays: %v", err)
+	}
+	for _, c := range h.calls() {
+		if strings.Contains(c, "rm -rf") {
+			t.Errorf("rm -rf: %s", c)
+		}
+	}
+}
+
+// Review T-013 #2: a container that this script did not make is neither
+// destroyed nor given the token.
+func TestForeignLXC(t *testing.T) {
+	h := newHost(t)
+	root := h.installed()
+	// Someone replaced container 105 (stale state file, id reused).
+	os.WriteFile(filepath.Join(h.state, "lxc.105"), []byte("hostname: db\ndescription: production database\n"), 0o644)
+	if code, _, errOut := h.run(root, "--remove", "--yes"); code == 0 || !strings.Contains(errOut, "not the Plumb LXC") {
+		t.Errorf("remove: %d %q", code, errOut)
+	}
+	if code, _, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code == 0 || !strings.Contains(errOut, "not made by this script") {
+		t.Errorf("install: %d %q", code, errOut)
+	}
+	for _, c := range h.changed() {
+		if strings.HasPrefix(c, "pct ") {
+			t.Errorf("the foreign container was touched: %s", c)
+		}
+	}
+	// --lxc-id of a foreign container on a fresh host.
+	h2 := newHost(t)
+	os.WriteFile(filepath.Join(h2.state, "lxc.200"), []byte("hostname: web\ndescription: \n"), 0o644)
+	code, _, errOut := h2.run([]string{"PLUMB_INSTALL_ASSUME_ROOT=1"}, "--yes", "--plumb-binary", h2.plumb, "--lxc-id", "200")
+	if code == 0 || !strings.Contains(errOut, "not made by this script") {
+		t.Errorf("--lxc-id foreign: %d %q", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(h2.state, "push", "_etc_plumb_plumb.env")); err == nil {
+		t.Error("the token went into a foreign container")
+	}
+}
+
+// Review T-013 #3: the pool guard fails closed.
+func TestRemovePoolGuardFailsClosed(t *testing.T) {
+	h := newHost(t)
+	root := h.installed()
+	if code, _, errOut := h.run(append(root, "FAKE_POOLS_FAIL=1"), "--remove", "--yes"); code == 0 || !strings.Contains(errOut, "cannot read the members") {
+		t.Errorf("unreadable pool: %d %q", code, errOut)
+	}
+	if code, _, errOut := h.run(append(root, `FAKE_POOL_MEMBERS=[{"poolid":"other"}]`), "--remove", "--yes"); code == 0 || !strings.Contains(errOut, "cannot read the members") {
+		t.Errorf("answer for another pool: %d %q", code, errOut)
+	}
+	if c := h.changed(); len(c) != 0 {
+		t.Errorf("changed: %v", c)
+	}
+}
+
+// Review T-013 #4 and host item 6: old rights are printed and removed;
+// a role with extra rights stops the install.
+func TestOldRights(t *testing.T) {
+	h := newHost(t)
+	env := []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "FAKE_EXTRA_ACL=/ plumb@pve Plumb user"}
+	code, out, errOut := h.run(env, "--yes", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "older rights of Plumb are not in the plan") || !strings.Contains(out, "  / plumb@pve Plumb user") {
+		t.Errorf("stray ACL not printed:\n%s", out)
+	}
+	if strings.Index(out, "older rights") > strings.Index(out, "+ ") && strings.Contains(out, "+ ") {
+		t.Error("printed after a change")
+	}
+	acl, _ := os.ReadFile(filepath.Join(h.state, "acl"))
+	if strings.Contains(string(acl), "/ plumb@pve Plumb") {
+		t.Errorf("the old right stays:\n%s", acl)
+	}
+	code, _, errOut = h.run([]string{"PLUMB_INSTALL_ASSUME_ROOT=1", "FAKE_ROLE_APPEND=1"}, "--yes", "--plumb-binary", h.plumb)
+	if code == 0 || !strings.Contains(errOut, "has the rights") {
+		t.Errorf("appended role: %d %q", code, errOut)
+	}
+}
+
+// Review T-013 #6: a lost LXC gets a new token, not an LXC without one.
+func TestLostLXCGetsNewToken(t *testing.T) {
+	h := newHost(t)
+	root := h.installed()
+	os.Remove(filepath.Join(h.state, "lxc.105"))
+	os.RemoveAll(filepath.Join(h.state, "push"))
+	code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+	if env, err := os.ReadFile(filepath.Join(h.state, "push", "_etc_plumb_plumb.env")); err != nil || !strings.Contains(string(env), fakeSecret) {
+		t.Errorf("new LXC without the token: %v", err)
+	}
+	var created bool
+	for _, c := range h.calls() {
+		if strings.HasPrefix(c, "pveum user token add") {
+			created = true
+		}
+	}
+	if !created {
+		t.Error("no new token")
+	}
+}
+
+// Review T-013 #7, #9, #10, #13.
+func TestInstallerMinors(t *testing.T) {
+	h := newHost(t)
+	h.installed()
+	if left, _ := os.ReadDir(h.tmpDir()); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+	for _, bad := range []string{"\"", "\\", "x\" , \"evil\": \"1"} {
+		ca := filepath.Join(t.TempDir(), "ca.pem")
+		os.WriteFile(ca, []byte("-----BEGIN CERTIFICATE-----\nMIIB"+bad+"\n-----END CERTIFICATE-----\n"), 0o644)
+		if code, _, errOut := h.run(nil, "--dry-run", "--snippet-only", "--ca", ca, "--url", "https://10.0.0.5:8444"); code == 0 || !strings.Contains(errOut, "more than PEM") {
+			t.Errorf("CA with %q: %d %q", bad, code, errOut)
+		}
+	}
+	_, out, _ := snippetFile(t, newHost(t), "https://10.0.0.5:8444")
+	if !strings.Contains(out, "--connect-timeout 10 --max-time 300") || !strings.Contains(out, "--timeout=60") {
+		t.Error("downloads without timeouts")
+	}
+	// D-081: the installer never changes a storage that it did not make.
+	_, out, _ = h.run([]string{"PLUMB_INSTALL_ASSUME_ROOT=1"}, "--remove", "--yes")
+	for _, c := range h.calls() {
+		if strings.HasPrefix(c, "pvesm set") || strings.Contains(c, "pvesm remove local") {
+			t.Errorf("a foreign storage was changed: %s", c)
+		}
+	}
+	if !strings.Contains(out, "Plumb is removed.") {
+		t.Errorf("remove: %s", out)
+	}
+}
+
+// D-081: package floor and storage rules, all refused before any change.
+func TestStorageAndVersionRules(t *testing.T) {
+	refused := func(name string, env []string, setup func(h *host), want string, args ...string) {
+		t.Helper()
+		h := newHost(t)
+		if setup != nil {
+			setup(h)
+		}
+		code, _, errOut := h.run(env, append([]string{"--dry-run", "--plumb-binary", h.plumb}, args...)...)
+		if code == 0 || !strings.Contains(errOut, want) || !strings.Contains(errOut, "Nothing was changed") {
+			t.Errorf("%s: %d %q", name, code, errOut)
+		}
+		if c := h.changed(); len(c) != 0 {
+			t.Errorf("%s: changed %v", name, c)
+		}
+	}
+	content := func(id, c string) func(h *host) {
+		return func(h *host) { os.WriteFile(filepath.Join(h.state, "content."+id), []byte(c), 0o644) }
+	}
+	refused("old qemu-server", []string{"FAKE_QEMU_SERVER=9.2.10"}, nil, "qemu-server 9.2.11 or newer")
+	refused("old storage perl", []string{"FAKE_STORAGE_PERL=9.1.12-1"}, nil, "libpve-storage-perl 9.1.13 or newer")
+	refused("disk storage with snippets", nil, content("local-lvm", "images,rootdir,snippets"), `has the content "snippets"`)
+	refused("image storage local", nil, nil, `must have exactly "import"`, "--image-storage", "local")
+	refused("image storage import+iso", nil, content("imgs", "import,iso"), `must have exactly "import"`, "--image-storage", "imgs")
+	refused("plumb-snippets with more content", nil, content("plumb-snippets", "snippets,images"), `not "snippets"`)
+
+	// An existing storage with exactly "import" is used as it is.
+	h := newHost(t)
+	os.WriteFile(filepath.Join(h.state, "content.imgs"), []byte("import"), 0o644)
+	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--image-storage", "imgs")
+	if code != 0 || strings.Contains(out, "plumb-images") || !strings.Contains(out, "/storage/imgs") {
+		t.Errorf("import-only storage: %d %s %s", code, out, errOut)
+	}
+	// Newer packages pass.
+	h = newHost(t)
+	if code, _, errOut := h.run([]string{"FAKE_QEMU_SERVER=9.2.11", "FAKE_STORAGE_PERL=9.1.13"}, "--dry-run", "--plumb-binary", h.plumb); code != 0 {
+		t.Errorf("minimum versions: %d %q", code, errOut)
 	}
 }

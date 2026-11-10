@@ -9,10 +9,19 @@
 # running it. The script downloads no third-party code: the controller
 # binary comes from --plumb-binary, the LXC template from Proxmox's own
 # template list (pveam).
+#
+# Test hooks (install/install_test.go; they only point the script at test
+# files and change nothing for root on a real host):
+#   PLUMB_INSTALL_ASSUME_ROOT=1   skip the root check (fake commands only)
+#   PLUMB_INSTALL_PVE_CA=FILE     the host CA file instead of /etc/pve/pve-root-ca.pem
+#   PLUMB_INSTALL_STATE=FILE      the state file instead of /etc/plumb/install.state
 set -euo pipefail
 umask 077
 
 readonly VERSION_MIN_MAJOR=9 VERSION_MIN_MINOR=1
+# Before these versions cicustom does not check the storage of a snippet,
+# so no ACL keeps the token to the static snippet of D-025 (D-081).
+readonly MIN_QEMU_SERVER=9.2.11 MIN_STORAGE_PERL=9.1.13
 
 # --- settings (flags override them) ---
 POOL=plumb
@@ -22,7 +31,8 @@ SNIPPET_STORAGE=plumb-snippets
 SNIPPET_DIR=/var/lib/plumb-snippets
 SNIPPET=plumb-vendor.yaml
 DISK_STORAGE=local-lvm
-IMAGE_STORAGE=local
+IMAGE_STORAGE=plumb-images
+IMAGE_DIR=/var/lib/plumb-images
 TEMPLATE_STORAGE=local
 BRIDGE=vmbr0
 LXC_ID=""
@@ -37,6 +47,7 @@ AGENT_URL=""
 MODE=install
 DRY_RUN=0
 YES=0
+SNIPPET_DIR_SET=0
 PVE_CA=${PLUMB_INSTALL_PVE_CA:-/etc/pve/pve-root-ca.pem}
 STATE_FILE=${PLUMB_INSTALL_STATE:-/etc/plumb/install.state}
 
@@ -50,7 +61,8 @@ Usage:
 Options:
   --plumb-binary FILE    the plumb binary (make build → bin/plumb)
   --disk-storage ID      storage for guest disks and the LXC (default local-lvm)
-  --image-storage ID     storage for downloaded images, content "import" (default local)
+  --image-storage ID     storage for downloaded images; default: the new dir storage plumb-images.
+                         Another storage must have exactly the content "import" (D-081)
   --template-storage ID  storage for the LXC template (default local)
   --bridge NAME          bridge for guests and the LXC (default vmbr0)
   --lxc-id N             VMID of the Plumb LXC (default: next free id)
@@ -59,6 +71,7 @@ Options:
   --vmid-range MIN-MAX   VMIDs for Plumb guests (default 9000-9099)
   --pool NAME            pool of Plumb guests (default plumb)
   --snippet-dir DIR      directory of the plumb-snippets storage (default /var/lib/plumb-snippets)
+  --image-dir DIR        directory of the plumb-images storage (default /var/lib/plumb-images)
   --dry-run              print the commands that change the host; change nothing
   --yes                  do not ask before changes
   -h, --help             this text
@@ -71,6 +84,20 @@ die() {
 }
 
 say() { printf '%s\n' "$*"; }
+
+# TMP_FILES are removed on every exit, also on Ctrl-C (review T-013 #7).
+TMP_FILES=()
+cleanup_tmp() { [[ ${#TMP_FILES[@]} -eq 0 ]] || rm -f -- "${TMP_FILES[@]}"; }
+trap cleanup_tmp EXIT
+trap 'exit 130' INT TERM
+# new_tmp NAME makes a temp file and sets the variable NAME to its path.
+# It runs in the main shell, so the exit trap knows the file.
+new_tmp() {
+	local f
+	f=$(mktemp)
+	TMP_FILES+=("$f")
+	printf -v "$1" '%s' "$f"
+}
 
 # run changes the host. In --dry-run it prints the command instead.
 run() {
@@ -120,7 +147,12 @@ parse_args() {
 			shift
 			;;
 		--pool) POOL=${2:?}; shift ;;
-		--snippet-dir) SNIPPET_DIR=${2:?}; shift ;;
+		--snippet-dir)
+			SNIPPET_DIR=${2:?}
+			SNIPPET_DIR_SET=1
+			shift
+			;;
+		--image-dir) IMAGE_DIR=${2:?}; shift ;;
 		--snippet-only) MODE=snippet ;;
 		--ca) CA_FILE=${2:?}; shift ;;
 		--url) AGENT_URL=${2:?}; shift ;;
@@ -147,6 +179,7 @@ parse_args() {
 	[[ $LXC_IP == dhcp || $LXC_IP =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || die "bad --lxc-ip (dhcp or CIDR)"
 	[[ -z $LXC_GW || $LXC_GW =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "bad --lxc-gw"
 	[[ $SNIPPET_DIR == /* && $SNIPPET_DIR != *..* ]] || die "bad --snippet-dir"
+	[[ $IMAGE_DIR == /* && $IMAGE_DIR != *..* ]] || die "bad --image-dir"
 }
 
 # --- checks ---
@@ -168,6 +201,14 @@ check_host() {
 	if ((major < VERSION_MIN_MAJOR || (major == VERSION_MIN_MAJOR && minor < VERSION_MIN_MINOR))); then
 		die "Plumb needs Proxmox VE ${VERSION_MIN_MAJOR}.${VERSION_MIN_MINOR} or newer; this host has ${major}.${minor} (D-032). Nothing was changed."
 	fi
+	local pkg min have
+	for pkg in qemu-server:$MIN_QEMU_SERVER libpve-storage-perl:$MIN_STORAGE_PERL; do
+		min=${pkg#*:}
+		pkg=${pkg%%:*}
+		have=$(query dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null) || die "$pkg is not installed. Nothing was changed."
+		query dpkg --compare-versions "$have" ge "$min" ||
+			die "Plumb needs $pkg $min or newer (cicustom must check the snippet storage, D-081); this host has $have. Update Proxmox VE. Nothing was changed."
+	done
 }
 
 # json_has FIELD VALUE: stdin is the JSON of a pveum/pvesh list.
@@ -178,12 +219,12 @@ json_has() { grep -Eq "\"$1\" *: *\"$2\""; }
 # One role per ACL path, so no path gets a right it does not need.
 ROLE_NAMES=(PlumbGuests PlumbDisk PlumbImages PlumbSnippets PlumbBridge PlumbNode)
 declare -A ROLE_PRIVS=(
-	[PlumbGuests]="VM.Allocate VM.Audit VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt Pool.Audit"
+	[PlumbGuests]="VM.Allocate VM.Audit VM.Clone VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt Pool.Audit"
 	[PlumbDisk]="Datastore.AllocateSpace Datastore.Audit"
 	[PlumbImages]="Datastore.AllocateTemplate Datastore.Audit"
-	[PlumbSnippets]="Datastore.Audit"
+	[PlumbSnippets]="Datastore.AllocateSpace"
 	[PlumbBridge]="SDN.Use"
-	[PlumbNode]="Sys.Audit Sys.AccessNetwork"
+	[PlumbNode]="Sys.AccessNetwork"
 )
 
 role_path() {
@@ -203,7 +244,7 @@ print_rights() {
 	for role in "${ROLE_NAMES[@]}"; do
 		printf '  %-38s %-14s %s\n' "$(role_path "$role")" "$role" "${ROLE_PRIVS[$role]}"
 	done
-	say "It gets no Sys.Modify, Permissions.Modify, Pool.Allocate, console or guest-agent right."
+	say "It gets no Sys.Modify, Sys.Audit, Permissions.Modify, Pool.Allocate, console or guest-agent right, and no other ACL."
 	say "The Plumb LXC is not in pool $POOL, so Plumb cannot change itself or foreign guests."
 }
 
@@ -216,6 +257,10 @@ snippet_yaml() {
 	[[ $url =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$|^https://\[[0-9a-fA-F:]+\](:[0-9]{1,5})?$ ]] ||
 		die "bad agent URL: $url (https://host:port)"
 	grep -q -- '-----BEGIN CERTIFICATE-----' "$ca" || die "$ca holds no PEM certificate"
+	# Only the PEM character set: nothing can break the JSON or the YAML.
+	if grep -qvE '^(-----(BEGIN|END) CERTIFICATE-----|[A-Za-z0-9+/=]*)\r?$' "$ca"; then
+		die "$ca holds more than PEM certificates"
+	fi
 	# PEM is base64, dashes and spaces only: safe in JSON after joining lines.
 	pem_json=$(awk 'BEGIN{ORS="\\n"} {sub(/\r$/, ""); print}' "$ca")
 	cat <<EOF
@@ -264,9 +309,9 @@ $(sed 's/^/      /' "$ca")
       trap 'rm -f "\$tmp"' EXIT
       fetch() {
         if command -v curl >/dev/null 2>&1; then
-          curl -fsS --proto =https --cacert "\$ca" -o "\$tmp" "\$url"
+          curl -fsS --proto =https --connect-timeout 10 --max-time 300 --cacert "\$ca" -o "\$tmp" "\$url"
         elif command -v wget >/dev/null 2>&1; then
-          wget -q --https-only --ca-certificate="\$ca" -O "\$tmp" "\$url"
+          wget -q --https-only --timeout=60 --tries=1 --ca-certificate="\$ca" -O "\$tmp" "\$url"
         elif command -v python3 >/dev/null 2>&1; then
           python3 -c 'import ssl,sys,urllib.request; c=ssl.create_default_context(cafile=sys.argv[1]); open(sys.argv[3],"wb").write(urllib.request.urlopen(sys.argv[2],context=c,timeout=60).read())' "\$ca" "\$url" "\$tmp"
         else
@@ -293,7 +338,7 @@ EOF
 ensure_snippet_storage() {
 	run install -d -o root -g root -m 0755 "$SNIPPET_DIR" "$SNIPPET_DIR/snippets"
 	if query pvesm status --storage "$SNIPPET_STORAGE" >/dev/null 2>&1; then
-		run pvesm set "$SNIPPET_STORAGE" --content snippets
+		: # exists with the content "snippets" only (check_storages)
 	else
 		run pvesm add dir "$SNIPPET_STORAGE" --path "$SNIPPET_DIR" --content snippets --shared 0
 	fi
@@ -301,7 +346,7 @@ ensure_snippet_storage() {
 
 write_snippet() {
 	local ca=$1 url=$2 tmp
-	tmp=$(mktemp)
+	new_tmp tmp
 	snippet_yaml "$ca" "$url" >"$tmp"
 	if [[ $DRY_RUN == 1 ]]; then
 		say "--- snippet $SNIPPET_DIR/snippets/$SNIPPET ---"
@@ -321,15 +366,93 @@ host_ip() {
 	echo "${BASH_REMATCH[1]}"
 }
 
-ensure_image_storage() {
+# storage_content ID prints the content types of a storage, or fails.
+storage_content() {
 	local cfg
-	cfg=$(query pvesh get "/storage/$IMAGE_STORAGE" --output-format json) || die "storage $IMAGE_STORAGE does not exist"
-	[[ $cfg =~ \"content\"\ *:\ *\"([^\"]*)\" ]] || die "cannot read the content types of $IMAGE_STORAGE"
-	local content=${BASH_REMATCH[1]}
-	if [[ ,$content, != *,import,* ]]; then
-		say "Storage $IMAGE_STORAGE gets the content type \"import\" for cloud images (it has: $content)."
-		run pvesm set "$IMAGE_STORAGE" --content "$content,import"
+	cfg=$(query pvesh get "/storage/$1" --output-format json 2>/dev/null) || return 1
+	[[ $cfg =~ \"content\"\ *:\ *\"([^\"]*)\" ]] || return 1
+	echo "${BASH_REMATCH[1]}"
+}
+
+# check_storages refuses, before any change, a storage setup that would
+# let the token reach another snippet or overwrite foreign files (D-081).
+check_storages() {
+	local c
+	c=$(storage_content "$DISK_STORAGE") || die "storage $DISK_STORAGE does not exist"
+	[[ ,$c, != *,snippets,* ]] ||
+		die "disk storage $DISK_STORAGE has the content \"snippets\": the token could point cicustom at any snippet there (D-081). Use a disk storage without snippets. Nothing was changed."
+	if [[ $IMAGE_STORAGE != plumb-images ]]; then
+		c=$(storage_content "$IMAGE_STORAGE") || die "storage $IMAGE_STORAGE does not exist"
+		[[ $c == import ]] ||
+			die "image storage $IMAGE_STORAGE has the content \"$c\"; it must have exactly \"import\" (D-081). Leave --image-storage out to get plumb-images. Nothing was changed."
+	elif c=$(storage_content plumb-images); then
+		[[ $c == import ]] || die "storage plumb-images exists with the content \"$c\", not \"import\". Nothing was changed."
 	fi
+	if c=$(storage_content "$SNIPPET_STORAGE"); then
+		[[ $c == snippets ]] || die "storage $SNIPPET_STORAGE exists with the content \"$c\", not \"snippets\". Nothing was changed."
+	fi
+}
+
+# ensure_image_storage makes the dir storage plumb-images (content import
+# only, root-owned). It never changes a storage that it did not make.
+ensure_image_storage() {
+	[[ $IMAGE_STORAGE == plumb-images ]] || return 0
+	if ! storage_content plumb-images >/dev/null; then
+		run install -d -o root -g root -m 0755 "$IMAGE_DIR"
+		run pvesm add dir plumb-images --path "$IMAGE_DIR" --content import --shared 0
+	fi
+}
+
+# json_rows runs a perl filter over JSON on stdin (perl is on every PVE host).
+json_rows() { perl -MJSON::PP -e 'my $d = decode_json(join "", <STDIN>); '"$1" "${@:2}"; }
+
+# acl_entries prints "path ugid role type" for every ACL of the Plumb user
+# and token.
+acl_entries() {
+	query pveum acl list --output-format json |
+		json_rows 'for my $e (@$d) { next unless $e->{ugid} eq $ARGV[0] || $e->{ugid} eq $ARGV[1];
+			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type}\n" }' "$PVE_USER" "$PVE_USER!$TOKEN_NAME"
+}
+
+# stray_acls prints the ACLs of the Plumb user and token that are not in
+# the plan, for example the single role of D-032 from an older install
+# (review T-013 #4).
+stray_acls() {
+	local path ugid role type planned r
+	while read -r path ugid role type; do
+		[[ -n $path ]] || continue
+		planned=0
+		for r in "${ROLE_NAMES[@]}"; do
+			if [[ $path == "$(role_path "$r")" && $role == "$r" ]]; then
+				planned=1
+			fi
+		done
+		[[ $planned == 1 ]] || printf '%s %s %s %s\n' "$path" "$ugid" "$role" "$type"
+	done < <(acl_entries)
+}
+
+remove_stray_acls() {
+	local path ugid role type
+	while read -r path ugid role type; do
+		[[ -n $path ]] || continue
+		if [[ $type == token ]]; then
+			run pveum acl delete "$path" --tokens "$ugid" --roles "$role"
+		else
+			run pveum acl delete "$path" --users "$ugid" --roles "$role"
+		fi
+	done <<<"$STRAY_ACLS"
+}
+
+# check_role fails when a role does not have exactly its planned rights
+# (host item 6: --privs must replace, not append).
+check_role() {
+	[[ $DRY_RUN == 1 ]] && return 0
+	local have want
+	have=$(query pveum role list --output-format json |
+		json_rows 'for my $e (@$d) { next unless $e->{roleid} eq $ARGV[0]; my $p = $e->{privs}; $p = join ",", @$p if ref $p;
+			print join(" ", sort split /[, ]+/, $p), "\n" }' "$1")
+	want=$(tr ' ' '\n' <<<"${ROLE_PRIVS[$1]}" | LC_ALL=C sort | tr '\n' ' ')
+	[[ "$have " == "$want" ]] || die "role $1 has the rights [$have], want [${want% }]; fix it with pveum, then run again"
 }
 
 ensure_pool_user_roles() {
@@ -344,6 +467,7 @@ ensure_pool_user_roles() {
 		else
 			run pveum role add "$role" --privs "${ROLE_PRIVS[$role]// /,}"
 		fi
+		check_role "$role"
 	done
 	if ! query pveum user list --output-format json | json_has userid "$PVE_USER"; then
 		run pveum user add "$PVE_USER" --comment "Plumb controller (API token only, no password)"
@@ -354,6 +478,7 @@ ensure_pool_user_roles() {
 		run pveum acl modify "$(role_path "$role")" --users "$PVE_USER" --roles "$role" --propagate "$propagate"
 		run pveum acl modify "$(role_path "$role")" --tokens "$PVE_USER!$TOKEN_NAME" --roles "$role" --propagate "$propagate"
 	done
+	remove_stray_acls
 }
 
 # ensure_token sets TOKEN_SECRET when it makes a new token. An existing
@@ -361,8 +486,8 @@ ensure_pool_user_roles() {
 TOKEN_SECRET=""
 ensure_token() {
 	if query pveum user token list "$PVE_USER" --output-format json 2>/dev/null | json_has tokenid "$TOKEN_NAME"; then
-		if [[ -n $(state_get lxc_id) ]]; then
-			say "Token $PVE_USER!$TOKEN_NAME exists; it is kept."
+		if lxc_has_env; then
+			say "Token $PVE_USER!$TOKEN_NAME exists and the Plumb LXC holds it; it is kept."
 			return 0
 		fi
 		confirm "Token $PVE_USER!$TOKEN_NAME exists, but no Plumb LXC holds it. Replace the token?" yes ||
@@ -390,13 +515,41 @@ state_get() {
 state_put() {
 	run install -d -o root -g root -m 0700 "$(dirname "$STATE_FILE")"
 	local tmp
-	tmp=$(mktemp)
-	printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\n' "$LXC_ID" "$POOL" "$SNIPPET_STORAGE" "$SNIPPET_DIR" >"$tmp"
+	new_tmp tmp
+	local images=""
+	[[ $IMAGE_STORAGE == plumb-images ]] && images=$IMAGE_DIR
+	printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\n' "$LXC_ID" "$POOL" "$SNIPPET_STORAGE" "$SNIPPET_DIR" "$images" >"$tmp"
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"
 }
 
 # --- the Plumb LXC (D-006, D-083) ---
+
+# LXC_MARKER is in the description of the LXC that this script made. An
+# existing container is used or destroyed only when it carries the marker
+# and the Plumb host name (review T-013 #2).
+readonly LXC_MARKER=plumb-installer-lxc
+
+# lxc_state ID prints "none", "ours" or "foreign".
+lxc_state() {
+	local cfg
+	if ! query pct status "$1" >/dev/null 2>&1; then
+		echo none
+		return 0
+	fi
+	cfg=$(query pct config "$1" 2>/dev/null || true)
+	if grep -q "^description: .*$LXC_MARKER" <<<"$cfg" && grep -qx "hostname: $LXC_HOSTNAME" <<<"$cfg"; then
+		echo ours
+	else
+		echo foreign
+	fi
+}
+
+# lxc_has_env reports whether our LXC holds the token env file.
+lxc_has_env() {
+	[[ -n $LXC_ID && $(lxc_state "$LXC_ID") == ours ]] &&
+		query pct exec "$LXC_ID" -- test -s /etc/plumb/plumb.env >/dev/null 2>&1
+}
 
 # lxc_template sets TEMPLATE to the newest Debian 13 template, and
 # downloads it through Proxmox's own template list when it is missing.
@@ -417,10 +570,17 @@ ensure_lxc() {
 	if [[ -z $LXC_ID ]]; then
 		LXC_ID=$(state_get lxc_id)
 	fi
-	if [[ -n $LXC_ID ]] && query pct status "$LXC_ID" >/dev/null 2>&1; then
-		say "LXC $LXC_ID exists; it is kept."
-		LXC_NEW=0
-		return 0
+	if [[ -n $LXC_ID ]]; then
+		case $(lxc_state "$LXC_ID") in
+		ours)
+			say "LXC $LXC_ID exists; it is kept."
+			LXC_NEW=0
+			return 0
+			;;
+		foreign)
+			die "container $LXC_ID exists but was not made by this script (no $LXC_MARKER marker or host name $LXC_HOSTNAME); nothing is written into it"
+			;;
+		esac
 	fi
 	if [[ -z $LXC_ID ]]; then
 		LXC_ID=$(query pvesh get /cluster/nextid)
@@ -431,7 +591,7 @@ ensure_lxc() {
 	# Unprivileged, no mount point, not in the Plumb pool (ARCHITECTURE §7).
 	run pct create "$LXC_ID" "$TEMPLATE" --hostname "$LXC_HOSTNAME" --unprivileged 1 --features nesting=1 \
 		--cores 2 --memory 1024 --swap 512 --rootfs "$DISK_STORAGE:8" --net0 "$net" --onboot 1 --ostype debian \
-		--description "Plumb controller, installed by install.sh"
+		--description "$LXC_MARKER Plumb controller, made by install.sh"
 	run pct start "$LXC_ID"
 	LXC_NEW=1
 }
@@ -447,7 +607,7 @@ lxc_ip() {
 	fi
 	local ip
 	for _ in $(seq 1 60); do
-		ip=$({ query pct exec "$LXC_ID" -- hostname -I 2>/dev/null || true; } | awk '{print $1}')
+		ip=$({ query pct exec "$LXC_ID" -- hostname -I 2>/dev/null || true; } | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n1 || true)
 		[[ -n $ip ]] && {
 			echo "$ip"
 			return 0
@@ -462,7 +622,7 @@ lxc_ip() {
 # terminal (D-083).
 push_env() {
 	local host=$1 ip=$2 tmp
-	tmp=$(mktemp)
+	new_tmp tmp
 	cat >"$tmp" <<EOF
 # Plumb controller settings, written by install.sh. Mode 0600.
 PLUMB_PVE_URL=https://$host:8006
@@ -519,12 +679,13 @@ setup_lxc() {
 	if [[ -n $TOKEN_SECRET ]]; then
 		push_env "$host" "$ip"
 	fi
-	tmp=$(mktemp)
+	new_tmp tmp
 	printf '%s\n' "$UNIT" >"$tmp"
 	run pct push "$LXC_ID" "$tmp" /etc/systemd/system/plumb.service --perms 0644 --user 0 --group 0
 	rm -f "$tmp"
 	run pct exec "$LXC_ID" -- systemctl daemon-reload
-	run pct exec "$LXC_ID" -- systemctl enable --now plumb.service
+	run pct exec "$LXC_ID" -- systemctl enable plumb.service
+	run pct exec "$LXC_ID" -- systemctl restart plumb.service # a repair run brings a new binary
 }
 
 # fetch_plumb_ca copies the CA that plumb made at its first start.
@@ -559,19 +720,26 @@ do_install() {
 	say "Plumb install on node $NODE ($host)."
 	print_rights
 	say "It creates or keeps: pool $POOL, user $PVE_USER, token $PVE_USER!$TOKEN_NAME, storage $SNIPPET_STORAGE ($SNIPPET_DIR),"
-	say "the vendor snippet $SNIPPET, and an unprivileged Debian 13 LXC \"$LXC_HOSTNAME\" without host mounts."
+	say "the vendor snippet $SNIPPET, the image storage $IMAGE_STORAGE, and an unprivileged Debian 13 LXC \"$LXC_HOSTNAME\" without host mounts."
+	check_storages
+	STRAY_ACLS=$(stray_acls)
+	if [[ -n $STRAY_ACLS ]]; then
+		say "These older rights of Plumb are not in the plan and are removed:"
+		sed 's/^/  /' <<<"$STRAY_ACLS"
+	fi
 	confirm "Continue?" || die "stopped; nothing was changed"
 
 	ensure_image_storage
 	ensure_pool_user_roles
 	ensure_snippet_storage
+	[[ -n $LXC_ID ]] || LXC_ID=$(state_get lxc_id)
 	ensure_token
 	ensure_lxc
 	local ip ca
 	ip=$(lxc_ip)
 	setup_lxc "$host" "$ip"
 	state_put
-	ca=$(mktemp)
+	new_tmp ca
 	fetch_plumb_ca "$ca"
 	write_snippet "$ca" "https://$ip:8444"
 	rm -f "$ca"
@@ -602,19 +770,35 @@ do_snippet_only() {
 
 do_remove() {
 	NODE=$(query hostname -s)
-	local lxc members
+	local lxc dir
 	lxc=$(state_get lxc_id)
-	members=$(query pvesh get "/pools" --poolid "$POOL" --output-format json 2>/dev/null || true)
-	if [[ $members =~ \"vmid\" ]]; then
-		die "pool $POOL still has guests or templates; remove them through Plumb first. Nothing was removed."
+	# Only what the state file names is removed; a --snippet-dir from the
+	# command line is never deleted (review T-013 #1).
+	dir=$(state_get snippet_dir)
+	if [[ $SNIPPET_DIR_SET == 1 && $SNIPPET_DIR != "$dir" ]]; then
+		die "--snippet-dir $SNIPPET_DIR is not the directory of the install (${dir:-none}); nothing was removed"
+	fi
+	if [[ -n $lxc && $(lxc_state "$lxc") == foreign ]]; then
+		die "container $lxc of the state file is not the Plumb LXC (no $LXC_MARKER marker); nothing was removed"
+	fi
+	# The pool guard fails closed: a pool whose members cannot be read is
+	# not removed (review T-013 #3).
+	if query pveum pool list --output-format json | json_has poolid "$POOL"; then
+		local members
+		members=$(query pvesh get /pools --poolid "$POOL" --output-format json 2>/dev/null) ||
+			die "cannot read the members of pool $POOL; nothing was removed"
+		json_has poolid "$POOL" <<<"$members" || die "cannot read the members of pool $POOL; nothing was removed"
+		if [[ $members =~ \"vmid\" ]]; then
+			die "pool $POOL still has guests or templates; remove them through Plumb first. Nothing was removed."
+		fi
 	fi
 	say "This removes:"
 	[[ -n $lxc ]] && say "  the Plumb LXC $lxc with its disk (all Plumb data)"
-	say "  token $PVE_USER!$TOKEN_NAME, user $PVE_USER, roles ${ROLE_NAMES[*]}"
-	say "  pool $POOL, storage $SNIPPET_STORAGE and $SNIPPET_DIR, $STATE_FILE"
+	say "  token $PVE_USER!$TOKEN_NAME, user $PVE_USER (with its ACLs), roles ${ROLE_NAMES[*]}"
+	say "  pool $POOL, storage $SNIPPET_STORAGE${dir:+, the snippet $dir/snippets/$SNIPPET and its empty directories}, $STATE_FILE"
 	confirm "Remove all of it?" remove || die "stopped; nothing was removed"
 
-	if [[ -n $lxc ]] && query pct status "$lxc" >/dev/null 2>&1; then
+	if [[ -n $lxc && $(lxc_state "$lxc") == ours ]]; then
 		run pct stop "$lxc"
 		run pct destroy "$lxc" --purge 1
 	fi
@@ -635,9 +819,20 @@ do_remove() {
 	if query pvesm status --storage "$SNIPPET_STORAGE" >/dev/null 2>&1; then
 		run pvesm remove "$SNIPPET_STORAGE"
 	fi
-	run rm -rf -- "$SNIPPET_DIR"
+	if [[ -n $dir ]]; then
+		run rm -f -- "$dir/snippets/$SNIPPET"
+		# rmdir fails when a directory holds anything else: then it stays.
+		run rmdir -- "$dir/snippets" "$dir" 2>/dev/null || say "Kept $dir: it holds files that this script did not make."
+	fi
+	local images
+	images=$(state_get image_dir)
+	if [[ -n $images ]] && query pvesm status --storage plumb-images >/dev/null 2>&1; then
+		run pvesm remove plumb-images
+		[[ -d $images/import ]] && { run rmdir -- "$images/import" 2>/dev/null || true; }
+		run rmdir -- "$images" 2>/dev/null || say "Kept $images: it holds the downloaded images (plumb-*.qcow2); remove them by hand if you want."
+	fi
 	run rm -f -- "$STATE_FILE"
-	say "Plumb is removed. Images in $IMAGE_STORAGE (plumb-*.qcow2) stay; remove them with pvesm if you want."
+	say "Plumb is removed."
 }
 
 main() {
@@ -652,4 +847,5 @@ main() {
 
 NODE=""
 LXC_NEW=0
+STRAY_ACLS=""
 main "$@"

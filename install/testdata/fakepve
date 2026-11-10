@@ -19,6 +19,16 @@ list() { # list PREFIX KEY: JSON list of {KEY: name} for files PREFIX.*
 }
 case $name in
 pveversion) echo "pve-manager/${FAKE_PVE_VERSION:-9.1.2}/0123456789abcdef (running kernel: 6.14.8-2-pve)" ;;
+dpkg-query)
+	case ${!#} in
+	qemu-server) printf '%s' "${FAKE_QEMU_SERVER:-9.2.15}" ;;
+	libpve-storage-perl) printf '%s' "${FAKE_STORAGE_PERL:-9.1.16}" ;;
+	*) exit 1 ;;
+	esac
+	;;
+dpkg) # dpkg --compare-versions A ge B
+	[[ $(printf '%s\n%s\n' "$2" "$4" | sort -V | head -n1) == "$4" ]]
+	;;
 hostname) echo pve1 ;;
 ip) echo "5: vmbr0    inet 192.168.1.5/24 brd 192.168.1.255 scope global vmbr0\\       valid_lft forever preferred_lft forever" ;;
 install)
@@ -37,13 +47,62 @@ pveum)
 	"pool list") list pool poolid ;;
 	"pool add") touch "$st/pool.$3" ;;
 	"pool delete") rm -f "$st/pool.$3" ;;
-	"role list") list role roleid ;;
-	"role add" | "role modify") echo "$5" >"$st/role.$3" ;;
+	"role list")
+		first=1
+		printf '['
+		for f in "$st"/role.*; do
+			[[ -e $f ]] || continue
+			[[ $first == 1 ]] || printf ','
+			first=0
+			# FAKE_ROLE_APPEND=1: modify appends, like a PVE that does not replace.
+			printf '{"roleid":"%s","privs":"%s"}' "${f##*/role.}" "$(tr -d '\n' <"$f")"
+		done
+		printf ']\n'
+		;;
+	"role add") echo "$5" >"$st/role.$3" ;;
+	"role modify")
+		if [[ ${FAKE_ROLE_APPEND:-0} == 1 && -e $st/role.$3 ]]; then
+			printf '%s,Sys.Modify\n' "$5" >"$st/role.$3"
+		else
+			echo "$5" >"$st/role.$3"
+		fi
+		;;
 	"role delete") rm -f "$st/role.$3" ;;
 	"user list") list user userid ;;
 	"user add") touch "$st/user.$3" ;;
 	"user delete") rm -f "$st/user.$3" ;;
-	"acl modify") echo "${*:3}" >>"$st/acl" ;;
+	"acl modify" | "acl delete")
+		op=$2 path=$3 ugid="" role="" type=""
+		set -- "${@:4}"
+		while [[ $# -gt 0 ]]; do
+			case $1 in
+			--users) ugid=$2 type=user ;;
+			--tokens) ugid=$2 type=token ;;
+			--roles) role=$2 ;;
+			esac
+			shift 2
+		done
+		touch "$st/acl"
+		grep -vxF "$path $ugid $role $type" "$st/acl" >"$st/acl.new" || true
+		mv "$st/acl.new" "$st/acl"
+		if [[ $op == modify ]]; then echo "$path $ugid $role $type" >>"$st/acl"; fi
+		;;
+	"acl list")
+		touch "$st/acl"
+		if [[ -n ${FAKE_EXTRA_ACL:-} && ! -e $st/extra-done ]]; then
+			echo "$FAKE_EXTRA_ACL" >>"$st/acl"
+			touch "$st/extra-done"
+		fi
+		first=1
+		printf '['
+		while read -r path ugid role type; do
+			[[ -n $path ]] || continue
+			[[ $first == 1 ]] || printf ','
+			first=0
+			printf '{"path":"%s","ugid":"%s","roleid":"%s","type":"%s","propagate":1}' "$path" "$ugid" "$role" "$type"
+		done <"$st/acl"
+		printf ']\n'
+		;;
 	"user token")
 		case $3 in
 		list) list token tokenid ;;
@@ -60,16 +119,37 @@ pveum)
 pvesm)
 	case $1 in
 	status) has "storage.$3" ;;
-	add) touch "$st/storage.$3" ;;
+	add)
+		id=$3
+		touch "$st/storage.$id"
+		while [[ $# -gt 0 ]]; do
+			if [[ $1 == --content ]]; then echo "$2" >"$st/content.$id"; fi
+			shift
+		done
+		;;
 	set) echo "${*:2}" >>"$st/storage-set" ;;
-	remove) rm -f "$st/storage.$2" ;;
+	remove) rm -f "$st/storage.$2" "$st/content.$2" ;;
 	esac
 	;;
 pvesh)
 	case "$2" in
-	/storage/*) if has import; then echo '{"content":"iso,vztmpl,import"}'; else echo '{"content":"iso,vztmpl,backup"}'; fi ;;
+	/storage/*)
+		id=${2#/storage/}
+		if [[ -e $st/content.$id ]]; then
+			printf '{"content":"%s"}\n' "$(cat "$st/content.$id")"
+		elif [[ $id == local-lvm ]]; then
+			echo '{"content":"images,rootdir"}'
+		elif [[ $id == local ]]; then
+			echo '{"content":"iso,vztmpl,backup,snippets"}'
+		else
+			exit 1
+		fi
+		;;
 	/cluster/nextid) echo 105 ;;
-	/pools) echo "${FAKE_POOL_MEMBERS:-[]}" ;;
+	/pools)
+		[[ ${FAKE_POOLS_FAIL:-0} == 1 ]] && exit 1
+		echo "${FAKE_POOL_MEMBERS:-[{\"poolid\":\"plumb\",\"members\":[]}]}"
+		;;
 	*) exit 1 ;;
 	esac
 	;;
@@ -84,7 +164,20 @@ pveam)
 pct)
 	case $1 in
 	status) has "lxc.$2" ;;
-	create) touch "$st/lxc.$2" ;;
+	create)
+		id=$2
+		shift 2
+		host="" desc=""
+		while [[ $# -gt 0 ]]; do
+			case $1 in
+			--hostname) host=$2 ;;
+			--description) desc=$2 ;;
+			esac
+			shift
+		done
+		printf 'hostname: %s\ndescription: %s\n' "$host" "$desc" >"$st/lxc.$id"
+		;;
+	config) cat "$st/lxc.$2" ;;
 	start | stop) ;;
 	destroy) rm -f "$st/lxc.$2" ;;
 	push)
@@ -97,7 +190,8 @@ pct)
 	exec)
 		shift 3 # pct exec ID --
 		case "$*" in
-		"hostname -I") echo "192.168.1.50 fd00::50" ;;
+		"hostname -I") echo "fd00::50 192.168.1.50" ;;
+		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
 		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;
 		*) ;;
 		esac
