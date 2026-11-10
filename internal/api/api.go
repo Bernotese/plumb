@@ -67,9 +67,6 @@ type Server struct {
 	streamMu  sync.Mutex
 	streams   map[string]map[uint64]context.CancelFunc // open event streams per principal (review m2)
 	streamSeq uint64
-	// testHookStream runs in events after authentication and before the
-	// stream is registered. Tests only.
-	testHookStream func()
 }
 
 // Limits of expensive or long-lived work.

@@ -36,9 +36,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, p *principal) {
 		}
 		after = last
 	}
-	if s.testHookStream != nil {
-		s.testHookStream()
-	}
 	release, ok := s.openStream(p.name, cancel)
 	if !ok {
 		tooMany(w, 10*time.Second)

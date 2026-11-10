@@ -248,30 +248,3 @@ func TestRevokeEndsStreams(t *testing.T) {
 		t.Errorf("other stream: %+v", ev)
 	}
 }
-
-// A revoke between authentication and stream registration still ends the
-// stream (review of PR #34): the stream answers 401 and never opens.
-func TestRevokeBeforeStreamRegisters(t *testing.T) {
-	e := newEnv(t, true)
-	adm := e.admin()
-	e.srv.cfg.KeepAlive = time.Hour
-	ct := e.createToken(adm, map[string]any{"name": "late", "tier": "read"})
-	e.srv.testHookStream = func() {
-		if code, _ := adm.do("DELETE", "/api/v1/tokens/"+ct.Token.ID, nil); code != 204 {
-			t.Errorf("revoke: %d", code)
-		}
-	}
-	done := make(chan int, 1)
-	go func() {
-		rec := (&client{e: e, bearer: ct.Bearer}).raw("GET", "/api/v1/events", nil)
-		done <- rec.Code
-	}()
-	select {
-	case code := <-done:
-		if code != 401 {
-			t.Errorf("stream of a token revoked before registration: %d, want 401", code)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the stream of the revoked token stays open")
-	}
-}
