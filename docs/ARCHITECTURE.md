@@ -160,7 +160,7 @@ Only the real-host level needs Proxmox. It is not part of CI. **The user must pr
 - Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types. Web dependencies (same rule): `svelte`, `vite`, `typescript`, `openapi-typescript`, `vitest`, `@playwright/test`. Build and lint tools are free as `devDependencies` (D-042).
 - Run: `make build` (UI + both binaries) · `make test` · `make lint` · `make test-guest` · `make test-pve` · `bin/plumb serve --dev` (fake driver only, simulated agents, seeded data, plain HTTP with a cookie without `Secure`; for development and screenshots only).
 
-## 10. Roadmap after the first slice (names only)
+## 10. Roadmap after the first slice (names only; slice 2 plan: §12)
 Secret store UI · LXC targets · image builds with Blocks, seal, retention, schedule · full installer · export/import and backups · more resources (`network`, disk grow with guest resize) · `command` resource · template features (`when`, `each`, `uses`, `after`, typed values) · signed image checksums · Docker Compose block · Block editor · ignore rules · API token UI · agent self-update · repair fallback (SSH) · MCP · AI help on issues.
 
 ## 11. User answers (2026-11-10) and open points
@@ -169,3 +169,57 @@ Secret store UI · LXC targets · image builds with Blocks, seal, retention, sch
 3. **Exposure:** LAN only, with a certificate from the Plumb CA (D-040).
 4. **Master key:** a key file on a volume that backups skip, created at install. The installer shows a recovery key once. No passphrase at start (D-030).
 5. **UI stack:** Svelte 5 (D-019).
+
+## 12. Slice 2 (D-085 … D-099)
+**Scope, part A – build and verify now** (no Docker, no Proxmox host; tests use `driver/fake` and the simulated agents of `link/linktest`):
+API tokens · revision history with diff and rollback · secret store · "Ignore once" and "Ignore by rule" · export/import.
+**Part B – design only, cards `blocked: test host`:** LXC targets (D-097) · image builds with seal, retention, schedule (D-098).
+**Later (not planned here):** Docker Compose block, Block editor, MCP, AI help, agent self-update, repair fallback, backups, guest adoption after a restore.
+
+What slice 1 already has: token tiers and `api.CreateToken` without an HTTP route; `store.Revisions`, `Diff`, `RevisionDocs` without a route; `wire.Redact`, `Resource.Sensitive` and the masking in `link` without a source of secrets; an empty package `secret`. It has no rollback, no export, no `Rule` kind and no UI for any of these.
+
+| Order | Cards | Why this place |
+|---|---|---|
+| 1 | T-027 API contract | Backend and UI then work in parallel. The UI starts on the mock (as in slice 1) |
+| 2 | T-028 secret store → T-029 secret references (`pl-backend`) | Largest item and the security risk: it starts first and gets the longest review |
+| 2 | T-030 token API, T-031 revision API (second backend lane) | Small. The store code exists. They unblock two UI screens at once |
+| 2 | T-034 history UI, T-035 settings UI (`pl-frontend`) | Need only the contract |
+| 3 | T-032 ignore actions with the `Rule` kind | Needs no agent change. After the secret cards in the backend lane |
+| 3 | T-036 secret parameters and ignore actions in the UI | Needs the shapes of T-029 and T-032 |
+| 4 | T-033 export/import | Must cover every kind (`Rule`) and the secret bundle, so it is last |
+| 5 | T-037 leak hunt and slice 2 acceptance (`pl-codex-qa`) | Independent proof over the whole flow |
+| – | T-038 LXC targets, T-039 image builds | Blocked: test host. T-039 comes first: an LXC target needs a template with the agent |
+
+Rule for the order: a card is in part A only when its acceptance criteria can be checked with `make lint test` and Playwright on `plumb serve --dev`.
+
+**Secret store (D-086 … D-090, D-099)**
+```
+key file (32 bytes, own volume, not in backups) ── recovery key = the same bytes, shown once on a terminal
+   │   made only by `plumb key init` (installer); `serve` never makes a key and stops without one
+   └─ HKDF-SHA256 per purpose ─► secret-store key ─► AES-256-GCM per secret (table `secret`)
+Block:   params: {properties: {db_password: {type: string, writeOnly: true}}}
+Target:  blocks: [{use: app, params: {db_password: {secret: app-db}}}]
+render:  file:/etc/app.env  attrs.content = "DB_PASSWORD=<marker app-db>\n"   sensitive: [content]
+plan:    replaces markers with values only in observe / apply / watch command bodies
+agent:   compares locally, reports {attr: content, sensitive: true, risk}; desired list has mode 0600
+```
+- Clear values exist in three places only: controller memory, the pinned TLS link, the guest. The database holds ciphertext. Documents, Plans, the render cache, run steps, events, logs and API responses hold names or markers.
+- The redaction list of `link` (D-062) is `Resource.Sensitive` of the head render. The render fills it from the markers.
+- A template can only print a secret parameter. It cannot cut, compare, measure or forge it: the render accepts only markers that it made.
+- A new secret value reaches a guest only through a Plan for the targets that use it (`Proposal.targets`). A Plan records the secret versions it was planned with; another version makes it stale, a missing one fails the Run.
+- **Only a human approves** a Plan that gives a secret to a target and resource that did not have it, for every origin (D-099). So a token cannot read a secret by sending it to a guest.
+- The export holds secret values only inside a passphrase-encrypted bundle (D-094). An import creates missing secrets only; it overwrites a live value only when the request names it (D-095).
+
+**Other part A items**
+- **Tokens:** list, create (bearer shown once), revoke. Human session only. Inside D-046.
+- **History:** list, diff of two revisions, rollback as a Plan (D-093).
+- **Ignore once:** resolves the Issue without a Plan and remembers its changes. A human can do it, or an `apply` token within its `max_risk` and never for a sensitive change; a `plan` token cannot (D-091).
+- **Ignore by rule:** a `Rule` document through a Plan. Only a human approves any `Rule` change (D-099). The controller filters drift at intake and shows per target what it dropped (D-092).
+- **Export/import:** one YAML stream of the head revision; import is a Plan with mode `replace` or `merge` (D-094, D-095).
+- **Migrations:** 0003 secrets, 0004 Plan origins, 0005 Issue resolution `ignore`. Merge in this order (D-096).
+
+**Part B at decision level**
+- **Image builds:** `Image` gets `blocks`, `retention.keep`, `schedule`. Build = Run on a temporary guest → `seal` → template → image version. A build never changes a target and uses no secrets.
+- **LXC targets:** the controller checks the base template against the Proxmox checksum, repacks it with the agent inside and uploads it through the API. Enrollment uses the `env` token (§5). No host access.
+
+Questions for the user: `docs/tasks/T-025-slice-2-plan.md`.
