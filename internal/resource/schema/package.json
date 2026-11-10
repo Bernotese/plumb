@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/package.json",
+  "title": "package",
+  "description": "An apt package. Key: name.",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9+.-]+$",
+      "description": "Package name."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+~:-]*$",
+      "description": "Wanted version. Needed for strictness exact."
+    },
+    "strictness": {
+      "enum": [
+        "present",
+        "exact"
+      ],
+      "default": "present",
+      "description": "present: any installed version is fine. exact: another version is drift."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  },
+  "if": {
+    "properties": {
+      "strictness": {
+        "const": "exact"
+      }
+    },
+    "required": [
+      "strictness"
+    ]
+  },
+  "then": {
+    "required": [
+      "version"
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/file.json",
+  "title": "file",
+  "description": "A regular file with fixed content. Key: path.",
+  "type": "object",
+  "required": [
+    "path"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string",
+      "pattern": "^/",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)|\\x00"
+      },
+      "maxLength": 4096,
+      "description": "Absolute path of the file."
+    },
+    "content": {
+      "type": "string",
+      "default": "",
+      "description": "Full content of the file."
+    },
+    "mode": {
+      "type": "string",
+      "pattern": "^[0-7]{3,4}$",
+      "default": "0644",
+      "description": "Octal permission bits."
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+      "default": "root",
+      "description": "Owning user."
+    },
+    "group": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+      "default": "root",
+      "description": "Owning group."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  }
+}
