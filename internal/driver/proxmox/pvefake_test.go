@@ -52,6 +52,9 @@ type fakePVE struct {
 	// creates a guest with it (in another pool, or in ours with another name).
 	raceVMID int
 	racePool string
+	// staleTemplate: /pools reports every guest with template 0, like the
+	// cluster resource cache of Proxmox right after a conversion.
+	staleTemplate bool
 }
 
 type fakeVM struct {
@@ -241,7 +244,7 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 			vm := f.vms[id]
 			if vm.pool == r.Form.Get("poolid") || f.allPools {
 				t := 0
-				if vm.template {
+				if vm.template && !f.staleTemplate {
 					t = 1
 				}
 				members = append(members, map[string]any{"vmid": id, "type": "qemu", "name": vm.cfg["name"], "template": t, "id": "qemu/" + strconv.Itoa(id)})

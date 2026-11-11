@@ -399,3 +399,30 @@ func TestParsers(t *testing.T) {
 		t.Error(templateName(image))
 	}
 }
+
+// Test host (T-012): the pool member list says template 0 for a few seconds
+// after the conversion. The driver reads the flag from the config, so a
+// fresh template is used, never removed as half-made, and Delete refuses it.
+func TestStaleTemplateFlagInPoolList(t *testing.T) {
+	f := newFakePVE(t)
+	f.staleTemplate = true
+	d := f.driver(t)
+	ctx := context.Background()
+	ref, err := d.FetchImage(ctx, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Create(ctx, guest(ref), driver.Bootstrap{Token: "tok-1"}); err != nil {
+		t.Fatalf("create from a fresh template: %v", err)
+	}
+	again, err := d.FetchImage(ctx, image)
+	if err != nil || again != ref {
+		t.Fatalf("second FetchImage = %s %v, want %s", again, err, ref)
+	}
+	if n := f.count("DELETE /nodes/pve/qemu/" + string(ref)); n != 0 {
+		t.Fatalf("the fresh template was removed as half-made (%d deletes)", n)
+	}
+	if err := d.Delete(ctx, driver.GuestID(ref)); err == nil || !strings.Contains(err.Error(), "is a template") {
+		t.Fatalf("Delete of the template: %v", err)
+	}
+}

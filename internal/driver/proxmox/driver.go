@@ -77,12 +77,17 @@ func vmid(s string) (int, error) {
 	return id, nil
 }
 
-// member is one guest of the pool.
+// member is one guest of the pool. Proxmox builds the member fields from
+// its cluster resource cache, which pvestatd refreshes every few seconds:
+// right after a template conversion the list still says template 0 (test
+// host, T-012). Membership itself is current (pool config). So the driver
+// never trusts Template of the list; own and isTemplate read the guest
+// config instead.
 type member struct {
 	VMID     int    `json:"vmid"`
 	Type     string `json:"type"`
 	Name     string `json:"name"`
-	Template int    `json:"template"`
+	Template int    `json:"template"` // stale for a few seconds; see own
 }
 
 // members lists the qemu guests in the pool.
@@ -126,6 +131,14 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 	}
 	for _, m := range ms {
 		if m.VMID == id {
+			t, err := d.isTemplate(ctx, id)
+			if err != nil {
+				return 0, member{}, err
+			}
+			m.Template = 0
+			if t {
+				m.Template = 1
+			}
 			return id, m, nil
 		}
 	}
@@ -199,17 +212,26 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	if err != nil {
 		return "", err
 	}
+	// The template flag comes from the guest config, not from the list
+	// (see member): a fresh template must never look half-made.
+	var halfMade []int
 	for _, m := range ms {
-		if m.Name == name && m.Template == 1 {
+		if m.Name != name || m.VMID < d.cfg.VMIDMin || m.VMID > d.cfg.VMIDMax {
+			continue
+		}
+		t, err := d.isTemplate(ctx, m.VMID)
+		if err != nil {
+			return "", err
+		}
+		if t {
 			return driver.ImageRef(strconv.Itoa(m.VMID)), nil
 		}
+		halfMade = append(halfMade, m.VMID)
 	}
 	// A VM with the template's name that is no template is the rest of a
 	// failed earlier try: remove it before the next try (review T-012 #6).
-	for _, m := range ms {
-		if m.Name == name && m.Template != 1 && m.VMID >= d.cfg.VMIDMin && m.VMID <= d.cfg.VMIDMax {
-			d.removeHalfMade(ctx, m.VMID, name)
-		}
+	for _, id := range halfMade {
+		d.removeHalfMade(ctx, id, name)
 	}
 
 	file := importFile(spec)
@@ -431,6 +453,15 @@ func (d *Driver) configure(ctx context.Context, id, tpl int, spec driver.GuestSp
 // --- Observe ---
 
 // config reads the current config of a guest as a flat map.
+// isTemplate reads the template flag from the guest config (current).
+func (d *Driver) isTemplate(ctx context.Context, id int) (bool, error) {
+	cfg, err := d.config(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return cfg["template"] == "1", nil
+}
+
 func (d *Driver) config(ctx context.Context, id int) (map[string]string, error) {
 	var raw map[string]any
 	if err := d.c.Get(ctx, vmPath(d, id)+"/config", url.Values{"current": {"1"}}, &raw); err != nil {
