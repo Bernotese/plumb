@@ -25,6 +25,8 @@ The test host is ready and the controller runs there (T-053, log `docs/tasks/T-0
 - Test: `test/pve/slice_pve_test.go` (build tag `pve`, each file ≤ ~150 lines), second step of `make test-pve`. The driver tests and this test share the pool and the VMID range 9000–9099: never run both at once.
 - Path: the criterion above, with a Debian 13 VM and an Ubuntu 26.04 VM (image documents with pinned SHA-256; the host downloads them), static addresses (D-079), a reboot, and the `guest:config` drift (limit ~90 s, `PollGuests` runs every 60 s). Agent drift opens an Issue within 10 s.
 - Root actions on the host, only these: `qm set <vmid> --memory …`, `qm reboot <vmid>`, and at the end `qm destroy` of the image templates (the driver never deletes a template, D-077). Only VMIDs in 9000–9099 that the test made.
+- Also allowed, read-only (pl-lead, 2026-11-11): `qm list`, `qm config <vmid>` and `pvesh get /pools/<pool> --output-format json` (pool from `PLUMB_TEST_POOL`, no default) to prove ownership before a destroy. Destroy only a VM that has a VMID in 9000–9099, is a template, is in the Plumb pool and has exactly the name `plumb-img-<name>-<sha256[:12]>` (D-077) of an Image document that this test run created. If one check fails: no destroy, the test fails and names the VMID.
+- Split (the Codex sandbox has no SSH to the host): `pl-codex-qa` writes the test, `pl-backend` runs it on the host.
 - A destructive Plan (delete of a Target) needs a human approval: use an admin session with the password file for that step, and say so in the log.
 - End state: no guest, no volume, no template of the test left; the controller LXC stays. No address, token, password or key in the log, the PR or the report.
 - A product bug goes to `pl-lead` as a short report, not as a fix.
