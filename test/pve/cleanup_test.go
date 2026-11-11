@@ -23,8 +23,15 @@ func hostRead(t *testing.T, n int, action string) string {
 
 func config(t *testing.T, n int) map[string]string {
 	t.Helper()
+	return configView(t, n, "config")
+}
+
+// configView parses "qm config" (the view after the next cold start) or
+// "config-current" (the running view).
+func configView(t *testing.T, n int, action string) map[string]string {
+	t.Helper()
 	out := map[string]string{}
-	for _, line := range strings.Split(hostRead(t, n, "config"), "\n") {
+	for _, line := range strings.Split(hostRead(t, n, action), "\n") {
 		k, v, ok := strings.Cut(line, ": ")
 		if ok {
 			out[k] = v

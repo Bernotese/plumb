@@ -60,6 +60,8 @@ func hostSSH(t *testing.T, owned map[int]bool, n int, action string) (string, bo
 		command = "qm list"
 	case "config":
 		command = fmt.Sprintf("qm config %d", n)
+	case "config-current": // the running view (read-only, T-056)
+		command = fmt.Sprintf("qm config %d --current 1", n)
 	case "pool":
 		pool := os.Getenv("PLUMB_TEST_POOL")
 		if pool == "" || strings.Trim(pool, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != "" {

@@ -162,21 +162,53 @@ func TestRealSliceAcceptance(t *testing.T) {
 			}
 			issue := c.issue(target, "guest:config", 90*time.Second)
 			memoryDrift(t, c.call("GET", "/issues/"+issue, nil, 200))
-			c.approve(c.call("POST", "/issues/"+issue+"/resolve", object{"action": "revert"}, 201), false)
+			reverted := c.approve(c.call("POST", "/issues/"+issue+"/resolve", object{"action": "revert"}, 201), false)
 			c.closed(issue, "revert")
-			// The revert writes memory 1024 on a running VM: only pending
-			// (T-056 fact 3). qm config shows the pending view, so this
-			// proves the desired value was written, not that the VM runs it.
-			// TODO(T-056): when T-056 is merged, assert the running value.
-			if config(t, n)["memory"] != "1024" {
-				t.Fatal("revert did not write memory 1024 to the VM config")
+			// T-056 (D-194, D-195): the Target keeps allow_restart false, so
+			// the revert writes memory 1024 and the VM keeps running 1536
+			// until its next stop and start. Assert the running value, the
+			// value that waits, and that Plumb says so (Run, Target, Issue).
+			if run, next := configView(t, n, "config-current")["memory"], config(t, n)["memory"]; run != "1536" || next != "1024" {
+				t.Fatalf("after the revert: running memory %s, next %s; want 1536, 1024", run, next)
 			}
-			t.Log("guest:config revert wrote memory 1024 (pending); the running value stays 1536 until T-056")
+			if reverted["waits_for_restart"] != float64(1) {
+				t.Fatalf("revert Run waits_for_restart = %v, want 1", reverted["waits_for_restart"])
+			}
+			restartNeeded(t, c.call("GET", "/targets/"+target, nil, 200)["status"].(map[string]any))
+			notActive(t, c.call("GET", "/issues/"+issue, nil, 200))
+			t.Log("guest:config revert: memory 1024 waits for a restart; the VM runs 1536; Target restart_needed")
 		})
 		if !ok {
 			break
 		} // Stop at the first product failure; cleanup still runs.
 	}
+}
+
+// restartNeeded checks the Target state after a revert that waits: phase
+// restart_needed and exactly memory 1536 → 1024 in the waiting list.
+func restartNeeded(t *testing.T, s map[string]any) {
+	t.Helper()
+	w, _ := s["waiting"].([]any)
+	if s["phase"] != "restart_needed" || len(w) != 1 {
+		t.Fatalf("Target phase %v with %d waiting values, want restart_needed with 1", s["phase"], len(w))
+	}
+	v := w[0].(map[string]any)
+	if v["attr"] != "memory" || v["from"] != float64(1536) || v["to"] != float64(1024) || v["since"] == nil {
+		t.Fatalf("waiting value is attribute %q, want memory 1536→1024 with since", v["attr"])
+	}
+}
+
+// notActive checks the system comment of an Issue that was resolved while
+// its value waits for a restart.
+func notActive(t *testing.T, i object) {
+	t.Helper()
+	comments, _ := i["comments"].([]any)
+	for _, item := range comments {
+		if body, _ := item.(map[string]any)["body"].(string); strings.HasPrefix(body, "Resolved, but not active:") {
+			return
+		}
+	}
+	t.Fatal("resolved Issue has no 'Resolved, but not active' comment")
 }
 
 // memoryDrift checks that the guest:config Issue is the test's own change:
