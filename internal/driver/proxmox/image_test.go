@@ -242,3 +242,48 @@ func TestImageNameRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// imageDescription is the description that FetchImage gives a template VM.
+func imageDescription(img driver.ImageSpec) string {
+	return "Plumb image " + img.Name + "\nsha256=" + img.SHA256
+}
+
+// Review S1 of PR #92: a VM that matches only by name (no template, no
+// checksum line of this image) is not half-made: an error with the VMID,
+// zero DELETE requests, no new template.
+func TestFetchImageNameOnlyVMIsKept(t *testing.T) {
+	for name, desc := range map[string]string{
+		"no description": "",
+		"other checksum": "Plumb image " + image.Name + "\nsha256=" + strings.Repeat("0", 64),
+		"someone else":   "my own VM",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakePVE(t)
+			d := f.driver(t)
+			f.addVM(9006, fakePool, map[string]string{"name": templateName(image), "description": desc}, false)
+			_, err := d.FetchImage(context.Background(), image)
+			if err == nil || !strings.Contains(err.Error(), "9006") || !strings.Contains(err.Error(), "qm destroy 9006") {
+				t.Fatalf("err = %v", err)
+			}
+			if n := f.count("DELETE "); n != 0 {
+				t.Errorf("DELETE requests: %d, want 0", n)
+			}
+			if n := f.count("POST /nodes/pve/qemu"); n != 0 {
+				t.Errorf("creates or clones: %d, want 0", n)
+			}
+			if _, ok := f.vms[9006]; !ok {
+				t.Error("the VM is gone")
+			}
+		})
+	}
+	// With the checksum line of this image it is half-made: removed, then a template.
+	f := newFakePVE(t)
+	d := f.driver(t)
+	f.addVM(9006, fakePool, map[string]string{"name": templateName(image), "description": imageDescription(image)}, false)
+	if _, err := d.FetchImage(context.Background(), image); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.countExact("DELETE /nodes/pve/qemu/9006"); n != 1 {
+		t.Errorf("DELETE of the half-made VM: %d, want 1", n)
+	}
+}

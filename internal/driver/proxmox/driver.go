@@ -379,12 +379,13 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 
 // findTemplate looks for a VM with the template name in the pool and the
 // VMID range. It returns the ref of a template with the full checksum, or
-// the VMIDs of half-made VMs of that name. The template flag comes from
+// the VMIDs of half-made VMs of that name and checksum. The template flag comes from
 // the guest config, not from the list (see member): a fresh template must
 // never look half-made. A VM with a lock is busy (a create, clone or
 // conversion runs; review S2): it is never half-made, and findTemplate
 // waits up to ImageLockWait for the lock to go (D-188). A template with
-// the name but another checksum is an error that removes nothing.
+// the name but another checksum, or a VM with the name and without the
+// checksum line, is an error that removes nothing.
 func (d *Driver) findTemplate(ctx context.Context, name, sum string) (driver.ImageRef, []int, error) {
 	deadline := time.Now().Add(d.cfg.ImageLockWait)
 	for {
@@ -409,6 +410,11 @@ func (d *Driver) findTemplate(ctx context.Context, name, sum string) (driver.Ima
 				return "", nil, fmt.Errorf("proxmox: template VM %d has the name %s but not the checksum sha256=%s in its description; Plumb does not use or remove it: check it and remove it by hand (qm destroy %d)", m.VMID, name, sum, m.VMID)
 			case cfg["template"] == "1":
 				return driver.ImageRef(strconv.Itoa(m.VMID)), nil, nil
+			case !hasChecksum(cfg["description"], sum):
+				// A name match alone proves nothing (review S1 of PR #92):
+				// FetchImage writes the checksum line at create, so a VM
+				// without it is not a half-made image of ours.
+				return "", nil, fmt.Errorf("proxmox: VM %d has the name %s but is no template and has not the checksum sha256=%s in its description; Plumb does not use or remove it: check it and remove it by hand (qm destroy %d)", m.VMID, name, sum, m.VMID)
 			default:
 				halfMade = append(halfMade, m.VMID)
 			}
