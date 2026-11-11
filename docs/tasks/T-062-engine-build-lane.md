@@ -28,3 +28,6 @@ An approved Plan builds a new image version, Targets are made from it, and old v
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+
+## Note from the T-064 review (pl-lead, 2026-11-11)
+- The list of unused import files feeds a command line that the user runs as root (`pvesm free …`, with a Copy button in the web). The API must list only volume names that Plumb itself made, checked by a strict pattern (`plumb-<name>-<sha256[:12]>.qcow2`, D-077), and give the command with the name quoted. A name that does not match is listed without a command. Test with a file name that holds shell characters.
