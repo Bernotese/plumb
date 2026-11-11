@@ -110,6 +110,15 @@ func TestSelectAddrsFromDump(t *testing.T) {
 		linkMsg(16, "eth0.20", "vlan", upFlags),
 		linkMsg(17, "mv0", "macvlan", upFlags),
 		linkMsg(18, "gen0", "geneve", upFlags),
+		linkMsg(19, "podman0", "bridge", upFlags),
+		linkMsg(20, "lxdbr0", "bridge", upFlags),
+		linkMsg(21, "incusbr0", "bridge", upFlags),
+		linkMsg(22, "gre1", "gre", upFlags),
+		linkMsg(23, "tunl0", "ipip", upFlags),
+		linkMsg(24, "sit1", "sit", upFlags),
+		linkMsg(25, "ip6gre1", "ip6gre", upFlags),
+		linkMsg(26, "ip6tnl1", "ip6tnl", upFlags),
+		linkMsg(27, "gretap1", "gretap", upFlags),
 	)
 	addrs := dump(
 		addrMsg(1, "127.0.0.1", syscall.IFA_F_PERMANENT, ""),
@@ -140,6 +149,15 @@ func TestSelectAddrsFromDump(t *testing.T) {
 		addrMsg(16, "10.20.0.1", 0, ""),
 		addrMsg(17, "10.30.0.1", 0, ""),
 		addrMsg(18, "10.94.0.1", 0, ""),
+		addrMsg(19, "10.88.0.1", 0, ""),
+		addrMsg(20, "10.93.0.1", 0, ""),
+		addrMsg(21, "10.92.0.1", 0, ""),
+		addrMsg(22, "10.91.0.1", 0, ""),
+		addrMsg(23, "10.90.0.1", 0, ""),
+		addrMsg(24, "10.89.0.1", 0, ""),
+		addrMsg(25, "fd99::1", 0, ""),
+		addrMsg(26, "fd98::1", 0, ""),
+		addrMsg(27, "10.87.0.1", 0, ""),
 		addrMsg(2, "224.0.0.251", 0, ""),
 		addrMsg(2, "0.0.0.0", 0, ""),
 	)
@@ -401,4 +419,83 @@ func TestAddrsReportBusyRetries(t *testing.T) {
 	if n := len(ctl.reportsOf(wire.ReportHello)); n != 1 {
 		t.Fatalf("%d hellos: a 429 must keep the link", n)
 	}
+}
+
+// reviewS1 is the fuzz case of review S1: an unaligned last attribute
+// makes syscall.ParseNetlinkRouteAttr slice out of range.
+const reviewS1 = "/\x00\x00\x00\x14\x00000000000000000000\b\x00000000\b\x00000000\a\x00000000"
+
+func TestParseNetlinkNoPanic(t *testing.T) {
+	// The case is an RTM_NEWADDR message: parseLinks skips it.
+	if l, err := parseLinks([]byte(reviewS1)); err != nil || len(l) != 0 {
+		t.Errorf("parseLinks: %v %v", l, err)
+	}
+	// The same bytes as a link message.
+	b := []byte(reviewS1)
+	b[4] = syscall.RTM_NEWLINK
+	if _, err := parseLinks(b); err == nil {
+		t.Error("parseLinks: no error for the S1 case as a link message")
+	}
+	if _, err := parseAddrs([]byte(reviewS1)); err == nil {
+		t.Error("parseAddrs: no error for the S1 case")
+	}
+}
+
+// FuzzParseNetlink: bad dumps give an error, never a panic.
+func FuzzParseNetlink(f *testing.F) {
+	f.Add([]byte(reviewS1))
+	f.Add(dump(linkMsg(2, "eth0", "veth", upFlags)))
+	f.Add(dump(addrMsg(2, "192.0.2.1", 0, "")))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		links, _ := parseLinks(b)
+		addrs, _ := parseAddrs(b)
+		list, cut := selectAddrs(links, addrs)
+		if err := wire.CheckAddrs(list, cut); err != nil {
+			t.Fatalf("selectAddrs gave a bad list: %v", err)
+		}
+	})
+}
+
+// A read that fails after the controller took a list says "unknown" once
+// (review N1); a working read sends the list again.
+func TestAddrsReadFailsAfterList(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok")
+	src := &fakeAddrs{list: []string{"192.0.2.41"}}
+	startAgentWith(t, ctl, ca, "tok", addrsOpts(src, time.Hour, 20*time.Millisecond))
+	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) > 0 })
+	src.set(nil, errors.New("netlink gone"))
+	waitFor(t, "unknown report", func() bool { return len(ctl.reportsOf(wire.ReportAddrs)) == 1 })
+	r := ctl.reportsOf(wire.ReportAddrs)[0]
+	if !r.AddrsUnknown || r.Addrs != nil || r.AddrsTruncated {
+		t.Fatalf("unknown report %+v", r)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := len(ctl.reportsOf(wire.ReportAddrs)); n != 1 {
+		t.Fatalf("%d reports while the read fails, want 1", n)
+	}
+	src.set([]string{"192.0.2.41"}, nil)
+	waitFor(t, "list again", func() bool { return len(ctl.reportsOf(wire.ReportAddrs)) == 2 })
+	if r := ctl.reportsOf(wire.ReportAddrs)[1]; r.AddrsUnknown || !slices.Equal(r.Addrs, []string{"192.0.2.41"}) {
+		t.Fatalf("report %+v", r)
+	}
+}
+
+// A 429 on an address report does not delay the poll (review S2).
+func TestAddrsBusyDoesNotDelayPoll(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok")
+	ctl.addrsCode = 429
+	ctl.retryAfter = "60"
+	src := &fakeAddrs{list: []string{"192.0.2.41"}}
+	startAgentWith(t, ctl, ca, "tok", addrsOpts(src, time.Hour, 20*time.Millisecond))
+	waitFor(t, "hello", func() bool { return len(ctl.reportsOf(wire.ReportHello)) > 0 })
+	src.set([]string{"192.0.2.42"}, nil)
+	tries := func() int { ctl.mu.Lock(); defer ctl.mu.Unlock(); return ctl.addrsTries }
+	waitFor(t, "a 429", func() bool { return tries() >= 1 })
+	ctl.mu.Lock()
+	polls := len(ctl.pollTimes)
+	ctl.mu.Unlock()
+	// With Retry-After 60 s as a connection error, no poll would come now.
+	waitFor(t, "polls after the 429", func() bool { ctl.mu.Lock(); defer ctl.mu.Unlock(); return len(ctl.pollTimes) >= polls+2 })
 }

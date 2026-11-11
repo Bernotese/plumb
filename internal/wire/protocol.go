@@ -181,6 +181,10 @@ type Report struct {
 	// an empty list: the guest has no address to report.
 	Addrs          []string `json:"addrs,omitempty"`
 	AddrsTruncated bool     `json:"addrs_truncated,omitempty"`
+	// AddrsUnknown is only for addrs, without a list: the agent cannot
+	// read its addresses any more, so the list it sent before is stale.
+	// The controller sets the list to unknown (D-212).
+	AddrsUnknown bool `json:"addrs_unknown,omitempty"`
 }
 
 // Hello describes the agent and its guest.
