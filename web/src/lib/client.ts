@@ -33,6 +33,8 @@ export interface PlumbApi {
   listTargets(): Promise<TargetView[]>;
   getTarget(name: string): Promise<TargetView>;
   createPlan(proposal: Proposal): Promise<Plan>;
+  /** Plans a re-enrollment of a target (D-038). 422 for a running VM with allow_restart off (D-194). */
+  reenrollTarget(name: string, reason: string): Promise<Plan>;
   getPlan(id: number): Promise<Plan>;
   approvePlan(id: number, comment?: string): Promise<Run>;
   getRun(id: number): Promise<Run>;

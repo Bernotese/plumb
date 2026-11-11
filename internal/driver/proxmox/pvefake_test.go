@@ -74,6 +74,8 @@ type fakePVE struct {
 	// writeDuringRead: this many reads of the config without current=1
 	// change the config first (a write between the reads of Observe).
 	writeDuringRead int
+	// noDigest: config answers have no digest (a proxy or a broken API).
+	noDigest bool
 	// keepPending: a write of the running value on a running VM keeps
 	// the pending entry (review B1: host check 2 is open).
 	keepPending bool
@@ -500,6 +502,9 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			}
 		}
 		out["digest"] = vmDigest(vm)
+		if f.noDigest {
+			delete(out, "digest")
+		}
 		reply(w, 200, out)
 	case r.Method == "POST" && sub == "/config":
 		if d := r.Form.Get("digest"); d != "" && d != vmDigest(vm) {
