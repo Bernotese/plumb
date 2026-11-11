@@ -40,6 +40,14 @@ type Options struct {
 	PollWait int
 	// BackoffMin and BackoffMax bound the retry delay; default 1 s and 60 s.
 	BackoffMin, BackoffMax time.Duration
+
+	// Addrs reads the address list of the guest; default the netlink dumps
+	// of readAddrs (D-213).
+	Addrs func() (list []string, truncated bool, err error)
+	// AddrsEvery is the period of the address report when nothing changed;
+	// default 15 min. AddrsGap is the least time between two address
+	// reports; default 30 s, the store limit of the controller (D-212).
+	AddrsEvery, AddrsGap time.Duration
 }
 
 // Agent is one agent process.
@@ -69,6 +77,13 @@ type Agent struct {
 	listChanged chan struct{} // the desired list changed
 	applyDone   chan []string // an apply ended; ids of its resources
 	sendMu      sync.Mutex    // one drift report at a time
+
+	// Address report state; only the Run goroutine uses it.
+	addrLast  addrList  // the list the controller took last
+	addrKnown bool      // addrLast is set
+	addrAt    time.Time // when the controller took addrLast
+	addrTry   time.Time // last address report, sent or not
+	addrErr   bool      // the last read failed (log once)
 }
 
 // New builds an agent. It reads the stored credential and desired list.
@@ -103,6 +118,15 @@ func New(opt Options) (*Agent, error) {
 	}
 	if opt.BackoffMax < opt.BackoffMin {
 		opt.BackoffMax = max(60*time.Second, opt.BackoffMin)
+	}
+	if opt.Addrs == nil {
+		opt.Addrs = readAddrs
+	}
+	if opt.AddrsEvery <= 0 {
+		opt.AddrsEvery = 15 * time.Minute
+	}
+	if opt.AddrsGap <= 0 {
+		opt.AddrsGap = 30 * time.Second
 	}
 	c, err := newClient(cfg, time.Duration(opt.PollWait)*time.Second)
 	if err != nil {
@@ -165,10 +189,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		if !connected {
 			// After start and after every reconnect: hello, then all open drift.
-			if err := a.send(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()}); err != nil {
+			hello := a.hello()
+			if err := a.send(ctx, wire.Report{Type: wire.ReportHello, Hello: hello}); err != nil {
 				connected = a.connError(ctx, err, &b, connected)
 				continue
 			}
+			a.addrsTaken(hello.Addrs, hello.AddrsTruncated, time.Now())
 			if err := a.flushDrift(ctx, true); err != nil {
 				connected = a.connError(ctx, err, &b, connected)
 				continue
@@ -195,6 +221,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 			pending = nil
 			b.reset()
+		}
+		if err := a.sendAddrs(ctx, time.Now()); err != nil {
+			connected = a.connError(ctx, err, &b, connected)
+			continue
 		}
 		cmd, err := a.client.poll(ctx, a.credential(), a.opt.PollWait)
 		if err != nil {
@@ -302,8 +332,75 @@ func (a *Agent) send(ctx context.Context, r wire.Report) error {
 	return a.client.report(ctx, a.credential(), r)
 }
 
+// hello describes the agent. It holds the address list; when the list
+// cannot be read, Addrs is nil and the controller treats the list as
+// unknown (D-212).
 func (a *Agent) hello() *wire.Hello {
-	return &wire.Hello{Version: a.opt.Version, Hostname: a.opt.Hostname, OS: osName(a.opt.Root)}
+	h := &wire.Hello{Version: a.opt.Version, Hostname: a.opt.Hostname, OS: osName(a.opt.Root)}
+	if l, ok := a.readAddrs(); ok {
+		h.Addrs, h.AddrsTruncated = l.List, l.Truncated
+	}
+	return h
+}
+
+// readAddrs reads the address list. A failure is logged once, until a
+// read works again. The log never holds an address.
+func (a *Agent) readAddrs() (addrList, bool) {
+	list, truncated, err := a.opt.Addrs()
+	if err != nil {
+		if !a.addrErr {
+			a.log.Warn("cannot read the address list", "err", err)
+		}
+		a.addrErr = true
+		return addrList{}, false
+	}
+	a.addrErr = false
+	if list == nil {
+		list = []string{} // a new agent always sends the field (D-212)
+	}
+	return addrList{List: list, Truncated: truncated}, true
+}
+
+// addrsTaken records that the controller took a list (in a Hello or an
+// addrs report). A nil list (not read) records nothing.
+func (a *Agent) addrsTaken(list []string, truncated bool, now time.Time) {
+	if list == nil {
+		a.addrKnown = false
+		return
+	}
+	a.addrLast, a.addrKnown, a.addrAt = addrList{List: list, Truncated: truncated}, true, now
+}
+
+// sendAddrs sends an addrs report at a poll round when the list differs
+// from the one the controller took last, or when that is AddrsEvery old;
+// never twice within AddrsGap (D-213). The controller may drop a list over
+// its own limit; the periodic send heals that. A refused report (400) is
+// not sent again until the list changes or AddrsEvery passed. Other errors
+// go to the caller, like every failed call.
+func (a *Agent) sendAddrs(ctx context.Context, now time.Time) error {
+	if !a.addrTry.IsZero() && now.Sub(a.addrTry) < a.opt.AddrsGap {
+		return nil
+	}
+	if a.addrKnown && now.Sub(a.addrAt) < a.opt.AddrsGap {
+		return nil // the Hello carried a list a moment ago
+	}
+	cur, ok := a.readAddrs()
+	if !ok {
+		return nil
+	}
+	if a.addrKnown && cur.equal(a.addrLast) && now.Sub(a.addrAt) < a.opt.AddrsEvery {
+		return nil
+	}
+	a.addrTry = now
+	err := a.send(ctx, wire.Report{Type: wire.ReportAddrs, Addrs: cur.List, AddrsTruncated: cur.Truncated})
+	if err != nil && permanent(err) {
+		a.log.Warn("address report refused; not sent again until the list changes", "err", err)
+		err = nil
+	}
+	if err == nil {
+		a.addrsTaken(cur.List, cur.Truncated, now)
+	}
+	return err
 }
 
 // osName reads ID and VERSION_ID from os-release, for example "ubuntu 26.04".
