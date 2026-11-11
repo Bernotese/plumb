@@ -88,6 +88,12 @@ func apply(base *state.Set, p Proposal) (*state.Set, error) {
 	if err != nil {
 		return nil, &ProposalError{Msg: "the documents are not valid:\n" + err.Error(), Err: err}
 	}
+	// The save checks of image builds are in state (T-059), but no Run
+	// builds yet: a built Image would be used as a stock image. T-062
+	// removes this.
+	if built := set.BuiltImages(); len(built) > 0 {
+		return nil, &ProposalError{Msg: fmt.Sprintf("Image %q has spec.build: image builds are not available yet (T-062)", built[0])}
+	}
 	return set, nil
 }
 
