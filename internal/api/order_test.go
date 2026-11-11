@@ -92,6 +92,24 @@ func (e *env) orderApply(c *client, p orderPlan, target string) {
 	}
 }
 
+func TestNginxSiteWithoutNginxBlockFailsSaveOnRestartService(t *testing.T) {
+	k := loadContract(t)
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	code, body := adm.do("POST", "/api/v1/plans", map[string]any{
+		"reason": "nginx site without nginx Block",
+		"put": []state.Doc{
+			doc(state.KindBlock, "nginx-site", orderSite),
+			orderTarget("web1", `{"use":"nginx-site","id":"site-a"}`),
+		},
+	})
+	if code != 422 || !bytes.Contains(body, []byte("service:nginx")) {
+		t.Fatalf("saving a Target with only nginx-site: %d %s; want 422 naming service:nginx", code, body)
+	}
+	k.check(t, recorded{"POST", "/plans", code, "application/problem+json", body})
+}
+
 // D-171: the Plan shows after on the resource that waits, and the
 // resources that cause a restart. An enrolled Target gets nginx and two
 // sites; then one site changes.
