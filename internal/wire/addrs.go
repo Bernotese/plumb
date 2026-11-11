@@ -40,8 +40,7 @@ func CheckAddrs(list []string, truncated bool) error {
 		if err != nil || a.Zone() != "" || a.Is4In6() || a.String() != s {
 			return fmt.Errorf("%w (entry %d)", ErrAddrsForm, i)
 		}
-		if a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() ||
-			a.IsInterfaceLocalMulticast() || a.IsMulticast() || a.IsUnspecified() {
+		if a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() {
 			return fmt.Errorf("%w (entry %d)", ErrAddrsKind, i)
 		}
 		if i > 0 {
@@ -59,13 +58,17 @@ func CheckAddrs(list []string, truncated bool) error {
 
 // SortAddrs sorts addresses in the order of CheckAddrs (IPv4 first, then
 // IPv6, each by value), drops duplicates and cuts the list to MaxAddrs. It
-// reports whether it cut. It unmaps IPv4-mapped IPv6 and drops zones. The
-// caller filters the kinds first. The list is never nil.
+// reports whether it cut. It unmaps IPv4-mapped IPv6, drops zones and
+// drops invalid (zero) addresses. The caller filters the kinds first. The
+// list is never nil.
 func SortAddrs(addrs []netip.Addr) (list []string, truncated bool) {
-	addrs = slices.Clone(addrs)
-	for i, a := range addrs {
-		addrs[i] = a.Unmap().WithZone("")
+	var valid []netip.Addr
+	for _, a := range addrs {
+		if a.IsValid() {
+			valid = append(valid, a.Unmap().WithZone(""))
+		}
 	}
+	addrs = valid
 	slices.SortFunc(addrs, netip.Addr.Compare)
 	addrs = slices.Compact(addrs)
 	if len(addrs) > MaxAddrs {
