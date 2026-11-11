@@ -33,7 +33,7 @@ func check(t *testing.T, err error, label string) {
 
 func settings(t *testing.T) *apiClient {
 	t.Helper()
-	for _, key := range []string{"POOL", "IMAGE_STORAGE", "URL", "CA", "TOKEN_FILE", "ADMIN_PW_FILE", "GUEST_KEY", "PVE_SSH", "VM_IP_1", "VM_IP_2", "VM_GW", "IMAGES_FILE",
+	for _, key := range []string{"POOL", "IMAGE_STORAGE", "LXC_ID", "URL", "CA", "TOKEN_FILE", "ADMIN_PW_FILE", "GUEST_KEY", "PVE_SSH", "VM_IP_1", "VM_GW", "IMAGES_FILE",
 		"IMAGE_DEBIAN13_URL", "IMAGE_DEBIAN13_SHA256", "IMAGE_UBUNTU2604_URL", "IMAGE_UBUNTU2604_SHA256"} {
 		if os.Getenv("PLUMB_TEST_"+key) == "" {
 			t.Skip("real-host settings absent; use scripts/test-slice-pve.sh")

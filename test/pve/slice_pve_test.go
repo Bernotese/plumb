@@ -64,12 +64,18 @@ func TestRealSliceAcceptance(t *testing.T) {
 			key, err := os.ReadFile(os.Getenv("PLUMB_TEST_GUEST_KEY") + ".pub")
 			check(t, err, "read guest public key")
 			pub := strings.TrimSpace(string(key))
-			address := os.Getenv(fmt.Sprintf("PLUMB_TEST_VM_IP_%d", i+1))
+			// D-192: stock Ubuntu 26.04 does not take a static address (dracut
+			// DHCP in the initramfs); it runs on DHCP and the test finds its
+			// address from the MAC (qm config) and the controller's neighbors.
+			dhcp := distro == "UBUNTU2604"
+			address, gateway := os.Getenv("PLUMB_TEST_VM_IP_1"), os.Getenv("PLUMB_TEST_VM_GW")
+			if dhcp {
+				address, gateway = "dhcp", ""
+			}
 			docs = append(docs, object{"kind": "Image", "name": image, "spec": object{
 				"type": "vm", "url": os.Getenv("PLUMB_TEST_IMAGE_" + distro + "_URL"), "sha256": sha}},
 				object{"kind": "Target", "name": target, "spec": object{"type": "vm", "image": image,
-					"guest": object{"cores": 2, "memory": 1024, "disk": 10, "bridge": "vmbr0", "ip": address,
-						"gateway": os.Getenv("PLUMB_TEST_VM_GW"), "ssh_keys": []string{pub}},
+					"guest": guestSpec(address, gateway, pub),
 					"blocks": []any{object{"use": prefix + "-deploy-user", "params": object{"ssh_key": pub}},
 						object{"use": prefix + "-motd"}, object{"use": prefix + "-nginx"}}}})
 			refs = append(refs, object{"kind": "Image", "name": image}, object{"kind": "Target", "name": target})
@@ -82,11 +88,16 @@ func TestRealSliceAcceptance(t *testing.T) {
 			}
 			owned[n] = true
 			g := guest{id: n, address: address, hosts: filepath.Join(t.TempDir(), "known_hosts")}
+			if dhcp {
+				g.address = leaseAddress(t, n)
+			}
 			// The Run ends when the agent is online (enrolled); SSH may come
 			// later. Limit 6 min (pl-lead); the time is logged.
 			agentOnline := time.Now()
 			ready := false
-			deadline := time.Now().Add(6 * time.Minute)
+			// Run 4: Ubuntu's first boot took ~3 min until the agent was
+			// online; SSH then works at once with the right address. Margin.
+			deadline := time.Now().Add(5 * time.Minute)
 			for !ready && time.Now().Before(deadline) {
 				_, ready = guestSSH(t, g, "true")
 				if !ready {
@@ -114,6 +125,11 @@ func TestRealSliceAcceptance(t *testing.T) {
 				t.Fatal("host reboot failed (output withheld)")
 			}
 			wait(t, "reboot changes boot ID and agent returns", 3*time.Minute, func() bool {
+				if dhcp { // the lease can change on a reboot
+					if a, ok := tryLeaseAddress(t, n); ok {
+						g.address = a
+					}
+				}
 				now, ok := guestSSH(t, g, fingerprintCommand)
 				if !ok || now == initial || strings.Split(now, "\n")[0] != strings.Split(initial, "\n")[0] {
 					return false
@@ -124,6 +140,9 @@ func TestRealSliceAcceptance(t *testing.T) {
 			after := fingerprint(t, g)
 			if strings.Split(initial, "\n")[0] != strings.Split(after, "\n")[0] {
 				t.Fatal("SSH fingerprint changed after reboot")
+			}
+			if dhcp {
+				g.address = leaseAddress(t, n)
 			}
 			if _, ok := hostSSH(t, owned, n, "memory"); !ok {
 				t.Fatal("host memory update failed (output withheld)")
@@ -142,4 +161,12 @@ func TestRealSliceAcceptance(t *testing.T) {
 			break
 		} // Stop at the first product failure; cleanup still runs.
 	}
+}
+
+func guestSpec(address, gateway, pub string) object {
+	g := object{"cores": 2, "memory": 1024, "disk": 10, "bridge": "vmbr0", "ip": address, "ssh_keys": []string{pub}}
+	if gateway != "" {
+		g["gateway"] = gateway
+	}
+	return g
 }

@@ -66,6 +66,12 @@ func hostSSH(t *testing.T, owned map[int]bool, n int, action string) (string, bo
 			t.Fatal("invalid pool setting")
 		}
 		command = "pvesh get /pools/" + pool + " --output-format json"
+	case "neigh":
+		lxc := os.Getenv("PLUMB_TEST_LXC_ID")
+		if strings.Trim(lxc, "0123456789") != "" || lxc == "" {
+			t.Fatal("invalid LXC id setting")
+		}
+		command = "pct exec " + lxc + " -- ip -4 neigh show"
 	case "imports":
 		storage := os.Getenv("PLUMB_TEST_IMAGE_STORAGE")
 		if storage == "" || strings.Trim(storage, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != "" {
@@ -145,4 +151,50 @@ func hostFreeImport(t *testing.T, file string) (string, bool) {
 		return "", false
 	}
 	return "", true
+}
+
+// tryLeaseAddress finds the DHCP address of an owned test VM: the MAC of
+// net0 (qm config, read-only), then the controller LXC's neighbor table
+// (read-only). The address is never logged.
+func tryLeaseAddress(t *testing.T, n int) (string, bool) {
+	t.Helper()
+	mac := ""
+	for _, line := range strings.Split(hostRead(t, n, "config"), "\n") {
+		if v, ok := strings.CutPrefix(line, "net0: "); ok {
+			for _, p := range strings.Split(v, ",") {
+				if k, m, ok := strings.Cut(p, "="); ok && k != "bridge" && len(m) == 17 {
+					mac = strings.ToLower(m)
+				}
+			}
+		}
+	}
+	if mac == "" {
+		t.Fatal("no MAC in net0 of the test VM")
+	}
+	out, ok := hostSSH(t, nil, n, "neigh")
+	if !ok {
+		return "", false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "lladdr" && strings.ToLower(f[i+1]) == mac && f[len(f)-1] != "FAILED" {
+				if a, err := netip.ParseAddr(f[0]); err == nil && a.Is4() {
+					return a.String() + "/32", true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func leaseAddress(t *testing.T, n int) string {
+	t.Helper()
+	var a string
+	wait(t, "DHCP address of the guest found", 2*time.Minute, func() bool {
+		var ok bool
+		a, ok = tryLeaseAddress(t, n)
+		return ok
+	})
+	return a
 }
