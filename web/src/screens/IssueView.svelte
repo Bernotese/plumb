@@ -3,7 +3,13 @@
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import type { Issue, IssueAction } from "../lib/types";
-  import { formatTime, isSensitive } from "../lib/view";
+  import {
+    ADDRESS_HINT,
+    GUEST_ADDRESS,
+    addressIssueText,
+    formatTime,
+    isSensitive,
+  } from "../lib/view";
   import ChangeTable from "../ui/ChangeTable.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import RiskBadge from "../ui/RiskBadge.svelte";
@@ -28,6 +34,12 @@
   const hidden = $derived(issue?.changes.some(isSensitive) ?? false);
   const source = $derived(
     issue?.resource === "guest:config" ? "Proxmox" : "the agent in the guest",
+  );
+
+  // guest:address (D-215): the Proxmox config is right, the guest does not follow it.
+  const isAddress = $derived(issue?.resource === GUEST_ADDRESS);
+  const canPlan = $derived(
+    issue?.actions.includes("revert") || (issue?.actions.includes("accept") && !hidden),
   );
 
   const changedAttrs = $derived([...new Set(issue?.changes.map((c) => c.attr) ?? [])]);
@@ -90,11 +102,25 @@
 <ProblemBox {error} />
 {#if issue}
   <div class="card">
-    <p>
-      <span class="mono">{issue.resource}</span> on <span class="mono">{issue.target}</span> differs
-      from the desired state. Found by {source} at {formatTime(issue.opened_at)}.
-    </p>
-    <p>Risk of a revert: <RiskBadge risk={issue.risk} /> · Status: {issue.status}</p>
+    {#if isAddress}
+      <p id="address-text">{addressIssueText(issue)}</p>
+      <p>
+        <span class="mono">{issue.resource}</span> on <span class="mono">{issue.target}</span>.
+        Plumb found it at {formatTime(issue.opened_at)} in the address list that the agent in the guest
+        reports.
+      </p>
+      <p class="hint-box" id="address-hint">{ADDRESS_HINT}</p>
+      <p>
+        Plumb cannot revert or accept this: the address is set only when the guest is created. ·
+        Status: {issue.status}
+      </p>
+    {:else}
+      <p>
+        <span class="mono">{issue.resource}</span> on <span class="mono">{issue.target}</span>
+        differs from the desired state. Found by {source} at {formatTime(issue.opened_at)}.
+      </p>
+      <p>Risk of a revert: <RiskBadge risk={issue.risk} /> · Status: {issue.status}</p>
+    {/if}
     {#if ignored}
       <p class="banner ok" role="status">
         Ignored once. The same drift opens no new issue until the resource matches again or a run
@@ -120,8 +146,12 @@
     changes={issue.changes}
     caption="Difference of {issue.resource}"
     resource={issue.resource}
-    fromLabel={issue.status === "open" ? "On the guest now" : "On the guest when found"}
-    toLabel="Desired"
+    fromLabel={isAddress
+      ? "Reported by the guest"
+      : issue.status === "open"
+        ? "On the guest now"
+        : "On the guest when found"}
+    toLabel={isAddress ? "Configured" : "Desired"}
   />
   {#if hidden}
     <p class="muted">
@@ -137,27 +167,28 @@
         <textarea id="resolve-reason" bind:value={reason}></textarea>
       </div>
       <ProblemBox error={actionError} />
-      <div class="row">
-        {#if issue.actions.includes("revert")}
-          <button
-            class="btn primary"
-            type="button"
-            disabled={busy}
-            onclick={() => resolve("revert")}
-          >
-            Revert: apply the desired state
-          </button>
-        {/if}
-        {#if issue.actions.includes("accept") && !hidden}
-          <button class="btn" type="button" disabled={busy} onclick={() => resolve("accept")}>
-            Accept: keep the guest value
-          </button>
-        {/if}
-      </div>
-      <p class="muted">
-        {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a plan.{/if}
-        Nothing changes until you approve it.
-      </p>
+      {#if canPlan}<div class="row">
+          {#if issue.actions.includes("revert")}
+            <button
+              class="btn primary"
+              type="button"
+              disabled={busy}
+              onclick={() => resolve("revert")}
+            >
+              Revert: apply the desired state
+            </button>
+          {/if}
+          {#if issue.actions.includes("accept") && !hidden}
+            <button class="btn" type="button" disabled={busy} onclick={() => resolve("accept")}>
+              Accept: keep the guest value
+            </button>
+          {/if}
+        </div>
+        <p class="muted">
+          {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a
+            plan.{/if}
+          Nothing changes until you approve it.
+        </p>{/if}
 
       {#if canIgnore}
         <h3>Ignore</h3>
@@ -188,8 +219,13 @@
                 Ignore once
               </button>
               <p class="muted">
-                Resolves this issue now, without a plan. The guest keeps its value until the next
-                apply. A new, different drift opens a new issue.
+                {#if isAddress}
+                  Resolves this issue now, without a plan. When the reported list changes and the
+                  configured address is still missing, the issue opens again.
+                {:else}
+                  Resolves this issue now, without a plan. The guest keeps its value until the next
+                  apply. A new, different drift opens a new issue.
+                {/if}
               </p>
             {/if}
           </div>
@@ -222,8 +258,9 @@
               Make ignore-rule plan
             </button>
             <p class="muted">
-              The rule is a document of the desired state. Only a person can approve the plan. The
-              next apply still writes the desired state.
+              The rule is a document of the desired state. Only a person can approve the plan.
+              {#if isAddress}While the rule exists, Plumb opens no address issue here.{:else}The
+                next apply still writes the desired state.{/if}
             </p>
           </fieldset>
         {/if}
@@ -269,6 +306,10 @@
     gap: var(--space-2);
     align-items: baseline;
     flex-wrap: wrap;
+  }
+  .hint-box {
+    border-left: 4px solid var(--color-info);
+    padding-left: var(--space-2);
   }
   .body {
     white-space: pre-wrap;

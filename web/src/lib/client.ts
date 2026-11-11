@@ -38,7 +38,8 @@ export interface PlumbApi {
   getPlan(id: number): Promise<Plan>;
   approvePlan(id: number, comment?: string): Promise<Run>;
   getRun(id: number): Promise<Run>;
-  listIssues(): Promise<Issue[]>;
+  /** Issues, newest first; the filter uses the `target` and `status` query of GET /issues. */
+  listIssues(filter?: { target?: string; status?: Issue["status"] }): Promise<Issue[]>;
   getIssue(id: number): Promise<Issue>;
   /** `accept`, `revert` and `ignore_rule` make a Plan; `rule` is the scope of an ignore rule. */
   resolveIssue(
