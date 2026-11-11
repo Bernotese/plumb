@@ -115,14 +115,20 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 	l.version = v.Version
 	e.imageVersionEvent(ctx, l.image, v.Version, store.ImageBuilding, run.ID)
 
-	// 1. The base template.
+	// 1. The base template. The disk gate is checked first (no
+	// reservation yet; that comes with the build guest): a build that the
+	// gate refuses makes nothing, not even the base template (T-066).
 	s.set(ctx, StepImageBase, wire.StatusRunning, nil, "")
+	if err := e.disk.Check(ctx, DiskBytes(r.Recipe.DiskGB), fmt.Sprintf("the %d GiB build disk of Image %s v%d", r.Recipe.DiskGB, l.image, v.Version)); err != nil {
+		s.set(ctx, StepImageBase, wire.StatusFailed, nil, fmt.Sprintf("%v; nothing was made", err))
+		return false
+	}
 	base, err := e.cfg.Driver.FetchImage(ctx, driver.ImageSpec{Name: l.image, Kind: info.Type, URL: r.Recipe.URL, SHA256: info.SHA256})
 	if err != nil {
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, err.Error())
 		return false
 	}
-	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", info.SHA256[:12]))
+	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", info.SHA256[:12])+planNotes(p, l.image))
 
 	// 2. The build guest, under the disk gate (D-203, T-074): its disk
 	// counts until the lane ends.
@@ -264,6 +270,22 @@ func (l *lane) fail(ctx context.Context, run store.Run) {
 		e.imageVersionEvent(ctx, l.image, l.version, store.ImageFailed, run.ID)
 	}
 	l.s.failRest(ctx, "the build failed; nothing was converted"+left)
+}
+
+// planNotes returns the disk notes of one Image of a Plan for the Run: a
+// scheduled build has no person who read the Plan, so the Run records them
+// (T-061 review: "thin-pool metadata use is unknown").
+func planNotes(p store.Plan, image string) string {
+	images, _ := imagePlans(p)
+	out := ""
+	for _, ip := range images {
+		if ip.Image == image {
+			for _, n := range ip.DiskNotes {
+				out += "\n" + n
+			}
+		}
+	}
+	return out
 }
 
 // buildTrigger is the trigger of an Image in a Plan.

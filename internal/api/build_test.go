@@ -26,15 +26,24 @@ var builtSHA = strings.Repeat("a", 64)
 
 // buildAgents starts a fake agent for every build guest that appears, as
 // the vendor snippet does in a real clone. The agent seals like the real
-// one (linktest) and then powers the guest off. tune sets it up first.
+// one (linktest) and then powers the guest off. tune sets each new agent
+// up; a second call only replaces tune.
 func (e *env) buildAgents(tune func(*linktest.Agent)) {
 	e.t.Helper()
+	e.mu.Lock()
+	e.buildTune = tune
+	running := e.buildLoop
+	e.buildLoop = true
+	e.mu.Unlock()
+	if running {
+		return
+	}
 	seen := map[driver.GuestID]bool{}
 	go func() {
 		for e.ctx.Err() == nil {
 			builds, _ := e.drv.ListBuilds(e.ctx)
 			for _, b := range builds {
-				if seen[b.ID] {
+				if seen[b.ID] || b.Template {
 					continue
 				}
 				seen[b.ID] = true
@@ -44,6 +53,9 @@ func (e *env) buildAgents(tune func(*linktest.Agent)) {
 					return boot.Token, ok
 				})
 				a.OnSeal(func() { e.drv.StopOutside(id) })
+				e.mu.Lock()
+				tune := e.buildTune
+				e.mu.Unlock()
 				if tune != nil {
 					tune(a)
 				}

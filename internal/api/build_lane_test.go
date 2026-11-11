@@ -161,11 +161,28 @@ func TestBuildDiskGate(t *testing.T) {
 	if !strings.Contains(body, "would not start now") || !strings.Contains(body, "thin-pool metadata use is unknown") {
 		t.Errorf("plan warnings: %s", body)
 	}
+	// The notes are also on the image part of the Plan (T-066).
+	var pv struct {
+		Images []struct {
+			Notes []string `json:"notes"`
+		} `json:"images"`
+	}
+	json.Unmarshal([]byte(body), &pv)
+	if len(pv.Images) != 1 || !strings.Contains(strings.Join(pv.Images[0].Notes, " "), "thin-pool metadata use is unknown") {
+		t.Errorf("image part notes: %s", body)
+	}
 	adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil)
 	e.eng.Wait()
 	steps := e.lastSteps(p.ID)
-	if s := steps["guest:config"]; s.Status != "failed" || !strings.Contains(s.Output, "nothing was made") {
-		t.Fatalf("guest step = %+v", s)
+	// Refused before the base template (T-066): nothing at all is made.
+	if s := steps["image:base"]; s.Status != "failed" || !strings.Contains(s.Output, "nothing was made") {
+		t.Fatalf("base step = %+v", s)
+	}
+	if objs, _ := e.drv.ListImages(e.ctx, "web"); len(objs) != 0 {
+		t.Fatalf("a refused build made %+v", objs)
+	}
+	if n := e.drv.Calls(fake.OpFetchImage); n != 0 {
+		t.Fatalf("FetchImage was called %d times", n)
 	}
 	if e.eng.Disk().Reserved() != 0 {
 		t.Errorf("reservation left: %d", e.eng.Disk().Reserved())
@@ -273,8 +290,6 @@ func TestLinkSealGuards(t *testing.T) {
 		t.Errorf("seal to a build link: %v", err)
 	}
 }
-
-var _ = json.Marshal
 
 // Review N2 of #133: a power read that fails is tried again; three in a
 // row fail the build, and nothing is converted.

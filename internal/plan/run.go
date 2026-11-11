@@ -145,6 +145,7 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 		}
 	}
 	e.staleBuildPlans(ctx, next)
+	e.resetSchedules(ctx, base, next)
 
 	started = true
 	e.start(p, run, next, targets, images, slots)
@@ -161,6 +162,7 @@ func (e *Engine) start(p store.Plan, run store.Run, set *state.Set, targets []Ta
 	go func() {
 		defer e.runs.Done()
 		e.execute(e.ctx, p, run, set, targets, images)
+		e.scheduledDone(p.ID)
 		e.mu.Lock()
 		delete(e.active, run.ID)
 		e.mu.Unlock()

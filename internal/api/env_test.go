@@ -57,6 +57,9 @@ type env struct {
 	bearers  []string // every token created
 	mu       sync.Mutex
 	seen     [][]byte // every response body, for the secret scan
+	// buildAgents (image builds): the tuning of new build agents.
+	buildTune func(*linktest.Agent)
+	buildLoop bool
 }
 
 func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {

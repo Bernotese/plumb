@@ -70,7 +70,13 @@
 {:else if first && items.length === 0}
   <p class="muted">No revisions yet.</p>
 {:else if first}
-  <div class="table-wrap card flush">
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div
+    class="table-wrap card flush"
+    tabindex="0"
+    role="region"
+    aria-label="Revisions, newest first, scrolls sideways"
+  >
     <table>
       <caption class="sr-only">Revisions, newest first</caption>
       <thead>

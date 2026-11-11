@@ -272,6 +272,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	errc := make(chan error, 2)
 	go func() { errc <- lk.Serve(ctx, f.agentListen) }()
 	go eng.PollGuests(ctx, time.Minute)
+	go eng.RunSchedules(ctx, time.Minute) // scheduled image builds (T-063)
 
 	ln, err := net.Listen("tcp", f.listen)
 	if err != nil {

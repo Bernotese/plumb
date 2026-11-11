@@ -195,6 +195,8 @@ type Engine struct {
 	// version it removes. Each side skips what the other holds.
 	pinned   map[imageKey]int
 	removing map[imageKey]bool
+	// scheduled builds (T-063): they run one after the other.
+	schedPlans map[int64]bool // Plans of scheduled builds that run now
 }
 
 // Disk is the disk gate of the engine. Image builds (T-062) reserve their

@@ -134,6 +134,11 @@ func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus,
 	} else {
 		s.log.Warn("image status: build rests", "image", d.Name, "err", err)
 	}
+	if next, err := s.cfg.Plans.NextBuildAt(ctx, d.Name); err == nil {
+		st.NextBuildAt = utc(next)
+	} else {
+		s.log.Warn("image status: next build", "image", d.Name, "err", err)
+	}
 	if u := s.cfg.Plans.DiskUse(ctx); u != nil {
 		st.Disk = &diskUseView{Storage: u.Storage, TotalBytes: u.TotalBytes, UsedBytes: u.UsedBytes, ReservedBytes: u.ReservedBytes, LimitPercent: u.LimitPercent}
 	}
@@ -195,6 +200,9 @@ type imagePlanView struct {
 	Build   *imageBuildPlanView `json:"build,omitempty"`
 	Removes []imageRemovalView  `json:"removes"`
 	Disk    *diskUseView        `json:"disk,omitempty"`
+	// Notes are the disk notes of the build, for the person who approves
+	// (T-061 review, T-066); missing = none.
+	Notes []string `json:"notes,omitempty"`
 }
 
 func imagePlanViews(raw json.RawMessage) ([]imagePlanView, error) {
@@ -207,7 +215,7 @@ func imagePlanViews(raw json.RawMessage) ([]imagePlanView, error) {
 	}
 	var out []imagePlanView
 	for _, ip := range images {
-		v := imagePlanView{Image: ip.Image, Removes: []imageRemovalView{}}
+		v := imagePlanView{Image: ip.Image, Removes: []imageRemovalView{}, Notes: ip.DiskNotes}
 		if ip.Build != nil {
 			b := &imageBuildPlanView{Version: ip.Build.Version, Trigger: ip.Build.Trigger, Upgrade: ip.Build.Upgrade,
 				RecipeSHA256: ip.Build.RecipeSHA256, Resources: []resourcePlanView{}}
