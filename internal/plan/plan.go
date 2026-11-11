@@ -162,6 +162,9 @@ type Config struct {
 	// built Image is refused, as before T-062. Part A of T-062 plans and
 	// approves builds; part B runs them and turns this on by default.
 	ImageBuilds bool
+	// DiskLimitPercent is the limit of the disk gate for creates and
+	// builds (D-219); default DefaultDiskLimitPercent.
+	DiskLimitPercent int
 }
 
 // Engine runs the change flow.
@@ -182,7 +185,12 @@ type Engine struct {
 	cache   *sensitiveCache
 	warned  map[string]bool       // "revision/target": the cycle warning is in the log
 	addrs   map[string]*addrWatch // target → state of the address check (D-215)
+	disk    *DiskGate             // creates and builds (T-074)
 }
+
+// Disk is the disk gate of the engine. Image builds (T-062) reserve their
+// disk with it, so builds and creates count together.
+func (e *Engine) Disk() *DiskGate { return e.disk }
 
 // load reads a stored revision. A Target whose apply order has a cycle
 // loads (D-168); the log gets one warning per revision and Target.
@@ -237,10 +245,13 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.AddrStable <= 0 {
 		cfg.AddrStable = AddrStable
 	}
+	if cfg.DiskLimitPercent < 0 || cfg.DiskLimitPercent > 100 {
+		return nil, fmt.Errorf("plan: disk limit %d %% is outside 1 … 100", cfg.DiskLimitPercent)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
 		results: map[string]chan wire.Report{}, busy: map[string]int{}, hello: map[string]int{}, active: map[int64]bool{},
-		addrs: map[string]*addrWatch{}}, nil
+		addrs: map[string]*addrWatch{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
 }
 
 // Close cancels all Runs and waits for them.
