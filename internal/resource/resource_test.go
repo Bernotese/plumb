@@ -3,6 +3,7 @@ package resource
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -143,4 +144,12 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// The list of internal/wire that link uses to refuse items of other
+// types (T-070 review B1) must equal this table.
+func TestWireAgentTypes(t *testing.T) {
+	if got, want := wire.AgentTypes(), Names(); !slices.Equal(got, want) {
+		t.Fatalf("wire.AgentTypes() = %v, resource.Names() = %v", got, want)
+	}
 }
