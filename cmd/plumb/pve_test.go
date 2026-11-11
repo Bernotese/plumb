@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -436,4 +438,91 @@ func TestStartErrorCertificateTime(t *testing.T) {
 			}
 		}
 	}
+}
+
+// tlsHost is a TLS server with its own certificate, a CA file for it, and a
+// count of the TLS connections it got.
+func tlsHost(t *testing.T, notBefore, notAfter time.Time) (url, ca string, conns *atomic.Int32) {
+	t.Helper()
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caTpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test node CA"},
+		NotBefore: time.Now().Add(-48 * time.Hour), NotAfter: time.Now().Add(48 * time.Hour), IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTpl, caTpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, _ := x509.ParseCertificate(caDER)
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "pve"},
+		NotBefore: notBefore, NotAfter: notAfter, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
+	der, err := x509.CreateCertificate(rand.Reader, leaf, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("a request passed TLS: %s", r.URL.Path)
+	}))
+	conns = &atomic.Int32{}
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	ca = filepath.Join(t.TempDir(), "node-ca.pem")
+	os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o644)
+	return srv.URL, ca, conns
+}
+
+// runFailing runs serve and checks a failed start: the exit code, the text,
+// an empty --data and no password.
+func runFailing(t *testing.T, code int, want string) string {
+	t.Helper()
+	data := filepath.Join(t.TempDir(), "data")
+	c, out, errOut := serveCode(t, "--data", data, "--key-file", keyFile(t), "--listen", "127.0.0.1:0", "--agent-listen", "127.0.0.1:0")
+	all := out + errOut
+	if c != code || !strings.Contains(all, want) {
+		t.Errorf("exit %d, want %d with %q:\n%s", c, code, want, all)
+	}
+	if _, err := os.Stat(data); !os.IsNotExist(err) {
+		t.Errorf("the data directory was made: %v", err)
+	}
+	if strings.Contains(all, "Password") || strings.Contains(all, canary) {
+		t.Errorf("password or secret in the output:\n%s", all)
+	}
+	return all
+}
+
+// QA gap: an expired node certificate, end to end: exit 78 with the dates.
+func TestServeExpiredCertificate(t *testing.T) {
+	url, ca, _ := tlsHost(t, time.Now().Add(-48*time.Hour), time.Now().Add(-24*time.Hour))
+	setPVE(t, url, ca)
+	runFailing(t, 78, "is not valid at this time (")
+}
+
+// QA gap: a TLS failure is never tried again: one connection only.
+func TestServeTLSFailureNotRetried(t *testing.T) {
+	url, _, conns := tlsHost(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	setPVE(t, url, otherCA(t))
+	pveStartWait, pveStartPoll = 2*time.Second, 10*time.Millisecond
+	t.Cleanup(func() { pveStartWait, pveStartPoll = 0, 0 })
+	runFailing(t, 78, "did not sign it")
+	if n := conns.Load(); n != 1 {
+		t.Errorf("TLS connections = %d, want 1 (no retry)", n)
+	}
+}
+
+// QA gap: no answer at all, end to end: exit 1 (systemd starts it again).
+func TestServeNoAnswer(t *testing.T) {
+	h := newFakeHost(t)
+	url := h.srv.URL
+	h.srv.Close()
+	setPVE(t, url, h.ca)
+	pveStartWait, pveStartPoll = 100*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { pveStartWait, pveStartPoll = 0, 0 })
+	runFailing(t, 1, "cannot reach Proxmox at "+url)
 }

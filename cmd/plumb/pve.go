@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Bernotese/plumb/internal/driver/proxmox"
@@ -31,6 +32,10 @@ func (e *errConfig) Error() string { return e.msg }
 func configErr(format string, a ...any) error { return &errConfig{msg: fmt.Sprintf(format, a...)} }
 
 const secretVar = "PLUMB_PVE_SECRET"
+
+// pveStartWait and pveStartPoll shorten the retry of the start-up check in
+// tests; zero is the driver default (60 s, 5 s).
+var pveStartWait, pveStartPoll time.Duration
 
 // pveVars are the settings that install.sh writes (push_env), in that order.
 var pveVars = []string{"PLUMB_PVE_URL", "PLUMB_PVE_TOKEN_ID", secretVar, "PLUMB_PVE_NODE", "PLUMB_PVE_POOL",
@@ -248,6 +253,7 @@ func proxmoxDriver(ctx context.Context, getenv func(string) string, log *slog.Lo
 		return nil, configErr("%v", err)
 	}
 	pc.Client = c
+	pc.StartWait, pc.StartPoll = pveStartWait, pveStartPoll
 	d, err := proxmox.New(pc)
 	if err != nil {
 		return nil, configErr("%v", err)
