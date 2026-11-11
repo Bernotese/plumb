@@ -1,0 +1,20 @@
+{
+  "seq": 97,
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:00009788:000C9340:6AF4D1B2:resize:9002:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "tokenid": "plumb",
+      "id": "9002",
+      "starttime": 1794429362,
+      "pid": 38792,
+      "upid": "UPID:pve:00009788:000C9340:6AF4D1B2:resize:9002:plumb@pve!plumb:",
+      "pstart": 824128,
+      "type": "resize",
+      "status": "running",
+      "user": "plumb@pve",
+      "node": "pve"
+    }
+  }
+}

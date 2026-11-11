@@ -1,0 +1,10 @@
+{
+  "seq": 43,
+  "method": "PUT",
+  "path": "/nodes/pve/qemu/9001/resize",
+  "form": "disk=scsi0\u0026size=10G",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:000095F2:000C8F15:6AF4D1A7:resize:9001:plumb@pve!plumb:"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "seq": 1,
+  "method": "GET",
+  "path": "/nodes/pve/storage/local-lvm/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "used": 1020605025,
+      "active": 1,
+      "shared": 0,
+      "enabled": 1,
+      "type": "lvmthin",
+      "total": 45562724352,
+      "content": "rootdir,images",
+      "avail": 44542119327
+    }
+  }
+}

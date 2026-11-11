@@ -1,0 +1,14 @@
+{
+  "seq": 118,
+  "method": "GET",
+  "path": "/cluster/nextid",
+  "query": "vmid=9000",
+  "status": 400,
+  "body": {
+    "data": null,
+    "errors": {
+      "vmid": "VM 9000 already exists"
+    },
+    "message": "Parameter verification failed.\n"
+  }
+}

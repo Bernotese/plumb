@@ -13,6 +13,7 @@ Image builds work on the real Proxmox host for Debian 13 and Ubuntu 26.04, and t
 - [ ] Per distribution: build with the real Go `seal` and `MakeImage`; the power-off handshake (B1); two Targets from the version.
 - [ ] Proofs C2 … C6 with the real `seal`: no word of the build guest's hostname, address or user under `/var/log`, `/root`, `/home`, `/tmp`.
 - [ ] Search of the template disk: no build credential, no token, no desired list, no agent binary.
+- [ ] Cloud-init drive of each version template (D-222, review N2 of PR #136): dump every part of the drive (user-data, meta-data, network-config, vendor-data) as a key list; none holds a user, hostname, address, key or vendor part of the build guest.
 - [ ] Ubuntu from a template built **with** the upgrade (new kernel): static address at the first boot, after a reboot and after a cold start (D-192).
 - [ ] A Target without SSH keys; disk growth from a built Ubuntu template.
 - [ ] A build refused by the 85 % rule; retention removes a version with the token; a short schedule fires once.

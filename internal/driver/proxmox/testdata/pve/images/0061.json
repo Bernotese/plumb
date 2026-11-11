@@ -1,0 +1,9 @@
+{
+  "seq": 61,
+  "method": "PUT",
+  "path": "/nodes/pve/qemu/9001/cloudinit",
+  "status": 200,
+  "body": {
+    "data": null
+  }
+}

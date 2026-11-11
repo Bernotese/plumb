@@ -1,0 +1,10 @@
+{
+  "seq": 58,
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9001/config",
+  "form": "ciupgrade=0\u0026delete=ciuser%2Cipconfig0%2Ccicustom%2Cnameserver%2Csearchdomain%2Conboot\u0026description=plumb-image%3A+test-image%0Aversion%3D1%0Abuild%3Df10f10f10f10f10f10f10f10f10f10f10f10f10f10f10f10f10f10f10f10f10f%0APlumb+image+template.+Do+not+change+it+here.\u0026digest=129e928752e58b42cfd845877c557496c85f2ed2\u0026name=plumb-img-test-image-v1\u0026smbios1=uuid%3Df11bda12-0168-4982-8630-444be3f90582",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:0000966A:000C901C:6AF4D1AA:qmconfig:9001:plumb@pve!plumb:"
+  }
+}

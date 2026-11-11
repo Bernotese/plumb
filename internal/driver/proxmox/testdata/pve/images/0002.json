@@ -1,0 +1,10 @@
+{
+  "seq": 2,
+  "method": "GET",
+  "path": "/nodes/pve/disks/lvmthin",
+  "status": 403,
+  "body": {
+    "message": "Permission check failed (/, Sys.Audit)\n",
+    "data": null
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "seq": 3,
+  "method": "GET",
+  "path": "/pools",
+  "query": "poolid=plumb\u0026type=qemu",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "comment": "Plumb guests and templates",
+        "poolid": "plumb",
+        "members": []
+      }
+    ]
+  }
+}

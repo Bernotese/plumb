@@ -1,0 +1,29 @@
+{
+  "seq": 57,
+  "method": "GET",
+  "path": "/nodes/pve/qemu/9001/status/current",
+  "status": 200,
+  "body": {
+    "data": {
+      "disk": 0,
+      "status": "stopped",
+      "qmpstatus": "stopped",
+      "maxdisk": 10737418240,
+      "uptime": 0,
+      "netout": 0,
+      "clipboard": null,
+      "serial": 1,
+      "mem": 0,
+      "ha": {
+        "managed": 0
+      },
+      "cpu": 0,
+      "netin": 0,
+      "maxmem": 1073741824,
+      "vmid": 9001,
+      "memhost": 0,
+      "cpus": 1,
+      "name": "plumb-build-test-image-v1"
+    }
+  }
+}

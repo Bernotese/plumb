@@ -32,14 +32,16 @@ type fakePVE struct {
 	auth   string
 	node   string
 
-	mu        sync.Mutex
-	vms       map[int]*fakeVM
-	files     map[string]bool // volids in the image storage
-	tasks     map[string]*fakeTask
-	failNext  map[string]string // request key → task exit status (one shot)
-	taskPolls int               // polls before a task stops
-	log       []string          // "METHOD /path"
-	params    map[string]url.Values
+	mu       sync.Mutex
+	vms      map[int]*fakeVM
+	files    map[string]bool // volids in the image storage
+	tasks    map[string]*fakeTask
+	failNext map[string]string // request key → task exit status (one shot)
+	// failCloudinit: the next PUT …/cloudinit (regenerate) fails.
+	failCloudinit bool
+	taskPolls     int      // polls before a task stops
+	log           []string // "METHOD /path"
+	params        map[string]url.Values
 
 	// Fault injection for the review tests.
 	allPools     bool              // answer /pools with every pool, ignoring poolid
@@ -122,6 +124,31 @@ type fakeVM struct {
 	pending map[string]string
 	// parent is the base volume of a linked clone ("base-9001-disk-0").
 	parent string
+	// ci is what the cloud-init drive holds: a copy of the config when
+	// Proxmox wrote it (at a start, and when the drive is added); nil for
+	// an empty drive or none. A clone gets a new empty drive (T-061 log).
+	ci map[string]string
+}
+
+// writeCI fills the cloud-init drive from the config, as Proxmox does.
+func (vm *fakeVM) writeCI() {
+	if !hasCloudinit(vm.cfg) {
+		vm.ci = nil
+		return
+	}
+	vm.ci = map[string]string{}
+	for k, v := range vm.cfg {
+		vm.ci[k] = v
+	}
+}
+
+func hasCloudinit(cfg map[string]string) bool {
+	for k, v := range cfg {
+		if driveKey.MatchString(k) && strings.Contains(v, "-cloudinit") {
+			return true
+		}
+	}
+	return false
 }
 
 // coldKeys are the keys that the fake keeps pending on a running VM.
@@ -504,6 +531,9 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		for k, v := range r.Form {
 			if k != "vmid" && k != "pool" && k != "scsi0" {
 				cfg[k] = v[0]
+				if st, ok := strings.CutSuffix(v[0], ":cloudinit"); ok && driveKey.MatchString(k) {
+					cfg[k] = fmt.Sprintf("%s:vm-%d-cloudinit,media=cdrom", st, id) // empty until a start
+				}
 			}
 		}
 		f.vms[id] = &fakeVM{cfg: cfg, pool: r.Form.Get("pool")}
@@ -599,12 +629,21 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 		}
 		for _, k := range strings.Split(r.Form.Get("delete"), ",") {
 			if k != "" {
+				if driveKey.MatchString(k) && strings.Contains(vm.cfg[k], "-cloudinit") {
+					vm.ci = nil // Proxmox removes the cloud-init volume, no unused line
+				}
 				delete(vm.cfg, k)
 				delete(vm.pending, k)
 			}
 		}
+		newCI := false
 		for k, v := range r.Form {
 			if k == "digest" || k == "delete" {
+				continue
+			}
+			if st, ok := strings.CutSuffix(v[0], ":cloudinit"); ok && driveKey.MatchString(k) {
+				vm.cfg[k] = fmt.Sprintf("%s:vm-%d-cloudinit,media=cdrom", st, id)
+				newCI = true
 				continue
 			}
 			switch {
@@ -620,10 +659,22 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 				delete(vm.pending, k) // a write of the running value removes the pending one
 			}
 		}
+		if newCI {
+			vm.writeCI() // a new drive is written from the config at once
+		}
 		if f.lateConvert == "afterWrite" && f.lateID == id {
 			f.convert(id, vm)
 		}
 		reply(w, 200, f.task(key))
+	case r.Method == "PUT" && sub == "/cloudinit":
+		// Regenerate: the drive is written from the current config; null answer.
+		if f.failCloudinit {
+			f.failCloudinit = false
+			fail(w, 500, "unable to regenerate the cloud-init drive", nil)
+			return
+		}
+		vm.writeCI()
+		reply(w, 200, nil)
 	case r.Method == "PUT" && sub == "/resize":
 		want := r.Form.Get("size")
 		have := parseProps(vm.cfg["scsi0"])["size"]
@@ -674,6 +725,13 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			cfg["name"] = f.cloneName
 		}
 		cfg["smbios1"] = "uuid=" + uuid() // a clone gets a new uuid
+		for k, v := range cfg {
+			// A clone gets its own, empty cloud-init volume (T-061 log).
+			if driveKey.MatchString(k) && strings.Contains(v, "-cloudinit") {
+				st, _, _ := strings.Cut(v, ":")
+				cfg[k] = fmt.Sprintf("%s:vm-%d-cloudinit,media=cdrom,size=4M", st, newid)
+			}
+		}
 		disk := parseProps(vm.cfg["scsi0"])
 		src := disk[""]
 		srcName := src[strings.Index(src, ":")+1:]
@@ -716,6 +774,7 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 					vm.cfg[k] = v
 				}
 				vm.pending = nil
+				vm.writeCI() // a start writes the cloud-init drive
 			}
 		case "/status/shutdown", "/status/stop":
 			if f.tasks[upid].exit == "OK" {

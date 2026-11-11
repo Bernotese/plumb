@@ -231,6 +231,9 @@ func (d *Driver) MakeImage(ctx context.Context, gid driver.GuestID, img driver.B
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", versionParams(cfg, img)); err != nil {
 		return "", fmt.Errorf("proxmox: clear the build guest %d (its config may have changed after the check): %w", id, err)
 	}
+	if err := d.renewCloudinit(ctx, id, cfg); err != nil {
+		return d.afterFailedConversion(ctx, id, img, err)
+	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/template", nil); err != nil {
 		return d.afterFailedConversion(ctx, id, img, fmt.Errorf("proxmox: convert to template: %w", err))
 	}
@@ -262,11 +265,7 @@ func (d *Driver) afterFailedConversion(ctx context.Context, id int, img driver.B
 	if cfg["template"] == "1" {
 		return ref, nil // the conversion ended on the host
 	}
-	if err := d.c.MaybeTask(cleanup, d.cfg.Node, "POST", vmPath(d, id)+"/config", url.Values{
-		"digest":      {cfg["digest"]},
-		"name":        {buildName(img.Image, img.Version)},
-		"description": {buildLine(img.Image, img.Version) + "\nPlumb image build. Do not change it here."},
-	}); err != nil {
+	if err := d.writeBuildName(cleanup, id, cfg["digest"], img); err != nil {
 		return left(err)
 	}
 	if cfg, err = d.config(cleanup, id); err != nil {
@@ -281,10 +280,11 @@ func (d *Driver) afterFailedConversion(ctx context.Context, id int, img driver.B
 	return "", convErr
 }
 
-// versionParams is the one config write that turns a build guest into a
+// versionParams is the config write that turns a build guest into a
 // version (D-208, host A2): the digest of cfg, the version name and
 // description, ciupgrade=0, smbios1 without the serial, and the delete of
-// the bootstrap values and DNS that cfg still has.
+// the bootstrap values and DNS that cfg still has. renewCloudinit then
+// writes the cloud-init drive again from this cleared config (D-222).
 func versionParams(cfg map[string]string, img driver.BuiltImage) url.Values {
 	params := url.Values{
 		"digest":      {cfg["digest"]},
@@ -309,9 +309,65 @@ func versionParams(cfg map[string]string, img driver.BuiltImage) url.Values {
 // clear set as the first write (review of PR #125: a guest converted by
 // hand before MakeImage still has the token serial, ciuser and ciupgrade=1).
 // A write on a template works with the token (host A2).
+// A failed regeneration gives the template its build name and marker back
+// (D-222), so it is not a version with the build's cloud-init drive; the
+// next MakeImage call finishes it again.
 func (d *Driver) nameVersion(ctx context.Context, id int, cfg map[string]string, img driver.BuiltImage) error {
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", versionParams(cfg, img)); err != nil {
 		return fmt.Errorf("proxmox: name template %d %s: %w", id, versionName(img.Image, img.Version), err)
+	}
+	ciErr := d.renewCloudinit(ctx, id, cfg) // a template takes it too (host, T-061 log)
+	if ciErr == nil {
+		return nil
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	now, err := d.config(cleanup, id)
+	if err == nil {
+		err = d.writeBuildName(cleanup, id, now["digest"], img)
+	}
+	if err != nil {
+		return errors.Join(ciErr, fmt.Errorf("proxmox: template %d keeps the name %s without a clean cloud-init drive; remove it by hand (qm destroy %d): %w",
+			id, versionName(img.Image, img.Version), id, err))
+	}
+	return ciErr
+}
+
+// writeBuildName writes the build name and marker of img (with digest).
+func (d *Driver) writeBuildName(ctx context.Context, id int, digest string, img driver.BuiltImage) error {
+	return d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", url.Values{
+		"digest":      {digest},
+		"name":        {buildName(img.Image, img.Version)},
+		"description": {buildLine(img.Image, img.Version) + "\nPlumb image build. Do not change it here."},
+	})
+}
+
+// hasCloudinitDrive reports whether cfg has a cloud-init drive.
+func hasCloudinitDrive(cfg map[string]string) bool {
+	for k, v := range cfg {
+		if driveKey.MatchString(k) && strings.HasSuffix(parseProps(v)[""], "-cloudinit") {
+			return true
+		}
+	}
+	return false
+}
+
+// driveKey matches the config keys of disks and CD drives.
+var driveKey = regexp.MustCompile(`^(ide|sata|scsi|virtio)[0-9]+$`)
+
+// renewCloudinit writes the cloud-init drive again from the cleared config
+// (D-222): until then it holds the build guest's user-data (user, host
+// name, vendor parts; T-061 host log, finding B). It uses "regenerate"
+// (VM.Config.Cloudinit), not a delete and a new drive, because a delete of
+// the drive needs VM.Config.CDROM, which the token does not have (D-081).
+// It works on a template too. A clone gets its own drive and writes its
+// own data at the start. old is the config before the clear write.
+func (d *Driver) renewCloudinit(ctx context.Context, id int, old map[string]string) error {
+	if !hasCloudinitDrive(old) {
+		return nil
+	}
+	if err := d.c.MaybeTask(ctx, d.cfg.Node, "PUT", vmPath(d, id)+"/cloudinit", nil); err != nil {
+		return fmt.Errorf("proxmox: regenerate the cloud-init drive of VMID %d: %w", id, err)
 	}
 	return nil
 }

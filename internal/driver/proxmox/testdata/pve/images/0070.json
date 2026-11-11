@@ -1,0 +1,43 @@
+{
+  "seq": 70,
+  "method": "GET",
+  "path": "/nodes/pve/storage/local-lvm/content",
+  "query": "content=images",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "size": 3221225472,
+        "volid": "local-lvm:base-9000-disk-0",
+        "ctime": "1794429341",
+        "vmid": 9000,
+        "format": "raw",
+        "content": "images"
+      },
+      {
+        "content": "images",
+        "vmid": 9001,
+        "format": "raw",
+        "ctime": "1794429346",
+        "size": 10737418240,
+        "volid": "local-lvm:base-9001-disk-0"
+      },
+      {
+        "volid": "local-lvm:vm-9000-cloudinit",
+        "size": 4194304,
+        "ctime": "1794429340",
+        "format": "raw",
+        "vmid": 9000,
+        "content": "images"
+      },
+      {
+        "volid": "local-lvm:vm-9001-cloudinit",
+        "size": 4194304,
+        "ctime": "1794429345",
+        "vmid": 9001,
+        "format": "raw",
+        "content": "images"
+      }
+    ]
+  }
+}

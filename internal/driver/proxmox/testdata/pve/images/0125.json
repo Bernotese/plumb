@@ -1,0 +1,80 @@
+{
+  "seq": 125,
+  "method": "GET",
+  "path": "/pools",
+  "query": "poolid=plumb\u0026type=qemu",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "comment": "Plumb guests and templates",
+        "poolid": "plumb",
+        "members": [
+          {
+            "maxcpu": 1,
+            "node": "pve",
+            "type": "qemu",
+            "vmid": 9000,
+            "maxdisk": 3221225472,
+            "cpu": 0,
+            "diskwrite": 0,
+            "status": "stopped",
+            "mem": 0,
+            "netout": 0,
+            "disk": 0,
+            "template": 1,
+            "netin": 0,
+            "id": "qemu/9000",
+            "uptime": 0,
+            "diskread": 0,
+            "memhost": 0,
+            "name": "plumb-img-test-image-de9d63f5e5ec",
+            "maxmem": 1073741824
+          },
+          {
+            "uptime": 0,
+            "id": "qemu/9001",
+            "netin": 0,
+            "template": 1,
+            "disk": 0,
+            "mem": 0,
+            "netout": 0,
+            "status": "stopped",
+            "maxmem": 1073741824,
+            "name": "plumb-img-test-image-v1",
+            "memhost": 0,
+            "diskread": 0,
+            "node": "pve",
+            "maxcpu": 1,
+            "diskwrite": 0,
+            "cpu": 0,
+            "vmid": 9001,
+            "maxdisk": 10737418240,
+            "type": "qemu"
+          },
+          {
+            "maxmem": 1073741824,
+            "diskread": 0,
+            "memhost": 0,
+            "name": "plumb-host-test-img",
+            "template": 0,
+            "disk": 0,
+            "uptime": 0,
+            "id": "qemu/9002",
+            "netin": 0,
+            "status": "stopped",
+            "mem": 0,
+            "netout": 0,
+            "diskwrite": 0,
+            "vmid": 9002,
+            "maxdisk": 0,
+            "type": "qemu",
+            "cpu": 0,
+            "node": "pve",
+            "maxcpu": 1
+          }
+        ]
+      }
+    ]
+  }
+}

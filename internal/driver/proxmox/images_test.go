@@ -5,6 +5,7 @@ package proxmox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -191,8 +192,11 @@ func TestMakeImage(t *testing.T) {
 		t.Fatalf("%d config writes", n)
 	}
 	p := f.lastParams(key)
-	if p.Get("digest") == "" {
-		t.Error("the write has no digest")
+	if p.Get("digest") == "" || p.Has("ide2") || strings.Contains(p.Get("delete"), "ide2") {
+		t.Errorf("the clear write: %v", p)
+	}
+	if n := f.countExact("PUT /nodes/pve/qemu/" + string(gid) + "/cloudinit"); n != 1 { // D-222
+		t.Errorf("%d cloud-init regenerations", n)
 	}
 	cfg := f.cfgOf(gid)
 	for _, k := range []string{"sshkeys", "ciuser", "ipconfig0", "cicustom", "nameserver", "searchdomain", "onboot"} {
@@ -212,6 +216,7 @@ func TestMakeImage(t *testing.T) {
 	if !strings.Contains(cfg["scsi0"], ":base-"+string(gid)+"-disk-0") {
 		t.Errorf("scsi0 %q", cfg["scsi0"])
 	}
+	checkFreshCloudinit(t, f, gid, "plumb-img-web-v2")
 	// A second call of the same version is a success (review N1); the
 	// template is not written again.
 	if again, err := d.MakeImage(ctx, gid, driver.BuiltImage{Image: "web", Version: 2, Digest: tDigest}); err != nil || again != ref {
@@ -762,4 +767,110 @@ func TestMakeImageFinishClearsBootstrap(t *testing.T) {
 	if p := f.lastParams("POST /nodes/pve/qemu/" + string(gid) + "/config"); p.Get("digest") == "" {
 		t.Error("the finish write has no digest")
 	}
+	checkFreshCloudinit(t, f, gid, "plumb-img-web-v1")
+}
+
+// checkFreshCloudinit: the version has a cloud-init drive again, and it
+// holds none of the build guest's values (D-222, T-061 finding B): it was
+// written from the cleared config of the version.
+func checkFreshCloudinit(t *testing.T, f *fakePVE, gid driver.GuestID, version string) {
+	t.Helper()
+	id, _ := strconv.Atoi(string(gid))
+	cfg := f.cfgOf(gid)
+	if !strings.HasPrefix(cfg["ide2"], fmt.Sprintf("local-lvm:vm-%d-cloudinit,", id)) {
+		t.Errorf("ide2 %q", cfg["ide2"])
+	}
+	f.mu.Lock()
+	ci := f.vms[id].ci
+	f.mu.Unlock()
+	if ci == nil || ci["name"] != version {
+		t.Fatalf("cloud-init drive %v: want one written from the version", ci)
+	}
+	for _, k := range makeImageDelete {
+		if v, ok := ci[k]; ok {
+			t.Errorf("cloud-init drive still has %s=%q", k, v)
+		}
+	}
+	if strings.Contains(ci["smbios1"], "serial") || strings.Contains(fmt.Sprint(ci), "plumb-build") {
+		t.Errorf("cloud-init drive holds build values: %v", ci)
+	}
+}
+
+// The build guest's own drive held its user-data (the start wrote it);
+// a failed regeneration leaves no template and gives the guest its build
+// name back, so the build cleanup finds it (D-222).
+func TestMakeImageCloudinitFails(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	_, gid := built(t, f, d, "web", 1)
+	id, _ := strconv.Atoi(string(gid))
+	f.mu.Lock()
+	before := f.vms[id].ci
+	f.failCloudinit = true
+	f.mu.Unlock()
+	if before["ciuser"] != "plumb-build" {
+		t.Fatalf("setup: the build guest's drive %v", before)
+	}
+	if _, err := d.MakeImage(context.Background(), gid, driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest}); err == nil ||
+		!strings.Contains(err.Error(), "cloud-init") {
+		t.Fatalf("err %v", err)
+	}
+	cfg := f.cfgOf(gid)
+	if cfg["template"] == "1" || cfg["name"] != "plumb-build-web-v1" || !hasLine(cfg["description"], "plumb-build: web v1") {
+		t.Errorf("not restored: %v", cfg)
+	}
+}
+
+// A clone of the version gets its own empty drive; its start writes the
+// Target's values (host, T-061 log).
+func TestVersionCloneCloudinit(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	ctx := context.Background()
+	_, gid := built(t, f, d, "web", 1)
+	ref, err := d.MakeImage(ctx, gid, driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid, err := d.Create(ctx, driver.GuestSpec{Name: "web1", Kind: wire.KindVM, ImageName: "web", Image: ref, ImageVersion: 1,
+		Cores: 1, MemoryMB: 1024, DiskGB: 10, Bridge: "vmbr0", IP: "dhcp", User: "plumb"}, driver.Bootstrap{Token: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := strconv.Atoi(string(tid))
+	f.mu.Lock()
+	ci := f.vms[id].ci
+	f.mu.Unlock()
+	if ci["name"] != "web1" || ci["ciuser"] != "plumb" || strings.Contains(fmt.Sprint(ci), "plumb-build") {
+		t.Errorf("the clone's drive %v", ci)
+	}
+}
+
+// S1 of PR #136: on the template path a failed regeneration gives the
+// template its build name and marker back (D-222); a second MakeImage
+// finishes it.
+func TestMakeImageFinishCloudinitFails(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	_, gid := built(t, f, d, "web", 1)
+	id, _ := strconv.Atoi(string(gid))
+	f.mu.Lock()
+	f.convert(id, f.vms[id])
+	f.failCloudinit = true
+	f.mu.Unlock()
+	img := driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest}
+	if _, err := d.MakeImage(context.Background(), gid, img); err == nil || !strings.Contains(err.Error(), "cloud-init") {
+		t.Fatalf("err %v", err)
+	}
+	cfg := f.cfgOf(gid)
+	if cfg["template"] != "1" || cfg["name"] != "plumb-build-web-v1" || !hasLine(cfg["description"], "plumb-build: web v1") {
+		t.Fatalf("not restored: %v", cfg)
+	}
+	if _, err := d.FindImage(context.Background(), "web", 1, tDigest); err == nil {
+		t.Error("FindImage adopts a template without a clean drive")
+	}
+	if ref, err := d.MakeImage(context.Background(), gid, img); err != nil || string(ref) != string(gid) {
+		t.Fatalf("again: %s %v", ref, err)
+	}
+	checkFreshCloudinit(t, f, gid, "plumb-img-web-v1")
 }
