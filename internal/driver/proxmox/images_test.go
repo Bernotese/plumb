@@ -845,3 +845,32 @@ func TestVersionCloneCloudinit(t *testing.T) {
 		t.Errorf("the clone's drive %v", ci)
 	}
 }
+
+// S1 of PR #136: on the template path a failed regeneration gives the
+// template its build name and marker back (D-222); a second MakeImage
+// finishes it.
+func TestMakeImageFinishCloudinitFails(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	_, gid := built(t, f, d, "web", 1)
+	id, _ := strconv.Atoi(string(gid))
+	f.mu.Lock()
+	f.convert(id, f.vms[id])
+	f.failCloudinit = true
+	f.mu.Unlock()
+	img := driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest}
+	if _, err := d.MakeImage(context.Background(), gid, img); err == nil || !strings.Contains(err.Error(), "cloud-init") {
+		t.Fatalf("err %v", err)
+	}
+	cfg := f.cfgOf(gid)
+	if cfg["template"] != "1" || cfg["name"] != "plumb-build-web-v1" || !hasLine(cfg["description"], "plumb-build: web v1") {
+		t.Fatalf("not restored: %v", cfg)
+	}
+	if _, err := d.FindImage(context.Background(), "web", 1, tDigest); err == nil {
+		t.Error("FindImage adopts a template without a clean drive")
+	}
+	if ref, err := d.MakeImage(context.Background(), gid, img); err != nil || string(ref) != string(gid) {
+		t.Fatalf("again: %s %v", ref, err)
+	}
+	checkFreshCloudinit(t, f, gid, "plumb-img-web-v1")
+}

@@ -265,11 +265,7 @@ func (d *Driver) afterFailedConversion(ctx context.Context, id int, img driver.B
 	if cfg["template"] == "1" {
 		return ref, nil // the conversion ended on the host
 	}
-	if err := d.c.MaybeTask(cleanup, d.cfg.Node, "POST", vmPath(d, id)+"/config", url.Values{
-		"digest":      {cfg["digest"]},
-		"name":        {buildName(img.Image, img.Version)},
-		"description": {buildLine(img.Image, img.Version) + "\nPlumb image build. Do not change it here."},
-	}); err != nil {
+	if err := d.writeBuildName(cleanup, id, cfg["digest"], img); err != nil {
 		return left(err)
 	}
 	if cfg, err = d.config(cleanup, id); err != nil {
@@ -313,11 +309,37 @@ func versionParams(cfg map[string]string, img driver.BuiltImage) url.Values {
 // clear set as the first write (review of PR #125: a guest converted by
 // hand before MakeImage still has the token serial, ciuser and ciupgrade=1).
 // A write on a template works with the token (host A2).
+// A failed regeneration gives the template its build name and marker back
+// (D-222), so it is not a version with the build's cloud-init drive; the
+// next MakeImage call finishes it again.
 func (d *Driver) nameVersion(ctx context.Context, id int, cfg map[string]string, img driver.BuiltImage) error {
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", versionParams(cfg, img)); err != nil {
 		return fmt.Errorf("proxmox: name template %d %s: %w", id, versionName(img.Image, img.Version), err)
 	}
-	return d.renewCloudinit(ctx, id, cfg) // a template takes it too (host, T-061 log)
+	ciErr := d.renewCloudinit(ctx, id, cfg) // a template takes it too (host, T-061 log)
+	if ciErr == nil {
+		return nil
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	now, err := d.config(cleanup, id)
+	if err == nil {
+		err = d.writeBuildName(cleanup, id, now["digest"], img)
+	}
+	if err != nil {
+		return errors.Join(ciErr, fmt.Errorf("proxmox: template %d keeps the name %s without a clean cloud-init drive; remove it by hand (qm destroy %d): %w",
+			id, versionName(img.Image, img.Version), id, err))
+	}
+	return ciErr
+}
+
+// writeBuildName writes the build name and marker of img (with digest).
+func (d *Driver) writeBuildName(ctx context.Context, id int, digest string, img driver.BuiltImage) error {
+	return d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", url.Values{
+		"digest":      {digest},
+		"name":        {buildName(img.Image, img.Version)},
+		"description": {buildLine(img.Image, img.Version) + "\nPlumb image build. Do not change it here."},
+	})
 }
 
 // hasCloudinitDrive reports whether cfg has a cloud-init drive.
