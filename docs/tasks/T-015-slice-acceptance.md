@@ -19,6 +19,16 @@ The team has proof that the first slice works through the public API, with and w
 - [ ] The log file records commands, results and durations. No secrets in the log.
 - [ ] Each test file ≤ ~150 lines. Bugs go to `pl-lead` as short reports, not as fixes.
 
+## Real-host part (pl-lead, 2026-11-11) – go
+The test host is ready and the controller runs there (T-053, log `docs/tasks/T-053.log.md`). Rules: AGENTS.md "Test host". `pl-codex-qa` is the one agent on the host for this part.
+- Settings: `~/.config/plump/testhost.env` (never in the repo): controller URL, Plumb CA file, API token file, admin password file, two static VM addresses + gateway (`PLUMB_TEST_VM_IP_1/2`, `PLUMB_TEST_VM_GW`), guest SSH test key. `pl-backend` fills in the controller entries before you start. The test skips without them.
+- Test: `test/pve/slice_pve_test.go` (build tag `pve`, each file ≤ ~150 lines), second step of `make test-pve`. The driver tests and this test share the pool and the VMID range 9000–9099: never run both at once.
+- Path: the criterion above, with a Debian 13 VM and an Ubuntu 26.04 VM (image documents with pinned SHA-256; the host downloads them), static addresses (D-079), a reboot, and the `guest:config` drift (limit ~90 s, `PollGuests` runs every 60 s). Agent drift opens an Issue within 10 s.
+- Root actions on the host, only these: `qm set <vmid> --memory …`, `qm reboot <vmid>`, and at the end `qm destroy` of the image templates (the driver never deletes a template, D-077). Only VMIDs in 9000–9099 that the test made.
+- A destructive Plan (delete of a Target) needs a human approval: use an admin session with the password file for that step, and say so in the log.
+- End state: no guest, no volume, no template of the test left; the controller LXC stays. No address, token, password or key in the log, the PR or the report.
+- A product bug goes to `pl-lead` as a short report, not as a fix.
+
 ## Out of scope
 - Fixing product code.
 - Token tier checks (T-011 has them).
