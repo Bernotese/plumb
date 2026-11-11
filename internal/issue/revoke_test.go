@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
@@ -195,5 +196,57 @@ func TestFailedDeleteKeepsAgent(t *testing.T) {
 	}
 	if code, _ := e.call("GET", wire.PathPoll, cred, nil); code != http.StatusNoContent && code != http.StatusOK {
 		t.Errorf("poll after a failed delete: %d, want 204 or 200", code)
+	}
+}
+
+// A crash between the guest delete and the revoke: Recover finishes the
+// step, so the old credential gets 401 (D-211, review T-057 n1). A guest
+// that still exists keeps its agent.
+func TestRecoverFinishesDelete(t *testing.T) {
+	e := newEnv(t)
+	e.seed("a", "b")
+	credA := e.stealCredential("a")
+	credB := e.stealCredential("b")
+	p := e.propose(plan.Proposal{Delete: []plan.DocKey{{Kind: state.KindTarget, Name: "a"}, {Kind: state.KindTarget, Name: "b"}}})
+
+	// What the crash leaves: the approval is committed, the Run says
+	// running, the guest of a is gone, its binding and agent are not.
+	head, _ := e.st.Head(e.ctx)
+	rows, _ := e.st.RevisionDocs(e.ctx, head.ID)
+	var keep []store.DocRow
+	for _, r := range rows {
+		if r.Kind != state.KindTarget {
+			keep = append(keep, r)
+		}
+	}
+	if _, _, err := e.st.ApprovePlan(e.ctx, p.ID, "user:admin", store.NewRevision{Author: "user:admin", Reason: "x", Docs: keep}); err != nil {
+		t.Fatal(err)
+	}
+	ba, err := e.st.GetBinding(e.ctx, state.KindTarget, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.drv.Delete(e.ctx, driver.GuestID(ba.Ref)); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := e.call("GET", wire.PathPoll, credA, nil); code != http.StatusNoContent {
+		t.Fatalf("old credential before Recover: %d (the crash state is wrong)", code)
+	}
+
+	e.eng.Close()
+	e.start()
+	if err := e.eng.Recover(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	e.oldCredentialDead("after Recover", credA)
+	if _, err := e.st.GetBinding(e.ctx, state.KindTarget, "a"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("binding of a after Recover: %v", err)
+	}
+	// b: the guest still runs, so its agent and binding stay.
+	if _, err := e.st.GetBinding(e.ctx, state.KindTarget, "b"); err != nil {
+		t.Errorf("binding of b after Recover: %v", err)
+	}
+	if code, _ := e.call("GET", wire.PathPoll, credB, nil); code != http.StatusNoContent && code != http.StatusOK {
+		t.Errorf("credential of b after Recover: %d, want 204 or 200", code)
 	}
 }
