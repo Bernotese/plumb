@@ -682,7 +682,7 @@ check_dns() {
 	if [[ -z $NAMESERVER && -r $RESOLV ]]; then
 		while read -r key val _; do
 			[[ $key == nameserver && -n $val ]] || continue
-			[[ $val == 127.* || $val == ::1 ]] && continue
+			[[ $val == 127.* || $val == ::1 || $val == 0.0.0.0 || $val == :: ]] && continue
 			ns+=("$val")
 		done <"$RESOLV"
 		NAMESERVER=$(IFS=,; echo "${ns[*]:0:3}")
@@ -697,16 +697,42 @@ check_dns() {
 	fi
 	[[ -n $NAMESERVER ]] || die "no DNS server for new VMs: $RESOLV has no usable nameserver line (loopback does not count); use --nameserver IP. Nothing was changed."
 	[[ -n $SEARCHDOMAIN ]] || die "no DNS search domain for new VMs: $RESOLV has no search line and the host name has no domain; use --searchdomain NAME. Nothing was changed."
-	local n=0 a
+	# The whole value first: a newline (or any other character) must never
+	# reach plumb.env, where it would add a line (review S1).
+	[[ $NAMESERVER =~ ^[0-9A-Fa-f.:]+(,[0-9A-Fa-f.:]+){0,2}$ ]] ||
+		die "bad name servers \"$NAMESERVER\": 1 to 3 IP addresses, comma-separated. Nothing was changed."
+	local a
 	IFS=, read -r -a ns <<<"$NAMESERVER"
 	for a in "${ns[@]}"; do
-		n=$((n + 1))
-		[[ $a =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || ($a =~ ^[0-9A-Fa-f:]+$ && $a == *:*:*) ]] || die "bad name server $a. Nothing was changed."
+		valid_ip "$a" || die "bad name server $a. Nothing was changed."
 	done
-	((n >= 1 && n <= 3)) || die "1 to 3 name servers, not $n. Nothing was changed."
 	[[ $SEARCHDOMAIN =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] ||
 		die "bad search domain $SEARCHDOMAIN. Nothing was changed."
 	say "New VMs get the DNS servers $NAMESERVER and the search domain $SEARCHDOMAIN (fixed at create, D-187)."
+}
+
+# valid_ip reports whether $1 is one IPv4 address (octets up to 255) or one
+# IPv6 address (hex groups, at most one "::", no loopback or unspecified).
+valid_ip() {
+	local a=$1 o groups
+	if [[ $a =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+		for o in "${BASH_REMATCH[@]:1}"; do
+			((10#$o <= 255)) || return 1
+		done
+		[[ $a != 0.0.0.0 && $a != 127.* ]]
+		return
+	fi
+	[[ $a =~ ^[0-9A-Fa-f:]+$ && $a == *:*:* && $a != *:::* && $a != ::1 && $a != :: ]] || return 1
+	[[ ${a//[^:]/} != *:*:*:*:*:*:*:*:* ]] || return 1 # at most 7 colons
+	local rest=${a/::/:}
+	[[ $rest != *::* ]] || return 1 # one "::" only
+	IFS=: read -r -a groups <<<"$rest"
+	for o in "${groups[@]}"; do
+		[[ -z $o || ${#o} -le 4 ]] || return 1
+	done
+	if [[ $a != *::* ]]; then
+		[[ ${a//[^:]/} == ::::::: ]] || return 1 # 8 groups without "::"
+	fi
 }
 
 # add_env_dns adds the D-187 lines to an existing plumb.env that lacks
@@ -717,7 +743,7 @@ add_env_dns() {
 		v=$NAMESERVER
 		[[ $k == PLUMB_PVE_SEARCHDOMAIN ]] && v=$SEARCHDOMAIN
 		if [[ $DRY_RUN == 1 ]] || ! query pct exec "$LXC_ID" -- grep -q "^$k=" /etc/plumb/plumb.env; then
-			run pct exec "$LXC_ID" -- sh -c "grep -q '^$k=' /etc/plumb/plumb.env || echo '$k=$v' >>/etc/plumb/plumb.env"
+			run pct exec "$LXC_ID" -- sh -c "test -f /etc/plumb/plumb.env && { grep -q '^$k=' /etc/plumb/plumb.env || echo '$k=$v' >>/etc/plumb/plumb.env; }"
 		fi
 	done
 }

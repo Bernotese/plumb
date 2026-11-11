@@ -615,7 +615,7 @@ func TestDNSAddedOnRepair(t *testing.T) {
 	}
 	n := 0
 	for _, c := range h.calls() {
-		if strings.HasPrefix(c, "pct exec 105 -- sh -c grep -q '^PLUMB_PVE_") {
+		if strings.HasPrefix(c, "pct exec 105 -- sh -c test -f /etc/plumb/plumb.env && { grep -q '^PLUMB_PVE_") {
 			n++
 			if strings.Contains(c, "SECRET") {
 				t.Errorf("the repair touched the secret: %s", c)
@@ -629,7 +629,51 @@ func TestDNSAddedOnRepair(t *testing.T) {
 	os.WriteFile(envFile, b, 0o600)
 	h.resetCalls()
 	h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
-	if index(h.calls(), "pct exec 105 -- sh -c grep -q") >= 0 {
+	if index(h.calls(), "pct exec 105 -- sh -c test -f /etc/plumb/plumb.env") >= 0 {
 		t.Error("lines added although the env file has them")
+	}
+}
+
+// Review S1 of the PR #26 delta: a value with a newline (or any other bad
+// character) never reaches plumb.env; strict address checks.
+func TestDNSValuesAreChecked(t *testing.T) {
+	for _, args := range [][]string{
+		{"--nameserver", "192.0.2.53\nPLUMB_PVE_URL=https://evil.example:8006"},
+		{"--nameserver", "192.0.2.53\n"},
+		{"--searchdomain", "plumb.test\nPLUMB_PVE_URL=https://evil.example:8006"},
+		{"--nameserver", "999.1.1.1"},
+		{"--nameserver", ":::"},
+		{"--nameserver", "1:2:3:4:5:6:7:8:9"},
+		{"--nameserver", "2001:db8::1::2"},
+		{"--nameserver", "0.0.0.0"},
+		{"--nameserver", "127.0.0.1"},
+		{"--nameserver", "::1"},
+		{"--nameserver", "192.0.2.1;id"},
+	} {
+		h := newHost(t)
+		code, _, _ := h.run(asRoot, append([]string{"--yes", "--plumb-binary", h.plumb}, args...)...)
+		if code == 0 {
+			t.Errorf("accepted %q", args)
+		}
+		for _, c := range h.calls() {
+			if mutating.MatchString(c) {
+				t.Errorf("%q: changed the host: %s", args, c)
+				break
+			}
+		}
+	}
+	for _, ok := range []string{"192.0.2.1", "2001:db8::53", "2001:db8:0:0:0:0:0:53", "192.0.2.1,2001:db8::1,192.0.2.2"} {
+		h := newHost(t)
+		if code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--nameserver", ok); code != 0 {
+			t.Errorf("refused %q: %s %s", ok, out, errOut)
+		}
+	}
+	// 0.0.0.0 in resolv.conf is skipped like loopback.
+	h := newHost(t)
+	os.WriteFile(filepath.Join(filepath.Dir(h.state), "resolv.conf"), []byte("nameserver 0.0.0.0\nnameserver 192.0.2.7\nsearch plumb.test\n"), 0o644)
+	h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+	b, _ := os.ReadFile(filepath.Join(h.state, "push", "_etc_plumb_plumb.env"))
+	if !strings.Contains(string(b), "\nPLUMB_PVE_NAMESERVER=192.0.2.7\n") {
+		t.Errorf("env:\n%s", b)
 	}
 }
