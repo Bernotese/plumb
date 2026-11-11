@@ -1,59 +1,21 @@
 {
-  "body": {
-    "data": [
-      {
-        "comment": "Plumb guests and templates",
-        "members": [
-          {
-            "cpu": 0,
-            "disk": 0,
-            "diskread": 0,
-            "diskwrite": 0,
-            "id": "qemu/9000",
-            "maxcpu": 1,
-            "maxdisk": 3221225472,
-            "maxmem": 1073741824,
-            "mem": 0,
-            "memhost": 0,
-            "name": "plumb-img-test-image-de9d63f5e5ec",
-            "netin": 0,
-            "netout": 0,
-            "node": "pve",
-            "status": "stopped",
-            "template": 1,
-            "type": "qemu",
-            "uptime": 0,
-            "vmid": 9000
-          },
-          {
-            "cpu": 0,
-            "disk": 0,
-            "diskread": 0,
-            "diskwrite": 0,
-            "id": "qemu/9001",
-            "maxcpu": 2,
-            "maxdisk": 8589934592,
-            "maxmem": 1610612736,
-            "mem": 90505216,
-            "memhost": 90505216,
-            "name": "plumb-host-test",
-            "netin": 0,
-            "netout": 0,
-            "node": "pve",
-            "status": "running",
-            "template": 0,
-            "type": "qemu",
-            "uptime": 0,
-            "vmid": 9001
-          }
-        ],
-        "poolid": "plumb"
-      }
-    ]
-  },
-  "method": "GET",
-  "path": "/pools",
-  "query": "poolid=plumb&type=qemu",
   "seq": 52,
-  "status": 200
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:0002A3BB:0038EDE5:6AF4349C:qmstart:9001:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "tokenid": "plumb",
+      "user": "plumb@pve",
+      "starttime": 1794389148,
+      "node": "pve",
+      "id": "9001",
+      "status": "stopped",
+      "pstart": 3730917,
+      "exitstatus": "OK",
+      "type": "qmstart",
+      "upid": "UPID:pve:0002A3BB:0038EDE5:6AF4349C:qmstart:9001:plumb@pve!plumb:",
+      "pid": 172987
+    }
+  }
 }

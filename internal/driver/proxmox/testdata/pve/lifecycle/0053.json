@@ -1,33 +1,59 @@
 {
-  "body": {
-    "data": {
-      "boot": "order=scsi0",
-      "cicustom": "vendor=plumb-snippets:snippets/plumb-vendor.yaml",
-      "ciupgrade": 0,
-      "ciuser": "plumb",
-      "cores": 2,
-      "cpu": "x86-64-v2-AES",
-      "description": "plumb-image: test-image\nManaged by Plumb. Do not change it here.",
-      "digest": "1f328f755409308d64e86bf051f2c1fb33b537c7",
-      "ide2": "local-lvm:vm-9001-cloudinit,media=cdrom,size=4M",
-      "ipconfig0": "ip=dhcp",
-      "memory": "1536",
-      "meta": "creation-qemu=11.1.3,ctime=1794357102",
-      "name": "plumb-host-test",
-      "net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0",
-      "onboot": 1,
-      "ostype": "l26",
-      "scsi0": "local-lvm:vm-9001-disk-0,size=8G",
-      "scsihw": "virtio-scsi-single",
-      "serial0": "socket",
-      "smbios1": "base64=1,serial=aG9zdC10ZXN0LXRva2VuLTI=,uuid=06776aca-5fdc-454a-83b0-6ca3dbc7735c",
-      "vga": "serial0",
-      "vmgenid": "09199bab-c561-46cb-8df7-8822ddb3e9b2"
-    }
-  },
-  "method": "GET",
-  "path": "/nodes/pve/qemu/9001/config",
-  "query": "current=1",
   "seq": 53,
-  "status": 200
+  "method": "GET",
+  "path": "/pools",
+  "query": "poolid=plumb&type=qemu",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "members": [
+          {
+            "disk": 0,
+            "vmid": 9000,
+            "id": "qemu/9000",
+            "netout": 0,
+            "diskwrite": 0,
+            "cpu": 0,
+            "template": 1,
+            "node": "pve",
+            "name": "plumb-img-test-image-de9d63f5e5ec",
+            "type": "qemu",
+            "uptime": 0,
+            "maxdisk": 3221225472,
+            "status": "stopped",
+            "maxmem": 1073741824,
+            "memhost": 0,
+            "maxcpu": 1,
+            "netin": 0,
+            "diskread": 0,
+            "mem": 0
+          },
+          {
+            "maxcpu": 1,
+            "memhost": 360984576,
+            "status": "running",
+            "maxmem": 1073741824,
+            "maxdisk": 8589934592,
+            "uptime": 120,
+            "mem": 216838144,
+            "diskread": 154997346,
+            "netin": 7512417,
+            "vmid": 9001,
+            "disk": 0,
+            "type": "qemu",
+            "name": "plumb-host-test",
+            "node": "pve",
+            "template": 0,
+            "cpu": 0.00396910098098485,
+            "diskwrite": 115225088,
+            "netout": 22453,
+            "id": "qemu/9001"
+          }
+        ],
+        "poolid": "plumb",
+        "comment": "Plumb guests and templates"
+      }
+    ]
+  }
 }
