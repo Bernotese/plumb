@@ -11,7 +11,9 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-015 slice acceptance, real-host part | pl-codex-qa writes, pl-backend runs | running. The Codex sandbox has no SSH to the host, so pl-codex-qa writes `test/pve/slice_pve_test.go` (PR #90) and pl-backend runs it on the host |
+| T-015 slice acceptance, real-host part | pl-codex-qa wrote, pl-backend runs | **Debian 13: passed on the real host** (82 s: VM ready 34 s, agent drift 2 s, reboot keeps host keys, `guest:config` drift 25 s). **Ubuntu 26.04: open**: the VM is up and the agent is online, but nobody answers on the static address; pl-backend looks for the cause. Test: PR #90 + branch pl-backend/T-015-real-host |
+| T-055 no Image binding (found by T-015: a stale binding failed every later Plan) | pl-frontend | running; plan reviewed (PR #91; D-188, D-189). Host checks later by pl-backend |
+| T-056 pending guest config (found by T-015) | tbd | plan reviewed (PR #91; D-190, D-191). **Waits for a user answer**: may a Run cold-restart a VM for a cores/memory change |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
@@ -67,4 +69,4 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Nothing now.
+- T-056: may a Run cold-restart a running VM (shutdown, hard power-off after 2 min, start) when the Plan changes cores or memory? Recommendation: yes; the Plan shows it before the approval.
