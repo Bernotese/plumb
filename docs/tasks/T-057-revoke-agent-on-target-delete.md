@@ -29,4 +29,4 @@ After a Target was deleted through a Plan, its agent credential is dead: the old
 - A rate limit for authenticated reports of a live agent (say in the Result if you think it needs a card).
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+pl-frontend/T-057-revoke-agent · see PR · `make lint test build` pass; new tests `internal/link/revoke_test.go` (TestRevoke), `internal/issue/revoke_test.go` (delete, re-add, no binding, failed delete) · no migration. Rate limit for reports of a live agent: no card needed now; a live agent is a bound guest, and its drift is one open Issue per resource.

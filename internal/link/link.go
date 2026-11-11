@@ -253,6 +253,33 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 	return token, expires, nil
 }
 
+// Revoke removes the agent and the enrollment token of a target (Target
+// delete, D-211). The old credential gets 401 on every route from now on,
+// also after a restart (the store has no agent row). Queued commands are
+// dropped, so no desired state reaches the old agent, and an open poll
+// ends with 401.
+func (l *Link) Revoke(ctx context.Context, target string) error {
+	if target == "" {
+		return errors.New("link: revoke needs a target")
+	}
+	if err := l.cfg.Store.RevokeAgent(ctx, target); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	ts := l.target(target)
+	ts.agentID = revokedAgent
+	ts.queue = nil
+	ts.outstanding = map[string]bool{}
+	ts.sensitive = map[string][]string{}
+	ts.secrets = map[string][]string{}
+	ts.lastPoll = time.Time{}
+	close(ts.wake) // a waiting poll checks current() again and gets 401
+	ts.wake = make(chan struct{})
+	l.mu.Unlock()
+	l.emit(ctx, "target.status", target, "system", map[string]any{"agent": "revoked"})
+	return nil
+}
+
 // The credential is "<agent id>.<secret>". The id finds the row; the
 // secret is compared by hash in constant time.
 func splitCredential(c string) (id, sec string, ok bool) {
