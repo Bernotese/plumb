@@ -742,8 +742,8 @@ add_env_dns() {
 	for k in PLUMB_PVE_NAMESERVER PLUMB_PVE_SEARCHDOMAIN; do
 		v=$NAMESERVER
 		[[ $k == PLUMB_PVE_SEARCHDOMAIN ]] && v=$SEARCHDOMAIN
-		if [[ $DRY_RUN == 1 ]] || ! query pct exec "$LXC_ID" -- grep -q "^$k=" /etc/plumb/plumb.env; then
-			run pct exec "$LXC_ID" -- sh -c "test -f /etc/plumb/plumb.env && { grep -q '^$k=' /etc/plumb/plumb.env || echo '$k=$v' >>/etc/plumb/plumb.env; }"
+		if [[ $DRY_RUN == 1 ]] || ! query pct exec "$LXC_ID" -- grep -q "^$k=" /etc/plumb/plumb.env </dev/null; then
+			run pct exec "$LXC_ID" -- sh -c "test -f /etc/plumb/plumb.env && { grep -q '^$k=' /etc/plumb/plumb.env || echo '$k=$v' >>/etc/plumb/plumb.env; }" </dev/null
 		fi
 	done
 }
@@ -773,7 +773,7 @@ lxc_state() {
 # lxc_has_env reports whether our LXC holds the token env file.
 lxc_has_env() {
 	[[ -n $LXC_ID && $(lxc_state "$LXC_ID") == ours ]] &&
-		query pct exec "$LXC_ID" -- test -s /etc/plumb/plumb.env >/dev/null 2>&1
+		query pct exec "$LXC_ID" -- test -s /etc/plumb/plumb.env </dev/null >/dev/null 2>&1
 }
 
 # lxc_template sets TEMPLATE to the newest Debian 13 template for the host's
@@ -866,7 +866,7 @@ lxc_ip() {
 	fi
 	local ip
 	for _ in $(seq 1 60); do
-		ip=$({ query pct exec "$LXC_ID" -- hostname -I 2>/dev/null || true; } | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n1 || true)
+		ip=$({ query pct exec "$LXC_ID" -- hostname -I </dev/null 2>/dev/null || true; } | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n1 || true)
 		[[ -n $ip ]] && {
 			echo "$ip"
 			return 0
@@ -905,7 +905,7 @@ EOF
 		die "cannot write the settings into the LXC"
 	fi
 	rm -f "$tmp"
-	run pct exec "$LXC_ID" -- chown plumb:plumb /etc/plumb/plumb.env
+	run pct exec "$LXC_ID" -- chown plumb:plumb /etc/plumb/plumb.env </dev/null
 }
 
 # The unit keeps ${PLUMB_HOSTS} for systemd to expand from the env file.
@@ -935,15 +935,15 @@ WantedBy=multi-user.target'
 
 setup_lxc() {
 	local host=$1 ip=$2 tmp
-	run pct exec "$LXC_ID" -- sh -c 'id plumb >/dev/null 2>&1 || useradd --system --home-dir /var/lib/plumb --shell /usr/sbin/nologin plumb'
-	run pct exec "$LXC_ID" -- install -d -o plumb -g plumb -m 0700 /etc/plumb /var/lib/plumb
+	run pct exec "$LXC_ID" -- sh -c 'id plumb >/dev/null 2>&1 || useradd --system --home-dir /var/lib/plumb --shell /usr/sbin/nologin plumb' </dev/null
+	run pct exec "$LXC_ID" -- install -d -o plumb -g plumb -m 0700 /etc/plumb /var/lib/plumb </dev/null
 	# The key directory is the mount point of the key volume (D-102).
 	if [[ $DRY_RUN != 1 ]]; then
-		query pct exec "$LXC_ID" -- mountpoint -q "$KEY_DIR" ||
+		query pct exec "$LXC_ID" -- mountpoint -q "$KEY_DIR" </dev/null ||
 			die "$KEY_DIR in LXC $LXC_ID is not a mount point; the key volume is missing"
 	fi
-	run pct exec "$LXC_ID" -- chown plumb:plumb "$KEY_DIR"
-	run pct exec "$LXC_ID" -- chmod 0700 "$KEY_DIR"
+	run pct exec "$LXC_ID" -- chown plumb:plumb "$KEY_DIR" </dev/null
+	run pct exec "$LXC_ID" -- chmod 0700 "$KEY_DIR" </dev/null
 	run pct push "$LXC_ID" "$PLUMB_BINARY" /usr/local/bin/plumb --perms 0755 --user 0 --group 0
 	run pct push "$LXC_ID" "$PVE_CA" /etc/plumb/pve-root-ca.pem --perms 0644 --user 0 --group 0
 	if [[ -n $TOKEN_SECRET ]]; then
@@ -955,15 +955,15 @@ setup_lxc() {
 	printf '%s\n' "$UNIT" >"$tmp"
 	run pct push "$LXC_ID" "$tmp" /etc/systemd/system/plumb.service --perms 0644 --user 0 --group 0
 	rm -f "$tmp"
-	run pct exec "$LXC_ID" -- systemctl daemon-reload
-	run pct exec "$LXC_ID" -- systemctl enable plumb.service
+	run pct exec "$LXC_ID" -- systemctl daemon-reload </dev/null
+	run pct exec "$LXC_ID" -- systemctl enable plumb.service </dev/null
 	key_init
-	run pct exec "$LXC_ID" -- systemctl restart plumb.service # a repair run brings a new binary
+	run pct exec "$LXC_ID" -- systemctl restart plumb.service </dev/null # a repair run brings a new binary
 }
 
 # lxc_has_key reports whether the LXC holds the master key file.
 lxc_has_key() {
-	query pct exec "$1" -- test -s "$KEY_FILE" >/dev/null 2>&1
+	query pct exec "$1" -- test -s "$KEY_FILE" </dev/null >/dev/null 2>&1
 }
 
 # lxc_key_volume ID prints the config line of the key volume ("mpN: …").
@@ -999,7 +999,7 @@ check_key_preflight() {
 # terminal; pct exec does not. The output is never captured: the recovery
 # key goes only to the terminal.
 key_init() {
-	if [[ $DRY_RUN != 1 ]] && lxc_has_key "$LXC_ID"; then
+	if lxc_has_key "$LXC_ID"; then
 		say "The master key exists in LXC $LXC_ID; it is kept."
 		return 0
 	fi
@@ -1009,6 +1009,9 @@ key_init() {
 		die "plumb key init failed; plumb.service was not started. Run install.sh again on a terminal."
 	if [[ $DRY_RUN != 1 ]]; then
 		lxc_has_key "$LXC_ID" || die "plumb key init wrote no $KEY_FILE; plumb.service was not started"
+		if [[ $YES != 1 ]]; then
+			read -r -p "Write the recovery key down, then press Enter" _
+		fi
 	fi
 	say ""
 }
@@ -1026,7 +1029,7 @@ EOF
 		return 0
 	fi
 	for _ in $(seq 1 60); do
-		if query pct exec "$LXC_ID" -- test -s /var/lib/plumb/link/ca.crt; then
+		if query pct exec "$LXC_ID" -- test -s /var/lib/plumb/link/ca.crt </dev/null; then
 			pct pull "$LXC_ID" /var/lib/plumb/link/ca.crt "$out"
 			return 0
 		fi
@@ -1089,7 +1092,7 @@ do_install() {
 		return 0
 	fi
 	local pw
-	pw=$({ query pct exec "$LXC_ID" -- journalctl -u plumb.service -o cat --no-pager 2>/dev/null || true; } | sed -n 's/^First start\. User: admin  Password: //p' | head -n1)
+	pw=$({ query pct exec "$LXC_ID" -- journalctl -u plumb.service -o cat --no-pager </dev/null 2>/dev/null || true; } | sed -n 's/^First start\. User: admin  Password: //p' | head -n1)
 	if [[ -n $pw && $LXC_NEW == 1 ]]; then
 		say "Initial login: user admin, password $pw (change it at the first login)."
 	else
