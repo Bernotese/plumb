@@ -11,8 +11,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-039 image builds (slice 2 part B, first) | child cards T-058 … T-066 | plan approved (D-218). **Contract on main** (T-058, PR #115). Running: T-059 state + migration 0009 (pl-architect), T-064 web on the mock (pl-frontend). Queued for pl-backend: T-060 agent seal, T-061 driver. Then T-062 engine, T-063 schedule, T-065 QA, T-066 real host |
-| T-067 the agent reports its addresses; Issue when a guest does not use its configured address | child cards T-068 … T-072 | plan approved (D-218). **Contract on main** (T-068, PR #114). T-069 agent: PR #116, approved after two small fixes (running). T-070 controller: PR #118, in review and QA audit (migration 0008). T-071 web: PR #117, in review. Then the real-host check |
+| T-039 image builds (slice 2 part B, first) | child cards T-058 … T-066 | plan approved (D-218). **On main**: contract (T-058, #115), state + migration 0009 (T-059, #121), web on the mock (T-064, #123). T-061 driver: PR #125 approved, QA audit running. Running: T-062 engine (pl-architect). Queued: T-060 agent seal (pl-backend, after the T-067 host check). Then T-063 schedule, T-065 QA, T-066 real host. T-074 disk space check at creates: pl-frontend prepares |
+| T-067 the agent reports its addresses; Issue when a guest does not use its configured address | pl-backend (host check) | **all code on main** (2026-11-11): contract #114, agent #116, controller #118 (migration 0008), web #117; QA: 8 + 1 mutants caught. Also fixed on the way (#119, security): an agent could open and close Issues of `guest:*` resources. Running: the real-host check (stock Ubuntu 26.04 with a static address) |
 | T-038 LXC targets (slice 2 part B, second) | tbd | design only; after T-039 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
