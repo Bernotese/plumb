@@ -242,6 +242,14 @@ func (e *Engine) Close() {
 	e.runs.Wait()
 }
 
+// Hellos returns how many Hellos the agent of a target sent since the
+// engine started. A Run uses the count to see a restarted agent. For tests.
+func (e *Engine) Hellos(target string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hello[target]
+}
+
 // Wait waits until no Run is active. For tests.
 func (e *Engine) Wait() { e.runs.Wait() }
 

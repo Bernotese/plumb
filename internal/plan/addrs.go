@@ -37,10 +37,11 @@ type addrWatch struct {
 }
 
 // storeAddrs stores the list of a Hello or an addrs report. The target is
-// bound (checked by the caller, N4). A change over AddrsGap is dropped: an
-// addrs report gets ErrTooOften (429); a Hello is taken without its list,
-// and the stored list stays (it is not "no addrs field"). A Hello without
-// a list sets the list to unknown (D-217).
+// bound (checked by the caller, N4). A Hello without a list, and an addrs
+// report with addrs_unknown, set the list to unknown (D-217). Every change,
+// to unknown too, counts in the limit of AddrsGap (D-212): over it the
+// change is dropped and the stored state stays; an addrs report gets
+// ErrTooOften (429), a Hello is taken without its change.
 func (e *Engine) storeAddrs(ctx context.Context, d link.Delivery) error {
 	var list []string
 	var truncated bool

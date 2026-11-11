@@ -32,12 +32,11 @@ type addrsJSON struct {
 var ErrAddrsRateLimited = errors.New("store: address list changed too often")
 
 // SetAgentAddrs stores the address list of an agent. A nil list sets it to
-// unknown. An equal list writes nothing (changed is false). A new list
-// within gap after the last stored list gives ErrAddrsRateLimited (D-212).
-// Setting a known list to unknown is not limited: it only writes when a
-// list is known, so a flood of alternating reports still writes at most
-// twice per gap, and an old agent always clears the list of a newer one
-// (D-217). A missing agent is ErrNotFound.
+// unknown. An equal state writes nothing (changed is false). Every other
+// change within gap after the last stored change, to unknown too, gives
+// ErrAddrsRateLimited (D-212): the stored state stays and the next allowed
+// change wins. Events are never pruned, so a hostile agent gets at most one
+// stored change, and one event, per gap. A missing agent is ErrNotFound.
 func (s *Store) SetAgentAddrs(ctx context.Context, agentID string, list []string, truncated bool, now time.Time, gap time.Duration) (changed bool, err error) {
 	var next sql.NullString
 	if list != nil {
@@ -59,11 +58,6 @@ func (s *Store) SetAgentAddrs(ctx context.Context, agentID string, list []string
 		if cur.Valid == next.Valid && (!cur.Valid || sameAddrs(cur.String, next.String)) {
 			return nil
 		}
-		if !next.Valid {
-			_, err = tx.ExecContext(ctx, `UPDATE agent SET addrs = NULL WHERE id = ?`, agentID)
-			changed = err == nil
-			return err
-		}
 		if at.Valid {
 			last, err := parseTime(at.String)
 			if err != nil {
@@ -73,7 +67,7 @@ func (s *Store) SetAgentAddrs(ctx context.Context, agentID string, list []string
 				return ErrAddrsRateLimited
 			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE agent SET addrs = ?, addrs_at = ? WHERE id = ?`, next.String, formatTime(now), agentID)
+		_, err = tx.ExecContext(ctx, `UPDATE agent SET addrs = ?, addrs_at = ? WHERE id = ?`, next, formatTime(now), agentID)
 		changed = err == nil
 		return err
 	})

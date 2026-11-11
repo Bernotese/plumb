@@ -236,7 +236,15 @@ func TestAddrsHello(t *testing.T) {
 	if code := e.send("web1", otherIP); code != http.StatusTooManyRequests {
 		t.Fatalf("addrs over the limit: %d, want 429", code)
 	}
-	// No addrs field (an old agent): unknown, also within the limit.
+	// No addrs field (an old agent) counts in the limit too (D-212): within
+	// it the list stays; after it the list is unknown.
+	if code := e.hello("web1", nil); code != http.StatusNoContent {
+		t.Fatalf("old hello: %d", code)
+	}
+	if l := e.reported("web1"); !slices.Equal(l, []string{staticIP}) {
+		t.Fatalf("old hello within the limit changed the list: %q", l)
+	}
+	e.clock.add(31 * time.Second)
 	if code := e.hello("web1", nil); code != http.StatusNoContent {
 		t.Fatalf("old hello: %d", code)
 	}
@@ -254,7 +262,7 @@ func TestAddrsHello(t *testing.T) {
 		t.Fatalf("bad hello list kept %q", l)
 	}
 	// addrs_unknown (the agent cannot read its list any more): unknown,
-	// not limited; with a list it is refused.
+	// in the same limit (429 within it); with a list it is refused.
 	e.clock.add(31 * time.Second)
 	e.send("web1", staticIP)
 	e.mu.Lock()
@@ -263,6 +271,10 @@ func TestAddrsHello(t *testing.T) {
 	if code := a.Report(e.ctx, wire.Report{Type: wire.ReportAddrs, AddrsUnknown: true, Addrs: []string{staticIP}}); code != http.StatusBadRequest {
 		t.Fatalf("addrs_unknown with a list: %d, want 400", code)
 	}
+	if code := a.Report(e.ctx, wire.Report{Type: wire.ReportAddrs, AddrsUnknown: true}); code != http.StatusTooManyRequests {
+		t.Fatalf("addrs_unknown within the limit: %d, want 429", code)
+	}
+	e.clock.add(31 * time.Second)
 	if code := a.Report(e.ctx, wire.Report{Type: wire.ReportAddrs, AddrsUnknown: true}); code != http.StatusNoContent {
 		t.Fatalf("addrs_unknown: %d", code)
 	}
@@ -642,18 +654,112 @@ func TestAddrsReportIsNoHello(t *testing.T) {
 		}
 		return n
 	}
-	// Wait for the seed Run's asynchronous watch before taking the baseline.
-	deadline := time.Now().Add(5 * time.Second)
-	for watches() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("no initial watch")
+	// The seed sends its watch lists asynchronously (after the Run and
+	// after the enroll Hello): wait until the count holds for 300 ms.
+	stable := func() int {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		last, since := watches(), time.Now()
+		for time.Since(since) < 300*time.Millisecond {
+			if time.Now().After(deadline) {
+				t.Fatal("watch count does not settle")
+			}
+			time.Sleep(10 * time.Millisecond)
+			if n := watches(); n != last {
+				last, since = n, time.Now()
+			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		return last
 	}
-	w := watches()
-	e.send("web1", otherIP)
-	time.Sleep(100 * time.Millisecond)
-	if watches() != w {
+	w := stable()
+	hellos := e.eng.Hellos("web1")
+	if code := e.send("web1", otherIP); code != http.StatusNoContent {
+		t.Fatalf("addrs: %d", code)
+	}
+	if n := e.eng.Hellos("web1"); n != hellos {
+		t.Fatalf("an addrs report counted as a hello: %d → %d", hellos, n)
+	}
+	if n := stable(); n != w {
 		t.Fatal("an addrs report made the engine send the watch list")
 	}
+	// A Hello counts and sends the watch list (the control).
+	e.clock.add(31 * time.Second)
+	if code := e.hello("web1", []string{staticIP}); code != http.StatusNoContent {
+		t.Fatalf("hello: %d", code)
+	}
+	if n := e.eng.Hellos("web1"); n != hellos+1 {
+		t.Fatalf("hello count %d, want %d", n, hellos+1)
+	}
+	eventually(t, "watch after a hello", func() bool { return watches() > w })
+}
+
+// An open Issue stays while the rule does not look (QA gap of #120): an
+// offline agent, an old agent without a list, a truncated list.
+func TestAddrIssueStaysWhileNotEligible(t *testing.T) {
+	e := addrEnv(t, "web1="+staticIP)
+	open := func() store.Issue {
+		t.Helper()
+		e.clock.add(31 * time.Second)
+		if code := e.send("web1", otherIP); code != http.StatusNoContent {
+			t.Fatalf("addrs: %d", code)
+		}
+		for range 3 {
+			e.tick(time.Minute)
+		}
+		iss, ok := e.openAddr("web1")
+		if !ok {
+			t.Fatal("no issue")
+		}
+		return iss
+	}
+	stays := func(what string, iss store.Issue) {
+		t.Helper()
+		for range 10 {
+			e.tick(time.Minute)
+		}
+		got, err := e.st.GetIssue(e.ctx, iss.ID)
+		if err != nil || got.Status != store.IssueOpen || !got.UpdatedAt.Equal(iss.UpdatedAt) {
+			t.Fatalf("%s: issue %+v %v, want it open and unchanged", what, got, err)
+		}
+	}
+	e.mu.Lock()
+	a := e.agents["web1"]
+	e.mu.Unlock()
+
+	// Offline: the guest may well use the right address by now.
+	iss := open()
+	e.clock.add(31 * time.Second)
+	e.send("web1", staticIP)
+	e.presence().mu.Lock()
+	e.presence().offline["web1"] = true
+	e.presence().mu.Unlock()
+	stays("offline", iss)
+	e.presence().mu.Lock()
+	e.presence().offline["web1"] = false
+	e.presence().mu.Unlock()
+	for range 4 {
+		e.tick(time.Minute)
+	}
+	if _, ok := e.openAddr("web1"); ok {
+		t.Fatal("not closed when online again with the right address")
+	}
+
+	// Old agent: the list is unknown.
+	iss = open()
+	e.clock.add(31 * time.Second)
+	if code := e.hello("web1", nil); code != http.StatusNoContent || e.reported("web1") != nil {
+		t.Fatalf("old hello: %d %q", code, e.reported("web1"))
+	}
+	stays("old agent", iss)
+
+	// Truncated list that holds the address.
+	var many []string
+	for i := 1; i <= wire.MaxAddrs; i++ {
+		many = append(many, fmt.Sprintf("192.0.2.%d", 30+i))
+	}
+	e.clock.add(31 * time.Second)
+	if code := a.Report(e.ctx, wire.Report{Type: wire.ReportAddrs, Addrs: many, AddrsTruncated: true}); code != http.StatusNoContent {
+		t.Fatalf("truncated: %d", code)
+	}
+	stays("truncated list", iss)
 }

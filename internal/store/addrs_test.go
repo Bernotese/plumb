@@ -45,17 +45,27 @@ func TestAgentAddrs(t *testing.T) {
 	if l, _ := get(); !slices.Equal(l, []string{"192.0.2.1"}) {
 		t.Fatalf("list %q", l)
 	}
-	// Unknown is not limited, and only writes when a list is known.
-	if ch, err := set(t0.Add(29*time.Second), nil); !ch || err != nil {
-		t.Fatalf("clear: %v %v", ch, err)
+	// A change to unknown counts in the same limit (D-212, review S1 of
+	// #118): within the gap it is dropped and the list stays.
+	if _, err := set(t0.Add(29*time.Second), nil); !errors.Is(err, ErrAddrsRateLimited) {
+		t.Fatalf("clear within the gap: %v", err)
 	}
-	if ch, err := set(t0.Add(29*time.Second), nil); ch || err != nil {
-		t.Fatalf("clear again: %v %v", ch, err)
+	if l, known := get(); !known || !slices.Equal(l, []string{"192.0.2.1"}) {
+		t.Fatalf("list after a dropped clear: %q %v", l, known)
+	}
+	if ch, err := set(t0.Add(30*time.Second), nil); !ch || err != nil {
+		t.Fatalf("clear after the gap: %v %v", ch, err)
+	}
+	if ch, err := set(t0.Add(31*time.Second), nil); ch || err != nil {
+		t.Fatalf("clear again (equal): %v %v", ch, err)
 	}
 	if _, known := get(); known {
 		t.Fatal("cleared list known")
 	}
-	if ch, err := set(t0.Add(30*time.Second), []string{}); !ch || err != nil {
+	if _, err := set(t0.Add(59*time.Second), []string{}); !errors.Is(err, ErrAddrsRateLimited) {
+		t.Fatalf("list within the gap after a clear: %v", err)
+	}
+	if ch, err := set(t0.Add(60*time.Second), []string{}); !ch || err != nil {
 		t.Fatalf("empty list after the gap: %v %v", ch, err)
 	}
 	if l, known := get(); !known || l == nil || len(l) != 0 {
