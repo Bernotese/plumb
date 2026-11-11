@@ -103,7 +103,7 @@ type targetState struct {
 	agentID     string
 	queue       []wire.Command
 	wake        chan struct{} // closed and replaced when a command is queued
-	outstanding map[string]bool
+	outstanding map[string]wire.CommandType // command id → type, until its result
 	sensitive   map[string][]string // resource id → sensitive attributes; a key means "known"
 	// secrets holds the sensitive desired values that link sent, per
 	// resource. They are masked in Output and Error (defence in depth).
@@ -243,7 +243,7 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 	l.mu.Lock()
 	if ts := l.target(target); ts != nil {
 		ts.lastPoll = time.Time{}
-		ts.outstanding = map[string]bool{}
+		ts.outstanding = map[string]wire.CommandType{}
 		ts.agentID = revokedAgent
 		close(ts.wake) // waiting polls of the old agent end now (with 401)
 		ts.wake = make(chan struct{})
@@ -269,7 +269,7 @@ func (l *Link) Revoke(ctx context.Context, target string) error {
 	ts := l.target(target)
 	ts.agentID = revokedAgent
 	ts.queue = nil
-	ts.outstanding = map[string]bool{}
+	ts.outstanding = map[string]wire.CommandType{}
 	ts.sensitive = map[string][]string{}
 	ts.secrets = map[string][]string{}
 	ts.lastPoll = time.Time{}
@@ -388,7 +388,7 @@ func (l *Link) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	l.mu.Lock()
 	ts := l.target(agent.Target)
-	ts.outstanding = map[string]bool{}
+	ts.outstanding = map[string]wire.CommandType{}
 	ts.agentID = agent.ID
 	l.mu.Unlock()
 	l.emit(r.Context(), "target.status", agent.Target, "agent:"+agent.Target,
@@ -423,7 +423,7 @@ func (l *Link) current(ts *targetState, agentID string) bool {
 func (l *Link) target(name string) *targetState {
 	ts, ok := l.targets[name]
 	if !ok {
-		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]bool{},
+		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]wire.CommandType{},
 			sensitive: map[string][]string{}, secrets: map[string][]string{}}
 		l.targets[name] = ts
 	}
@@ -463,7 +463,7 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 		if len(ts.queue) > 0 {
 			cmd := ts.queue[0]
 			ts.queue = ts.queue[1:]
-			ts.outstanding[cmd.ID] = true
+			ts.outstanding[cmd.ID] = cmd.Type
 			l.mu.Unlock()
 			writeJSON(w, http.StatusOK, cmd)
 			return
@@ -482,11 +482,22 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 }
 
 // Send queues a command for a target and returns its id. body is
-// wire.ObserveBody, wire.ApplyBody or wire.WatchBody. The agent gets it at
-// its next poll.
+// wire.ObserveBody, wire.ApplyBody, wire.WatchBody or wire.SealBody. The
+// agent gets it at its next poll. seal goes only to the link of an image
+// build guest (prefix wire.BuildLinkPrefix, D-207): one of the two
+// independent guards that keep seal away from a real Target.
 func (l *Link) Send(target string, typ wire.CommandType, body any) (string, error) {
 	switch typ {
 	case wire.CommandObserve, wire.CommandApply, wire.CommandWatch:
+	case wire.CommandSeal:
+		if !strings.HasPrefix(target, wire.BuildLinkPrefix) || len(target) == len(wire.BuildLinkPrefix) {
+			return "", fmt.Errorf("link: seal only goes to an image build guest (link %q has no prefix %q)", target, wire.BuildLinkPrefix)
+		}
+		switch body.(type) {
+		case wire.SealBody, *wire.SealBody:
+		default:
+			return "", fmt.Errorf("link: seal needs a wire.SealBody, got %T", body)
+		}
 	default:
 		return "", fmt.Errorf("link: unknown command type %q", typ)
 	}
@@ -628,10 +639,18 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	var cmdType wire.CommandType
 	if rep.Type == wire.ReportResult || rep.Type == wire.ReportProgress {
-		if !ts.outstanding[rep.CommandID] {
+		var known bool
+		cmdType, known = ts.outstanding[rep.CommandID]
+		if !known {
 			l.mu.Unlock()
 			writeError(w, http.StatusConflict, "unknown command id")
+			return
+		}
+		if err := checkItemKinds(rep, cmdType); err != nil {
+			l.mu.Unlock()
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if rep.Type == wire.ReportResult {
@@ -689,7 +708,7 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 			l.log.Error("report handler", "target", agent.Target, "err", err)
 			if rep.Type == wire.ReportResult {
 				l.mu.Lock()
-				l.target(agent.Target).outstanding[rep.CommandID] = true // the retry must be accepted
+				l.target(agent.Target).outstanding[rep.CommandID] = cmdType // the retry must be accepted
 				l.mu.Unlock()
 			}
 			writeError(w, http.StatusServiceUnavailable, "try again")
@@ -823,8 +842,10 @@ func validateReport(rep wire.Report) error {
 		}
 		// Only the types that an agent manages. guest:config and
 		// guest:address belong to the controller: an item of them from an
-		// agent would open or close their Issues (T-070 review B1).
-		if !wire.AgentType(typ) {
+		// agent would open or close their Issues (T-070 review B1). A seal
+		// step ("seal:<step>") only in a result; checkItemKinds then needs
+		// a seal command for it.
+		if !wire.AgentType(typ) && !(typ == sealItemType && rep.Type == wire.ReportResult) {
 			return fmt.Errorf("item %d: resource type %q is not an agent resource", i, typ)
 		}
 		if !agentStatuses[it.Status] {
@@ -840,6 +861,47 @@ func validateReport(rep wire.Report) error {
 			if !c.Risk.Valid() {
 				return fmt.Errorf("item %d change %d: bad risk %q", i, j, c.Risk)
 			}
+		}
+	}
+	return nil
+}
+
+// sealItemType is the type part of a seal result item (wire.SealItemID).
+const sealItemType = "seal"
+
+// sealItemStatuses are the states of a seal step (wire.SealSteps).
+var sealItemStatuses = map[wire.Status]bool{
+	wire.StatusApplied: true, wire.StatusSkipped: true, wire.StatusFailed: true, wire.StatusRefused: true,
+}
+
+// checkItemKinds checks the items of a result or progress against the type
+// of its command: a seal command has a result of seal steps only, each
+// step at most once and without changes, and no progress; every other
+// command has no seal step (review of #119).
+func checkItemKinds(rep wire.Report, cmd wire.CommandType) error {
+	if cmd != wire.CommandSeal {
+		for i, it := range rep.Items {
+			if typ, _, _ := wire.SplitID(it.Resource); typ == sealItemType {
+				return fmt.Errorf("item %d: a seal step answers only a seal command", i)
+			}
+		}
+		return nil
+	}
+	if rep.Type != wire.ReportResult {
+		return errors.New("seal has no progress reports")
+	}
+	steps := map[string]bool{}
+	for _, s := range wire.SealSteps {
+		steps[wire.SealItemID(s)] = true
+	}
+	seen := map[string]bool{}
+	for i, it := range rep.Items {
+		if !steps[it.Resource] || seen[it.Resource] {
+			return fmt.Errorf("item %d: not a seal step, or a step twice", i)
+		}
+		seen[it.Resource] = true
+		if !sealItemStatuses[it.Status] || len(it.Changes) > 0 {
+			return fmt.Errorf("item %d: bad seal step state", i)
 		}
 	}
 	return nil
