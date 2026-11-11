@@ -16,7 +16,9 @@ import (
 // list to authorize a call or as the target of a connection.
 func TestReportedAddrsCallers(t *testing.T) {
 	allowed := map[string]bool{
-		"internal/plan/addrs.go": true, // reported (for Live) and checkAddress
+		"internal/plan/addrs.go:reported":     true,
+		"internal/plan/addrs.go:checkAddress": true,
+		"internal/plan/guest.go:Live":         true,
 	}
 	root := "../.."
 	fset := token.NewFileSet()
@@ -40,14 +42,25 @@ func TestReportedAddrsCallers(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
-		ast.Inspect(f, func(n ast.Node) bool {
-			if call, ok := n.(*ast.CallExpr); ok {
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "ReportedAddrs" {
-					found = append(found, rel)
-				}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
 			}
-			return true
-		})
+			ast.Inspect(fn, func(n ast.Node) bool {
+				// Inspect references too, so assigning a reader to a function
+				// value cannot bypass the caller check.
+				sel, ok := n.(*ast.SelectorExpr)
+				if ok && (sel.Sel.Name == "ReportedAddrs" || sel.Sel.Name == "reported") {
+					key := rel + ":" + fn.Name.Name
+					found = append(found, key)
+					if sel.Sel.Name == "ReportedAddrs" && fn.Name.Name == "Live" {
+						t.Errorf("%s must use reported to enforce online status", key)
+					}
+				}
+				return true
+			})
+		}
 		return nil
 	})
 	if err != nil {
