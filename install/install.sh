@@ -845,6 +845,12 @@ check_stale_lxc_dir() {
 clean_stale_lxc_dir() {
 	local id=$1 mode=$2 dir=$LXC_DIR/$1 bad
 	[[ -e $dir || -L $dir ]] || return 0
+	# Only the dir of an id without a container is a leftover (review nit).
+	if [[ $(lxc_state "$id") != none ]]; then
+		[[ $mode == die ]] && die "container $id exists; $dir is not a leftover"
+		say "Kept $dir: container $id exists."
+		return 0
+	fi
 	bad=$(stale_lxc_entry "$id")
 	if [[ -n $bad ]]; then
 		[[ $mode == die ]] && die "$bad, and container $id does not exist; check it by hand"
@@ -1253,9 +1259,18 @@ do_remove() {
 	say "Plumb is removed."
 }
 
+# check_state_file stops when the state file names an LXC id that is not a
+# number: the id goes into pct commands and paths (review nit).
+check_state_file() {
+	local id
+	id=$(state_get lxc_id)
+	[[ -z $id || $id =~ ^[0-9]+$ ]] || die "$STATE_FILE has an lxc_id that is not a number; check it by hand. Nothing was changed."
+}
+
 main() {
 	parse_args "$@"
 	check_host
+	check_state_file
 	case $MODE in
 	install) do_install ;;
 	snippet) do_snippet_only ;;

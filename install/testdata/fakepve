@@ -259,6 +259,8 @@ pct)
 	start) rm -f "$st/stopped.$2" ;;
 	stop) touch "$st/stopped.$2" ;;
 	destroy)
+		# A destroy that leaves the container (review nit test).
+		[[ ${FAKE_DESTROY_NOOP:-0} == 1 ]] && exit 0
 		rm -f "$st/lxc.$2" "$st/key.$2" "$st/stopped.$2"
 		# Like pve-container 6.1: --purge keeps rules.seccomp and passthrough/.
 		if [[ -n ${PLUMB_INSTALL_LXC_DIR:-} ]]; then

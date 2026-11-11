@@ -811,3 +811,44 @@ func TestStaleLXCDirKnownSet(t *testing.T) {
 		})
 	}
 }
+
+// Review nit: an lxc_id in the state file that is not a number stops every
+// mode before a change (it goes into pct commands and paths).
+func TestStateLXCIDMustBeNumber(t *testing.T) {
+	for _, args := range [][]string{{"--yes", "--plumb-binary", ""}, {"--dry-run", "--plumb-binary", ""}, {"--remove", "--yes"}} {
+		h := newHost(t)
+		if args[len(args)-1] == "" {
+			args[len(args)-1] = h.plumb
+		}
+		os.MkdirAll(filepath.Dir(h.stateF), 0o700)
+		os.WriteFile(h.stateF, []byte("lxc_id=../105\npool=plumb\n"), 0o600)
+		code, _, errOut := h.run(asRoot, args...)
+		if code == 0 || !strings.Contains(errOut, "lxc_id that is not a number") {
+			t.Errorf("%v: %d %q", args, code, errOut)
+		}
+		for _, c := range h.calls() {
+			if mutating.MatchString(c) {
+				t.Errorf("%v: changed the host: %s", args, c)
+			}
+		}
+	}
+}
+
+// Review nit: the leftover cleanup never touches the dir of an id whose
+// container still exists (here: a pct destroy that left it).
+func TestStaleCleanupNeedsNoContainer(t *testing.T) {
+	h := newHost(t)
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("install: %d %s %s", code, out, errOut)
+	}
+	dir := filepath.Join(filepath.Dir(h.state), "lxc", "105")
+	os.MkdirAll(filepath.Join(dir, "passthrough"), 0o755)
+	os.WriteFile(filepath.Join(dir, "rules.seccomp"), []byte("rules"), 0o644)
+	code, out, errOut := h.runRemove("FAKE_DESTROY_NOOP=1")
+	if !strings.Contains(out, "Kept "+dir+": container 105 exists.") {
+		t.Errorf("remove: %d %s %s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rules.seccomp")); err != nil {
+		t.Errorf("removed a file of a live container: %v", err)
+	}
+}
