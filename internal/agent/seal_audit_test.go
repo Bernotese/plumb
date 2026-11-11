@@ -37,8 +37,19 @@ func TestSealAuditStateAliases(t *testing.T) {
 			if len(rep.Items) != 1 || rep.Items[0].Status != wire.StatusRefused {
 				t.Fatalf("alias apply: %+v", rep.Items)
 			}
+			// mayNotSeal reads the marks from disk: had the forged file
+			// landed, it would allow seal. (The file resource also refuses
+			// a path through a symlink, so this is the second layer.)
 			if why := ta.a.mayNotSeal(); why == "" {
 				t.Fatal("alias forged the build mark")
+			}
+			// Control: the check bites. The same content written directly
+			// makes this agent sealable.
+			if err := ta.a.state.saveIdentity(identity{Credential: "cred-1", Build: true, Enrolled: true}); err != nil {
+				t.Fatal(err)
+			}
+			if why := ta.a.mayNotSeal(); why != "" {
+				t.Fatalf("control: a forged mark on disk must allow seal, got %q", why)
 			}
 		})
 	}
