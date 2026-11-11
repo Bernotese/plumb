@@ -1,0 +1,38 @@
+{
+  "body": {
+    "data": [
+      {
+        "comment": "Plumb guests and templates",
+        "members": [
+          {
+            "cpu": 0,
+            "disk": 0,
+            "diskread": 0,
+            "diskwrite": 0,
+            "id": "qemu/9000",
+            "maxcpu": 1,
+            "maxdisk": 0,
+            "maxmem": 536870912,
+            "mem": 0,
+            "memhost": 0,
+            "name": "VM 9000",
+            "netin": 0,
+            "netout": 0,
+            "node": "pve",
+            "status": "stopped",
+            "template": 0,
+            "type": "qemu",
+            "uptime": 0,
+            "vmid": 9000
+          }
+        ],
+        "poolid": "plumb"
+      }
+    ]
+  },
+  "method": "GET",
+  "path": "/pools",
+  "query": "poolid=plumb&type=qemu",
+  "seq": 10,
+  "status": 200
+}

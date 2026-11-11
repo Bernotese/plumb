@@ -48,7 +48,7 @@ func TestServeFlags(t *testing.T) {
 	if err := secret.WriteKeyFile(defaultKeyFile(keyed), secret.NewKey()); err != nil {
 		t.Fatal(err)
 	}
-	if code := serve(context.Background(), []string{"--data", keyed}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "Proxmox driver") {
+	if code := serve(context.Background(), []string{"--data", keyed}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "installer") {
 		t.Errorf("serve without --dev: %d %q", code, errOut.String())
 	}
 	if code := serve(context.Background(), []string{"--dev", "--driver", "proxmox"}, &out, &errOut); code != 2 {

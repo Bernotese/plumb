@@ -1,0 +1,10 @@
+{
+  "body": {
+    "data": "UPID:pve:00006DE9:00080C74:6AF3B779:qmshutdown:9001:plumb@pve!plumb:"
+  },
+  "form": "forceStop=1&timeout=120",
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9001/status/shutdown",
+  "seq": 46,
+  "status": 200
+}

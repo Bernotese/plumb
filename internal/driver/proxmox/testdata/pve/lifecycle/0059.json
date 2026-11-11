@@ -1,0 +1,9 @@
+{
+  "body": {
+    "data": "UPID:pve:00006FEC:00083C53:6AF3B7F4:qmstop:9001:plumb@pve!plumb:"
+  },
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9001/status/stop",
+  "seq": 59,
+  "status": 200
+}

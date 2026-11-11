@@ -1,0 +1,10 @@
+{
+  "body": {
+    "data": "UPID:pve:00007009:00083CBB:6AF3B7F5:qmdestroy:9000:plumb@pve!plumb:"
+  },
+  "method": "DELETE",
+  "path": "/nodes/pve/qemu/9000",
+  "query": "purge=1",
+  "seq": 67,
+  "status": 200
+}

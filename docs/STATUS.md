@@ -12,8 +12,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | Card | Owner | State |
 |---|---|---|
 | T-015 slice acceptance, real-host part | pl-codex-qa | **test host ready** (the part without Proxmox is merged, PR #67) |
-| T-012 Proxmox VM driver | pl-backend | draft PR #20. **Real host: 20 of 22 items pass** (2026-11-11); 1 driver bug found and fixed (stale `template` flag). Item 19 (cloud-init change gives new SSH host keys) decided by pl-architect: D-185 (cloud-init inputs are create-only; `ssh_deletekeys: false`). Open: D-185 in code, recorded answers, `make test-pve`, review |
-| T-053 wire `plumb serve` to the Proxmox driver | tbd (proposal: pl-backend) | card + plan merged (PR #86, reviewed; D-182 … D-184). Needs T-012 on main |
+| T-053 wire `plumb serve` to the Proxmox driver | pl-backend | card + plan on main (PR #86; D-182 … D-184, D-187 settings). The driver is on main, so the code can start |
 | T-013 minimal installer | pl-backend | draft PR #26. **The installer works on the real host** (run 3, 2026-11-11): roles, ACLs, token, storages, LXC, key volume, `plumb key init`; a half-installed host is repaired. Two defects found by real runs and fixed (token ACL order; umask at `pct create`), plus S1. Passed: rights exact, LXC shape, file modes, no secret in state or journal. Open: negative token checks (running); repair run, UI + first login, agent unit need a `plumb serve` with the Proxmox driver (T-012). Before merge: S2 … S4 of pl-architect, `--remove` test |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 | T-052 installer: key volume + `plumb key init`, static LXC address | pl-backend | done on the T-013 branch, approved by pl-reviewer (PR #26, 9556b32) |
@@ -21,6 +20,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
 
 ## Done (2026-11-10 and 2026-11-11)
+- **T-012 (2026-11-11): Proxmox VM driver, proven on the real host** (PR #20): 22 host items, `make test-pve` runs the whole VM life cycle inside the LXC (token stays there), 69 recorded real answers as replay test data with a leak-scan test. Found on the host and fixed: stale `template` flag, cleanup that hid errors, parallel image fetch race. Decisions D-076 … D-079, D-185 (cloud-init inputs are create-only, guests keep SSH host keys), D-186 (no package upgrade at first boot, user), D-187 (DNS set at create). Not tested: bridge change on a real guest (the host has one bridge).
 - **T-044 (2026-11-11): order between Block uses.** A Block names the resources it waits for (`spec.after`) and the services it restarts (`spec.restarts`); the starter Block `nginx-site` is back. Plan approved by the user (D-176), decisions D-167 … D-175, D-181. PRs: #77 plan, #78 contract (T-046), #80 state + plan (T-047), #83 agent (T-048), #81 + #82 web (T-049), #84 Block (T-050), #85 QA (T-051). Proof: slice test (fails without `after`) and a guest test in CI on Debian 13 and Ubuntu 26.04 (`nginx` + two sites, first Run, both orders). Accepted limit: a site file that Nginx cannot read can stop Nginx at the restart; no agent version gate yet (D-169).
 - Team setup, auto mode, GitHub remote, model split.
 - T-001, T-002, T-016, T-019: architecture, review, decisions D-001 … D-041, slice cards.

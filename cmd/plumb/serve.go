@@ -158,7 +158,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	case "fake":
 		drv = fake.New()
 	default:
-		return errors.New("the Proxmox driver is not in this build yet (T-012); use --dev to try Plumb")
+		return errors.New("the Proxmox driver needs the host configuration that the installer writes (T-013); use --dev to try Plumb")
 	}
 	if f.data == "" {
 		dir, err := os.MkdirTemp("", "plumb-dev-*")
