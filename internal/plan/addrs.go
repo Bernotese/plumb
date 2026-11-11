@@ -49,7 +49,7 @@ func (e *Engine) storeAddrs(ctx context.Context, d link.Delivery) error {
 		list, truncated = d.Report.Hello.Addrs, d.Report.Hello.AddrsTruncated
 	case wire.ReportAddrs:
 		list, truncated = d.Report.Addrs, d.Report.AddrsTruncated
-		if list == nil {
+		if list == nil && !d.Report.AddrsUnknown {
 			list = []string{} // a missing list in an addrs report is empty
 		}
 	default:

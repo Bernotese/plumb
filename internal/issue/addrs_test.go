@@ -253,6 +253,26 @@ func TestAddrsHello(t *testing.T) {
 	if l := e.reported("web1"); l != nil {
 		t.Fatalf("bad hello list kept %q", l)
 	}
+	// addrs_unknown (the agent cannot read its list any more): unknown,
+	// not limited; with a list it is refused.
+	e.clock.add(31 * time.Second)
+	e.send("web1", staticIP)
+	e.mu.Lock()
+	a := e.agents["web1"]
+	e.mu.Unlock()
+	if code := a.Report(e.ctx, wire.Report{Type: wire.ReportAddrs, AddrsUnknown: true, Addrs: []string{staticIP}}); code != http.StatusBadRequest {
+		t.Fatalf("addrs_unknown with a list: %d, want 400", code)
+	}
+	if code := a.Report(e.ctx, wire.Report{Type: wire.ReportAddrs, AddrsUnknown: true}); code != http.StatusNoContent {
+		t.Fatalf("addrs_unknown: %d", code)
+	}
+	if l := e.reported("web1"); l != nil {
+		t.Fatalf("addrs_unknown kept %q", l)
+	}
+	if code := a.Report(e.ctx, wire.Report{Type: wire.ReportDrift, AddrsUnknown: true,
+		Items: []wire.Item{{Resource: "file:/etc/motd", Status: wire.StatusUnchanged}}}); code != http.StatusBadRequest {
+		t.Fatalf("addrs_unknown on drift: %d, want 400", code)
+	}
 }
 
 // A flood of Hellos and reports with alternating lists: at most one write

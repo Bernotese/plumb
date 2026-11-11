@@ -772,7 +772,7 @@ var ErrTooOften = errors.New("link: report changes data too often")
 
 // validateReport checks a report against the wire types and limits.
 func validateReport(rep wire.Report) error {
-	if rep.Type != wire.ReportAddrs && (rep.Addrs != nil || rep.AddrsTruncated) {
+	if rep.Type != wire.ReportAddrs && (rep.Addrs != nil || rep.AddrsTruncated || rep.AddrsUnknown) {
 		return errors.New("addrs only in an addrs report")
 	}
 	switch rep.Type {
@@ -800,6 +800,9 @@ func validateReport(rep wire.Report) error {
 	case wire.ReportAddrs:
 		if rep.CommandID != "" || rep.Hello != nil || len(rep.Items) > 0 || rep.Error != "" {
 			return errors.New("addrs has only the addrs fields")
+		}
+		if rep.AddrsUnknown && (rep.Addrs != nil || rep.AddrsTruncated) {
+			return errors.New("addrs_unknown has no list")
 		}
 		if err := wire.CheckAddrs(rep.Addrs, rep.AddrsTruncated); err != nil {
 			return err // the reason, never the list
