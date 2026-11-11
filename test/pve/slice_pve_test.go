@@ -19,20 +19,29 @@ func TestRealSliceAcceptance(t *testing.T) {
 	before := snapshot(t)
 	t.Logf("guest/template list before: %v", inventory(before))
 	expected := map[string]bool{}
+	imports := map[string]bool{} // the import files this run may leave
+	importsBefore := importFiles(t)
 	refs := []any{}
 	owned := map[int]bool{}
-	t.Cleanup(func() { cleanup(a, before, expected, refs, owned) })
+	t.Cleanup(func() {
+		cleanup(a, before, expected, refs, owned)
+		checkImports(a.t, importsBefore, imports)
+	})
 	for i, distro := range []string{"DEBIAN13", "UBUNTU2604"} {
 		ok := t.Run(distro, func(t *testing.T) {
 			c := *a
 			c.t = t
 			prefix := fmt.Sprintf("t015-%d-%d", time.Now().UnixNano(), i)
-			image, target := prefix+"-img", prefix+"-vm"
+			// The Image name is stable per distribution, so its import file
+			// (plumb-<name>-<sha256[:12]>.qcow2, D-077) is reused by a later
+			// run and not downloaded again (pl-lead, 2026-11-11).
+			image, target := "t015-"+strings.ToLower(distro), prefix+"-vm"
 			sha := os.Getenv("PLUMB_TEST_IMAGE_" + distro + "_SHA256")
 			if len(sha) != 64 || strings.Trim(sha, "0123456789abcdef") != "" {
 				t.Fatal("invalid pinned checksum")
 			}
 			expected["plumb-img-"+image+"-"+sha[:12]] = true
+			imports["plumb-"+image+"-"+sha[:12]+".qcow2"] = true
 			docs := []any{}
 			for _, block := range []string{"deploy-user", "motd", "nginx"} {
 				b, err := blocks.FS.ReadFile(block + ".yaml")
@@ -93,6 +102,12 @@ func TestRealSliceAcceptance(t *testing.T) {
 			}
 			if _, ok := hostSSH(t, owned, n, "memory"); !ok {
 				t.Fatal("host memory update failed (output withheld)")
+			}
+			// Memory is not in Proxmox's default hotplug list: on a running VM
+			// the change is pending, and the driver observes the running values
+			// (config?current=1). The allowed reboot applies it; then it is drift.
+			if _, ok := hostSSH(t, owned, n, "reboot"); !ok {
+				t.Fatal("host reboot after the memory change failed (output withheld)")
 			}
 			issue := c.issue(target, "guest:config", 90*time.Second)
 			c.approve(c.call("POST", "/issues/"+issue+"/resolve", object{"action": "revert"}, 201), false)

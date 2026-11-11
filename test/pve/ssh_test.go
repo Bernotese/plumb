@@ -66,6 +66,12 @@ func hostSSH(t *testing.T, owned map[int]bool, n int, action string) (string, bo
 			t.Fatal("invalid pool setting")
 		}
 		command = "pvesh get /pools/" + pool + " --output-format json"
+	case "imports":
+		storage := os.Getenv("PLUMB_TEST_IMAGE_STORAGE")
+		if storage == "" || strings.Trim(storage, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != "" {
+			t.Fatal("invalid image storage setting")
+		}
+		command = "pvesm list " + storage + " --content import"
 	case "memory":
 		command = fmt.Sprintf("qm set %d --memory 1536", n)
 	case "reboot":
