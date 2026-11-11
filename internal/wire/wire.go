@@ -216,6 +216,11 @@ const AttrRestart = "restart"
 // of a target. The driver handles it, not the agent.
 const GuestConfigID = "guest:config"
 
+// GuestAddressID is the id of the resource of the address check (D-215): a
+// Target with a static ip whose agent does not report that address. The
+// controller makes it from the reported list; no agent reports it.
+const GuestAddressID = "guest:address"
+
 // agentTypes are the resource types that an agent manages and may report.
 // It must equal the type table of internal/resource (a test there checks
 // it). The type "guest" belongs to the controller.

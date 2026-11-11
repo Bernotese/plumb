@@ -120,7 +120,45 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		}
 		return false
 	})
-	eventually(t, "2 seed agents", 5*time.Second, func() bool { return devAgentRuns() == 2 })
+	// web1, web2 and the demo Target db1 (T-070).
+	eventually(t, "3 seed agents", 5*time.Second, func() bool { return devAgentRuns() == 3 })
+
+	// The demo guest:address Issue of db1 is there, and it is not the
+	// newest Issue (the e2e tests revert the newest one).
+	var issues struct {
+		Items []struct {
+			ID       int64
+			Target   string
+			Resource string
+			Actions  []string
+		}
+	}
+	if call("GET", "/api/v1/issues?status=open", nil, &issues) != 200 || len(issues.Items) == 0 {
+		t.Fatalf("issues: %+v", issues)
+	}
+	var addrIssue, newest int64
+	for _, i := range issues.Items {
+		newest = max(newest, i.ID)
+		if i.Target == "db1" && i.Resource == "guest:address" {
+			addrIssue = i.ID
+			if strings.Join(i.Actions, ",") != "ignore_once,ignore_rule" {
+				t.Errorf("address issue actions %v", i.Actions)
+			}
+		}
+	}
+	if addrIssue == 0 || addrIssue == newest {
+		t.Errorf("address issue %d, newest %d: %+v", addrIssue, newest, issues.Items)
+	}
+	var db1 struct {
+		Status struct {
+			IPs         []string `json:"ips"`
+			ReportedIPs []string `json:"reported_ips"`
+		}
+	}
+	if call("GET", "/api/v1/targets/db1", nil, &db1) != 200 ||
+		strings.Join(db1.Status.IPs, ",") != "192.168.1.20" || strings.Join(db1.Status.ReportedIPs, ",") != "10.99.0.107" {
+		t.Errorf("db1 status %+v", db1.Status)
+	}
 
 	// --dev-demo seeds one plan token; the server never prints its bearer (T-030).
 	var toks struct {
@@ -163,9 +201,9 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		"guest":  map[string]any{"cores": 1, "memory": 1024, "disk": 10, "bridge": "vmbr0"},
 		"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "Hello from web3"}}},
 	}}}})
-	eventually(t, "agent of web3", 5*time.Second, func() bool { return devAgentRuns() == 3 })
+	eventually(t, "agent of web3", 5*time.Second, func() bool { return devAgentRuns() == 4 })
 	apply("delete web3", map[string]any{"delete": []any{map[string]any{"kind": "Target", "name": "web3"}}})
-	eventually(t, "agent of web3 stops", 5*time.Second, func() bool { return devAgentRuns() == 2 })
+	eventually(t, "agent of web3 stops", 5*time.Second, func() bool { return devAgentRuns() == 3 })
 
 	cancel()
 	if err := <-done; err != nil {
