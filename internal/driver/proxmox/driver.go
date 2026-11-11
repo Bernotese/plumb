@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"reflect"
@@ -158,9 +159,9 @@ func vmid(s string) (int, error) {
 // member is one guest of the pool. Proxmox builds the member fields from
 // its cluster resource cache, which pvestatd refreshes every few seconds:
 // right after a template conversion the list still says template 0 (test
-// host, T-012). Membership itself is current (pool config). So the driver
-// never trusts Template of the list; own and isTemplate read the guest
-// config instead.
+// host, T-012), and right after a clone the new guest has no name yet
+// (test host, T-073 A4). Membership itself is current (pool config). So
+// own reads Name and Template from the guest config instead.
 type member struct {
 	VMID     int    `json:"vmid"`
 	Type     string `json:"type"`
@@ -209,12 +210,15 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 	}
 	for _, m := range ms {
 		if m.VMID == id {
-			t, err := d.isTemplate(ctx, id)
+			// Name and template come from the config, never from the
+			// list: for a fresh clone the list has no name yet (T-073).
+			cfg, err := d.config(ctx, id)
 			if err != nil {
 				return 0, member{}, err
 			}
+			m.Name = cfg["name"]
 			m.Template = 0
-			if t {
+			if cfg["template"] == "1" {
 				m.Template = 1
 			}
 			return id, m, nil
@@ -329,7 +333,7 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	// failed earlier try: remove it before the next try (review T-012 #6).
 	// If that fails, stop: a second VM with the same name must not follow.
 	for _, id := range halfMade {
-		if err := d.removeHalfMade(ctx, id, name); err != nil {
+		if err := d.removeHalfMade(ctx, id, name, false); err != nil {
 			return "", halfMadeLeft(nil, id, err)
 		}
 	}
@@ -370,10 +374,10 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		"serial0": {"socket"}, "vga": {"serial0"},
 		"description": {"Plumb image " + spec.Name + "\nsha256=" + spec.SHA256},
 	}); err != nil {
-		return "", halfMadeLeft(fmt.Errorf("proxmox: create template VM: %w", err), id, d.removeHalfMade(ctx, id, name))
+		return "", halfMadeLeft(fmt.Errorf("proxmox: create template VM: %w", err), id, d.removeHalfMade(ctx, id, name, false))
 	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/template", nil); err != nil {
-		return "", halfMadeLeft(fmt.Errorf("proxmox: convert to template: %w", err), id, d.removeHalfMade(ctx, id, name))
+		return "", halfMadeLeft(fmt.Errorf("proxmox: convert to template: %w", err), id, d.removeHalfMade(ctx, id, name, true))
 	}
 	return driver.ImageRef(strconv.Itoa(id)), nil
 }
@@ -504,6 +508,9 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	if m.Template != 1 {
 		return "", fmt.Errorf("proxmox: VMID %d is not a template", tpl)
 	}
+	if err := d.checkDisk(ctx, tpl, spec); err != nil {
+		return "", err
+	}
 	id, err := d.nextID(ctx)
 	if err != nil {
 		return "", err
@@ -515,13 +522,32 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	}); err != nil {
 		// A clone that failed or was stopped after Proxmox made the VM
 		// leaves a half-made guest (review N2).
-		return "", halfMadeLeft(fmt.Errorf("proxmox: clone: %w", err), id, d.removeHalfMade(ctx, id, spec.Name))
+		return "", halfMadeLeft(fmt.Errorf("proxmox: clone: %w", err), id, d.removeHalfMade(ctx, id, spec.Name, false))
 	}
 	gid := driver.GuestID(strconv.Itoa(id))
 	if err := d.configure(ctx, id, spec, boot.Token); err != nil {
-		return "", scrub(halfMadeLeft(err, id, d.removeHalfMade(ctx, id, spec.Name)), boot.Token)
+		// The clone worked: the VM at id is the one this call made.
+		return "", scrub(halfMadeLeft(err, id, d.removeHalfMade(ctx, id, spec.Name, true)), boot.Token)
 	}
 	return gid, nil
+}
+
+// checkDisk refuses a disk that is smaller than the template's disk
+// before the clone: Proxmox cannot shrink a disk, and the resize would
+// fail only after the clone (T-073). A size it cannot read is no error;
+// the resize still refuses it, and the half-made guest is removed.
+func (d *Driver) checkDisk(ctx context.Context, tpl int, spec driver.GuestSpec) error {
+	cfg, err := d.config(ctx, tpl)
+	if err != nil {
+		return err
+	}
+	have := sizeMB(parseProps(cfg["scsi0"])["size"])
+	if have <= 0 || spec.DiskGB*1024 >= have {
+		return nil
+	}
+	min := (have + 1023) / 1024
+	return fmt.Errorf("proxmox: disk %d GB is smaller than the %d GB disk of image %s (template VMID %d); a disk cannot shrink: set disk to %d or more",
+		spec.DiskGB, min, spec.ImageName, tpl, min)
 }
 
 // removeHalfMade deletes a guest that a failed Create or FetchImage left
@@ -532,7 +558,10 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 // error. It waits until Proxmox drops the lock of a stopped create or clone
 // (a DELETE during the lock fails), checks the task results and proves that
 // the guest is gone (review S1). A non-nil error means the guest is left.
-func (d *Driver) removeHalfMade(ctx context.Context, id int, name string) error {
+// made says that this call's create or clone worked, so the guest at id
+// must be its own: another name there is then an error (the guest is left
+// and named), not a silent skip (T-073).
+func (d *Driver) removeHalfMade(ctx context.Context, id int, name string, made bool) error {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
 	_, m, err := d.own(cleanup, strconv.Itoa(id))
@@ -542,6 +571,9 @@ func (d *Driver) removeHalfMade(ctx context.Context, id int, name string) error 
 	case err != nil:
 		return err
 	case m.Name != name || m.Template == 1:
+		if made {
+			return fmt.Errorf("VMID %d has the name %q (template %d), not %q: not proven ours, not removed", id, m.Name, m.Template, name)
+		}
 		return nil // not the guest this call made
 	}
 	if err := d.waitUnlocked(cleanup, id); err != nil {
@@ -684,15 +716,6 @@ const DefaultShutdownTimeout = 120 * time.Second
 // --- Observe ---
 
 // config reads the current config of a guest as a flat map.
-// isTemplate reads the template flag from the guest config (current).
-func (d *Driver) isTemplate(ctx context.Context, id int) (bool, error) {
-	cfg, err := d.config(ctx, id)
-	if err != nil {
-		return false, err
-	}
-	return cfg["template"] == "1", nil
-}
-
 func (d *Driver) config(ctx context.Context, id int) (map[string]string, error) {
 	return d.readConfig(ctx, id, true)
 }
@@ -759,6 +782,32 @@ func sizeGB(s string) int {
 		return int(n / 1024)
 	}
 	return 0
+}
+
+// sizeMB reads a Proxmox disk size ("10G", "3584M", "1T", "512K") in MiB,
+// rounded up. 0 means unknown.
+func sizeMB(s string) int {
+	if len(s) < 2 {
+		return 0
+	}
+	n, err := strconv.ParseFloat(s[:len(s)-1], 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	var mb float64
+	switch s[len(s)-1] {
+	case 'T':
+		mb = n * 1024 * 1024
+	case 'G':
+		mb = n * 1024
+	case 'M':
+		mb = n
+	case 'K':
+		mb = n / 1024
+	default:
+		return 0
+	}
+	return int(math.Ceil(mb))
 }
 
 // specOf reads the managed settings from a config map.

@@ -55,6 +55,12 @@ type fakePVE struct {
 	// staleTemplate: /pools reports every guest with template 0, like the
 	// cluster resource cache of Proxmox right after a conversion.
 	staleTemplate bool
+	// staleNames: /pools reports every guest without a name, like the
+	// cache right after a clone (test host, T-073 A4).
+	staleNames bool
+	// cloneName: a clone gets this name instead of the asked one (someone
+	// renames the new guest at once; T-073).
+	cloneName string
 	// lockReads: the config of a VM shows "lock: create" for this many
 	// more reads, and a DELETE fails meanwhile (a stopped create task).
 	lockReads map[int]int
@@ -350,7 +356,11 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 				if vm.template && !f.staleTemplate {
 					t = 1
 				}
-				members = append(members, map[string]any{"vmid": id, "type": "qemu", "name": vm.cfg["name"], "template": t, "id": "qemu/" + strconv.Itoa(id)})
+				name := vm.cfg["name"]
+				if f.staleNames {
+					name = ""
+				}
+				members = append(members, map[string]any{"vmid": id, "type": "qemu", "name": name, "template": t, "id": "qemu/" + strconv.Itoa(id)})
 			}
 		}
 		if f.allPools { // a server that ignores the filter: one entry per pool
@@ -559,6 +569,9 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			}
 		}
 		cfg["name"] = r.Form.Get("name")
+		if f.cloneName != "" {
+			cfg["name"] = f.cloneName
+		}
 		cfg["smbios1"] = "uuid=" + uuid() // a clone gets a new uuid
 		cfg["scsi0"] = strings.Replace(cfg["scsi0"], "vm-"+strconv.Itoa(id), "vm-"+strconv.Itoa(newid), 1)
 		f.vms[newid] = &fakeVM{cfg: cfg, pool: r.Form.Get("pool")}
