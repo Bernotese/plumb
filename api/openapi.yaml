@@ -2749,6 +2749,13 @@ components:
         build:
           $ref: "#/components/schemas/ImageBuildPlan"
           description: Missing when the Plan only removes templates (lower `keep`, Image delete).
+        notes:
+          type: array
+          description: |
+            What the person who approves must know about the disk storage of this build, for
+            example "thin-pool metadata use is unknown" or that the build would not start now.
+            Missing means none. A scheduled build records them in its Run.
+          items: { type: string }
         removes:
           type: array
           description: |

@@ -99,11 +99,14 @@
     </p>
     {#if use.over && part.build}
       <p class="banner warn" role="note">
-        {diskLimitText(part.disk, buildDiskGb ?? 0)} The Run will fail at the step guest:config, and nothing
+        {diskLimitText(part.disk, buildDiskGb ?? 0)} The Run will fail at the step image:base, and nothing
         is made.
       </p>
     {/if}
   {/if}
+  {#each part.notes ?? [] as note (note)}
+    <p class="warn" role="note">{note}</p>
+  {/each}
 </section>
 
 <style>
