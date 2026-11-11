@@ -2343,6 +2343,20 @@ components:
         disk:
           $ref: "#/components/schemas/DiskUse"
           description: Use of the disk storage, when the driver could read it.
+        left_templates:
+          type: array
+          description: |
+            Build guests that were converted to a template but never named as a version (a
+            conversion that ended after its error). Plumb never uses or removes them; a person
+            removes them in Proxmox by `guest_id` (the VMID). Missing means none.
+          items: { $ref: "#/components/schemas/LeftTemplate" }
+    LeftTemplate:
+      type: object
+      additionalProperties: false
+      required: [name, guest_id]
+      properties:
+        name: { type: string, examples: ["plumb-build-ubuntu-web-v4"] }
+        guest_id: { type: string, description: Proxmox VMID. }
     ImageVersion:
       type: object
       additionalProperties: false

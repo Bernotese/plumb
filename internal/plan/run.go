@@ -461,9 +461,11 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		// A built Image: the newest ready version (D-200); a stock Image:
 		// the base template (D-188).
 		if info, ok := set.ImageInfo(r.Image); ok && info.Built {
-			if spec.Image, spec.ImageVersion, err = e.newestVersion(ctx, r.Image); err != nil {
+			var unpin func()
+			if spec.Image, spec.ImageVersion, unpin, err = e.newestVersion(ctx, r.Image); err != nil {
 				return res, err
 			}
+			defer unpin() // the clone is done when guestStep returns
 		} else if spec.Image, err = e.fetchImage(ctx, run.RevisionID, r.Image); err != nil {
 			return res, err
 		}

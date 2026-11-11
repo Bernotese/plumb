@@ -343,17 +343,30 @@ func (e *Engine) waitOnlineFor(ctx context.Context, link string, after int, time
 	return nil
 }
 
+// observeRetries is how many reads in a row may fail before a build lane
+// gives up on the power state (review N2 of #133).
+const observeRetries = 3
+
 // waitStopped waits until the build guest is stopped, until deadline. A
 // guest that does not power off itself is a failed build: the controller
 // never stops it, so a template never holds a running agent's files (B1).
+// A read that fails is tried again; observeRetries failures in a row end
+// the wait.
 func (e *Engine) waitStopped(ctx context.Context, gid driver.GuestID, deadline time.Time) error {
+	failures := 0
 	for {
 		st, err := e.cfg.Driver.Observe(ctx, gid)
-		if err != nil {
-			return fmt.Errorf("the build guest cannot be read: %w", err)
-		}
-		if st.Power == driver.PowerStopped {
+		switch {
+		case errors.Is(err, driver.ErrNotFound):
+			return fmt.Errorf("the build guest is gone: %w", err)
+		case err != nil:
+			if failures++; failures >= observeRetries {
+				return fmt.Errorf("the build guest cannot be read (%d tries): %w", failures, err)
+			}
+		case st.Power == driver.PowerStopped:
 			return nil
+		default:
+			failures = 0
 		}
 		if !time.Now().Before(deadline) {
 			return errors.New("the build guest did not power itself off after seal; it is removed, not converted")
@@ -375,8 +388,8 @@ func (e *Engine) removeBuildGuests(ctx context.Context, image string) error {
 	}
 	var errs []error
 	for _, g := range guests {
-		if image != "" && g.Image != image {
-			continue
+		if (image != "" && g.Image != image) || g.Template {
+			continue // a converted rest stays; the Image status shows it
 		}
 		if err := e.cfg.Agents.Revoke(ctx, buildLink(g.Image)); err != nil {
 			errs = append(errs, err)
@@ -387,6 +400,32 @@ func (e *Engine) removeBuildGuests(ctx context.Context, image string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// LeftTemplate is a build guest that was converted but never named as a
+// version (T-061 N1). Plumb never adopts or removes it; the Image status
+// shows it so that a person can remove it.
+type LeftTemplate struct {
+	Name    string
+	GuestID string
+}
+
+// LeftTemplates lists the converted build rests of an Image.
+func (e *Engine) LeftTemplates(ctx context.Context, image string) ([]LeftTemplate, error) {
+	guests, err := e.cfg.Driver.ListBuilds(ctx)
+	if errors.Is(err, driver.ErrNotImplemented) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []LeftTemplate
+	for _, g := range guests {
+		if g.Template && g.Image == image {
+			out = append(out, LeftTemplate{Name: fmt.Sprintf("plumb-build-%s-v%d", g.Image, g.Version), GuestID: string(g.ID)})
+		}
+	}
+	return out, nil
 }
 
 // --- retention (D-209) ---
@@ -442,6 +481,13 @@ func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 stri
 		}
 	}
 	remove := func(o driver.ImageObject, version int) {
+		if version > 0 {
+			if !e.startRemove(image, version) {
+				left = append(left, fmt.Sprintf("left %s: a create clones from it now; the next build tries again", o.Name))
+				return
+			}
+			defer e.endRemove(image, version)
+		}
 		if err := e.cfg.Driver.RemoveImage(ctx, o); err != nil {
 			left = append(left, fmt.Sprintf("left %s: %v", o.Name, err))
 			return
@@ -486,29 +532,79 @@ func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 stri
 
 // --- Target from a version (D-200) ---
 
+// imageKey names one version of an Image.
+type imageKey struct {
+	image   string
+	version int
+}
+
+// pinVersion marks a version as the clone source of a create. It fails
+// when retention removes the version now.
+func (e *Engine) pinVersion(image string, version int) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	k := imageKey{image, version}
+	if e.removing[k] {
+		return false
+	}
+	e.pinned[k]++
+	return true
+}
+
+func (e *Engine) unpinVersion(image string, version int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	k := imageKey{image, version}
+	if e.pinned[k]--; e.pinned[k] <= 0 {
+		delete(e.pinned, k)
+	}
+}
+
+// startRemove marks a version for removal. It fails when a create clones
+// from it now: a clone takes no source lock in Proxmox.
+func (e *Engine) startRemove(image string, version int) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	k := imageKey{image, version}
+	if e.pinned[k] > 0 {
+		return false
+	}
+	e.removing[k] = true
+	return true
+}
+
+func (e *Engine) endRemove(image string, version int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.removing, imageKey{image, version})
+}
+
 // newestVersion returns the template of the newest ready version of a
-// built Image that exists. A ready row whose template is gone becomes
-// removed (D-198).
-func (e *Engine) newestVersion(ctx context.Context, image string) (driver.ImageRef, int, error) {
+// built Image that exists, pinned until the caller calls unpin (after the
+// clone). A ready row whose template is gone becomes removed (D-198).
+func (e *Engine) newestVersion(ctx context.Context, image string) (driver.ImageRef, int, func(), error) {
 	versions, err := e.st.ImageVersions(ctx, image)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	for _, v := range versions {
-		if v.Status != store.ImageReady {
+		if v.Status != store.ImageReady || !e.pinVersion(image, v.Version) {
 			continue
 		}
+		unpin := func() { e.unpinVersion(image, v.Version) }
 		ref, err := e.cfg.Driver.FindImage(ctx, image, v.Version, v.Digest)
 		if errors.Is(err, driver.ErrNotFound) {
+			unpin()
 			_ = e.st.RemoveImageVersion(ctx, image, v.Version)
 			continue
 		}
 		if err != nil {
-			return "", 0, err
+			unpin()
+			return "", 0, nil, err
 		}
-		return ref, v.Version, nil
+		return ref, v.Version, unpin, nil
 	}
-	return "", 0, fmt.Errorf("the Image %s has no ready version; build the Image first", image)
+	return "", 0, nil, fmt.Errorf("the Image %s has no ready version; build the Image first", image)
 }
 
 // --- recover (S4) ---
@@ -544,7 +640,7 @@ func (e *Engine) recoverBuilds(ctx context.Context) error {
 		return nil
 	}
 	for _, g := range guests {
-		if live[g.Image] {
+		if live[g.Image] || g.Template {
 			continue
 		}
 		if err := e.removeBuildGuests(ctx, g.Image); err != nil {

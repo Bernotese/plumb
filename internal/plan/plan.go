@@ -190,6 +190,11 @@ type Engine struct {
 	warned  map[string]bool       // "revision/target": the cycle warning is in the log
 	addrs   map[string]*addrWatch // target → state of the address check (D-215)
 	disk    *DiskGate             // creates and builds (T-074)
+	// versions in use (review S1 of #133): a create pins the version it
+	// clones from the pick to the end of the clone; retention marks the
+	// version it removes. Each side skips what the other holds.
+	pinned   map[imageKey]int
+	removing map[imageKey]bool
 }
 
 // Disk is the disk gate of the engine. Image builds (T-062) reserve their
@@ -264,7 +269,7 @@ func New(cfg Config) (*Engine, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
 		results: map[string]chan wire.Report{}, busy: map[string]int{}, hello: map[string]int{}, active: map[int64]bool{},
-		addrs: map[string]*addrWatch{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
+		addrs: map[string]*addrWatch{}, pinned: map[imageKey]int{}, removing: map[imageKey]bool{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
 }
 
 // Close cancels all Runs and waits for them.
