@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,6 +159,13 @@ type Config struct {
 	// AddrStable is the stable time of the address check; default
 	// AddrStable. Only the dev demo shortens it.
 	AddrStable time.Duration
+	// Timeouts of an image build (T-039 Plan §2). Defaults: enroll 20 min,
+	// seal 5 min (the apply uses ApplyTimeout).
+	BuildEnrollTimeout time.Duration
+	SealTimeout        time.Duration
+	// PowerPoll is how often a build lane reads the power state after
+	// seal; default 2 s.
+	PowerPoll time.Duration
 	// DiskLimitPercent is the limit of the disk gate for creates and
 	// builds (D-219); default DefaultDiskLimitPercent.
 	DiskLimitPercent int
@@ -182,6 +190,13 @@ type Engine struct {
 	warned  map[string]bool       // "revision/target": the cycle warning is in the log
 	addrs   map[string]*addrWatch // target → state of the address check (D-215)
 	disk    *DiskGate             // creates and builds (T-074)
+	// versions in use (review S1 of #133): a create pins the version it
+	// clones from the pick to the end of the clone; retention marks the
+	// version it removes. Each side skips what the other holds.
+	pinned   map[imageKey]int
+	removing map[imageKey]bool
+	// scheduled builds (T-063): they run one after the other.
+	schedPlans map[int64]bool // Plans of scheduled builds that run now
 }
 
 // Disk is the disk gate of the engine. Image builds (T-062) reserve their
@@ -235,6 +250,15 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.BuildEnrollTimeout == 0 {
+		cfg.BuildEnrollTimeout = DefaultBuildEnrollTimeout
+	}
+	if cfg.SealTimeout == 0 {
+		cfg.SealTimeout = DefaultSealTimeout
+	}
+	if cfg.PowerPoll == 0 {
+		cfg.PowerPoll = 2 * time.Second
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -247,7 +271,7 @@ func New(cfg Config) (*Engine, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
 		results: map[string]chan wire.Report{}, busy: map[string]int{}, hello: map[string]int{}, active: map[int64]bool{},
-		addrs: map[string]*addrWatch{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
+		addrs: map[string]*addrWatch{}, pinned: map[imageKey]int{}, removing: map[imageKey]bool{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
 }
 
 // Close cancels all Runs and waits for them.
@@ -334,6 +358,9 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 // bound reports whether a target has a guest binding. Agent reports of a
 // target without one are dropped (D-211).
 func (e *Engine) bound(ctx context.Context, target string) (bool, error) {
+	if strings.HasPrefix(target, wire.BuildLinkPrefix) {
+		return false, nil // a build guest: no watch, no drift, no address list (D-203)
+	}
 	_, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	if errors.Is(err, store.ErrNotFound) {
 		e.log.Warn("agent report for a target without a guest dropped", "target", target)

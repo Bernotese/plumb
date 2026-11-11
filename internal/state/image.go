@@ -115,3 +115,41 @@ func buildGuest(attrs map[string]any) map[string]any {
 	}
 	return out
 }
+
+// DefaultKeep is the default of retention.keep (D-197).
+const DefaultKeep = 3
+
+// ImageInfo is what the engine needs to know about an Image besides its
+// render: whether it is built, its base checksum, how many versions stay
+// and its schedule (canonical JSON, nil for none).
+type ImageInfo struct {
+	Name     string
+	Type     wire.Kind
+	SHA256   string
+	Built    bool
+	Keep     int
+	Schedule json.RawMessage
+}
+
+// Images returns the names of all Images, sorted.
+func (s *Set) Images() []string { return sortedKeys(s.images) }
+
+// ImageInfo returns the facts of one Image; ok is false when it does not
+// exist.
+func (s *Set) ImageInfo(name string) (ImageInfo, bool) {
+	img, ok := s.images[name]
+	if !ok {
+		return ImageInfo{}, false
+	}
+	info := ImageInfo{Name: name, Type: wire.Kind(img.Type), SHA256: img.SHA256, Built: img.Build != nil, Keep: DefaultKeep}
+	if img.Retention != nil && img.Retention.Keep > 0 {
+		info.Keep = img.Retention.Keep
+	}
+	if len(img.Schedule) > 0 && string(img.Schedule) != "null" {
+		var v any
+		if decode(img.Schedule, &v) == nil {
+			info.Schedule, _ = json.Marshal(v) // sorted keys: one form for one value
+		}
+	}
+	return info, true
+}

@@ -22,6 +22,7 @@ var endpoints = []endpoint{
 	{"PUT", "/api/v1/session/password", map[string]string{}, TierAdmin, true},
 	{"GET", "/api/v1/images", nil, TierRead, false},
 	{"GET", "/api/v1/images/ubuntu", nil, TierRead, false},
+	{"POST", "/api/v1/images/nope/build", nil, TierPlan, false},
 	{"GET", "/api/v1/blocks", nil, TierRead, false},
 	{"GET", "/api/v1/blocks/motd", nil, TierRead, false},
 	{"GET", "/api/v1/rules", nil, TierRead, false},

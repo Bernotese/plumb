@@ -134,8 +134,13 @@ var SealSteps = []string{
 	SealStepHostKeys, SealStepBuildUser, SealStepSeed, SealStepLogs, SealStepTrim,
 }
 
+// SealItemType is the type part of a seal Item id. It is no resource type:
+// link takes such an Item only in a result of a build link, as the answer
+// of an outstanding seal command.
+const SealItemType = "seal"
+
 // SealItemID is the Item resource id of a seal step.
-func SealItemID(step string) string { return "seal:" + step }
+func SealItemID(step string) string { return SealItemType + ":" + step }
 
 // BodyResources returns the resources of an observe, apply or watch body
 // (value or pointer), or nil.
