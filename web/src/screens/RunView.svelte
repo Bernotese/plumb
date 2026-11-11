@@ -3,6 +3,7 @@
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { PlumbEvent, Run } from "../lib/types";
+  import { BUILD_STEP_TEXT, TRIGGER_TEXT } from "../lib/images";
   import { applyStepEvent, formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
@@ -38,8 +39,14 @@
       onError: (e) => (error = e),
       onEvent: (e: PlumbEvent, l) => {
         if (e.subject !== `run:${id}` || !run) return;
-        const d = e.data as { target?: string; resource?: string; status?: string };
-        if (e.type === "run.step") announce = `${d.resource} on ${d.target}: ${d.status}`;
+        const d = e.data as {
+          target?: string;
+          image?: string;
+          resource?: string;
+          status?: string;
+        };
+        if (e.type === "run.step")
+          announce = `${d.resource} on ${d.image ? `image ${d.image}` : d.target}: ${d.status}`;
         if (!applyStepEvent(run, e) && (e.type === "run.step" || e.type === "run.finished"))
           l.reloadSoon();
       },
@@ -102,6 +109,40 @@
       </table>
     </div>
   {/each}
+  {#each run.images ?? [] as b (b.image)}
+    <h2>
+      Image <a class="mono" href={href({ name: "image", image: b.image })}>{b.image}</a>
+      <span class="muted">version {b.version} · {TRIGGER_TEXT[b.trigger]}</span>
+      <Badge tone={tone[b.status] ?? "muted"} label={b.status} />
+    </h2>
+    <div class="table-wrap card flush">
+      <table>
+        <caption class="sr-only">Build steps of image {b.image} version {b.version}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Step</th>
+            <th scope="col">Action</th>
+            <th scope="col">Status</th>
+            <th scope="col">Output</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each b.steps as s (s.resource)}
+            <tr>
+              <th scope="row"
+                ><span class="mono">{s.resource}</span>{#if BUILD_STEP_TEXT[s.resource]}<span
+                    class="step-text">{BUILD_STEP_TEXT[s.resource]}</span
+                  >{/if}</th
+              >
+              <td>{s.action ?? "–"}</td>
+              <td><Badge tone={tone[s.status] ?? "muted"} label={s.status} /></td>
+              <td><pre class="mono out">{s.output || "–"}</pre></td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/each}
 {:else if !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
@@ -118,7 +159,14 @@
     margin: 0;
     white-space: pre-wrap;
   }
+  .step-text {
+    display: block;
+    font-weight: normal;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+  }
   h2 {
+    flex-wrap: wrap;
     display: flex;
     gap: var(--space-2);
     align-items: center;

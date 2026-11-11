@@ -6,6 +6,10 @@ export type Route =
   | { name: "targets" }
   | { name: "target-new" }
   | { name: "target-edit"; target: string }
+  | { name: "images" }
+  | { name: "image-new" }
+  | { name: "image"; image: string }
+  | { name: "image-edit"; image: string }
   | { name: "plan"; id: number }
   | { name: "run"; id: number }
   | { name: "issues" }
@@ -42,6 +46,12 @@ export function parse(hash: string): Route {
   if (parts.length === 3 && a === "targets" && b && NAME.test(b) && c === "edit") {
     return { name: "target-edit", target: b };
   }
+  if (parts.length === 1 && a === "images") return { name: "images" };
+  if (parts.length === 2 && a === "images" && b === "new") return { name: "image-new" };
+  if (parts.length === 2 && a === "images" && b && NAME.test(b)) return { name: "image", image: b };
+  if (parts.length === 3 && a === "images" && b && NAME.test(b) && c === "edit") {
+    return { name: "image-edit", image: b };
+  }
   const n = parts.length === 2 ? id(b) : undefined;
   if (a === "plans" && n) return { name: "plan", id: n };
   if (a === "runs" && n) return { name: "run", id: n };
@@ -68,6 +78,14 @@ export function href(r: Route): string {
       return "#/targets/new";
     case "target-edit":
       return `#/targets/${encodeURIComponent(r.target)}/edit`;
+    case "images":
+      return "#/images";
+    case "image-new":
+      return "#/images/new";
+    case "image":
+      return `#/images/${encodeURIComponent(r.image)}`;
+    case "image-edit":
+      return `#/images/${encodeURIComponent(r.image)}/edit`;
     case "plan":
       return `#/plans/${r.id}`;
     case "run":

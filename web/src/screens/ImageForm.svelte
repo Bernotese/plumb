@@ -1,0 +1,540 @@
+<script lang="ts">
+  import imageSchema from "../../../internal/state/schema/image.json";
+  import type { PlumbApi } from "../lib/client";
+  import { pointerErrors } from "../lib/formErrors";
+  import { WEEKDAYS, nextSlot, weekdayName, type Schedule, type Weekday } from "../lib/images";
+  import { go, href } from "../lib/router";
+  import {
+    fieldsOf,
+    initialValues,
+    mergeParams,
+    validate,
+    type Field,
+    type Values,
+  } from "../lib/schemaForm";
+  import type { BlockView, ImageSpec, ImageView } from "../lib/types";
+  import ProblemBox from "../ui/ProblemBox.svelte";
+  import SchemaFields from "../ui/SchemaFields.svelte";
+
+  let { api, name }: { api: PlumbApi; name?: string } = $props();
+
+  // One schema source (D-043): the build guest form comes from the Image schema.
+  const specProps = imageSchema.properties.spec.properties;
+  const guestFields: Field[] = fieldsOf(specProps.build.properties.guest as never);
+  const namePattern = new RegExp(imageSchema.properties.name.pattern, "u");
+  const urlPattern = new RegExp(specProps.url.pattern, "u");
+  const shaPattern = new RegExp(specProps.sha256.pattern, "u");
+  const atPattern = new RegExp(specProps.schedule.properties.at.pattern, "u");
+  const editing = $derived(name !== undefined);
+
+  interface Use {
+    key: number;
+    use: string;
+    id: string;
+    fields: Field[];
+    values: Values;
+    stored: Record<string, unknown>;
+    errors: Record<string, string>;
+  }
+
+  let existing = $state<ImageView | null>(null);
+  let allBlocks = $state<BlockView[]>([]);
+  let loaded = $state(false);
+  let loadError = $state<unknown>(null);
+
+  let imageName = $state("");
+  let title = $state("");
+  let url = $state("");
+  let sha = $state("");
+  let build = $state(false);
+  let upgrade = $state(true);
+  let guest = $state<Values>({});
+  let uses = $state<Use[]>([]);
+  let addChoice = $state("");
+  let keep = $state(3);
+  let every = $state<"none" | Schedule["every"]>("none");
+  let weekday = $state<Weekday>("sun");
+  let day = $state(1);
+  let at = $state("03:00");
+  let reason = $state("");
+  let errors = $state<Record<string, string>>({});
+  let guestErrors = $state<Record<string, string>>({});
+  let submitError = $state<unknown>(null);
+  let busy = $state(false);
+  let nextKey = 0;
+
+  /** A Block with a secret parameter cannot go into an Image (D-202). */
+  const hasSecret = (b: BlockView) =>
+    Object.values(b.document.spec.params?.properties ?? {}).some(
+      (p) => (p as { writeOnly?: boolean }).writeOnly === true,
+    );
+  const usable = $derived(allBlocks.filter((b) => !hasSecret(b)));
+  const secretBlocks = $derived(allBlocks.filter(hasSecret).map((b) => b.document.name));
+  const blockByName = (n: string) => allBlocks.find((b) => b.document.name === n);
+  const wasBuilt = $derived(existing?.document.spec.build !== undefined);
+
+  const schedule = $derived<Schedule | undefined>(
+    every === "none"
+      ? undefined
+      : every === "week"
+        ? { every, weekday, at }
+        : every === "month"
+          ? { every, day, at }
+          : { every, at },
+  );
+  const nextBuild = $derived.by(() => {
+    if (!schedule || !atPattern.test(at) || (every === "month" && !(day >= 1 && day <= 28)))
+      return null;
+    return nextSlot(schedule, new Date());
+  });
+
+  function makeUse(use: string, id = "", params: Record<string, unknown> = {}): Use {
+    const fields = fieldsOf(blockByName(use)?.document.spec.params);
+    return {
+      key: nextKey++,
+      use,
+      id,
+      fields,
+      values: initialValues(fields, params),
+      stored: params,
+      errors: {},
+    };
+  }
+
+  $effect(() => {
+    Promise.all([api.listBlocks(), name ? api.getImage(name) : Promise.resolve(null)]).then(
+      ([b, i]) => {
+        allBlocks = b;
+        existing = i;
+        addChoice = b.find((x) => !hasSecret(x))?.document.name ?? "";
+        const s = i?.document.spec;
+        const g = s?.build?.guest;
+        guest = initialValues(guestFields, {
+          cores: 1,
+          memory: 1024,
+          disk: 10,
+          bridge: "vmbr0",
+          ip: "dhcp",
+          ...g,
+        });
+        if (i && s) {
+          imageName = i.document.name;
+          title = s.title ?? "";
+          url = s.url;
+          sha = s.sha256;
+          build = s.build !== undefined;
+          upgrade = s.build?.upgrade ?? true;
+          uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
+          keep = s.retention?.keep ?? 3;
+          every = s.schedule?.every ?? "none";
+          weekday = s.schedule?.weekday ?? "sun";
+          day = s.schedule?.day ?? 1;
+          at = s.schedule?.at ?? "03:00";
+        }
+        loaded = true;
+      },
+      (e: unknown) => (loadError = e),
+    );
+  });
+
+  // Server field errors (422 pointers) next to their fields.
+  const serverErrors = $derived(pointerErrors(submitError));
+  const fieldError = (key: string, pointer: string) =>
+    errors[key] ?? serverErrors[`/put/0/spec${pointer}`];
+
+  function addBlock() {
+    if (!addChoice) return;
+    uses = [...uses, makeUse(addChoice)];
+    const key = uses[uses.length - 1]?.key;
+    queueMicrotask(() => document.getElementById(`iuse-${key}-legend`)?.focus());
+  }
+
+  function removeBlock(key: number) {
+    uses = uses.filter((u) => u.key !== key);
+    queueMicrotask(() => document.getElementById("add-block")?.focus());
+  }
+
+  function check(): boolean {
+    const e: Record<string, string> = {};
+    if (!editing && !namePattern.test(imageName))
+      e["name"] =
+        "Use lower-case letters, digits, '-' and '.'; start and end with a letter or digit.";
+    if (!urlPattern.test(url.trim())) e["url"] = "Give an https:// address of the cloud image.";
+    if (!shaPattern.test(sha.trim()))
+      e["sha256"] = "Give the SHA-256 checksum: 64 characters 0-9 and a-f.";
+    if (!reason.trim()) e["reason"] = "Say why you make this change.";
+    guestErrors = build ? validate(guestFields, guest) : {};
+    if (build) {
+      if (!(Number.isInteger(keep) && keep >= 1 && keep <= 20))
+        e["keep"] = "Keep 1 to 20 versions.";
+      if (every !== "none" && !atPattern.test(at)) e["at"] = "Give a time as HH:MM (UTC).";
+      if (every === "month" && !(Number.isInteger(day) && day >= 1 && day <= 28))
+        e["day"] = "Choose a day from 1 to 28.";
+      const seen: string[] = [];
+      for (const u of uses) {
+        u.errors = validate(u.fields, u.values);
+        const id = u.id.trim() || u.use;
+        if (seen.includes(id))
+          u.errors["__id"] = `Two uses of a Block need different ids ("${id}").`;
+        else if (u.id.trim() && !namePattern.test(u.id.trim()))
+          u.errors["__id"] = "The id has the wrong format.";
+        seen.push(id);
+      }
+    }
+    errors = e;
+    return (
+      Object.keys(e).length === 0 &&
+      Object.keys(guestErrors).length === 0 &&
+      (!build || uses.every((u) => Object.keys(u.errors).length === 0))
+    );
+  }
+
+  async function submit(ev: SubmitEvent) {
+    ev.preventDefault();
+    submitError = null;
+    if (!check()) {
+      queueMicrotask(() =>
+        (document.querySelector('[aria-invalid="true"]') as HTMLElement | null)?.focus(),
+      );
+      return;
+    }
+    const old = existing?.document.spec;
+    const spec: ImageSpec = {
+      ...(title.trim() ? { title: title.trim() } : {}),
+      type: "vm",
+      url: url.trim(),
+      sha256: sha.trim(),
+    };
+    if (build) {
+      spec.build = {
+        blocks: uses.map((u) => ({
+          use: u.use,
+          ...(u.id.trim() ? { id: u.id.trim() } : {}),
+          params: mergeParams(u.stored, u.fields, u.values),
+        })),
+        upgrade,
+        guest: mergeParams(old?.build?.guest ?? {}, guestFields, guest) as NonNullable<
+          ImageSpec["build"]
+        >["guest"],
+      };
+      spec.retention = { keep };
+      if (schedule) spec.schedule = schedule;
+    }
+    busy = true;
+    try {
+      const plan = await api.createPlan({
+        reason,
+        put: [{ kind: "Image", name: imageName, spec }],
+      });
+      go({ name: "plan", id: plan.id });
+    } catch (err) {
+      submitError = err;
+    } finally {
+      busy = false;
+    }
+  }
+
+  const desc = (id: string, err: string | undefined, hint = true) =>
+    [err ? `${id}-error` : "", hint ? `${id}-hint` : ""].filter(Boolean).join(" ") || undefined;
+</script>
+
+<h1 id="page-title" tabindex="-1">{editing ? `Edit image ${name}` : "New image"}</h1>
+<ProblemBox error={loadError} />
+{#if loaded}
+  <form onsubmit={submit} novalidate>
+    <fieldset>
+      <legend>Base image</legend>
+      <div class="grid">
+        <div class="field">
+          <label for="i-name"
+            >Name{#if !editing}<span aria-hidden="true"> *</span>{/if}</label
+          >
+          <input
+            id="i-name"
+            type="text"
+            bind:value={imageName}
+            readonly={editing}
+            required
+            aria-invalid={!!errors["name"]}
+            aria-describedby={desc("i-name", errors["name"], editing)}
+          />
+          {#if editing}<span class="hint" id="i-name-hint">The name cannot change.</span>{/if}
+          {#if errors["name"]}<span class="error" id="i-name-error">{errors["name"]}</span>{/if}
+        </div>
+        <div class="field">
+          <label for="i-title">Title (optional)</label>
+          <input id="i-title" type="text" bind:value={title} maxlength="100" />
+        </div>
+        <div class="field">
+          <span class="label">Type</span>
+          <span>Virtual machine</span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="i-url">Download address<span aria-hidden="true"> *</span></label>
+        <input
+          id="i-url"
+          type="text"
+          inputmode="url"
+          spellcheck="false"
+          bind:value={url}
+          required
+          placeholder="https://cloud.debian.org/images/cloud/…qcow2"
+          aria-invalid={!!fieldError("url", "/url")}
+          aria-describedby={desc("i-url", fieldError("url", "/url"))}
+        />
+        <span class="hint" id="i-url-hint">The official cloud image (qcow2 or img).</span>
+        {#if fieldError("url", "/url")}<span class="error" id="i-url-error"
+            >{fieldError("url", "/url")}</span
+          >{/if}
+      </div>
+      <div class="field">
+        <label for="i-sha">SHA-256 checksum<span aria-hidden="true"> *</span></label>
+        <input
+          id="i-sha"
+          type="text"
+          class="mono"
+          bind:value={sha}
+          required
+          spellcheck="false"
+          aria-invalid={!!fieldError("sha256", "/sha256")}
+          aria-describedby={desc("i-sha", fieldError("sha256", "/sha256"))}
+        />
+        <span class="hint" id="i-sha-hint">Plumb refuses any other file.</span>
+        {#if fieldError("sha256", "/sha256")}<span class="error" id="i-sha-error"
+            >{fieldError("sha256", "/sha256")}</span
+          >{/if}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Build</legend>
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            id="i-build"
+            bind:checked={build}
+            aria-describedby="i-build-hint"
+          />
+          Build templates from this image
+        </label>
+        <span class="hint" id="i-build-hint"
+          >Off: a stock image, imported as it is. On: Plumb makes versioned templates with the
+          Blocks below and fresh packages. Only a person can approve a change of the recipe, the
+          schedule or the retention.</span
+        >
+      </div>
+      {#if wasBuilt && !build}
+        <p class="banner warn" id="i-unbuild">
+          Without a build, the plan removes every built version of this image. Guests made from them
+          keep running.
+        </p>
+      {/if}
+    </fieldset>
+
+    {#if build}
+      <h2>Blocks</h2>
+      <p class="muted">
+        The build applies these Blocks before the template is made. A Block with a secret parameter
+        cannot be used: a template must hold no secret.
+      </p>
+      {#if secretBlocks.length}
+        <p class="muted" id="i-not-offered">
+          Not offered: <span class="mono">{secretBlocks.join(", ")}</span>.
+        </p>
+      {/if}
+      {#each uses as u (u.key)}
+        {@const b = blockByName(u.use)}
+        <fieldset>
+          <legend id="iuse-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend>
+          <div class="field">
+            <label for="iuse-{u.key}-id">Use id (optional)</label>
+            <input
+              id="iuse-{u.key}-id"
+              type="text"
+              bind:value={u.id}
+              placeholder={u.use}
+              aria-invalid={!!u.errors["__id"]}
+              aria-describedby={u.errors["__id"] ? `iuse-${u.key}-id-error` : undefined}
+            />
+            {#if u.errors["__id"]}<span class="error" id="iuse-{u.key}-id-error"
+                >{u.errors["__id"]}</span
+              >{/if}
+          </div>
+          {#if u.fields.length}
+            <SchemaFields
+              fields={u.fields}
+              bind:values={u.values}
+              errors={u.errors}
+              prefix="iuse-{u.key}"
+            />
+          {:else}
+            <p class="muted">This Block has no parameters.</p>
+          {/if}
+          <button type="button" class="btn danger" onclick={() => removeBlock(u.key)}>
+            Remove {b?.document.spec.title ?? u.use}
+          </button>
+        </fieldset>
+      {:else}
+        <p class="muted">No Blocks: the template is the base image with fresh packages.</p>
+      {/each}
+      <div class="row add">
+        <label for="add-choice" class="sr-only">Block to add</label>
+        <select id="add-choice" bind:value={addChoice}>
+          {#each usable as b (b.document.name)}
+            <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
+          {/each}
+        </select>
+        <button type="button" class="btn" id="add-block" onclick={addBlock}>Add Block</button>
+      </div>
+
+      <fieldset>
+        <legend>Build guest</legend>
+        <div class="field">
+          <label class="check">
+            <input
+              type="checkbox"
+              id="i-upgrade"
+              bind:checked={upgrade}
+              aria-describedby="i-upgrade-hint"
+            />
+            Upgrade all packages in the build
+          </label>
+          <span class="hint" id="i-upgrade-hint"
+            >On: every build installs what the package mirror serves at that time. apt checks the
+            signatures. Off: the packages of the base image.</span
+          >
+        </div>
+        <SchemaFields
+          fields={guestFields}
+          bind:values={guest}
+          errors={{
+            ...guestErrors,
+            ...(serverErrors["/put/0/spec/build/guest/disk"]
+              ? { disk: serverErrors["/put/0/spec/build/guest/disk"] }
+              : {}),
+          }}
+          prefix="i-guest"
+        />
+      </fieldset>
+
+      <fieldset>
+        <legend>Versions and schedule</legend>
+        <div class="grid">
+          <div class="field">
+            <label for="i-keep">Keep</label>
+            <input
+              id="i-keep"
+              type="number"
+              min="1"
+              max="20"
+              bind:value={keep}
+              aria-invalid={!!errors["keep"]}
+              aria-describedby={desc("i-keep", errors["keep"])}
+            />
+            <span class="hint" id="i-keep-hint"
+              >Newest ready versions that stay (1 … 20). One version takes about 1.4 GB (Debian) or
+              3.3 … 3.9 GB (Ubuntu).</span
+            >
+            {#if errors["keep"]}<span class="error" id="i-keep-error">{errors["keep"]}</span>{/if}
+          </div>
+          <div class="field">
+            <label for="i-every">Build on a schedule</label>
+            <select id="i-every" bind:value={every}>
+              <option value="none">No schedule</option>
+              <option value="day">Every day</option>
+              <option value="week">Every week</option>
+              <option value="month">Every month</option>
+            </select>
+          </div>
+          {#if every === "week"}
+            <div class="field">
+              <label for="i-weekday">Day of the week</label>
+              <select id="i-weekday" bind:value={weekday}>
+                {#each WEEKDAYS as d (d)}<option value={d}>{weekdayName(d)}</option>{/each}
+              </select>
+            </div>
+          {/if}
+          {#if every === "month"}
+            <div class="field">
+              <label for="i-day">Day of the month</label>
+              <input
+                id="i-day"
+                type="number"
+                min="1"
+                max="28"
+                bind:value={day}
+                aria-invalid={!!errors["day"]}
+                aria-describedby={desc("i-day", errors["day"])}
+              />
+              <span class="hint" id="i-day-hint">1 … 28, so every month has it.</span>
+              {#if errors["day"]}<span class="error" id="i-day-error">{errors["day"]}</span>{/if}
+            </div>
+          {/if}
+          {#if every !== "none"}
+            <div class="field">
+              <label for="i-at">Time (UTC)</label>
+              <input
+                id="i-at"
+                type="time"
+                bind:value={at}
+                aria-invalid={!!errors["at"]}
+                aria-describedby={desc("i-at", errors["at"])}
+              />
+              <span class="hint" id="i-at-hint"
+                >{nextBuild
+                  ? `Next build: ${nextBuild.toLocaleString()} (your local time).`
+                  : "HH:MM in UTC."}</span
+              >
+              {#if errors["at"]}<span class="error" id="i-at-error">{errors["at"]}</span>{/if}
+            </div>
+          {/if}
+        </div>
+        {#if every !== "none"}
+          <p class="muted">
+            A scheduled build runs with no click. A failed one does not try again before the next
+            slot.
+          </p>
+        {/if}
+      </fieldset>
+    {/if}
+
+    <h2>Review</h2>
+    <div class="field">
+      <label for="i-reason">Reason<span aria-hidden="true"> *</span></label>
+      <textarea
+        id="i-reason"
+        bind:value={reason}
+        required
+        aria-invalid={!!errors["reason"]}
+        aria-describedby={desc("i-reason", errors["reason"])}></textarea>
+      <span class="hint" id="i-reason-hint">Stored with the revision (provenance).</span>
+      {#if errors["reason"]}<span class="error" id="i-reason-error">{errors["reason"]}</span>{/if}
+    </div>
+    <ProblemBox error={submitError} />
+    <div class="row">
+      <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
+      <a
+        class="btn"
+        href={editing && name ? href({ name: "image", image: name }) : href({ name: "images" })}
+        >Cancel</a
+      >
+    </div>
+    <p class="muted">
+      Nothing changes until you approve the plan. A new or changed recipe builds a new version in
+      the Run of that plan.
+    </p>
+  </form>
+{:else if !loadError}
+  <p class="muted" aria-live="polite">Loading…</p>
+{/if}
+
+<style>
+  .add {
+    margin-bottom: var(--space-4);
+  }
+  legend:focus {
+    outline: 2px solid var(--color-accent);
+  }
+</style>

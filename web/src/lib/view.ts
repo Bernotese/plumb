@@ -209,14 +209,20 @@ export const CREATE_ONLY = ["ip", "gateway", "user", "ssh_keys", "disk"] as cons
 
 /** Applies one run.step event to a run snapshot; false when it does not fit. */
 export function applyStepEvent(
-  run: { id: number; targets: { target: string; steps: { resource: string; status: string }[] }[] },
+  run: {
+    id: number;
+    targets: { target: string; steps: { resource: string; status: string }[] }[];
+    images?: { image: string; steps: { resource: string; status: string }[] }[];
+  },
   e: { type: string; subject: string; data: Record<string, unknown> },
 ): boolean {
   if (e.type !== "run.step" || e.subject !== `run:${run.id}`) return false;
-  const d = e.data as { target?: string; resource?: string; status?: string };
-  const step = run.targets
-    .find((t) => t.target === d.target)
-    ?.steps.find((s) => s.resource === d.resource);
+  const d = e.data as { target?: string; image?: string; resource?: string; status?: string };
+  // A build lane (T-064) names its Image instead of a Target.
+  const lane = d.image
+    ? run.images?.find((i) => i.image === d.image)
+    : run.targets.find((t) => t.target === d.target);
+  const step = lane?.steps.find((s) => s.resource === d.resource);
   if (!step || !d.status) return false;
   step.status = d.status;
   return true;
