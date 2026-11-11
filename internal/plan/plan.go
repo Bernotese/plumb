@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -99,6 +100,13 @@ type ResourceChange struct {
 	// exist yet, so nobody could observe it. It is verified at the first
 	// apply after the first boot.
 	Unverified bool `json:"unverified,omitempty"`
+	// After are the resource ids that this resource comes after in the
+	// apply (wire.Resource.After, D-171). For display.
+	After []string `json:"after,omitempty"`
+	// RestartBy names, for a service with a planned restart, the resources
+	// of its restart_on list that cause it: they change in this Plan or
+	// nobody observed them (D-171). For display; the apply does not use it.
+	RestartBy []string `json:"restart_by,omitempty"`
 }
 
 // risk is the highest risk of a target plan.
@@ -156,6 +164,37 @@ type Engine struct {
 	busy    map[string]int              // targets with a running or starting Run
 	active  map[int64]bool              // Runs of this process
 	cache   *sensitiveCache
+	warned  map[string]bool // "revision/target": the cycle warning is in the log
+}
+
+// load reads a stored revision. A Target whose apply order has a cycle
+// loads (D-168); the log gets one warning per revision and Target.
+func (e *Engine) load(ctx context.Context, revision int64) (*state.Set, error) {
+	set, err := state.Load(ctx, e.st, revision)
+	if err != nil {
+		return nil, err
+	}
+	cycles := set.Cycles()
+	targets := make([]string, 0, len(cycles))
+	for t := range cycles {
+		targets = append(targets, t)
+	}
+	sort.Strings(targets)
+	for _, t := range targets {
+		key := fmt.Sprintf("%d/%s", revision, t)
+		e.mu.Lock()
+		seen := e.warned[key]
+		if e.warned == nil {
+			e.warned = map[string]bool{}
+		}
+		e.warned[key] = true
+		e.mu.Unlock()
+		if !seen {
+			e.log.Warn("the apply order of a Target has a cycle: its applies fail, and the next proposal must repair it",
+				"revision", revision, "target", t, "cycle", cycles[t])
+		}
+	}
+	return set, nil
 }
 
 // New returns an Engine. Close stops its Runs.
@@ -331,7 +370,7 @@ func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered
 	c := e.cache
 	e.mu.Unlock()
 	if c == nil || c.rev != head.ID {
-		set, err := state.Load(ctx, e.st, head.ID)
+		set, err := e.load(ctx, head.ID)
 		if err != nil {
 			return nil, err
 		}

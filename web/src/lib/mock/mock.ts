@@ -117,7 +117,7 @@ const keyAttr: Record<string, string> = {
 
 /**
  * Renders the Blocks of a Target into a flat resource list: Blocks, the
- * `after` check, `restarts`, overrides (D-168, D-172).
+ * `restarts`, overrides, the `after` check (D-168, D-172).
  * The mock has no cycle check (T-044 plan, section 9).
  */
 export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): Rendered[] {
@@ -149,9 +149,25 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
     uses.push({ block, useId: use.id ?? use.use, ids });
   }
   const byId = new Map(out.map((r) => [r.id, r]));
+  // `restarts` adds the ids of the use to restart_on of each named service (D-172).
+  for (const u of uses) {
+    for (const svc of u.block.spec.restarts ?? []) {
+      const s = byId.get(svc);
+      if (!s)
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `Block "${u.block.name}" (use "${u.useId}") restarts ${svc}, but ${svc} is not on this target; add the Block that provides it`,
+        );
+      const on = [...((s.attrs["restart_on"] as string[] | undefined) ?? [])];
+      for (const id of u.ids) if (id !== svc && !on.includes(id)) on.push(id);
+      s.attrs["restart_on"] = on;
+    }
+  }
+  // Target overrides replace rendered attributes ("Accept", raw mode, state: absent).
+  for (const r of out) r.attrs = { ...r.attrs, ...(spec.overrides?.[r.id] ?? {}) };
   // An `after` id must be on the Target and not in the same use (D-168).
-  // Ids do not depend on overrides, so this check runs first: a site
-  // without the nginx Block names package:nginx (T-044 plan, section 6).
   for (const u of uses) {
     for (const id of u.block.spec.after ?? []) {
       const who = `Block "${u.block.name}" (use "${u.useId}") comes after ${id}`;
@@ -171,24 +187,6 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
         );
     }
   }
-  // `restarts` adds the ids of the use to restart_on of each named service (D-172).
-  for (const u of uses) {
-    for (const svc of u.block.spec.restarts ?? []) {
-      const s = byId.get(svc);
-      if (!s)
-        throw problem(
-          "validation",
-          "Validation failed",
-          422,
-          `Block "${u.block.name}" (use "${u.useId}") restarts ${svc}, but ${svc} is not on this target; add the Block that provides it`,
-        );
-      const on = [...((s.attrs["restart_on"] as string[] | undefined) ?? [])];
-      for (const id of u.ids) if (id !== svc && !on.includes(id)) on.push(id);
-      s.attrs["restart_on"] = on;
-    }
-  }
-  // Target overrides replace rendered attributes ("Accept", raw mode, state: absent).
-  for (const r of out) r.attrs = { ...r.attrs, ...(spec.overrides?.[r.id] ?? {}) };
   return out;
 }
 

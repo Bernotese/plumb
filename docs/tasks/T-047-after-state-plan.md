@@ -1,6 +1,6 @@
 # T-047 – `after` and `restarts` in render and Plan
 
-- **Owner:** tbd (pl-lead assigns)   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa (T-051)
+- **Owner:** pl-architect   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa (T-051)
 - **Size:** M   · **Depends on:** T-046   · **Parent:** T-044
 
 ## Goal
@@ -28,3 +28,9 @@ A Block with `spec.after` or `spec.restarts` renders, bad names and cycles are s
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+pl-architect/T-047-after-state-plan · tests: `make lint test` → pass.
+Render: `restarts` (list stays `[]any`), overrides, schemas, `restart_on` check, `after` check, `wire.Order`. The T-046 guard is gone. `wire.RestartOn` reads the list in render, `plannedRestarts` and `RestartChange`.
+S3: `state.Load` keeps a stored cycle (`Set.Cycles`); the engine logs one warning per revision and Target (`Engine.load`); `Validate` refuses it. Tests: `TestLoadKeepsAStoredCycle`, `TestStoredCycleIsServedAndMustBeRepaired`.
+S2: `TestRestartsWithANewSecretBinding` (planned restart of D-160 with `restart_by`, Run succeeds). Plan fields: `TestPlanShowsAfterAndRestartBy`, `TestPlanShowsAfterOnANewTarget`, both checked against `api/openapi.yaml`.
+Review nits of T-046: the cycle hint names the order of the resources in a Block (N1); `RestartOn` returns a copy (N3). N4 (`minItems`) not taken: a contract change with no effect.
+Dev seed: `nginx-site` on `web2` (the e2e tests edit `web1`). Mutations (local): 6, all caught (PR text).

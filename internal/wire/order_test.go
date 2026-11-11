@@ -154,11 +154,11 @@ func TestOrderErrors(t *testing.T) {
 		{"after itself",
 			[]Resource{res("file:/a", "one", "file:/a")},
 			OrderCycle, []string{"file:/a"},
-			`apply order has a cycle: file:/a (use "one") waits for itself; check after, restarts and restart_on`},
+			`apply order has a cycle: file:/a (use "one") waits for itself; check after, restarts, restart_on and the order of the resources in each Block`},
 		{"after and after",
 			[]Resource{res("file:/a", "one", "file:/b"), res("file:/b", "two", "file:/a")},
 			OrderCycle, []string{"file:/a", "file:/b"},
-			`apply order has a cycle: file:/a (use "one") waits for file:/b (use "two"), which waits for file:/a; check after, restarts and restart_on`},
+			`apply order has a cycle: file:/a (use "one") waits for file:/b (use "two"), which waits for file:/a; check after, restarts, restart_on and the order of the resources in each Block`},
 		// A site that waits for the whole nginx use would wait for its last
 		// step, the service, and the service waits for the site (D-167).
 		{"after and restart_on",
@@ -168,7 +168,7 @@ func TestOrderErrors(t *testing.T) {
 				res("file:/site", "site", "service:nginx"),
 			},
 			OrderCycle, []string{"service:nginx", "file:/site"},
-			`apply order has a cycle: service:nginx (use "nginx") waits for file:/site (use "site"), which waits for service:nginx; check after, restarts and restart_on`},
+			`apply order has a cycle: service:nginx (use "nginx") waits for file:/site (use "site"), which waits for service:nginx; check after, restarts, restart_on and the order of the resources in each Block`},
 		// D-055: restart_on of a resource that is later in the same use.
 		{"restart_on later in its own use",
 			[]Resource{svc("service:x", "one", "file:/a"), res("file:/a", "one")},
@@ -185,7 +185,7 @@ func TestOrderErrors(t *testing.T) {
 				res("file:/free", "four"),
 			},
 			OrderCycle, []string{"file:/a", "file:/c2", "file:/c", "file:/b"},
-			`apply order has a cycle: file:/a (use "one") waits for file:/c2 (use "three"), which waits for file:/c (use "three"), which waits for file:/b (use "two"), which waits for file:/a; check after, restarts and restart_on`},
+			`apply order has a cycle: file:/a (use "one") waits for file:/c2 (use "three"), which waits for file:/c (use "three"), which waits for file:/b (use "two"), which waits for file:/a; check after, restarts, restart_on and the order of the resources in each Block`},
 	} {
 		edges, err := Order(tc.list)
 		var oe *OrderError
@@ -234,6 +234,15 @@ func TestRestartOn(t *testing.T) {
 		if got := RestartOn(r); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("RestartOn(%#v) = %#v, want %#v", tc.v, got, tc.want)
 		}
+	}
+	// The result is a copy: an append or a write does not reach the resource.
+	own := []string{"file:/a", "file:/b"}
+	r := Resource{Attrs: map[string]any{"restart_on": own[:1]}}
+	got := RestartOn(r)
+	got[0] = "file:/changed"
+	_ = append(got, "file:/more")
+	if !reflect.DeepEqual(own, []string{"file:/a", "file:/b"}) {
+		t.Errorf("RestartOn gave the slice of the caller: %v", own)
 	}
 	if got := RestartOn(Resource{}); got != nil {
 		t.Errorf("RestartOn of a resource without attrs = %#v", got)

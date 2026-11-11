@@ -55,7 +55,7 @@ func (e *Engine) base(ctx context.Context) (int64, *state.Set, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	set, err := state.Load(ctx, e.st, head.ID)
+	set, err := e.load(ctx, head.ID)
 	return head.ID, set, err
 }
 
@@ -253,11 +253,58 @@ func union(a, b []string) []string {
 // fresh are the resources with a new secret binding (D-156): they are not
 // observed before the approval.
 func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
-	tp := TargetPlan{Target: target}
 	r, err := renderOrNil(next, target)
 	if err != nil {
-		return tp, err
+		return TargetPlan{Target: target}, err
 	}
+	tp, err := e.planRendered(ctx, r, target, reenroll, fresh)
+	if err == nil && r != nil {
+		showOrder(&tp, r)
+	}
+	return tp, err
+}
+
+// showOrder adds what the Plan shows about the apply order (D-171): After
+// on a resource that waits, and RestartBy on a service with a planned
+// restart. A resource causes the restart when it is in restart_on of the
+// service and this Plan changes it: it has a change that is not a restart
+// itself (as in the agent, D-036), or it is unverified.
+func showOrder(tp *TargetPlan, r *state.Rendered) {
+	byID := map[string]wire.Resource{}
+	for _, res := range r.Resources {
+		byID[res.ID] = res
+	}
+	changed := map[string]bool{}
+	for _, rc := range tp.Resources {
+		if rc.Unverified || (len(rc.Changes) > 0 && rc.Action != wire.ActionRestart) {
+			changed[rc.Resource] = true
+		}
+	}
+	for i := range tp.Resources {
+		rc := &tp.Resources[i]
+		res, ok := byID[rc.Resource]
+		if !ok {
+			continue // guest:config
+		}
+		rc.After = append([]string(nil), res.After...)
+		restarts := false
+		for _, c := range rc.Changes {
+			restarts = restarts || c.Attr == wire.AttrRestart
+		}
+		if !restarts {
+			continue
+		}
+		for _, id := range wire.RestartOn(res) {
+			if changed[id] && id != rc.Resource {
+				rc.RestartBy = append(rc.RestartBy, id)
+			}
+		}
+	}
+}
+
+// planRendered plans one target from its render (nil: the Target is deleted).
+func (e *Engine) planRendered(ctx context.Context, r *state.Rendered, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
+	tp := TargetPlan{Target: target}
 	bind, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	exists := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -511,10 +558,9 @@ func plannedRestarts(tp *TargetPlan, r *state.Rendered, left []wire.Resource) {
 		if gone[res.ID] {
 			continue
 		}
-		list, _ := res.Attrs["restart_on"].([]any)
 		needs := false
-		for _, v := range list {
-			if id, _ := v.(string); gone[id] {
+		for _, id := range wire.RestartOn(res) {
+			if gone[id] {
 				needs = true
 			}
 		}

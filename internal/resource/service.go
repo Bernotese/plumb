@@ -60,7 +60,7 @@ func RestartChange(svc wire.Resource, changed []string) (wire.Change, bool) {
 	if svc.Type != "service" {
 		return wire.Change{}, false
 	}
-	for _, id := range toStrings(svc.Attrs["restart_on"]) {
+	for _, id := range wire.RestartOn(svc) {
 		for _, c := range changed {
 			if c == id {
 				return wire.Change{Attr: wire.AttrRestart, Risk: wire.RiskDisruptive}, true

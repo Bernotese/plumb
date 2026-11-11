@@ -2,7 +2,9 @@ kind: Block
 name: nginx
 spec:
   title: Nginx web server
-  description: Install Nginx and overwrite the distro default site. Set default_site to absent to disable it. Changes restart Nginx (not reload).
+  description: >-
+    Install Nginx and overwrite the distro default site. Set default_site to absent to disable it.
+    Changes restart Nginx (not reload). Add more sites with the nginx-site Block.
   params:
     type: object
     properties:

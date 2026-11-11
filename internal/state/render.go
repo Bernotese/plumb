@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -21,8 +22,12 @@ type Rendered struct {
 	// defaults. The driver handles it, not the agent. Its Block is empty.
 	Guest wire.Resource `json:"guest"`
 	// Resources are the resources that the agent applies, in Block order
-	// and, inside a Block, in the listed order.
+	// and, inside a Block, in the listed order. The first resource of a
+	// use whose Block has spec.after carries the ids in After (D-169).
 	Resources []wire.Resource `json:"resources"`
+	// cycle is the text of an apply-order cycle in a stored revision
+	// (D-168); see Set.Cycles.
+	cycle string
 }
 
 // All returns guest:config followed by the agent resources.
@@ -31,8 +36,9 @@ func (r *Rendered) All() []wire.Resource {
 }
 
 // Render renders one Target of the set into its flat resource list:
-// value templates over the Block parameters, then the overrides. The
-// limits of the Set apply. The error is of type Errors.
+// value templates over the Block parameters, the restarts of the Blocks
+// (D-172), then the overrides; then the checks, and the apply order last
+// (D-168). The limits of the Set apply. The error is of type Errors.
 func (s *Set) Render(target string) (*Rendered, error) { return s.render(target, nil) }
 
 // render renders one Target. total is the shared budget of a Validate
@@ -60,7 +66,9 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	nonce := newNonce()          // markers of this render only (D-088)
 	where := map[string]string{} // resource id → path of its origin
 	byID := map[string]*wire.Resource{}
+	first := make([]int, len(t.Blocks)+1) // use i has out.Resources[first[i]:first[i+1]]
 	for i, use := range t.Blocks {
+		first[i] = len(out.Resources)
 		b := s.blocks[use.Use]
 		params := templateData(withDefaults(use.Params, b.defaults)).(map[string]any)
 		for p := range b.secrets {
@@ -109,8 +117,43 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 			out.Resources = append(out.Resources, wire.Resource{ID: id, Type: br.Type, Block: use.id(), Attrs: am})
 		}
 	}
+	first[len(t.Blocks)] = len(out.Resources)
 	for i := range out.Resources {
 		byID[out.Resources[i].ID] = &out.Resources[i]
+	}
+
+	// restarts (D-172): the resources of a use go into restart_on of the
+	// services that its Block names, in Target order. This runs before the
+	// overrides, so an override of restart_on still replaces the full list
+	// (D-053). The list keeps its JSON form ([]any of strings): the checks
+	// below and the Plan read it like a list from a Block.
+	for i, use := range t.Blocks {
+		for _, id := range s.blocks[use.Use].restarts {
+			svc, ok := byID[id]
+			if !ok {
+				return nil, errf(ptr("/spec/blocks", i),
+					"Block %q (use %q) restarts %s, but %s is not on this target; add the Block that provides it",
+					use.Use, use.id(), id, id)
+			}
+			list, isList := svc.Attrs["restart_on"].([]any)
+			if _, has := svc.Attrs["restart_on"]; has && !isList {
+				continue // not a list: the type schema reports it below
+			}
+			have := map[string]bool{svc.ID: true} // never the service itself
+			for _, v := range list {
+				if s, ok := v.(string); ok {
+					have[s] = true
+				}
+			}
+			list = append([]any(nil), list...)
+			for _, r := range out.Resources[first[i]:first[i+1]] {
+				if !have[r.ID] {
+					have[r.ID] = true
+					list = append(list, r.ID)
+				}
+			}
+			svc.Attrs["restart_on"] = list
+		}
 	}
 	byID[wire.GuestConfigID] = &out.Guest
 
@@ -178,14 +221,51 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 
 	// restart_on must name resources of this target that the agent applies.
 	for _, r := range out.Resources {
-		list, _ := r.Attrs["restart_on"].([]any)
-		for k, v := range list {
-			id, _ := v.(string)
+		for k, id := range wire.RestartOn(r) {
 			if _, ok := byID[id]; !ok || id == wire.GuestConfigID || id == r.ID {
 				return nil, errf("/spec/blocks", "resource %s from %s: restart_on/%d: %q is not another resource on this target",
 					r.ID, where[r.ID], k, id)
 			}
 		}
+	}
+
+	// after (D-167, D-168): each id is a resource of this target that the
+	// agent applies, from another use. The first resource of the use
+	// carries the ids; the rest of the use follows by the listed order.
+	for i, use := range t.Blocks {
+		after := s.blocks[use.Use].after
+		if len(after) == 0 {
+			continue
+		}
+		own := map[string]bool{}
+		for _, r := range out.Resources[first[i]:first[i+1]] {
+			own[r.ID] = true
+		}
+		for _, id := range after {
+			switch _, ok := byID[id]; {
+			case !ok || id == wire.GuestConfigID:
+				return nil, errf(ptr("/spec/blocks", i),
+					"Block %q (use %q) comes after %s, but %s is not on this target; add the Block that provides it",
+					use.Use, use.id(), id, id)
+			case own[id]:
+				return nil, errf(ptr("/spec/blocks", i),
+					"Block %q (use %q) comes after %s, which is its own resource; resources of one Block already apply in the listed order",
+					use.Use, use.id(), id)
+			}
+		}
+		out.Resources[first[i]].After = append([]string(nil), after...)
+	}
+
+	// The apply order must exist: no cycle through the listed order of a
+	// use, restart_on and after. wire.Order is the rule that the agent uses
+	// too (D-168). A stored revision from before this check keeps its
+	// cycle, so that it loads and a proposal can repair it.
+	if _, err := wire.Order(out.Resources); err != nil {
+		var oe *wire.OrderError
+		if !s.stored || !errors.As(err, &oe) || oe.Reason != wire.OrderCycle {
+			return nil, errf("/spec/blocks", "%v", err)
+		}
+		out.cycle = err.Error()
 	}
 	return out, nil
 }

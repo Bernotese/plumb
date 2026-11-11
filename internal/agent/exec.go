@@ -93,20 +93,37 @@ func (a *Agent) observe(ctx context.Context, list []wire.Resource) []wire.Item {
 	return items
 }
 
-// step is one resource of an apply.
+// step is one resource of an apply. Its waits come from wire.Order and keep
+// their kind apart (D-170): only restartDeps can restart a service.
 type step struct {
-	r       wire.Resource
-	after   []*step       // restart_on resources of this apply
-	done    chan struct{} // closed when the step ended
-	changed bool          // the step applied changes (read after done)
-	item    wire.Item
+	r           wire.Resource
+	needs       []*step       // after: runs only when each ended unchanged or applied
+	restartDeps []*step       // restart_on: waits; restarts when one changed; runs also when one failed
+	done        chan struct{} // closed when the step ended
+	changed     bool          // the step applied changes (read after done)
+	item        wire.Item
 }
 
-// apply answers an apply command. Resources of one Block run in the listed
-// order; Blocks run in parallel. A service waits for its restart_on
-// resources and restarts once when one of them changed. Every resource is
-// observed again; a change above max_risk is refused and nothing of it is
-// applied. After a failed or refused step, the rest of its Block is skipped.
+// succeeded reports whether a step that ended lets the steps after it run.
+func succeeded(st wire.Status) bool { return st == wire.StatusUnchanged || st == wire.StatusApplied }
+
+// skipped is the item of a step that did not run. The output names the
+// cause, so no skipped row is empty (D-170, N1).
+func skipped(s *step, cause string) wire.Item {
+	return wire.Item{Resource: s.r.ID, Status: wire.StatusSkipped, Output: "not applied: " + cause}
+}
+
+// apply answers an apply command. Each Block use runs in its listed order,
+// in its own goroutine; uses wait for each other only through after and
+// restart_on (wire.Order, D-168). A step with after waits for those steps
+// and runs only when each ended unchanged or applied; else it is skipped. A
+// service waits for its restart_on resources, restarts once when one of
+// them changed, and still runs when one failed. Every resource is observed
+// again; a change above max_risk is refused and nothing of it is applied.
+// After a step that failed, was refused or was skipped, the rest of its use
+// is skipped. When ctx ends during a wait, the waiting step and the rest of
+// its use are skipped, and apply returns: every goroutine of the apply has
+// ended when it returns.
 func (a *Agent) apply(ctx context.Context, cmdID string, body wire.ApplyBody) ([]wire.Item, error) {
 	steps, blocks, err := plan(body.Resources)
 	if err != nil {
@@ -132,14 +149,15 @@ func (a *Agent) apply(ctx context.Context, cmdID string, body wire.ApplyBody) ([
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			failed := false
+			cause := "" // set by the first step of the use that did not succeed
 			for _, s := range block {
-				if failed {
-					s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusSkipped}
+				if cause != "" {
+					s.item = skipped(s, cause)
 				} else {
 					a.applyStep(ctx, s, body.MaxRisk, planned)
-					st := s.item.Status
-					failed = st == wire.StatusFailed || st == wire.StatusRefused
+					if st := s.item.Status; !succeeded(st) {
+						cause = fmt.Sprintf("%s was %s", s.r.ID, st)
+					}
 				}
 				close(s.done)
 				a.progress(ctx, cmdID, s.item)
@@ -184,12 +202,28 @@ func plannedByID(body wire.ApplyBody) (map[string]wire.Planned, error) {
 // nothing of the resource changes. The agent never fixes a difference that
 // the Plan does not show; the drift check reports it.
 func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk, planned map[string]wire.Planned) {
-	var changedBefore []string
-	for _, dep := range s.after {
+	// wait returns false when ctx ends first; the step is then skipped.
+	wait := func(dep *step) bool {
 		select {
 		case <-dep.done:
+			return true
 		case <-ctx.Done():
-			s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusSkipped}
+			s.item = skipped(s, "the apply ended while this resource waited for "+dep.r.ID)
+			return false
+		}
+	}
+	for _, dep := range s.needs {
+		if !wait(dep) {
+			return
+		}
+		if st := dep.item.Status; !succeeded(st) {
+			s.item = skipped(s, fmt.Sprintf("%s was %s", dep.r.ID, st))
+			return
+		}
+	}
+	var changedBefore []string
+	for _, dep := range s.restartDeps {
+		if !wait(dep) {
 			return
 		}
 		if dep.changed {
@@ -236,20 +270,21 @@ func (a *Agent) progress(ctx context.Context, cmdID string, item wire.Item) {
 	}
 }
 
-// plan builds the steps of an apply: blocks in order of first appearance,
-// restart_on links, and a check for duplicate ids and for cycles (a service
-// that waits for a resource that waits for the service would never run).
+// plan builds the steps of an apply from wire.Order, the one rule for the
+// apply order (D-168): Block uses in order of first appearance, and the
+// after and restart_on waits of each step. A duplicate id, an unknown after
+// id or a cycle fails the apply before anything runs.
 func plan(list []wire.Resource) ([]*step, [][]*step, error) {
+	edges, err := wire.Order(list)
+	if err != nil {
+		return nil, nil, err
+	}
 	steps := make([]*step, len(list))
-	byID := map[string]*step{}
 	var blocks [][]*step
 	blockIdx := map[string]int{}
 	for i, r := range list {
-		if byID[r.ID] != nil {
-			return nil, nil, fmt.Errorf("resource %s is listed twice", r.ID)
-		}
 		s := &step{r: r, done: make(chan struct{})}
-		steps[i], byID[r.ID] = s, s
+		steps[i] = s
 		bi, ok := blockIdx[r.Block]
 		if !ok {
 			bi = len(blocks)
@@ -258,73 +293,17 @@ func plan(list []wire.Resource) ([]*step, [][]*step, error) {
 		}
 		blocks[bi] = append(blocks[bi], s)
 	}
-	// A step waits for the step before it in its Block and for its
-	// restart_on resources. Find cycles in that graph.
-	wait := map[*step][]*step{}
-	for _, block := range blocks {
-		for i, s := range block {
-			if i > 0 {
-				wait[s] = append(wait[s], block[i-1])
-			}
-		}
-	}
-	for _, s := range steps {
-		if s.r.Type != "service" {
-			continue
-		}
-		for _, id := range restartOn(s.r) {
-			if dep := byID[id]; dep != nil && dep != s {
-				s.after = append(s.after, dep)
-				wait[s] = append(wait[s], dep)
-			}
-		}
-	}
-	const (
-		white = iota
-		grey
-		black
-	)
-	color := map[*step]int{}
-	var visit func(*step) error
-	visit = func(s *step) error {
-		color[s] = grey
-		for _, d := range wait[s] {
-			switch color[d] {
-			case grey:
-				return fmt.Errorf("resource %s must run after %s, which runs after it (Block order and restart_on form a cycle)", s.r.ID, d.r.ID)
-			case white:
-				if err := visit(d); err != nil {
-					return err
-				}
-			}
-		}
-		color[s] = black
-		return nil
-	}
-	for _, s := range steps {
-		if color[s] == white {
-			if err := visit(s); err != nil {
-				return nil, nil, err
+	for i, s := range steps {
+		for _, e := range edges[i] {
+			switch e.Kind {
+			case wire.EdgeAfter:
+				s.needs = append(s.needs, steps[e.To])
+			case wire.EdgeRestart:
+				s.restartDeps = append(s.restartDeps, steps[e.To])
+			case wire.EdgeBlock:
+				// The goroutine of the use runs its steps in order.
 			}
 		}
 	}
 	return steps, blocks, nil
-}
-
-// restartOn returns the restart_on list of a service ([]any from JSON or
-// []string from Go).
-func restartOn(r wire.Resource) []string {
-	switch v := r.Attrs["restart_on"].(type) {
-	case []string:
-		return v
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, e := range v {
-			if s, ok := e.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	return nil
 }

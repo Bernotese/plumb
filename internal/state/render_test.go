@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files in testdata/golden")
@@ -193,20 +196,193 @@ func TestValidateReferences(t *testing.T) {
 	})
 }
 
-// The schema has spec.after and spec.restarts (T-046), render does not use
-// them yet. Until T-047 a Block with one of them cannot be saved, so no
-// state says "after" and then applies in parallel.
-func TestAfterAndRestartsNotAvailableYet(t *testing.T) {
-	site := func(extra string) Doc {
-		return doc(KindBlock, "site", `{`+extra+`"resources":[{"file":{"path":"/site","content":"x"}}]}`)
+// Blocks for the order tests (D-167 … D-173): a small nginx and a site that
+// comes after its package and restarts its service.
+const (
+	nginxB = `{"resources":[{"package":{"name":"nginx"}},{"file":{"path":"/etc/nginx/default","content":"d"}},` +
+		`{"service":{"name":"nginx","restart_on":["file:/etc/nginx/default"]}}]}`
+	siteB = `{"params":{"type":"object","properties":{"name":{"type":"string","default":"site"}}},` +
+		`"after":["package:nginx"],"restarts":["service:nginx"],"resources":[` +
+		`{"file":{"path":"/etc/nginx/{{ .name }}","content":"s"}},` +
+		`{"symlink":{"path":"/etc/nginx/on-{{ .name }}","target":"/etc/nginx/{{ .name }}"}}]}`
+	sitesAB = `{"use":"site","id":"site-a","params":{"name":"a"}},{"use":"site","id":"site-b","params":{"name":"b"}}`
+)
+
+func orderFixture(extra ...Doc) []Doc {
+	return append(fixture(doc(KindBlock, "nginx", nginxB), doc(KindBlock, "site", siteB)), extra...)
+}
+
+func renderT1(t *testing.T, docs []Doc) *Rendered {
+	t.Helper()
+	set, err := Validate(docs)
+	if err != nil {
+		t.Fatal(err)
 	}
-	wantErr(t, fixture(site(`"after":["file:/etc/motd"],`)), "/spec/after", "not available yet")
-	wantErr(t, fixture(site(`"restarts":["service:nginx"],`)), "/spec/restarts", "not available yet")
-	for _, extra := range []string{``, `"after":[],"restarts":[],`} {
-		if _, err := Validate(fixture(site(extra))); err != nil {
-			t.Errorf("Block with %q: %v", extra, err)
+	r, err := set.Render("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func resourceOf(t *testing.T, r *Rendered, id string) wire.Resource {
+	t.Helper()
+	for _, res := range r.Resources {
+		if res.ID == id {
+			return res
 		}
 	}
+	t.Fatalf("no resource %s", id)
+	return wire.Resource{}
+}
+
+// D-167, D-169, D-172: after goes to the first resource of each use,
+// restarts go into restart_on of the service, and the Target order of the
+// uses does not change the apply order.
+func TestAfterAndRestartsRender(t *testing.T) {
+	for name, blocks := range map[string]string{
+		"nginx first": `"blocks":[{"use":"nginx"},` + sitesAB + `]`,
+		"sites first": `"blocks":[` + sitesAB + `,{"use":"nginx"}]`,
+	} {
+		r := renderT1(t, orderFixture(target(blocks)))
+		for _, res := range r.Resources {
+			var want []string
+			if res.ID == "file:/etc/nginx/a" || res.ID == "file:/etc/nginx/b" {
+				want = []string{"package:nginx"}
+			}
+			if !reflect.DeepEqual(res.After, want) {
+				t.Errorf("%s: %s has after %v, want %v", name, res.ID, res.After, want)
+			}
+		}
+		// The JSON form ([]any), as from a Block: the restart_on check
+		// and plan.plannedRestarts read it (review S2).
+		got, isAny := resourceOf(t, r, "service:nginx").Attrs["restart_on"].([]any)
+		want := []any{"file:/etc/nginx/default", "file:/etc/nginx/a", "symlink:/etc/nginx/on-a", "file:/etc/nginx/b", "symlink:/etc/nginx/on-b"}
+		if !isAny || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: restart_on = %#v, want %#v", name, resourceOf(t, r, "service:nginx").Attrs["restart_on"], want)
+		}
+		edges, err := wire.Order(r.Resources)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for i, res := range r.Resources {
+			if res.ID != "file:/etc/nginx/a" {
+				continue
+			}
+			if len(edges[i]) != 1 || edges[i][0].Kind != wire.EdgeAfter || r.Resources[edges[i][0].To].ID != "package:nginx" {
+				t.Errorf("%s: the site waits for %+v, want only after package:nginx", name, edges[i])
+			}
+		}
+	}
+	// The template of the Block is not changed by a render: a second
+	// Target gets its own list.
+	set, err := Validate(orderFixture(
+		target(`"blocks":[{"use":"nginx"},`+sitesAB+`]`),
+		doc(KindTarget, "t2", `{"type":"vm","image":"img",`+guest+`,"blocks":[{"use":"nginx"}]}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		r, err := set.Render("t2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := wire.RestartOn(resourceOf(t, r, "service:nginx")); !reflect.DeepEqual(got, []string{"file:/etc/nginx/default"}) {
+			t.Errorf("t2 restart_on = %v", got)
+		}
+	}
+}
+
+func TestRestartsRules(t *testing.T) {
+	t.Run("service without restart_on gets the list", func(t *testing.T) {
+		plain := doc(KindBlock, "nginx", `{"resources":[{"package":{"name":"nginx"}},{"service":{"name":"nginx"}}]}`)
+		r := renderT1(t, append(fixture(plain, doc(KindBlock, "site", siteB)), target(`"blocks":[{"use":"nginx"},{"use":"site"}]`)))
+		want := []string{"file:/etc/nginx/site", "symlink:/etc/nginx/on-site"}
+		if got := wire.RestartOn(resourceOf(t, r, "service:nginx")); !reflect.DeepEqual(got, want) {
+			t.Errorf("restart_on = %v, want %v", got, want)
+		}
+	})
+	t.Run("skips the service itself and ids that are in the list", func(t *testing.T) {
+		own := doc(KindBlock, "own", `{"restarts":["service:x"],"resources":[{"file":{"path":"/a","content":"a"}},{"file":{"path":"/b","content":"b"}},`+
+			`{"service":{"name":"x","restart_on":["file:/b"]}}]}`)
+		r := renderT1(t, fixture(own, target(`"blocks":[{"use":"own"}]`)))
+		if got := wire.RestartOn(resourceOf(t, r, "service:x")); !reflect.DeepEqual(got, []string{"file:/b", "file:/a"}) {
+			t.Errorf("restart_on = %v", got)
+		}
+	})
+	t.Run("an override of restart_on replaces the full list", func(t *testing.T) {
+		r := renderT1(t, orderFixture(target(`"blocks":[{"use":"nginx"},`+sitesAB+`],"overrides":{"service:nginx":{"restart_on":["file:/etc/nginx/a"]}}`)))
+		if got := wire.RestartOn(resourceOf(t, r, "service:nginx")); !reflect.DeepEqual(got, []string{"file:/etc/nginx/a"}) {
+			t.Errorf("restart_on = %v", got)
+		}
+	})
+	t.Run("the service is not on the target", func(t *testing.T) {
+		wantErr(t, orderFixture(target(`"blocks":[{"use":"motd"},{"use":"site","id":"site-a"}]`)), "/spec/blocks/1",
+			`Block "site" (use "site-a") restarts service:nginx, but service:nginx is not on this target; add the Block that provides it`)
+	})
+	t.Run("a bad id in the merged list still fails the restart_on check", func(t *testing.T) {
+		bad := doc(KindBlock, "nginx", `{"resources":[{"package":{"name":"nginx"}},{"service":{"name":"nginx","restart_on":["file:/nope"]}}]}`)
+		wantErr(t, append(fixture(bad, doc(KindBlock, "site", siteB)), target(`"blocks":[{"use":"nginx"},{"use":"site"}]`)),
+			"/spec/blocks", `restart_on/0: "file:/nope" is not another resource`)
+	})
+	t.Run("restart_on that is no list is a schema error, not a panic", func(t *testing.T) {
+		bad := doc(KindBlock, "nginx", `{"resources":[{"package":{"name":"nginx"}},{"service":{"name":"nginx","restart_on":"file:/x"}}]}`)
+		wantErr(t, append(fixture(bad, doc(KindBlock, "site", siteB)), target(`"blocks":[{"use":"nginx"},{"use":"site"}]`)),
+			"/spec/blocks", "restart_on")
+	})
+}
+
+// The save-time errors of after (D-168, plan section 2).
+func TestAfterRules(t *testing.T) {
+	block := func(name, spec string) Doc { return doc(KindBlock, name, spec) }
+	t.Run("unknown resource type", func(t *testing.T) {
+		wantErr(t, fixture(block("b", `{"after":["nosuch:x"],"resources":[{"file":{"path":"/b","content":"b"}}]}`)),
+			"/spec/after/0", `after: "nosuch:x" has no known resource type`)
+	})
+	t.Run("guest:config is no agent resource", func(t *testing.T) {
+		wantErr(t, fixture(block("b", `{"after":["file:/etc/motd","guest:config"],"resources":[{"file":{"path":"/b","content":"b"}}]}`)),
+			"/spec/after/1", `after: "guest:config" has no known resource type`)
+	})
+	t.Run("the id is not on the target", func(t *testing.T) {
+		wantErr(t, orderFixture(
+			doc(KindBlock, "plain", `{"resources":[{"service":{"name":"nginx"}}]}`),
+			target(`"blocks":[{"use":"plain"},{"use":"site","id":"site-a"}]`)), "/spec/blocks/1",
+			`Block "site" (use "site-a") comes after package:nginx, but package:nginx is not on this target; add the Block that provides it`)
+	})
+	t.Run("the id is a resource of the same use", func(t *testing.T) {
+		wantErr(t, fixture(
+			block("x", `{"after":["file:/a"],"resources":[{"file":{"path":"/b","content":"b"}},{"file":{"path":"/a","content":"a"}}]}`),
+			target(`"blocks":[{"use":"x"}]`)), "/spec/blocks/0",
+			`Block "x" (use "x") comes after file:/a, which is its own resource; resources of one Block already apply in the listed order`)
+	})
+	t.Run("a Block that no Target uses needs no resource", func(t *testing.T) {
+		if _, err := Validate(orderFixture()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("after the service that the Block restarts is a cycle", func(t *testing.T) {
+		// Why after names package:nginx and not the nginx use (D-167).
+		bad := block("site", `{"after":["service:nginx"],"restarts":["service:nginx"],"resources":[{"file":{"path":"/etc/nginx/s","content":"s"}}]}`)
+		wantErr(t, append(fixture(block("nginx", nginxB), bad), target(`"blocks":[{"use":"nginx"},{"use":"site"}]`)), "/spec/blocks",
+			`apply order has a cycle: service:nginx (use "nginx") waits for file:/etc/nginx/s (use "site"), which waits for service:nginx; check after, restarts, restart_on and the order of the resources in each Block`)
+	})
+	t.Run("two Blocks after each other are a cycle", func(t *testing.T) {
+		wantErr(t, fixture(
+			block("a", `{"after":["file:/b"],"resources":[{"file":{"path":"/a","content":"a"}}]}`),
+			block("b", `{"after":["file:/a"],"resources":[{"file":{"path":"/b","content":"b"}}]}`),
+			target(`"blocks":[{"use":"a"},{"use":"b"}]`)), "/spec/blocks",
+			`apply order has a cycle: file:/a (use "a") waits for file:/b (use "b"), which waits for file:/a`)
+	})
+	t.Run("restart_on of a later resource in its own Block is a cycle at save time", func(t *testing.T) {
+		// Until D-168 only the agent refused this, at the apply (D-055).
+		wantErr(t, fixture(
+			block("svc", `{"resources":[{"service":{"name":"x","restart_on":["file:/late"]}},{"file":{"path":"/late","content":"l"}}]}`),
+			target(`"blocks":[{"use":"svc"}]`)), "/spec/blocks", "apply order has a cycle: service:x")
+	})
+	t.Run("an override cannot set after", func(t *testing.T) {
+		wantErr(t, orderFixture(target(`"blocks":[{"use":"nginx"},{"use":"site"}],"overrides":{"file:/etc/nginx/site":{"after":["file:/etc/motd"]}}`)),
+			"/spec/blocks", "has overrides")
+	})
 }
 
 func TestParamDefaults(t *testing.T) {
