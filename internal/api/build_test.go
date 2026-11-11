@@ -476,3 +476,14 @@ func TestUnusedImportsKeepRunningBuild(t *testing.T) {
 		t.Fatalf("after the build: %s", body)
 	}
 }
+
+// The build Plan and the Image status show the limit and the reserved
+// bytes of the disk gate (T-074), not a constant.
+func TestBuildPlanShowsDiskGate(t *testing.T) {
+	e := newEnv(t, false, withBuilds, func(c *plan.Config) { c.DiskLimitPercent = 90 })
+	adm := e.admin()
+	_, body := e.plan(adm, map[string]any{"reason": "image", "put": builtImageDoc("web", "hi")}, 201)
+	if !strings.Contains(body, `"limit_percent":90`) || !strings.Contains(body, `"reserved_bytes":0`) {
+		t.Fatalf("plan disk: %s", body)
+	}
+}

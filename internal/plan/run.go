@@ -469,7 +469,7 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		}
 		// T-074: the full disk counts until the clone is done; then the
 		// real use that the driver reads counts.
-		release, err := e.disk.Reserve(ctx, int64(spec.DiskGB)*GiB, fmt.Sprintf("the %d GiB disk of %s", spec.DiskGB, tp.Target))
+		release, err := e.disk.Reserve(ctx, DiskBytes(spec.DiskGB), fmt.Sprintf("the %d GiB disk of %s", spec.DiskGB, tp.Target))
 		if err != nil {
 			return res, fmt.Errorf("%w; nothing was made: free space on the storage or choose a smaller disk", err)
 		}

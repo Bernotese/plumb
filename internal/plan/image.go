@@ -19,7 +19,6 @@ import (
 // its recipe, schedule or retention (D-201).
 const HumanOnlyImageRecipe = "image-recipe"
 
-
 // ErrStockImage is wrapped when a build is asked for an Image without
 // spec.build.
 var ErrStockImage = errors.New("the Image has no build part; it is a stock image")
@@ -225,8 +224,8 @@ func (e *Engine) planRemovals(ctx context.Context, name string, versions []store
 // diskUse reads the disk storage for the Plan of a build (D-203). The
 // notes say what the person who approves must know: the use is unknown,
 // or the thin-pool metadata use is unknown (T-061 review). The check
-// before the build is the disk gate of T-074 (part B); ReservedBytes comes
-// from it then.
+// before the build is the disk gate of T-074 (part B); the limit and the
+// reserved bytes come from it.
 func (e *Engine) diskUse(ctx context.Context, image string, diskGB int) (*DiskUse, []string) {
 	ds, err := e.cfg.Driver.DiskSpace(ctx)
 	if errors.Is(err, driver.ErrNotImplemented) {
@@ -238,7 +237,7 @@ func (e *Engine) diskUse(ctx context.Context, image string, diskGB int) (*DiskUs
 	u := &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes,
 		ReservedBytes: e.disk.Reserved(), LimitPercent: e.disk.Limit()}
 	var notes []string
-	if err := e.disk.Check(ctx, int64(diskGB)*GiB, fmt.Sprintf("the %d GiB build disk of Image %s", diskGB, image)); err != nil {
+	if err := e.disk.Check(ctx, DiskBytes(diskGB), fmt.Sprintf("the %d GiB build disk of Image %s", diskGB, image)); err != nil {
 		notes = append(notes, fmt.Sprintf("The build would not start now: %v.", err))
 	}
 	if !ds.MetaKnown {
@@ -326,7 +325,6 @@ func (e *Engine) ProposeBuild(ctx context.Context, image, trigger, reason, autho
 		map[string]any{"origin": OriginBuild, "risk": wire.RiskReversible, "images": []string{image}})
 	return p, nil
 }
-
 
 // recipeStale reports whether a recipe of the image part differs at set.
 func recipeStale(set *state.Set, images []ImagePlan) (bool, error) {

@@ -132,7 +132,7 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		s.set(ctx, wire.GuestConfigID, wire.StatusFailed, nil, err.Error())
 		return false
 	}
-	release, err := e.disk.Reserve(ctx, int64(spec.DiskGB)*GiB, fmt.Sprintf("the %d GiB build disk of Image %s v%d", spec.DiskGB, l.image, v.Version))
+	release, err := e.disk.Reserve(ctx, DiskBytes(spec.DiskGB), fmt.Sprintf("the %d GiB build disk of Image %s v%d", spec.DiskGB, l.image, v.Version))
 	if err != nil {
 		s.set(ctx, wire.GuestConfigID, wire.StatusFailed, nil, fmt.Sprintf("%v; nothing was made", err))
 		return false
@@ -508,7 +508,7 @@ func (e *Engine) newestVersion(ctx context.Context, image string) (driver.ImageR
 		}
 		return ref, v.Version, nil
 	}
-	return "", 0, fmt.Errorf("Image %s has no ready version; build the Image first", image)
+	return "", 0, fmt.Errorf("the Image %s has no ready version; build the Image first", image)
 }
 
 // --- recover (S4) ---

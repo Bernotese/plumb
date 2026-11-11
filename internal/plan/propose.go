@@ -642,7 +642,7 @@ func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPl
 		if err != nil {
 			continue
 		}
-		total += int64(disk) * GiB
+		total = addBytes(total, DiskBytes(disk))
 		n++
 	}
 	if n == 0 {

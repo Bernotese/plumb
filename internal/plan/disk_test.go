@@ -3,9 +3,11 @@ package plan
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
 )
@@ -123,5 +125,65 @@ func TestDiskGateMetadataAndErrors(t *testing.T) {
 	}
 	if g.Reserved() != 0 {
 		t.Error("a refusal reserved")
+	}
+}
+
+// Review S1: a disk whose bytes do not fit in an int64, and sums that
+// would wrap, never pass the gate.
+func TestDiskGateHugeDiskFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	drv := &diskDriver{ds: driver.DiskSpace{Storage: "local-lvm", TotalBytes: 100 * GiB, UsedBytes: 1 * GiB}}
+	g := NewDiskGate(drv, 0)
+	huge := int(math.MaxInt64/GiB) + 1 // int64(huge)*GiB would wrap negative
+	if got := DiskBytes(huge); got != math.MaxInt64 {
+		t.Fatalf("DiskBytes(%d) = %d, want MaxInt64", huge, got)
+	}
+	if _, err := g.Reserve(ctx, DiskBytes(huge), "the huge disk"); !errors.Is(err, ErrDiskFull) {
+		t.Fatalf("huge disk: %v", err)
+	}
+	if _, err := g.Reserve(ctx, -GiB, "a negative disk"); !errors.Is(err, ErrDiskFull) {
+		t.Fatalf("negative size: %v", err)
+	}
+	// used + bytes wraps in int64 arithmetic.
+	drv.ds.UsedBytes = math.MaxInt64 - GiB
+	if _, err := g.Reserve(ctx, 2*GiB, "the 2 GiB disk"); !errors.Is(err, ErrDiskFull) {
+		t.Fatalf("wrapping sum: %v", err)
+	}
+	if g.Reserved() != 0 {
+		t.Fatalf("a refusal reserved %d bytes", g.Reserved())
+	}
+	if got := addBytes(math.MaxInt64-1, 2); got != math.MaxInt64 {
+		t.Fatalf("addBytes saturates: %d", got)
+	}
+}
+
+// hungDriver blocks DiskSpace until its ctx ends.
+type hungDriver struct{ driver.Driver }
+
+func (hungDriver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
+	<-ctx.Done()
+	return driver.DiskSpace{}, ctx.Err()
+}
+
+// Review N1: a hung read ends after the timeout and releases the mutex;
+// the refusal has no "plan:" prefix (N3).
+func TestDiskGateReadTimeout(t *testing.T) {
+	old := diskReadTimeout
+	diskReadTimeout = 50 * time.Millisecond
+	defer func() { diskReadTimeout = old }()
+	g := NewDiskGate(hungDriver{}, 0)
+	start := time.Now()
+	err := g.Check(context.Background(), GiB, "the 1 GiB disk of web1")
+	if err == nil || errors.Is(err, ErrDiskFull) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hung read: %v", err)
+	}
+	if strings.HasPrefix(err.Error(), "plan:") {
+		t.Fatalf("Plan text has the plan: prefix: %v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("the read did not time out")
+	}
+	if g.Reserved() != 0 {
+		t.Fatal("reserved after a failed read")
 	}
 }

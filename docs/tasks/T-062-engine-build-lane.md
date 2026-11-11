@@ -40,3 +40,12 @@ Two PRs (pl-lead agreed). **Part A** `pl-architect/T-062-engine` (Plan side, bui
 ## Note from the T-061 review (pl-lead, 2026-11-11)
 - `DiskSpace` fails closed for the data space, but when the thin-pool metadata cannot be read (403 or an ambiguous pool) it gives `MetaKnown=false`. Decision of pl-lead: no new token right now (D-081). The build Plan then shows a clear line "thin-pool metadata use is unknown" so the person who approves sees it; a scheduled build (planned by `system`) records the same line in its Run. After the host check (is the metadata readable with today's rights?) pl-lead decides if more is needed.
 - N1: a conversion that times out in the driver but ends on the host can leave a template with the build name: the retention step and the unused list must show it (it is never adopted).
+
+**Part B** `pl-architect/T-062b-build-lane` (Run side; stacked on part A):
+- Lane `internal/plan/build.go`: version row (digest D-198) → `image:base` → `guest:config` (`CreateBuild` under the T-074 gate, held until the lane ends; token of link `build:<image>`) → enroll (20 min) → apply (no risk limit, no secret resolver) → `image:seal` (result, revoke, no stop, wait for `stopped` in the 5 min seal timeout, B1) → `image:template` (`MakeImage`, version `ready`, event `image.version`) → `image:retention`.
+- Every failure: revoke, `RemoveBuild` (T-073 guard + marker), version `failed`, rest of the steps failed "nothing was converted" (S4). A new build and `Recover` first remove build guests; `Recover` fails `building` versions of other processes.
+- Driver: `ListBuilds`, `RemoveBuild` (interface, fake, Proxmox with fake-PVE test).
+- Link: `seal` only to `build:` links, no `watch` to them, `seal:` items only in results of a build link, `EnrollResponse.Build` for a `build:` token (no migration: only the lane makes such a token). `linktest` simulates seal (refused without the first-enrollment mark or after a watch, failing step, no power-off).
+- Retention (n2, D-209): after `ready`, never this version, never fewer than `keep`; ready rows without a template become `removed`; failed rests (T-061 N1) and base templates of another checksum go; Image delete removes all; a guard refusal is named in the step, not hidden.
+- Target create clones the newest ready version that exists (`FindImage`), `GuestSpec.ImageVersion`; Image status lists the Targets per version.
+- The flag of part A is gone: builds are on. The real agent answers `seal` only after T-060; until then a real build fails at `image:seal` and leaves nothing.
