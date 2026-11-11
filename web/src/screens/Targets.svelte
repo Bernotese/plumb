@@ -97,7 +97,7 @@
             <td class="mono">{t.document.spec.image}</td>
             <td class="nowrap">{g.cores} CPU · {g.memory / 1024} GiB · {g.disk} GiB</td>
             <td
-              ><span class="sr-only">{"Configured: "}</span><span class="mono"
+              ><span class="sr-only">Configured:&nbsp;</span><span class="mono"
                 >{t.status.ips?.join(", ") || ((g.ip ?? "dhcp") === "dhcp" ? "DHCP" : "–")}</span
               >{#if reported}<span class="reported" title={REPORTED_TITLE}
                   ><span class="mono">{reportedText(reported)}</span>
