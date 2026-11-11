@@ -306,6 +306,7 @@ pct)
 			sha256sum <"$f" | sed "s#-\$#${2}#"
 			;;
 		"mv -f "*)
+			[[ ${FAKE_MV_FAIL:-0} == 1 ]] && exit 1
 			from=$st/push/${3//\//_} to=$st/push/${4//\//_}
 			mv -f "$from" "$to" || exit 1
 			[[ -e $from.opts ]] && mv -f "$from.opts" "$to.opts"
@@ -320,7 +321,16 @@ pct)
 			fi
 			;;
 		"systemctl show -p MainPID --value plumb.service")
-			if [[ -e $st/running-exe ]]; then echo 4242; else echo 0; fi
+			# FAKE_CRASH_LOOP=1: a new process at every read, like a unit
+			# that systemd restarts every few seconds.
+			n=$(cat "$st/restarts" 2>/dev/null || echo 0)
+			[[ ${FAKE_CRASH_LOOP:-0} == 1 ]] && { n=$((n + 1)); echo "$n" >"$st/restarts"; }
+			if [[ -e $st/running-exe ]]; then echo $((4242 + n)); else echo 0; fi
+			;;
+		"systemctl show -p NRestarts --value plumb.service") cat "$st/restarts" 2>/dev/null || echo 0 ;;
+		"systemctl is-active plumb.service")
+			if [[ ${FAKE_CRASH_LOOP:-0} == 1 ]]; then echo activating; exit 3; fi
+			echo active
 			;;
 		*) ;;
 		esac

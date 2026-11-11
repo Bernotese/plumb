@@ -116,3 +116,31 @@ func TestFailedPctExecStops(t *testing.T) {
 		t.Error("the run went on after the failed pct exec")
 	}
 }
+
+// Review nit 1: a new binary in a crash loop fails the run; the journal
+// lines are shown with the password masked.
+func TestCrashLoopFails(t *testing.T) {
+	h := installed(t)
+	h.newBinary()
+	code, _, errOut := h.run(append(asRoot, "FAKE_CRASH_LOOP=1", "PLUMB_INSTALL_RUNNING_TRIES=2", "PLUMB_INSTALL_STAY_WAIT=0"), "--yes", "--plumb-binary", h.plumb)
+	if code == 0 || !strings.Contains(errOut, "does not stay up with the new binary") {
+		t.Errorf("crash loop: %d %q", code, errOut)
+	}
+	if strings.Contains(errOut, "pw-from-journal") || !strings.Contains(errOut, "Password: <hidden>") {
+		t.Errorf("journal lines leak the password or are missing: %q", errOut)
+	}
+}
+
+// Review nit 2: a failed rename removes the temp file.
+func TestFailedRenameRemovesTemp(t *testing.T) {
+	h := installed(t)
+	h.newBinary()
+	code, _, errOut := h.run(append(asRoot, "FAKE_MV_FAIL=1"), "--yes", "--plumb-binary", h.plumb)
+	if code == 0 || !strings.Contains(errOut, "cannot put /usr/local/bin/plumb in place") {
+		t.Errorf("failed rename: %d %q", code, errOut)
+	}
+	left, _ := filepath.Glob(filepath.Join(h.state, "push", "*.plumb-new*"))
+	if len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+}

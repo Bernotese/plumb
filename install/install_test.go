@@ -67,6 +67,7 @@ func newHost(t *testing.T) *host {
 		"PLUMB_INSTALL_LXC_DIR="+filepath.Join(dir, "lxc"),
 		"PLUMB_INSTALL_RESOLV="+filepath.Join(dir, "resolv.conf"),
 		"PLUMB_INSTALL_RUNNING_WAIT=0",
+		"PLUMB_INSTALL_STAY_WAIT=0",
 		// The tests have no terminal; the fake plumb key init does not check.
 		// TestKeyInitNeedsTerminal sets it back to 0.
 		"PLUMB_INSTALL_ASSUME_TTY=1",

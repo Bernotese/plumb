@@ -20,6 +20,7 @@
 #   PLUMB_INSTALL_LXC_DIR=DIR     the lxc run directory instead of /var/lib/lxc
 #   PLUMB_INSTALL_RUNNING_TRIES=N, PLUMB_INSTALL_RUNNING_WAIT=S
 #                                 checks of the running binary after the restart (default 30 × 2 s)
+#   PLUMB_INSTALL_STAY_WAIT=S     wait before the second check of the service (default 3 s)
 #   PLUMB_INSTALL_RESOLV=FILE     the resolver file instead of /etc/resolv.conf
 #   PLUMB_INSTALL_ASSUME_TTY=1    skip the terminal check before plumb key init
 #                                 (plumb key init itself still refuses a non-terminal)
@@ -1042,7 +1043,10 @@ setup_lxc() {
 push_checked() {
 	local src=$1 dest=$2 mode=$3 tmp want have
 	tmp="${dest%/*}/.${dest##*/}.plumb-new"
-	run pct push "$LXC_ID" "$src" "$tmp" --perms "$mode" --user 0 --group 0
+	if ! run pct push "$LXC_ID" "$src" "$tmp" --perms "$mode" --user 0 --group 0; then
+		pct exec "$LXC_ID" -- rm -f "$tmp" </dev/null >/dev/null 2>&1 || true
+		die "cannot copy $dest into LXC $LXC_ID; $dest and the running service were not changed"
+	fi
 	if [[ $DRY_RUN != 1 ]]; then
 		want=$(sha256sum <"$src") || die "cannot read $src"
 		want=${want%% *}
@@ -1053,7 +1057,35 @@ push_checked() {
 			die "the copy of $dest in LXC $LXC_ID is missing or wrong (pct push failed); $dest and the running service were not changed"
 		fi
 	fi
-	run pct exec "$LXC_ID" -- mv -f "$tmp" "$dest" </dev/null
+	if ! run pct exec "$LXC_ID" -- mv -f "$tmp" "$dest" </dev/null; then
+		pct exec "$LXC_ID" -- rm -f "$tmp" </dev/null >/dev/null 2>&1 || true
+		die "cannot put $dest in place in LXC $LXC_ID; it was not changed"
+	fi
+}
+
+# service_prop NAME prints one property of plumb.service in the LXC.
+service_prop() {
+	query pct exec "$LXC_ID" -- systemctl show -p "$1" --value plumb.service </dev/null 2>/dev/null || true
+}
+
+# check_service_stays PID fails when the new binary does not stay up: after
+# a few seconds the unit must be active with the same MainPID and the same
+# NRestarts (a crash loop restarts it every 5 s). The failure shows the last
+# journal lines; a "Password: …" value (first start, D-086) and any
+# PLUMB_PVE_SECRET value are masked.
+check_service_stays() {
+	local pid=$1 restarts active now
+	restarts=$(service_prop NRestarts)
+	sleep "${PLUMB_INSTALL_STAY_WAIT:-3}"
+	active=$(query pct exec "$LXC_ID" -- systemctl is-active plumb.service </dev/null 2>/dev/null) || true
+	now=$(service_prop MainPID)
+	if [[ $active == active && $now == "$pid" && $(service_prop NRestarts) == "$restarts" ]]; then
+		return 0
+	fi
+	echo "install.sh: plumb.service does not stay up with the new binary (state ${active:-unknown}); last lines of its journal:" >&2
+	{ query pct exec "$LXC_ID" -- journalctl -u plumb.service -n 20 -o cat --no-pager </dev/null 2>/dev/null || true; } |
+		sed -E 's/(Password:).*/\1 <hidden>/; s/(PLUMB_PVE_SECRET=).*/\1<hidden>/' | sed 's/^/  /' >&2
+	die "plumb.service in LXC $LXC_ID does not stay up with the new binary (see: pct exec $LXC_ID -- journalctl -u plumb.service)"
 }
 
 # check_running_binary fails when plumb.service does not run the binary of
@@ -1067,7 +1099,10 @@ check_running_binary() {
 		pid=$(query pct exec "$LXC_ID" -- systemctl show -p MainPID --value plumb.service </dev/null 2>/dev/null) || pid=""
 		if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
 			have=$(query pct exec "$LXC_ID" -- sha256sum "/proc/$pid/exe" </dev/null 2>/dev/null) || have=""
-			[[ ${have%% *} == "$want" ]] && return 0
+			if [[ ${have%% *} == "$want" ]]; then
+				check_service_stays "$pid"
+				return 0
+			fi
 		fi
 		sleep "${PLUMB_INSTALL_RUNNING_WAIT:-2}"
 	done
