@@ -38,7 +38,9 @@ dpkg) # dpkg --print-architecture | dpkg --compare-versions A ge B
 	fi
 	[[ $(printf '%s\n%s\n' "$2" "$4" | sort -V | head -n1) == "$4" ]]
 	;;
-hostname) echo pve1 ;;
+hostname)
+	if [[ ${1:-} == -d ]]; then echo "${FAKE_HOST_DOMAIN:-}"; else echo pve1; fi
+	;;
 stat) # stat -c '%U %a' -- DIR: the tests run as a normal user; root unless FAKE_DIR_OWNER
 	printf '%s %s\n' "${FAKE_DIR_OWNER:-root}" "$(/usr/bin/stat -c %a -- "${!#}")"
 	;;
@@ -270,6 +272,7 @@ pct)
 		case "$*" in
 		"hostname -I") echo "fd00::50 192.168.1.50" ;;
 		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
+		"grep -q ^"*" /etc/plumb/plumb.env") grep -q "$3" "$st/push/_etc_plumb_plumb.env" ;;
 		"test -s /var/lib/plumb/key/master.key") has "key.$id" ;;
 		"mountpoint -q /var/lib/plumb/key") grep -q '^mp0: .*mp=/var/lib/plumb/key' "$st/lxc.$id" ;;
 		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;

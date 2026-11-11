@@ -18,6 +18,7 @@
 #   PLUMB_INSTALL_PVE_CA=FILE     the host CA file instead of /etc/pve/pve-root-ca.pem
 #   PLUMB_INSTALL_STATE=FILE      the state file instead of /etc/plumb/install.state
 #   PLUMB_INSTALL_LXC_DIR=DIR     the lxc run directory instead of /var/lib/lxc
+#   PLUMB_INSTALL_RESOLV=FILE     the resolver file instead of /etc/resolv.conf
 #   PLUMB_INSTALL_ASSUME_TTY=1    skip the terminal check before plumb key init
 #                                 (plumb key init itself still refuses a non-terminal)
 set -euo pipefail
@@ -54,6 +55,9 @@ DRY_RUN=0
 YES=0
 SNIPPET_DIR_SET=0
 PVE_CA=${PLUMB_INSTALL_PVE_CA:-/etc/pve/pve-root-ca.pem}
+RESOLV=${PLUMB_INSTALL_RESOLV:-/etc/resolv.conf}
+NAMESERVER=""   # --nameserver, else from RESOLV (D-187)
+SEARCHDOMAIN="" # --searchdomain, else from RESOLV or the host name
 STATE_FILE=${PLUMB_INSTALL_STATE:-/etc/plumb/install.state}
 LXC_DIR=${PLUMB_INSTALL_LXC_DIR:-/var/lib/lxc}
 
@@ -80,6 +84,8 @@ Options:
   --lxc-ip CIDR|dhcp     address of the LXC (default dhcp; a static address is recommended:
                          the vendor snippet holds it, D-179)
   --lxc-gw IP            gateway for a static LXC address
+  --nameserver IP[,IP…]  DNS servers of new VMs, 1 to 3 (default: nameserver lines of /etc/resolv.conf, D-187)
+  --searchdomain NAME    DNS search domain of new VMs (default: search of /etc/resolv.conf, else the host domain)
   --vmid-range MIN-MAX   VMIDs for Plumb guests (default 9000-9099)
   --pool NAME            pool of Plumb guests (default plumb)
   --snippet-dir DIR      directory of the plumb-snippets storage (default /var/lib/plumb-snippets)
@@ -153,6 +159,8 @@ parse_args() {
 		--lxc-id) LXC_ID=${2:?}; shift ;;
 		--lxc-ip) LXC_IP=${2:?}; shift ;;
 		--lxc-gw) LXC_GW=${2:?}; shift ;;
+		--nameserver) NAMESERVER=${2:?}; shift ;;
+		--searchdomain) SEARCHDOMAIN=${2:?}; shift ;;
 		--vmid-range)
 			VMID_MIN=${2%-*}
 			VMID_MAX=${2#*-}
@@ -663,6 +671,57 @@ state_put() {
 	STATE_WRITTEN=$content
 }
 
+# --- DNS of new VMs (D-187) ---
+
+# check_dns sets NAMESERVER and SEARCHDOMAIN from the options, else from
+# the host: the nameserver lines of RESOLV (loopback addresses left out: a
+# guest cannot use the host's local resolver) and its search line, else the
+# domain of the host name. It stops before any change without them.
+check_dns() {
+	local ns=() key val _ word
+	if [[ -z $NAMESERVER && -r $RESOLV ]]; then
+		while read -r key val _; do
+			[[ $key == nameserver && -n $val ]] || continue
+			[[ $val == 127.* || $val == ::1 ]] && continue
+			ns+=("$val")
+		done <"$RESOLV"
+		NAMESERVER=$(IFS=,; echo "${ns[*]:0:3}")
+	fi
+	if [[ -z $SEARCHDOMAIN && -r $RESOLV ]]; then
+		word=$(awk '$1 == "search" || $1 == "domain" {print $2; exit}' "$RESOLV")
+		[[ $word == . ]] && word=""
+		SEARCHDOMAIN=$word
+	fi
+	if [[ -z $SEARCHDOMAIN ]]; then
+		SEARCHDOMAIN=$(query hostname -d 2>/dev/null || true)
+	fi
+	[[ -n $NAMESERVER ]] || die "no DNS server for new VMs: $RESOLV has no usable nameserver line (loopback does not count); use --nameserver IP. Nothing was changed."
+	[[ -n $SEARCHDOMAIN ]] || die "no DNS search domain for new VMs: $RESOLV has no search line and the host name has no domain; use --searchdomain NAME. Nothing was changed."
+	local n=0 a
+	IFS=, read -r -a ns <<<"$NAMESERVER"
+	for a in "${ns[@]}"; do
+		n=$((n + 1))
+		[[ $a =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || ($a =~ ^[0-9A-Fa-f:]+$ && $a == *:*:*) ]] || die "bad name server $a. Nothing was changed."
+	done
+	((n >= 1 && n <= 3)) || die "1 to 3 name servers, not $n. Nothing was changed."
+	[[ $SEARCHDOMAIN =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] ||
+		die "bad search domain $SEARCHDOMAIN. Nothing was changed."
+	say "New VMs get the DNS servers $NAMESERVER and the search domain $SEARCHDOMAIN (fixed at create, D-187)."
+}
+
+# add_env_dns adds the D-187 lines to an existing plumb.env that lacks
+# them (an install before D-187). It needs no secret.
+add_env_dns() {
+	local k v
+	for k in PLUMB_PVE_NAMESERVER PLUMB_PVE_SEARCHDOMAIN; do
+		v=$NAMESERVER
+		[[ $k == PLUMB_PVE_SEARCHDOMAIN ]] && v=$SEARCHDOMAIN
+		if [[ $DRY_RUN == 1 ]] || ! query pct exec "$LXC_ID" -- grep -q "^$k=" /etc/plumb/plumb.env; then
+			run pct exec "$LXC_ID" -- sh -c "grep -q '^$k=' /etc/plumb/plumb.env || echo '$k=$v' >>/etc/plumb/plumb.env"
+		fi
+	done
+}
+
 # --- the Plumb LXC (D-006, D-083) ---
 
 # LXC_MARKER is in the description of the LXC that this script made. An
@@ -811,6 +870,8 @@ PLUMB_PVE_SNIPPETS=$SNIPPET_STORAGE
 PLUMB_PVE_SNIPPET=$SNIPPET
 PLUMB_PVE_BRIDGE=$BRIDGE
 PLUMB_PVE_VMID_RANGE=$VMID_MIN-$VMID_MAX
+PLUMB_PVE_NAMESERVER=$NAMESERVER
+PLUMB_PVE_SEARCHDOMAIN=$SEARCHDOMAIN
 PLUMB_HOSTS=$ip,$LXC_HOSTNAME
 EOF
 	if ! run pct push "$LXC_ID" "$tmp" /etc/plumb/plumb.env --perms 0600 --user 0 --group 0; then
@@ -861,6 +922,8 @@ setup_lxc() {
 	run pct push "$LXC_ID" "$PVE_CA" /etc/plumb/pve-root-ca.pem --perms 0644 --user 0 --group 0
 	if [[ -n $TOKEN_SECRET ]]; then
 		push_env "$host" "$ip"
+	else
+		add_env_dns
 	fi
 	new_tmp tmp
 	printf '%s\n' "$UNIT" >"$tmp"
@@ -962,6 +1025,7 @@ do_install() {
 		say "WARNING: the LXC gets its address by DHCP. The vendor snippet holds this address: when the lease"
 		say "changes, no agent reaches Plumb any more. Use a static address: --lxc-ip CIDR --lxc-gw IP (D-179)."
 	fi
+	check_dns
 	check_storages
 	check_images
 	check_user_groups

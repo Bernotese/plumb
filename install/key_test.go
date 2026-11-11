@@ -540,3 +540,96 @@ func (h *host) runRemove(env ...string) (int, string, string) {
 	}
 	return code, out.String(), errOut.String()
 }
+
+// D-187: plumb.env gets the DNS of new VMs from the host resolver.
+func TestDNSFromHost(t *testing.T) {
+	envOf := func(h *host) string {
+		b, _ := os.ReadFile(filepath.Join(h.state, "push", "_etc_plumb_plumb.env"))
+		return string(b)
+	}
+	resolv := func(h *host, s string) {
+		os.WriteFile(filepath.Join(filepath.Dir(h.state), "resolv.conf"), []byte(s), 0o644)
+	}
+	h := newHost(t)
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+	if e := envOf(h); !strings.Contains(e, "\nPLUMB_PVE_NAMESERVER=192.0.2.53\n") || !strings.Contains(e, "\nPLUMB_PVE_SEARCHDOMAIN=plumb.test\n") {
+		t.Errorf("env:\n%s", e)
+	}
+
+	// Loopback is left out; at most 3; the host domain when there is no search.
+	h = newHost(t)
+	resolv(h, "nameserver 127.0.0.53\nnameserver 192.0.2.1\nnameserver 192.0.2.2\nnameserver 2001:db8::3\nnameserver 192.0.2.4\n")
+	h.run(append(asRoot, "FAKE_HOST_DOMAIN=lan.example"), "--yes", "--plumb-binary", h.plumb)
+	if e := envOf(h); !strings.Contains(e, "\nPLUMB_PVE_NAMESERVER=192.0.2.1,192.0.2.2,2001:db8::3\n") || !strings.Contains(e, "\nPLUMB_PVE_SEARCHDOMAIN=lan.example\n") {
+		t.Errorf("env:\n%s", e)
+	}
+
+	// Only a loopback resolver and no domain: stop before any change …
+	h = newHost(t)
+	resolv(h, "nameserver 127.0.0.53\nsearch .\n")
+	code, _, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+	if code == 0 || !strings.Contains(errOut, "use --nameserver IP") {
+		t.Errorf("loopback only: %d %q", code, errOut)
+	}
+	for _, c := range h.calls() {
+		if mutating.MatchString(c) {
+			t.Errorf("changed the host: %s", c)
+		}
+	}
+	// … unless the options give the values; bad values are refused.
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb, "--nameserver", "192.0.2.9", "--searchdomain", "corp.example"); code != 0 {
+		t.Fatalf("options: %d %s %s", code, out, errOut)
+	}
+	if e := envOf(h); !strings.Contains(e, "\nPLUMB_PVE_NAMESERVER=192.0.2.9\n") || !strings.Contains(e, "\nPLUMB_PVE_SEARCHDOMAIN=corp.example\n") {
+		t.Errorf("env:\n%s", e)
+	}
+	for _, bad := range [][]string{{"--nameserver", "dns.example"}, {"--searchdomain", "a b"}, {"--nameserver", "192.0.2.1,192.0.2.2,192.0.2.3,192.0.2.4"}} {
+		h = newHost(t)
+		if code, _, _ := h.run(asRoot, append([]string{"--dry-run", "--plumb-binary", h.plumb}, bad...)...); code == 0 {
+			t.Errorf("accepted %v", bad)
+		}
+	}
+}
+
+// D-187 on a repair run: an env file of an older install gets the two
+// lines; an env file that has them is not changed.
+func TestDNSAddedOnRepair(t *testing.T) {
+	h := newHost(t)
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+	envFile := filepath.Join(h.state, "push", "_etc_plumb_plumb.env")
+	b, _ := os.ReadFile(envFile)
+	var old []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(l, "PLUMB_PVE_NAMESERVER=") && !strings.HasPrefix(l, "PLUMB_PVE_SEARCHDOMAIN=") {
+			old = append(old, l)
+		}
+	}
+	os.WriteFile(envFile, []byte(strings.Join(old, "\n")), 0o600)
+	h.resetCalls()
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("repair: %d %s %s", code, out, errOut)
+	}
+	n := 0
+	for _, c := range h.calls() {
+		if strings.HasPrefix(c, "pct exec 105 -- sh -c grep -q '^PLUMB_PVE_") {
+			n++
+			if strings.Contains(c, "SECRET") {
+				t.Errorf("the repair touched the secret: %s", c)
+			}
+		}
+	}
+	if n != 2 {
+		t.Errorf("DNS lines added: %d, want 2\n%s", n, strings.Join(h.calls(), "\n"))
+	}
+	// With the lines in place, nothing is added.
+	os.WriteFile(envFile, b, 0o600)
+	h.resetCalls()
+	h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+	if index(h.calls(), "pct exec 105 -- sh -c grep -q") >= 0 {
+		t.Error("lines added although the env file has them")
+	}
+}

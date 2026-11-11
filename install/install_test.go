@@ -55,6 +55,8 @@ func newHost(t *testing.T) *host {
 		}
 	}
 	os.WriteFile(h.plumb, []byte("#!/bin/sh\necho plumb\n"), 0o755)
+	// Like a host with systemd-resolved off: a LAN resolver and a search domain.
+	os.WriteFile(filepath.Join(dir, "resolv.conf"), []byte("search plumb.test\nnameserver 192.0.2.53\n"), 0o644)
 	os.WriteFile(h.pveCA, []byte("-----BEGIN CERTIFICATE-----\nMIIBpveroot\n-----END CERTIFICATE-----\n"), 0o644)
 	h.env = append(os.Environ(),
 		"PATH="+h.bin+":"+os.Getenv("PATH"),
@@ -63,6 +65,7 @@ func newHost(t *testing.T) *host {
 		"PLUMB_INSTALL_PVE_CA="+h.pveCA,
 		"PLUMB_INSTALL_STATE="+h.stateF,
 		"PLUMB_INSTALL_LXC_DIR="+filepath.Join(dir, "lxc"),
+		"PLUMB_INSTALL_RESOLV="+filepath.Join(dir, "resolv.conf"),
 		// The tests have no terminal; the fake plumb key init does not check.
 		// TestKeyInitNeedsTerminal sets it back to 0.
 		"PLUMB_INSTALL_ASSUME_TTY=1",
