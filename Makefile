@@ -55,7 +55,7 @@ lint: lint-go lint-sh lint-web
 
 ## lint-sh: shellcheck for the shell scripts. CI must have shellcheck; on a
 ## machine without it the check is skipped with a warning.
-SH_FILES = install/install.sh install/testdata/fakepve scripts/check-embed.sh
+SH_FILES = install/install.sh install/testdata/fakepve scripts/check-embed.sh scripts/test-slice-pve.sh
 lint-sh:
 	@for f in $(SH_FILES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then shellcheck -x $(SH_FILES); \
@@ -79,8 +79,10 @@ test-guest:
 ## test-pve: driver tests on the real test host (scripts/test-pve.sh). The test
 ## binary runs inside the Plumb LXC with its plumb.env, so the token never
 ## leaves it; fails when a guest of the Plumb range is left.
+## Then run HTTP slice acceptance from the dev VM with external test settings.
 test-pve:
 	scripts/test-pve.sh
+	bash scripts/test-slice-pve.sh
 
 clean:
 	rm -f bin/plumb bin/plumb-agent
