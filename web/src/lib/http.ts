@@ -39,6 +39,7 @@ export const EVENT_TYPES = [
   "token.revoked",
   "secret.updated",
   "secret.deleted",
+  "image.version",
 ] as const satisfies readonly components["schemas"]["Event"]["type"][];
 
 export interface HttpOptions {

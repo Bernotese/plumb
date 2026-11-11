@@ -197,3 +197,27 @@ func TestCovers(t *testing.T) {
 		t.Errorf("ApplyBody JSON: %s", raw)
 	}
 }
+
+func TestSealContract(t *testing.T) {
+	if len(SealSteps) != 10 || SealSteps[0] != SealStepGuard || SealSteps[len(SealSteps)-1] != SealStepTrim {
+		t.Fatalf("SealSteps = %v: guard first, trim last", SealSteps)
+	}
+	seen := map[string]bool{}
+	for _, s := range SealSteps {
+		if seen[s] {
+			t.Fatalf("step %q twice", s)
+		}
+		seen[s] = true
+	}
+	if got := SealItemID(SealStepHostKeys); got != "seal:host-keys" {
+		t.Fatalf("SealItemID = %q", got)
+	}
+	raw, _ := json.Marshal(SealBody{PlanID: 7, Upgraded: true})
+	if string(raw) != `{"plan_id":7,"upgraded":true}` {
+		t.Fatalf("SealBody JSON = %s", raw)
+	}
+	raw, _ = json.Marshal(EnrollResponse{AgentID: "a", Credential: "c"})
+	if strings.Contains(string(raw), "build") {
+		t.Fatalf("a normal enrollment must not carry the build mark: %s", raw)
+	}
+}

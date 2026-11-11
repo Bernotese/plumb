@@ -466,11 +466,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     example("getPlan", 200),
     example("reenrollTarget", 201),
     example("resolveIssue", 201),
+    example("buildImage", 201), // image build contract (T-058); behaviour: T-064
   ]) {
     if (!plans.has(p.id)) plans.set(p.id, p);
   }
   const runs = new Map<number, Run>();
-  for (const r of [...exampleItems<Run>(example("listRuns", 200)), example("getRun", 200)])
+  for (const r of [
+    ...exampleItems<Run>(example("listRuns", 200)),
+    example("getRun", 200),
+    buildRunFixture(),
+  ])
     runs.set(r.id, r);
   const issues = new Map<number, Issue>();
   for (const i of [...exampleItems<Issue>(example("listIssues", 200)), example("getIssue", 200)])
@@ -1050,6 +1055,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       if (p.status !== "pending")
         throw problem("conflict", "Plan is not pending", 409, `Plan ${id} is ${p.status}.`);
+      if (p.origin === "build")
+        throw problem("not-in-mock", "Not in the demo yet", 409, "Image builds come with T-064.");
       const proposal = pendingDocs.get(p.id);
       const docs = new Map(findRevision(head).docs);
       for (const d of proposal?.put ?? []) docs.set(docKey(d), structuredClone(d));
@@ -1611,4 +1618,49 @@ function mockHash(s: string): string {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return (h >>> 0).toString(16);
+}
+
+/**
+ * The Run of version 3 of the built Image ubuntu-web in the listImages
+ * example (contract T-058): one build lane with the steps of D-199.
+ */
+function buildRunFixture(): Run {
+  const at = (m: number, sec = 0) =>
+    `2026-11-08T03:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}Z`;
+  const step = (resource: string, from: string, to: string, output = "") => ({
+    resource,
+    action: null,
+    status: "applied" as const,
+    changes: [],
+    output,
+    started_at: from,
+    finished_at: to,
+  });
+  return {
+    id: 19,
+    plan_id: 20,
+    revision: 7,
+    status: "succeeded",
+    started_at: at(0),
+    finished_at: at(6, 12),
+    waits_for_restart: 0,
+    targets: [],
+    images: [
+      {
+        image: "ubuntu-web",
+        version: 3,
+        trigger: "schedule",
+        status: "succeeded",
+        steps: [
+          { ...step("image:base", at(0), at(0, 2)), status: "unchanged" },
+          step("guest:config", at(0, 2), at(0, 30)),
+          { ...step("package:nginx", at(4, 13), at(4, 40)), action: "create" },
+          { ...step("service:nginx", at(4, 40), at(4, 41)), action: "create" },
+          step("image:seal", at(4, 41), at(4, 55), "10 steps, guest powered off"),
+          step("image:template", at(4, 55), at(5, 1), "plumb-img-ubuntu-web-v3"),
+          { ...step("image:retention", at(5, 1), at(6, 12)), status: "unchanged" },
+        ],
+      },
+    ],
+  };
 }

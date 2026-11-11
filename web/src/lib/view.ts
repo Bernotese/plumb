@@ -233,6 +233,10 @@ export function humanOnlyReasons(plan: Plan): string[] {
       out.push("It adds, changes or removes an ignore rule.");
       continue;
     }
+    if (reason === "image-recipe") {
+      out.push("It makes, changes or deletes the recipe of a built image.");
+      continue;
+    }
     // The targets that get a secret in a changed resource of this Plan.
     const given = plan.targets.filter(
       (t) =>
