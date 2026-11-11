@@ -100,11 +100,12 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
   }
 
   /** All items of a list: follows `next` until the last page. */
-  async function all<T>(path: string): Promise<T[]> {
+  /** Every page of a list; `filter` is an encoded query without "?" (for example "status=open&"). */
+  async function all<T>(path: string, filter = ""): Promise<T[]> {
     const out: T[] = [];
     let cursor: string | null = null;
     for (let i = 0; i < 1000; i++) {
-      const q: string = `?limit=${PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const q: string = `?${filter}limit=${PAGE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
       const page: { items: unknown; next: string | null } = await call("GET", path + q);
       out.push(...(page.items as T[]));
       cursor = page.next;
@@ -139,7 +140,13 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     approvePlan: (id, comment) =>
       call<Run>("POST", `/plans/${id}/approve`, comment ? { comment } : {}),
     getRun: (id) => call<Run>("GET", `/runs/${id}`),
-    listIssues: async () => (await all<Issue>("/issues")).sort((a, b) => b.id - a.id),
+    listIssues: async (f) => {
+      const q = new URLSearchParams();
+      if (f?.target) q.set("target", f.target);
+      if (f?.status) q.set("status", f.status);
+      const filter = q.size ? `${q.toString()}&` : "";
+      return (await all<Issue>("/issues", filter)).sort((a, b) => b.id - a.id);
+    },
     getIssue: (id) => call<Issue>("GET", `/issues/${id}`),
     resolveIssue: (id, action, reason, rule) =>
       call<Plan>("POST", `/issues/${id}/resolve`, {

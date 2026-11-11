@@ -42,6 +42,13 @@ describe("http api", () => {
     ]);
   });
 
+  it("filters the Issues by target and status (review T-071 S1)", async () => {
+    const f = fakeFetch(() => Response.json({ items: [], next: null }));
+    const api = createHttpApi({ fetch: f.fn });
+    await api.listIssues({ target: "db1", status: "open" });
+    expect(f.calls.map((c) => c.url)).toEqual(["/api/v1/issues?target=db1&status=open&limit=200"]);
+  });
+
   it("calls the revision operations (T-034)", async () => {
     const f = fakeFetch(() => Response.json({ items: [], next: null }));
     const api = createHttpApi({ fetch: f.fn });

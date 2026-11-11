@@ -3,7 +3,16 @@
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { TargetView } from "../lib/types";
-  import { ageText, formatTime, targetState, waitingSince } from "../lib/view";
+  import {
+    REPORTED_MARK,
+    REPORTED_TITLE,
+    ageText,
+    formatTime,
+    reportedAddrs,
+    reportedText,
+    targetState,
+    waitingSince,
+  } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
@@ -21,7 +30,12 @@
         (targets = t.sort((a, b) => a.document.name.localeCompare(b.document.name))),
       onError: (e) => (error = e),
       onEvent: (e, l) => {
-        if (e.type === "target.status" || e.type === "run.finished" || e.type.startsWith("issue."))
+        if (
+          e.type === "target.status" ||
+          e.type === "target.addrs" ||
+          e.type === "run.finished" ||
+          e.type.startsWith("issue.")
+        )
           l.reloadSoon();
       },
     });
@@ -57,6 +71,7 @@
           {@const st = targetState(t)}
           {@const g = t.document.spec.guest}
           {@const since = waitingSince(t.status.waiting ?? [])}
+          {@const reported = reportedAddrs(t.status)}
           <tr>
             <th scope="row">
               <a class="mono" href={href({ name: "target-edit", target: t.document.name })}
@@ -81,7 +96,14 @@
             >
             <td class="mono">{t.document.spec.image}</td>
             <td class="nowrap">{g.cores} CPU · {g.memory / 1024} GiB · {g.disk} GiB</td>
-            <td class="mono">{t.status.ips?.join(", ") || "–"}</td>
+            <td
+              ><span class="sr-only">Configured:&nbsp;</span><span class="mono"
+                >{t.status.ips?.join(", ") || ((g.ip ?? "dhcp") === "dhcp" ? "DHCP" : "–")}</span
+              >{#if reported}<span class="reported" title={REPORTED_TITLE}
+                  ><span class="mono">{reportedText(reported)}</span>
+                  <span class="mark">{REPORTED_MARK}</span></span
+                >{/if}</td
+            >
             <td class="nowrap">{formatTime(t.status.last_seen)}</td>
           </tr>
         {/each}
@@ -95,6 +117,15 @@
     display: block;
     font-size: var(--text-xs);
     color: var(--color-text-muted);
+  }
+  .reported {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    overflow-wrap: anywhere;
+  }
+  .mark {
+    font-style: italic;
   }
   .extra {
     margin-left: var(--space-1);
