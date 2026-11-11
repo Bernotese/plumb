@@ -92,6 +92,10 @@ func TestScheduledBuilds(t *testing.T) {
 	if head, _ := e.st.Head(e.ctx); head.PlanID == ps[0].ID {
 		t.Fatal("a scheduled build committed a revision")
 	}
+	// No person read the Plan: its disk note is in the Run (T-061 review).
+	if st := e.lastSteps(ps[0].ID)["image:base"]; !strings.Contains(st.Output, "thin-pool metadata use is unknown") {
+		t.Fatalf("image:base of the scheduled build = %q", st.Output)
+	}
 	// The same slot again: nothing.
 	e.tick()
 	if n := len(e.schedulePlans()); n != 1 {
