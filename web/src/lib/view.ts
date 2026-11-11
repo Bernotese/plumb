@@ -23,11 +23,10 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
         detail: `${s.open_issues} open issue${s.open_issues === 1 ? "" : "s"}.`,
       };
     case "restart_needed":
-      // T-056: the full text of the state comes with the web part.
       return {
         label: "Restart needed",
         tone: "warn",
-        detail: "A value is set in Proxmox and waits for a stop and start of the VM.",
+        detail: `${s.waiting.length} value${s.waiting.length === 1 ? "" : "s"} set in Proxmox, waiting for a stop and start of the VM.`,
       };
     case "applying":
     case "provisioning":
@@ -69,7 +68,10 @@ export function valueText(v: unknown): string {
 }
 
 /** One change as text for display: sensitive values are never shown; a restart has no values. */
-export function changeView(c: Change): {
+export function changeView(
+  c: Change,
+  resource?: string,
+): {
   attr: string;
   from: string;
   to: string;
@@ -80,6 +82,15 @@ export function changeView(c: Change): {
   if (c.attr === "restart" && c.from === undefined && c.to === undefined) {
     return { attr: c.attr, from: "", to: "", hidden: false, restart: true };
   }
+  if (resource === GUEST_CONFIG && c.attr === "allow_restart") {
+    return {
+      attr: ALLOW_RESTART_LABEL,
+      from: c.from === true ? "yes" : "no",
+      to: c.to === true ? "yes" : "no",
+      hidden: false,
+      restart: false,
+    };
+  }
   return {
     attr: c.attr,
     from: valueText(c.from),
@@ -88,6 +99,104 @@ export function changeView(c: Change): {
     restart: false,
   };
 }
+
+// --- T-056: pending values, allow_restart, "restart needed" (D-190, D-194, D-195) ---
+
+export const GUEST_CONFIG = "guest:config";
+
+/** The label of spec.allow_restart (D-196). */
+export const ALLOW_RESTART_LABEL = "Plumb may restart this VM";
+
+/** The help text of the allow_restart checkbox (card step 10). */
+export const ALLOW_RESTART_HELP =
+  "Off: a change of cores or memory waits until you stop and start the VM. On: the Plan shows the restart, and the Run does it.";
+
+/** The text of the restart change on guest:config; the 2 minutes are pinned in Go. */
+export const RESTART_TEXT =
+  "Restart of the VM if Proxmox cannot apply the change live: clean shutdown, hard power-off after 2 minutes, then start.";
+
+/** The refusal of a re-enrollment of a running VM with allow_restart off (D-194). */
+export const REENROLL_REFUSED =
+  "Re-enrollment restarts the VM, and this Target does not allow a restart by a Run. Stop the VM in Proxmox and re-enroll again (the Run starts it). Or set allow_restart first (its own Plan), then re-enroll.";
+
+/** Proxmox settings that Plumb never changes after create (cloud-init inputs, D-185). */
+const CREATE_ONLY_GUEST = ["kind", "image", "disk", "ip", "gateway", "user", "ssh_keys"];
+
+/** The tags and the sentences that explain one change (D-190, D-194). */
+export function changeNotes(c: Change, resource?: string): { tags: string[]; notes: string[] } {
+  const tags: string[] = [];
+  const notes: string[] = [];
+  if (resource !== GUEST_CONFIG || isSensitive(c)) return { tags, notes };
+  if (c.attr === "restart" && c.from === undefined && c.to === undefined) {
+    return { tags: ["restart"], notes: [RESTART_TEXT] };
+  }
+  if (c.attr === "allow_restart") {
+    return { tags, notes: ["A rule of Plumb: nothing changes in Proxmox."] };
+  }
+  const from = valueText(c.from);
+  const to = valueText(c.to);
+  if (c.pending) {
+    tags.push("pending");
+    notes.push(
+      `Set in Proxmox but not active. The VM uses ${to}. ${from} becomes active at the next stop and start of the VM. A reboot inside the guest is not enough.`,
+    );
+    if (CREATE_ONLY_GUEST.includes(c.attr)) {
+      notes.push(
+        "Plumb does not revert this value. Remove it in Proxmox: use Revert on the pending value, or `qm set <vmid> --revert <key>`.",
+      );
+    }
+  }
+  if (c.also_pending !== undefined && c.also_pending !== null) {
+    notes.push(`Also pending: ${valueText(c.also_pending)}.`);
+  }
+  if (c.waits_for_restart) {
+    tags.push("after restart");
+    if (c.risk === "read") {
+      notes.push(
+        `${to} is set in Proxmox already and waits. The VM uses ${from} until the restart of this Plan.`,
+      );
+    } else {
+      notes.push(
+        `Plumb writes ${to} to Proxmox. The VM keeps ${from} until its next stop and start. That can be a restart that nobody plans (host maintenance, HA). This Run does not restart the VM (allow_restart is off). A reboot inside the guest is not enough.`,
+      );
+    }
+  }
+  return { tags, notes };
+}
+
+type Waiting = TargetView["status"]["waiting"][number];
+
+/** A waiting value with its unit. */
+export function waitingValue(attr: string, v: number): string {
+  return attr === "memory" ? `${v} MiB` : String(v);
+}
+
+/** How long a value waits, short: "5 min", "3 h", "2 days". */
+export function ageText(since: string, now: Date = new Date()): string {
+  const ms = now.getTime() - new Date(since).getTime();
+  if (!Number.isFinite(ms) || ms < 60_000) return "under 1 min";
+  const min = Math.floor(ms / 60_000);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.floor(h / 24)} days`;
+}
+
+/** The oldest since of the list, or null for an empty list. */
+export function waitingSince(waiting: Waiting[]): string | null {
+  return waiting.reduce<string | null>((a, w) => (a === null || w.since < a ? w.since : a), null);
+}
+
+/** One sentence per waiting value (Target page, D-195). */
+export function waitingLines(waiting: Waiting[]): string[] {
+  return waiting.map(
+    (w) =>
+      `${w.attr}: the VM uses ${waitingValue(w.attr, w.from)}. ${waitingValue(w.attr, w.to)} is set and becomes active at the next stop and start of the VM.`,
+  );
+}
+
+/** What the user can do while values wait (Target page, D-195). */
+export const WAITING_ACTIONS = `Stop and start the VM in Proxmox; a reboot inside the guest is not enough. Or switch on '${ALLOW_RESTART_LABEL}' and make a Plan.`;
 
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return "–";

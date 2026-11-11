@@ -11,7 +11,16 @@
     type Values,
   } from "../lib/schemaForm";
   import type { BlockView, ImageView, TargetSpec, TargetView } from "../lib/types";
-  import { CREATE_ONLY, formatTime } from "../lib/view";
+  import {
+    ALLOW_RESTART_HELP,
+    ALLOW_RESTART_LABEL,
+    CREATE_ONLY,
+    REENROLL_REFUSED,
+    WAITING_ACTIONS,
+    formatTime,
+    waitingLines,
+    waitingSince,
+  } from "../lib/view";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
@@ -50,7 +59,27 @@
   let guestErrors = $state<Record<string, string>>({});
   let submitError = $state<unknown>(null);
   let busy = $state(false);
+  let allowRestart = $state(false);
+  let reenrollReason = $state("");
+  let reenrollError = $state<unknown>(null);
+  let reenrollBusy = $state(false);
   let nextKey = 0;
+
+  const waitingFrom = $derived(waitingSince(existing?.status.waiting ?? []));
+  // The stored setting decides the re-enrollment, not the unsaved checkbox.
+  const storedAllow = $derived(existing?.document.spec.allow_restart === true);
+
+  // D-192: a stock Ubuntu 26.04 image takes a static address only from its
+  // second boot. A short warning at the address field, only when it matters.
+  const addressNote = $derived.by(() => {
+    const ip = String(guest["ip"] ?? "dhcp");
+    const img = images.find((i) => i.document.name === image);
+    const label = `${image} ${img?.document.spec.title ?? ""}`;
+    if (editing || ip === "dhcp" || !/ubuntu/i.test(label) || !/26\.04/.test(label)) return {};
+    return {
+      ip: "Ubuntu 26.04 takes a static address only from its second boot (D-192). Use DHCP.",
+    } as Record<string, string>;
+  });
 
   const blockByName = (n: string) => blocks.find((b) => b.document.name === n);
 
@@ -83,6 +112,7 @@
           targetName = t.document.name;
           image = t.document.spec.image;
           guest = initialValues(guestFields, t.document.spec.guest);
+          allowRestart = t.document.spec.allow_restart === true;
           uses = (t.document.spec.blocks ?? []).map((u) =>
             makeUse(u.use, u.id ?? "", u.params ?? {}),
           );
@@ -167,6 +197,11 @@
         params: mergeParams(u.stored, u.fields, u.values),
       })),
       overrides: existing?.document.spec.overrides ?? {},
+      // Written only when set or stored before, so an old Target gets no
+      // new key by an unrelated edit (default false, D-194).
+      ...(allowRestart || existing?.document.spec.allow_restart !== undefined
+        ? { allow_restart: allowRestart }
+        : {}),
     };
     busy = true;
     try {
@@ -179,6 +214,21 @@
       submitError = err;
     } finally {
       busy = false;
+    }
+  }
+
+  async function reenroll(ev: SubmitEvent) {
+    ev.preventDefault();
+    if (!name) return;
+    reenrollError = null;
+    reenrollBusy = true;
+    try {
+      const plan = await api.reenrollTarget(name, reenrollReason.trim());
+      go({ name: "plan", id: plan.id });
+    } catch (err) {
+      reenrollError = err;
+    } finally {
+      reenrollBusy = false;
     }
   }
 </script>
@@ -202,6 +252,18 @@
       {/each}
     </ul>
     <a href={href({ name: "rules" })}>See the rules</a>
+  </section>
+{/if}
+{#if existing && waitingFrom}
+  <section class="card waiting" aria-labelledby="waiting-title">
+    <h2 id="waiting-title">Restart needed</h2>
+    <p>Restart needed since {formatTime(waitingFrom)}.</p>
+    <ul>
+      {#each waitingLines(existing.status.waiting) as line (line)}
+        <li>{line}</li>
+      {/each}
+    </ul>
+    <p>{WAITING_ACTIONS}</p>
   </section>
 {/if}
 {#if loaded}
@@ -257,7 +319,20 @@
         prefix="guest"
         readonly={editing ? CREATE_ONLY : []}
         readonlyHint="Create-only: it cannot change on an existing target."
+        notes={addressNote}
       />
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            id="t-allow-restart"
+            bind:checked={allowRestart}
+            aria-describedby="t-allow-restart-hint"
+          />
+          {ALLOW_RESTART_LABEL}
+        </label>
+        <span class="hint" id="t-allow-restart-hint">{ALLOW_RESTART_HELP}</span>
+      </div>
     </fieldset>
 
     <h2>Blocks</h2>
@@ -335,8 +410,42 @@
 {:else if !loadError}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
+{#if loaded && existing}
+  <form class="card" onsubmit={reenroll} aria-labelledby="reenroll-title">
+    <h2 id="reenroll-title">Re-enroll the agent</h2>
+    <p>
+      A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it;
+      nothing happens until you approve the plan.
+    </p>
+    {#if storedAllow}
+      <p>
+        The Run restarts the VM. '{ALLOW_RESTART_LABEL}' stays on after it, until you switch it off.
+      </p>
+    {:else if existing.status.power === "running"}
+      <p class="warn" id="reenroll-refused">{REENROLL_REFUSED}</p>
+    {:else}
+      <p>The VM is stopped: the Run starts it with the new token.</p>
+    {/if}
+    <div class="field">
+      <label for="reenroll-reason">Reason (optional)</label>
+      <textarea id="reenroll-reason" bind:value={reenrollReason}></textarea>
+    </div>
+    <ProblemBox error={reenrollError} />
+    <button class="btn" type="submit" disabled={reenrollBusy}>Plan the re-enrollment</button>
+  </form>
+{/if}
 
 <style>
+  .waiting {
+    border-left: 4px solid var(--color-warn);
+  }
+  .waiting ul {
+    margin: 0 0 var(--space-2);
+    padding-left: var(--space-6);
+  }
+  .warn {
+    color: var(--color-warn);
+  }
   .drift {
     margin: 0 0 var(--space-2);
     padding-left: var(--space-6);
