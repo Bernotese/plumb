@@ -100,15 +100,15 @@
   // The stored setting decides the re-enrollment, not the unsaved checkbox.
   const storedAllow = $derived(existing?.document.spec.allow_restart === true);
 
-  // D-192: a stock Ubuntu 26.04 image takes a static address only from its
-  // second boot. A short warning at the address field, only when it matters.
+  // D-192, D-220: a boot race can sometimes leave a stock Ubuntu 26.04 guest on DHCP
+  // until its first restart. A short warning at the address field.
   const addressNote = $derived.by(() => {
     const ip = String(guest["ip"] ?? "dhcp");
     const img = images.find((i) => i.document.name === image);
     const label = `${image} ${img?.document.spec.title ?? ""}`;
     if (editing || ip === "dhcp" || !/ubuntu/i.test(label) || !/26\.04/.test(label)) return {};
     return {
-      ip: "Ubuntu 26.04 takes a static address only from its second boot (D-192). Use DHCP.",
+      ip: "A stock Ubuntu 26.04 guest can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP.",
     } as Record<string, string>;
   });
 
