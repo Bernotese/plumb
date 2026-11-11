@@ -28,9 +28,13 @@ func TestRealSliceAcceptance(t *testing.T) {
 			t.Logf("kept for diagnosis: VMID %d, its template, documents and import file (no cleanup)", keepForDiagnosis)
 			return
 		}
+		// Deferred: a Fatal in the delete Plan or the template guard must
+		// still free this run's import files (review N5).
+		defer func() {
+			freeImports(a.t, importsBefore, imports)
+			checkImports(a.t, importsBefore, map[string]bool{})
+		}()
 		cleanup(a, before, expected, refs, owned)
-		freeImports(a.t, importsBefore, imports)
-		checkImports(a.t, importsBefore, map[string]bool{})
 	})
 	for i, distro := range []string{"DEBIAN13", "UBUNTU2604"} {
 		// PLUMB_TEST_DISTROS=UBUNTU2604 runs one distribution (diagnosis).
@@ -131,8 +135,11 @@ func TestRealSliceAcceptance(t *testing.T) {
 					}
 				}
 				now, ok := guestSSH(t, g, fingerprintCommand)
-				if !ok || now == initial || strings.Split(now, "\n")[0] != strings.Split(initial, "\n")[0] {
+				if !ok || now == initial {
 					return false
+				}
+				if strings.Split(now, "\n")[0] != strings.Split(initial, "\n")[0] {
+					t.Fatal("SSH fingerprint changed after reboot") // new boot, other key
 				}
 				s := c.call("GET", "/targets/"+target, nil, 200)["status"].(map[string]any)
 				return s["agent"] == "online" && s["power"] == "running"
@@ -154,12 +161,35 @@ func TestRealSliceAcceptance(t *testing.T) {
 				t.Fatal("host reboot after the memory change failed (output withheld)")
 			}
 			issue := c.issue(target, "guest:config", 90*time.Second)
+			memoryDrift(t, c.call("GET", "/issues/"+issue, nil, 200))
 			c.approve(c.call("POST", "/issues/"+issue+"/resolve", object{"action": "revert"}, 201), false)
 			c.closed(issue, "revert")
+			// The revert writes memory 1024 on a running VM: only pending
+			// (T-056 fact 3). qm config shows the pending view, so this
+			// proves the desired value was written, not that the VM runs it.
+			// TODO(T-056): when T-056 is merged, assert the running value.
+			if config(t, n)["memory"] != "1024" {
+				t.Fatal("revert did not write memory 1024 to the VM config")
+			}
+			t.Log("guest:config revert wrote memory 1024 (pending); the running value stays 1536 until T-056")
 		})
 		if !ok {
 			break
 		} // Stop at the first product failure; cleanup still runs.
+	}
+}
+
+// memoryDrift checks that the guest:config Issue is the test's own change:
+// exactly memory from 1536 (the VM runs it) to 1024 (desired).
+func memoryDrift(t *testing.T, i object) {
+	t.Helper()
+	changes, _ := i["changes"].([]any)
+	if len(changes) != 1 {
+		t.Fatalf("guest:config Issue has %d changes, want 1 (memory)", len(changes))
+	}
+	ch := changes[0].(map[string]any)
+	if ch["attr"] != "memory" || ch["from"] != float64(1536) || ch["to"] != float64(1024) {
+		t.Fatalf("guest:config Issue change is %v %v→%v, want memory 1536→1024", ch["attr"], ch["from"], ch["to"])
 	}
 }
 

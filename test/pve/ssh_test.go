@@ -175,17 +175,25 @@ func tryLeaseAddress(t *testing.T, n int) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	// Prefer a live entry: an old STALE one can remain after a lease change.
+	fallback := ""
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
 		for i := 0; i+1 < len(f); i++ {
 			if f[i] == "lladdr" && strings.ToLower(f[i+1]) == mac && f[len(f)-1] != "FAILED" {
 				if a, err := netip.ParseAddr(f[0]); err == nil && a.Is4() {
-					return a.String() + "/32", true
+					switch f[len(f)-1] {
+					case "REACHABLE", "DELAY", "PERMANENT":
+						return a.String() + "/32", true
+					}
+					if fallback == "" {
+						fallback = a.String() + "/32"
+					}
 				}
 			}
 		}
 	}
-	return "", false
+	return fallback, fallback != ""
 }
 
 func leaseAddress(t *testing.T, n int) string {

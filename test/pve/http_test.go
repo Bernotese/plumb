@@ -112,6 +112,13 @@ func (a *apiClient) approve(p object, human bool) object {
 	if human {
 		h := *a
 		h.token = ""
+		// Own client and cookie jar: the token client never holds the
+		// admin session cookie (review N2).
+		jar, err := cookiejar.New(nil)
+		check(a.t, err, "cookie jar")
+		hc := *a.client
+		hc.Jar = jar
+		h.client = &hc
 		login := h.call("POST", "/session", object{"username": "admin", "password": secret(a.t, "ADMIN_PW_FILE")}, 200)
 		if login["must_change_password"] != false {
 			a.t.Fatal("admin password change required")
