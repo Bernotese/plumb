@@ -194,18 +194,21 @@ type targetRunView struct {
 }
 
 type runView struct {
-	ID         int64           `json:"id"`
-	PlanID     int64           `json:"plan_id"`
-	Revision   int64           `json:"revision"`
-	Status     string          `json:"status"`
-	StartedAt  time.Time       `json:"started_at"`
-	FinishedAt *time.Time      `json:"finished_at"`
-	Targets    []targetRunView `json:"targets"`
+	ID         int64      `json:"id"`
+	PlanID     int64      `json:"plan_id"`
+	Revision   int64      `json:"revision"`
+	Status     string     `json:"status"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	// WaitsForRestart: changes of the Run that wait for a stop and start
+	// of the VM (D-195).
+	WaitsForRestart int             `json:"waits_for_restart"`
+	Targets         []targetRunView `json:"targets"`
 }
 
 func (s *Server) runView(ctx context.Context, run store.Run) (runView, error) {
 	v := runView{ID: run.ID, PlanID: run.PlanID, Revision: run.RevisionID, Status: run.Status,
-		StartedAt: run.StartedAt.UTC(), FinishedAt: utc(run.FinishedAt), Targets: []targetRunView{}}
+		StartedAt: run.StartedAt.UTC(), FinishedAt: utc(run.FinishedAt), WaitsForRestart: run.WaitsForRestart, Targets: []targetRunView{}}
 	steps, err := s.st.Steps(ctx, run.ID)
 	if err != nil {
 		return v, err

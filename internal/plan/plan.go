@@ -162,6 +162,7 @@ type Engine struct {
 	mu      sync.Mutex
 	results map[string]chan wire.Report // command id → reports; only waiters create them
 	busy    map[string]int              // targets with a running or starting Run
+	hello   map[string]int              // hellos per target since start (a new boot)
 	active  map[int64]bool              // Runs of this process
 	cache   *sensitiveCache
 	warned  map[string]bool // "revision/target": the cycle warning is in the log
@@ -216,7 +217,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
-		results: map[string]chan wire.Report{}, busy: map[string]int{}, active: map[int64]bool{}}, nil
+		results: map[string]chan wire.Report{}, busy: map[string]int{}, hello: map[string]int{}, active: map[int64]bool{}}, nil
 }
 
 // Close cancels all Runs and waits for them.
@@ -266,6 +267,7 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		// done; a watch before the first apply would report every resource
 		// of a new guest as drift.
 		e.mu.Lock()
+		e.hello[d.Target]++
 		busy := e.busy[d.Target] > 0
 		e.mu.Unlock()
 		if busy {

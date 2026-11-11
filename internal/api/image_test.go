@@ -128,9 +128,10 @@ func TestImageDestroyedOutside(t *testing.T) {
 	}
 	e.noGuestDrift("web1")
 	e.runPlan(adm, map[string]any{"reason": "cores", "put": []state.Doc{targetWith("web1", "ubuntu", 4)}})
+	// allow_restart is false: the new value waits for a cold start (D-194).
 	st, err := e.drv.Observe(e.ctx, e.guestID("web1"))
-	if err != nil || st.Spec.Cores != 4 || st.Spec.ImageName != "ubuntu" {
-		t.Errorf("web1 after cores: %+v %v", st.Spec, err)
+	if err != nil || st.Next().Cores != 4 || st.Spec.ImageName != "ubuntu" {
+		t.Errorf("web1 after cores: %+v %v", st, err)
 	}
 }
 

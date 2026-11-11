@@ -77,7 +77,7 @@ func TestApprovePlan(t *testing.T) {
 	if len(steps) != 1 || steps[0].Status != "applied" || steps[0].Output != "ok" || steps[0].FinishedAt.IsZero() || steps[0].StartedAt.IsZero() {
 		t.Errorf("steps = %+v", steps)
 	}
-	if err := s.FinishRun(ctx, run.ID, "succeeded"); err != nil {
+	if err := s.FinishRun(ctx, run.ID, "succeeded", 0); err != nil {
 		t.Fatal(err)
 	}
 	if r, _ := s.GetRun(ctx, run.ID); r.Status != "succeeded" || r.FinishedAt.IsZero() {

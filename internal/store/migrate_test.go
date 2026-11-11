@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // openAt makes a database with the migrations up to version and returns
@@ -321,7 +322,48 @@ func TestMigrateNoImageBinding(t *testing.T) {
 	if b, err := s.Bindings(ctx, "Image"); err != nil || len(b) != 0 {
 		t.Errorf("Image bindings after migration: %+v %v", b, err)
 	}
-	if b, err := s.GetBinding(ctx, "Target", "web1"); err != nil || b.Ref != "9002" || b.Digest != "abc" {
+	// 0007 empties the digest (T-056); the row itself stays.
+	if b, err := s.GetBinding(ctx, "Target", "web1"); err != nil || b.Ref != "9002" || b.Digest != "" {
 		t.Errorf("Target binding after migration: %+v %v", b, err)
+	}
+}
+
+// Migration 0007 (T-056, D-195) empties every digest, so the first poll
+// round compares every guest, adds binding.waiting (default empty) and
+// run.waits_for_restart.
+func TestMigrateWaiting(t *testing.T) {
+	ctx := context.Background()
+	const ts = "'2026-11-11T00:00:00.000000000Z'"
+	path := openAt(t, migrationNumber(t, "_waiting.sql")-1,
+		`INSERT INTO binding (kind, name, ref, digest, updated_at) VALUES ('Target', 'web1', '100', 'abc', `+ts+`)`,
+		`INSERT INTO binding (kind, name, ref, digest, updated_at) VALUES ('Target', 'web2', '101', 'def', `+ts+`)`,
+	)
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	bs, err := s.Bindings(ctx, "Target")
+	if err != nil || len(bs) != 2 {
+		t.Fatalf("bindings: %+v %v", bs, err)
+	}
+	for _, b := range bs {
+		if b.Digest != "" || b.Waiting != nil {
+			t.Errorf("%s after 0007: digest %q, waiting %+v", b.Name, b.Digest, b.Waiting)
+		}
+	}
+	// Round trip of the list.
+	since := time.Date(2026, 11, 11, 9, 0, 0, 0, time.FixedZone("x", 3600))
+	b := bs[0]
+	b.Waiting = []Waiting{{Attr: "memory", From: 1024, To: 2048, Since: since}}
+	if err := s.PutBinding(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetBinding(ctx, "Target", "web1")
+	if err != nil || len(got.Waiting) != 1 || got.Waiting[0].To != 2048 || !got.Waiting[0].Since.Equal(since) {
+		t.Errorf("waiting round trip: %+v %v", got, err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE binding SET waiting = '{}' WHERE name = 'web1'`); err == nil {
+		t.Error("waiting accepts a JSON object")
 	}
 }

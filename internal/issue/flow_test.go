@@ -297,6 +297,14 @@ func TestReenroll(t *testing.T) {
 	if !errors.Is(err, plan.ErrOffline) {
 		t.Errorf("a normal plan for the stuck target: %v", err)
 	}
+	// The guest runs and allow_restart is false: refused (D-194). Stopped
+	// in Proxmox, the re-enrollment is a Plan, and the Run starts it.
+	if _, err := e.eng.Propose(e.ctx, plan.Input{Proposal: plan.Proposal{Reenroll: []string{"web1"}}, Author: "user:admin"}); err == nil ||
+		!strings.Contains(err.Error(), plan.TextReenrollRefused) {
+		t.Fatalf("reenroll of a running guest: %v", err)
+	}
+	b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1")
+	e.drv.StopOutside(driver.GuestID(b.Ref))
 	p := e.propose(plan.Proposal{Reenroll: []string{"web1"}})
 	tp := changes(t, p)["web1"]
 	if p.Risk != string(wire.RiskDisruptive) || tp.Guest != "reenroll" {
@@ -366,9 +374,10 @@ func TestGuestDrift(t *testing.T) {
 	if run := e.approve(p.ID); run.Status != "succeeded" {
 		t.Fatalf("revert run %s", run.Status)
 	}
+	// allow_restart is false: 2 is set and waits for a cold start (D-195).
 	st, _ := e.drv.Observe(e.ctx, driver.GuestID(b.Ref))
-	if st.Spec.Cores != 2 {
-		t.Errorf("cores = %d", st.Spec.Cores)
+	if st.Spec.Cores != 8 || st.Next().Cores != 2 {
+		t.Errorf("cores = %d, next %d", st.Spec.Cores, st.Next().Cores)
 	}
 	if got, _ := e.st.GetIssue(e.ctx, iss.ID); got.Status != store.IssueResolved {
 		t.Errorf("guest issue: %+v", got)

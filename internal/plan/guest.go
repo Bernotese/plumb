@@ -28,11 +28,13 @@ func (e *Engine) PollGuests(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// CheckGuests runs one round of the guest poll. It calls Driver.Diff only
-// for guests whose config digest changed since the last round, and
-// reports drift on guest:config to OnDrift: "differs" with the changes,
-// or "unchanged" when the guest matches again. Targets with a running
-// Run are skipped; the Run stores the new digest.
+// CheckGuests runs one round of the guest poll. It compares only guests
+// whose config digest changed since the last round or whose waiting list
+// is not empty (a cold start need not move the digest, review S8). It
+// writes the waiting list first (D-195), then reports drift on
+// guest:config to OnDrift: "differs" with the changes, or "unchanged"
+// when the guest matches again. Targets with a running Run are skipped;
+// the Run stores the new digest.
 func (e *Engine) CheckGuests(ctx context.Context) error {
 	binds, err := e.st.Bindings(ctx, state.KindTarget)
 	if err != nil {
@@ -51,7 +53,7 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
-		if observed.Digest == b.Digest {
+		if observed.Digest == b.Digest && len(b.Waiting) == 0 {
 			continue
 		}
 		r, err := e.headRender(ctx, b.Name)
@@ -63,6 +65,14 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		// The waiting list before the drift report: an Issue that the
+		// report resolves says when a value still waits (D-195).
+		if e.putWaiting(ctx, &b, driver.WaitingGuest(desired, observed)) {
+			if err := e.st.PutBinding(ctx, b); err != nil {
+				errs = append(errs, err)
+				continue
+			}
 		}
 		item := wire.Item{Resource: wire.GuestConfigID, Status: wire.StatusUnchanged}
 		if changes := driver.DriftGuest(desired, observed); len(changes) > 0 {
@@ -92,6 +102,8 @@ type Live struct {
 	IPs      []string
 	GuestID  string // "" when there is no guest
 	Busy     bool   // a Run works on the target
+	// Waiting are the values that wait for a stop and start (D-195).
+	Waiting []store.Waiting
 }
 
 // Live reads the live status of a target from the agent table, the link
@@ -116,7 +128,7 @@ func (e *Engine) Live(ctx context.Context, target string) (Live, error) {
 	if err != nil {
 		return l, err
 	}
-	l.GuestID = b.Ref
+	l.GuestID, l.Waiting = b.Ref, b.Waiting
 	if st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); err == nil {
 		l.Power, l.IPs = string(st.Power), st.IPs
 	}

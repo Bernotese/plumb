@@ -97,6 +97,16 @@ type targetStatus struct {
 	LastRunID       *int64     `json:"last_run_id"`
 	// IgnoredDrift is drift that a rule dropped (D-092); missing = none.
 	IgnoredDrift []ignoredDriftView `json:"ignored_drift,omitempty"`
+	// Waiting are values that wait for a stop and start (D-195); always
+	// present.
+	Waiting []waitingView `json:"waiting"`
+}
+
+type waitingView struct {
+	Attr  string    `json:"attr"`
+	From  int       `json:"from"`
+	To    int       `json:"to"`
+	Since time.Time `json:"since"`
 }
 
 type ignoredDriftView struct {
@@ -153,6 +163,10 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 	if st.IPs == nil {
 		st.IPs = []string{}
 	}
+	st.Waiting = []waitingView{}
+	for _, w := range live.Waiting {
+		st.Waiting = append(st.Waiting, waitingView{Attr: w.Attr, From: w.From, To: w.To, Since: w.Since.UTC()})
+	}
 	issues, err := s.st.Issues(ctx, name)
 	if err != nil {
 		return st, err
@@ -196,6 +210,8 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 		st.Phase = "error"
 	case st.OpenIssues > 0:
 		st.Phase = "drifted"
+	case len(st.Waiting) > 0:
+		st.Phase = "restart_needed"
 	default:
 		st.Phase = "ready"
 	}

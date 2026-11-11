@@ -292,11 +292,14 @@ func (u blockUse) id() string {
 }
 
 type targetSpec struct {
-	Type      string                    `json:"type"`
-	Image     string                    `json:"image"`
-	Guest     map[string]any            `json:"guest"`
-	Blocks    []blockUse                `json:"blocks"`
-	Overrides map[string]map[string]any `json:"overrides"`
+	Type  string         `json:"type"`
+	Image string         `json:"image"`
+	Guest map[string]any `json:"guest"`
+	// AllowRestart: a Run may restart the running VM (D-194). A rule of
+	// Plumb, not a Proxmox setting; the schema default is false.
+	AllowRestart bool                      `json:"allow_restart"`
+	Blocks       []blockUse                `json:"blocks"`
+	Overrides    map[string]map[string]any `json:"overrides"`
 }
 
 type blockResource struct {

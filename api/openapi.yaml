@@ -504,7 +504,10 @@ paths:
       description: |
         Creates a Plan that restarts the guest with a new enrollment token (risk `disruptive`,
         D-038). The token is never a change: the driver passes it as `Bootstrap` (D-047).
-        Nothing happens until the Plan is approved.
+        Nothing happens until the Plan is approved. A re-enrollment needs a cold start: for a
+        running VM whose Target has `allow_restart: false` it is refused with 422 (D-194). Stop
+        the VM in Proxmox and re-enroll again (the Run starts it), or set `allow_restart` first in
+        its own Plan. The Run checks the power state again before it makes the token.
       security:
         - session: []
         - token: [plan]
@@ -548,6 +551,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
 
   /plans:
     get:
