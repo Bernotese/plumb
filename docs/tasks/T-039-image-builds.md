@@ -138,7 +138,7 @@ Target create: newest ready version of its Image (found by name + build digest, 
 - **Steps, in this order** (final list after `HOST C0, C7, D2`): (1) the guards below; (2) Ubuntu, D-192: when dracut is the initramfs tool and its network part is present, write `/etc/dracut.conf.d/90-plumb-no-network.conf` and make the initramfs again; (3) when `upgraded`: `apt-get -s dist-upgrade` must say `0 upgraded, 0 newly installed`, else fail with the end of the cloud-init output log; (4) cloud-init: remove `/etc/cloud/cloud-init.disabled`, `cloud-init clean --logs --seed --machine-id --configs all`; (5) remove `/etc/ssh/ssh_host_*` (D-185); (6) machine-id (also the dbus file when it is no link); (7) remove the user `plumb-build`, its home and its sudoers file; (8) systemd random seed and `credential.secret`; (9) `apt-get clean`, journal, shell histories, `/tmp`, `/var/tmp`; (10) `fstrim`; (11) send the result; when the controller took it: remove the credential, the desired list, the unit, the config, the CA file, the install script and the binary, then stop.
 - **The agent is not in a VM template.** A clone installs the current agent from the controller through the vendor snippet, as with a stock image. So no template holds an old agent, a credential or a desired list. (LXC templates need the agent inside; T-038 adds that variant.)
 - **Guards: two independent ones, so one defect cannot seal a real Target.** Controller: `link.Send` takes `seal` only for a link name with the prefix `build:`, and the engine sends it only from a build lane. Agent: it runs `seal` only when its enrollment answer said `build` (stored as a file in the state directory) **and** it never got a `watch`; else it answers `refused` and changes nothing. An enrollment token is marked `build` only by `CreateBuild`.
-- After the result the controller revokes the agent (`link.Revoke`, new) before it stops the guest. A failed `seal` step fails the build; the guest is deleted, never converted.
+- After the result the controller revokes the agent with the revoke function of T-057 (D-211; this plan adds no second one) before it stops the guest. A failed `seal` step fails the build; the guest is deleted, never converted.
 - **What stays the same:** the trust model (§7). The controller already has root in every guest; `seal` adds no new power to a token, and it gets no input from a document.
 
 ### 5. Driver (`internal/driver`), retention and delete
@@ -172,17 +172,17 @@ Target create: newest ready version of its Image (found by name + build digest, 
 ### 9. Child cards (after the user's approval)
 | Card | Content | Owner (proposal) | After |
 |---|---|---|---|
-| T-057 | Contract: Image schema, OpenAPI, `wire` seal, driver interface with fake stubs, mock examples | pl-architect | – |
-| T-058 | State and store: save checks, `RenderImage`, recipe, migration 0008 | pl-backend | T-057 |
-| T-059 | Agent `seal`, guards, build mode at enrollment, guest tests | pl-backend (second lane) | T-057 |
-| T-060 | Driver: `CreateBuild`, `MakeImage`, `FindImage`, `ListImages`, `RemoveImage`, version marker, recordings from the host | pl-backend | T-057 |
-| T-061 | Engine: build lane, `Plan.images`, `image-recipe`, Target from a version, retention step, crash cleanup, API | pl-backend | T-058, T-060 |
-| T-062 | Schedule: clock, slots, `system` approval | pl-backend | T-061 |
-| T-063 | Web: Images screens, form, Plan/Run/Target changes | pl-frontend | T-057 (mock), T-061 (real API) |
-| T-064 | QA: tests against the cards above, mutation audit, guest tests | pl-codex-qa | each card |
-| T-065 | Real-host acceptance, both distributions; then remove the known limit D-192 from ARCHITECTURE §5 | pl-backend + pl-codex-qa | all |
+| T-058 | Contract: Image schema, OpenAPI, `wire` seal, driver interface with fake stubs, mock examples | pl-architect | – |
+| T-059 | State and store: save checks, `RenderImage`, recipe, migration 0008 | pl-backend | T-058 |
+| T-060 | Agent `seal`, guards, build mode at enrollment, guest tests | pl-backend (second lane) | T-058 |
+| T-061 | Driver: `CreateBuild`, `MakeImage`, `FindImage`, `ListImages`, `RemoveImage`, version marker, recordings from the host | pl-backend | T-058 |
+| T-062 | Engine: build lane, `Plan.images`, `image-recipe`, Target from a version, retention step, crash cleanup, API | pl-backend | T-059, T-061 |
+| T-063 | Schedule: clock, slots, `system` approval | pl-backend | T-062 |
+| T-064 | Web: Images screens, form, Plan/Run/Target changes | pl-frontend | T-058 (mock), T-062 (real API) |
+| T-065 | QA: tests against the cards above, mutation audit, guest tests | pl-codex-qa | each card |
+| T-066 | Real-host acceptance, both distributions; then remove the known limit D-192 from ARCHITECTURE §5 | pl-backend + pl-codex-qa | all |
 
-T-058, T-059, T-060 and the mock part of T-063 run in parallel.
+T-059, T-060, T-061 and the mock part of T-064 run in parallel.
 
 ### 10. Open questions for the user (each with one recommendation)
 1. **Who approves a change of an Image recipe, schedule or retention?** Recommendation: only a person (`image-recipe`). A token can still start a build of an approved recipe.
