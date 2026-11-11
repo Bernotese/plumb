@@ -16,6 +16,7 @@ import type {
   ImageView,
   Change,
   Issue,
+  IssueAction,
   Plan,
   PlumbEvent,
   Problem,
@@ -490,7 +491,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   for (const i of [...exampleItems<Issue>(example("listIssues", 200)), example("getIssue", 200)])
     issues.set(i.id, i);
   for (const i of issues.values())
-    if (i.status === "open") i.actions = [...i.actions, "ignore_once", "ignore_rule"];
+    if (i.status === "open")
+      i.actions = [...new Set<IssueAction>([...i.actions, "ignore_once", "ignore_rule"])];
   // Plan 15 (example) resolves issue 7.
   const i7 = issues.get(7);
   const p15 = plans.get(15);
@@ -1680,9 +1682,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       if (!r) throw new ApiError(example("getRun", 404));
       return structuredClone(r);
     },
-    async listIssues() {
+    async listIssues(filter) {
       auth();
-      return structuredClone([...issues.values()].sort((a, b) => b.id - a.id));
+      const list = [...issues.values()].filter(
+        (i) =>
+          (!filter?.target || i.target === filter.target) &&
+          (!filter?.status || i.status === filter.status),
+      );
+      return structuredClone(list.sort((a, b) => b.id - a.id));
     },
     async getIssue(id) {
       auth();

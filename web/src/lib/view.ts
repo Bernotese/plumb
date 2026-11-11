@@ -1,5 +1,5 @@
 // Display rules shared by the screens. Pure functions, tested in view.test.ts.
-import type { Change, Plan, Risk, TargetView } from "./types";
+import type { Change, Issue, Plan, Risk, TargetView } from "./types";
 
 export type Tone = "ok" | "warn" | "danger" | "info" | "muted";
 
@@ -262,4 +262,56 @@ export function humanOnlyReasons(plan: Plan): string[] {
     }
   }
   return out;
+}
+
+// --- T-071: addresses reported by the guest (D-212 … D-216) ---
+
+export const GUEST_ADDRESS = "guest:address";
+
+/** The mark next to every address that the agent in the guest reports (D-216). */
+export const REPORTED_MARK = "reported by the guest";
+
+/** Why the mark is there: root in the guest can send any list. */
+export const REPORTED_TITLE =
+  "The agent in the guest sends this list. Plumb shows it only and never connects to it.";
+
+/** The hint on a guest:address Issue (D-192). */
+export const ADDRESS_HINT =
+  "If the image is a stock Ubuntu 26.04, restart the guest once: it takes a static address only from the second boot (D-192). Else check the network setup in the guest.";
+
+type Status = TargetView["status"];
+
+/**
+ * The reported list for display, or null when Plumb has no list
+ * (agent offline, old agent: reported_at is null, D-217).
+ */
+export function reportedAddrs(s: Status): { ips: string[]; more: boolean } | null {
+  if (!s.reported_at) return null;
+  return { ips: s.reported_ips ?? [], more: s.reported_ips_more === true };
+}
+
+/** "192.0.2.107, fd00::41 + more", or "no address". */
+export function reportedText(r: { ips: string[]; more: boolean }): string {
+  if (r.ips.length === 0) return r.more ? "+ more" : "no address";
+  return r.ips.join(", ") + (r.more ? " + more" : "");
+}
+
+/** The list of a guest:address change: "192.0.2.107" or "no address". */
+function listText(v: unknown): string {
+  const list = Array.isArray(v) ? v.map(String) : [];
+  return list.length ? list.join(", ") : "no address";
+}
+
+/** The text of a guest:address Issue (D-215). */
+export function addressIssueText(issue: Issue): string {
+  const c = issue.changes.find((x) => x.attr === "ip");
+  if (!c || isSensitive(c)) return "The guest does not use its configured address.";
+  return `The guest does not use the configured address ${valueText(c.to)}. It reports: ${listText(c.from)}.`;
+}
+
+/** The mismatch line of the Target page: "Configured: X — the guest reports Y". */
+export function mismatchLine(issue: Issue): string {
+  const c = issue.changes.find((x) => x.attr === "ip");
+  if (!c || isSensitive(c)) return "The guest does not use its configured address.";
+  return `Configured: ${valueText(c.to)} — the guest reports ${listText(c.from)}`;
 }
