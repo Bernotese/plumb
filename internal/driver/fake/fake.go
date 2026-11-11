@@ -36,13 +36,17 @@ const (
 )
 
 type guest struct {
-	spec  driver.GuestSpec
-	power driver.Power
+	// spec is what the running guest uses; next is what it uses after the
+	// next stop and start (D-190). Both are equal on a stopped guest.
+	spec, next driver.GuestSpec
+	power      driver.Power
 	// token is the active enrollment token; pending is the one that
 	// becomes active at the next cold start (re-enrollment).
 	token, pending string
 	gen            int // bumped on every config change
 	ip             string
+	frozen         string // a digest that a cold start kept (ColdRestart)
+	boots          int    // cold starts, Create included
 }
 
 // Driver is the fake driver. The zero value is not usable; call New.
@@ -55,6 +59,20 @@ type Driver struct {
 	nextTpl  int // refs are never used twice, also after RemoveImage
 	failures map[Op][]error
 	calls    map[Op]int
+	hooks    map[Op][]func()
+	// hotplug: a running guest takes cores and memory live. Default off,
+	// like Proxmox without hotplug and NUMA settings.
+	hotplug bool
+	// bridgeStuck: a running guest does not take a bridge change live (a
+	// failed hot-unplug).
+	bridgeStuck bool
+	// keepPending: a write of the running value on a running guest keeps
+	// the pending value (a Proxmox that needs revert=<key>, review B1).
+	keepPending bool
+	// restartFault fails a restart half way: "stop" (the guest still
+	// runs) or "start" (the guest is stopped). One shot.
+	restartFault    string
+	restartFaultErr error
 }
 
 var _ driver.Driver = (*Driver)(nil)
@@ -69,7 +87,46 @@ func New() *Driver {
 		nextTpl:  9000,
 		failures: map[Op][]error{},
 		calls:    map[Op]int{},
+		hooks:    map[Op][]func(){},
 	}
+}
+
+// Hook runs fn once, right before the next call of op takes the driver
+// lock: for example a guest that someone starts outside Plumb between
+// two steps of a Run.
+func (d *Driver) Hook(op Op, fn func()) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.hooks[op] = append(d.hooks[op], fn)
+}
+
+// SetHotplug makes a running guest take cores and memory live.
+func (d *Driver) SetHotplug(on bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.hotplug = on
+}
+
+// SetBridgeStuck makes a running guest keep a bridge change pending.
+func (d *Driver) SetBridgeStuck(on bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.bridgeStuck = on
+}
+
+// SetKeepPending makes a write of the running value keep the pending one.
+func (d *Driver) SetKeepPending(on bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.keepPending = on
+}
+
+// FailRestart makes the next restart fail half way: at "stop" the guest
+// still runs; at "start" it is stopped.
+func (d *Driver) FailRestart(stage string, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.restartFault, d.restartFaultErr = stage, err
 }
 
 // SetLatency sets the duration of every task. Default 0.
@@ -94,7 +151,8 @@ func (d *Driver) Calls(op Op) int {
 }
 
 // Tamper changes a guest from outside Plumb, like a user in the Proxmox
-// UI. The digest changes.
+// UI, in the running view and in the view after the next cold start. The
+// digest changes.
 func (d *Driver) Tamper(id driver.GuestID, change func(*driver.GuestSpec)) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -103,8 +161,103 @@ func (d *Driver) Tamper(id driver.GuestID, change func(*driver.GuestSpec)) error
 		return driver.ErrNotFound
 	}
 	change(&g.spec)
+	change(&g.next)
 	g.gen++
+	g.frozen = ""
 	return nil
+}
+
+// TamperPending changes only the view after the next cold start, like
+// qm set --memory on a running VM (T-015 run 1). The digest changes.
+func (d *Driver) TamperPending(id driver.GuestID, change func(*driver.GuestSpec)) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g, ok := d.guests[id]
+	if !ok {
+		return driver.ErrNotFound
+	}
+	change(&g.next)
+	g.gen++
+	g.frozen = ""
+	return nil
+}
+
+// StartOutside starts a stopped guest outside Plumb; the pending values
+// become active. A running guest stays as it is.
+func (d *Driver) StartOutside(id driver.GuestID) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g, ok := d.guests[id]
+	if !ok {
+		return driver.ErrNotFound
+	}
+	if g.power == driver.PowerStopped {
+		g.coldStart()
+	}
+	return nil
+}
+
+// StopOutside stops a guest outside Plumb. Pending values stay pending.
+func (d *Driver) StopOutside(id driver.GuestID) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g, ok := d.guests[id]
+	if !ok {
+		return driver.ErrNotFound
+	}
+	g.power = driver.PowerStopped
+	return nil
+}
+
+// ColdRestart stops and starts a guest outside Plumb. With keepDigest the
+// digest does not move, so a poll cannot rely on it (review S8).
+func (d *Driver) ColdRestart(id driver.GuestID, keepDigest bool) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g, ok := d.guests[id]
+	if !ok {
+		return driver.ErrNotFound
+	}
+	old := digest(g)
+	g.coldStart()
+	if keepDigest {
+		g.frozen = old
+	}
+	return nil
+}
+
+// coldStart applies the pending values and the pending token and runs
+// the guest.
+func (g *guest) coldStart() {
+	changed := !equalSpec(g.spec, g.next) || g.pending != ""
+	g.spec = g.next
+	g.spec.SSHKeys = append([]string(nil), g.next.SSHKeys...)
+	if g.pending != "" {
+		g.token, g.pending = g.pending, ""
+	}
+	if changed {
+		g.gen++
+		g.frozen = ""
+	}
+	g.power = driver.PowerRunning
+	g.boots++
+}
+
+// Boots returns how often a guest had a cold start (Create counts), so a
+// test agent can say hello after each boot, like the real agent.
+func (d *Driver) Boots(id driver.GuestID) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if g, ok := d.guests[id]; ok {
+		return g.boots
+	}
+	return 0
+}
+
+func equalSpec(a, b driver.GuestSpec) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
 }
 
 // Bootstrap returns the active enrollment token of a guest, as an agent
@@ -139,6 +292,14 @@ func task[T any](ctx context.Context, d *Driver, op Op, fn func() (T, error)) (T
 	var zero T
 	d.mu.Lock()
 	d.calls[op]++
+	if hs := d.hooks[op]; len(hs) > 0 {
+		d.hooks[op] = nil
+		d.mu.Unlock()
+		for _, h := range hs {
+			h()
+		}
+		d.mu.Lock()
+	}
 	if q := d.failures[op]; len(q) > 0 {
 		err := q[0]
 		d.failures[op] = q[1:]
@@ -250,7 +411,9 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		d.nextID++
 		spec.SSHKeys = append([]string(nil), spec.SSHKeys...)
 		spec.Image = "" // like Proxmox: the guest keeps the Image name, not the ref (D-189)
-		d.guests[id] = &guest{spec: spec, power: driver.PowerRunning, token: boot.Token, ip: ip}
+		next := spec
+		next.SSHKeys = append([]string(nil), spec.SSHKeys...)
+		d.guests[id] = &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1}
 		return id, nil
 	})
 }
@@ -264,7 +427,12 @@ func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestSt
 		}
 		spec := g.spec
 		spec.SSHKeys = append([]string(nil), g.spec.SSHKeys...)
-		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power}
+		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != ""}
+		if !equalSpec(g.spec, g.next) {
+			next := g.next
+			next.SSHKeys = append([]string(nil), g.next.SSHKeys...)
+			st.Pending = &next
+		}
 		if g.power == driver.PowerRunning {
 			st.IPs = []string{g.ip}
 		}
@@ -274,11 +442,14 @@ func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestSt
 
 // digest changes whenever the config changes, like the Proxmox digest.
 func digest(g *guest) string {
+	if g.frozen != "" {
+		return g.frozen
+	}
 	b, _ := json.Marshal(struct {
-		Spec    driver.GuestSpec
-		Gen     int
-		Pending bool
-	}{g.spec, g.gen, g.pending != ""})
+		Spec, Next driver.GuestSpec
+		Gen        int
+		Pending    bool
+	}{g.spec, g.next, g.gen, g.pending != ""})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:20])
 }
@@ -296,7 +467,10 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 		if !ok {
 			return driver.ErrNotFound
 		}
-		next := g.spec
+		// A running guest takes cores and memory only at the next cold
+		// start (unless hotplug), and the bridge live (unless stuck).
+		running := g.power == driver.PowerRunning
+		run, next := g.spec, g.next
 		for _, c := range changes {
 			if driver.IsCreateOnly(c.Attr) {
 				return &driver.CreateOnlyError{Attr: c.Attr}
@@ -304,15 +478,34 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 			var err error
 			switch c.Attr {
 			case driver.AttrCores:
-				next.Cores, err = driver.IntValue(c.To)
+				var v int
+				v, err = driver.IntValue(c.To)
+				if !(running && d.keepPending && v == run.Cores) {
+					next.Cores = v
+				}
+				if !running || d.hotplug {
+					run.Cores = v
+				}
 			case driver.AttrMemory:
-				next.MemoryMB, err = driver.IntValue(c.To)
+				var v int
+				v, err = driver.IntValue(c.To)
+				if !(running && d.keepPending && v == run.MemoryMB) {
+					next.MemoryMB = v
+				}
+				if !running || d.hotplug {
+					run.MemoryMB = v
+				}
 			case driver.AttrBridge:
 				s, ok := c.To.(string)
 				if !ok || s == "" {
 					err = fmt.Errorf("fake: bridge %v is not a name", c.To)
 				}
-				next.Bridge = s
+				if !(running && d.keepPending && s == run.Bridge) {
+					next.Bridge = s
+				}
+				if !running || !d.bridgeStuck {
+					run.Bridge = s
+				}
 			case driver.AttrEnrollToken:
 				if !c.Sensitive || c.From != nil || c.To != nil {
 					err = errors.New("fake: enroll_token change must be sensitive and carry no value")
@@ -327,11 +520,12 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				return err
 			}
 		}
-		g.spec = next
+		g.spec, g.next = run, next
 		if boot != nil {
 			g.pending = boot.Token
 		}
 		g.gen++
+		g.frozen = ""
 		return nil
 	})
 }
@@ -347,14 +541,20 @@ func (d *Driver) Power(ctx context.Context, id driver.GuestID, action driver.Pow
 		switch action {
 		case driver.PowerStop:
 			g.power = driver.PowerStopped
-		case driver.PowerStart, driver.PowerRestart:
-			if action == driver.PowerRestart || g.power == driver.PowerStopped {
-				if g.pending != "" {
-					g.token, g.pending = g.pending, ""
-					g.gen++
-				}
+		case driver.PowerStart:
+			if g.power == driver.PowerStopped { // a start of a running guest does nothing
+				g.coldStart()
 			}
-			g.power = driver.PowerRunning
+		case driver.PowerRestart:
+			if d.restartFault != "" {
+				stage, err := d.restartFault, d.restartFaultErr
+				d.restartFault, d.restartFaultErr = "", nil
+				if stage == "start" {
+					g.power = driver.PowerStopped
+				}
+				return err
+			}
+			g.coldStart()
 		default:
 			return fmt.Errorf("fake: unknown power action %q", action)
 		}

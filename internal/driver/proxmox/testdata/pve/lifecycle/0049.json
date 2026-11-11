@@ -1,9 +1,21 @@
 {
-  "body": {
-    "data": "UPID:pve:00006F99:00083BEB:6AF3B7F3:qmstart:9001:plumb@pve!plumb:"
-  },
-  "method": "POST",
-  "path": "/nodes/pve/qemu/9001/status/start",
   "seq": 49,
-  "status": 200
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:00029E14:0038BE6D:6AF43422:qmshutdown:9001:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "starttime": 1794389026,
+      "user": "plumb@pve",
+      "tokenid": "plumb",
+      "pid": 171540,
+      "upid": "UPID:pve:00029E14:0038BE6D:6AF43422:qmshutdown:9001:plumb@pve!plumb:",
+      "type": "qmshutdown",
+      "exitstatus": "OK",
+      "pstart": 3718765,
+      "node": "pve",
+      "status": "stopped",
+      "id": "9001"
+    }
+  }
 }

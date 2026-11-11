@@ -1060,6 +1060,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         plan_id: p.id,
         revision: head,
         status: "running",
+        waits_for_restart: 0,
         started_at: now(),
         finished_at: null,
         targets: p.targets.map((t) => ({
@@ -1114,6 +1115,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
               applied_revision: head,
               open_issues: 0,
               last_run_id: run.id,
+              waiting: [],
             },
           };
           view.status.last_run_id = run.id;

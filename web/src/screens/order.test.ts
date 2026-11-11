@@ -108,6 +108,7 @@ describe("RunView skipped step", () => {
       status: "failed",
       started_at: "2026-11-10T09:00:00Z",
       finished_at: "2026-11-10T09:01:00Z",
+      waits_for_restart: 0,
       targets: [
         {
           target: "web1",

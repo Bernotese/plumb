@@ -1,21 +1,21 @@
 {
+  "seq": 9,
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:00029CB1:0038BB36:6AF4341A:qmtemplate:9000:plumb@pve!plumb:/status",
+  "status": 200,
   "body": {
     "data": {
-      "exitstatus": "OK",
+      "tokenid": "plumb",
+      "starttime": 1794389018,
+      "user": "plumb@pve",
       "id": "9000",
       "node": "pve",
-      "pid": 27917,
-      "pstart": 526708,
-      "starttime": 1794357106,
       "status": "stopped",
-      "tokenid": "plumb",
+      "exitstatus": "OK",
+      "upid": "UPID:pve:00029CB1:0038BB36:6AF4341A:qmtemplate:9000:plumb@pve!plumb:",
       "type": "qmtemplate",
-      "upid": "UPID:pve:00006D0D:00080974:6AF3B772:qmtemplate:9000:plumb@pve!plumb:",
-      "user": "plumb@pve"
+      "pid": 171185,
+      "pstart": 3717942
     }
-  },
-  "method": "GET",
-  "path": "/nodes/pve/tasks/UPID:pve:00006D0D:00080974:6AF3B772:qmtemplate:9000:plumb@pve!plumb:/status",
-  "seq": 9,
-  "status": 200
+  }
 }

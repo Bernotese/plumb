@@ -266,6 +266,11 @@ func TestContract(t *testing.T) {
 	call(adm, "GET", "/api/v1/issues/999", "/issues/{id}", nil) // 404
 
 	// Re-enroll and discard.
+	// A running VM with allow_restart false: refused (D-194). Stopped: a Plan.
+	call(adm, "POST", "/api/v1/targets/web1/reenroll", "/targets/{name}/reenroll", map[string]string{"reason": "test"}) // 422
+	if err := e.drv.StopOutside(e.guestID("web1")); err != nil {
+		t.Fatal(err)
+	}
 	re := call(adm, "POST", "/api/v1/targets/web1/reenroll", "/targets/{name}/reenroll", map[string]string{"reason": "test"})
 	call(adm, "POST", "/api/v1/targets/nope/reenroll", "/targets/{name}/reenroll", nil) // 404
 	call(adm, "DELETE", "/api/v1/plans/"+id(re), "/plans/{id}", nil)

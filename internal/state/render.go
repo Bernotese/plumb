@@ -18,6 +18,10 @@ type Rendered struct {
 	Target string    `json:"target"`
 	Kind   wire.Kind `json:"kind"`
 	Image  string    `json:"image"`
+	// AllowRestart is spec.allow_restart of the Target (D-194): a Run may
+	// restart the running VM. It is a rule of Plumb: never drift, no
+	// override, and the driver never gets it.
+	AllowRestart bool `json:"allow_restart,omitempty"`
 	// Guest is the guest:config resource: the Proxmox settings, with
 	// defaults. The driver handles it, not the agent. Its Block is empty.
 	Guest wire.Resource `json:"guest"`
@@ -55,7 +59,7 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 		return nil, errs
 	}
 	sch := mustSchemas()
-	out := &Rendered{Target: target, Kind: wire.Kind(t.Type), Image: t.Image}
+	out := &Rendered{Target: target, Kind: wire.Kind(t.Type), Image: t.Image, AllowRestart: t.AllowRestart}
 	out.Guest = wire.Resource{
 		ID:    wire.GuestConfigID,
 		Type:  GuestType,

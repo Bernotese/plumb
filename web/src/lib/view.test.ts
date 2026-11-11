@@ -21,7 +21,7 @@ function target(
       name: "t",
       spec: { type: "vm", image: "i", guest: { cores: 1, memory: 256, disk: 1, bridge: "vmbr0" } },
     },
-    status: { phase, agent, power: "running", open_issues: open },
+    status: { phase, agent, power: "running", open_issues: open, waiting: [] },
   };
 }
 

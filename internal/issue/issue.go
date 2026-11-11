@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/plan"
@@ -121,7 +122,7 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 			if err := s.st.ResolveIssue(ctx, iss.ID, "gone", "system"); err != nil {
 				return err
 			}
-			s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": "gone"})
+			s.emit(ctx, "issue.resolved", iss.ID, "system", s.waitingNote(ctx, iss, map[string]any{"resolution": "gone"}))
 		}
 	}
 	return nil
@@ -318,10 +319,37 @@ func (s *Service) PlanDone(ctx context.Context, planID int64, ok bool) {
 		}
 		if ok {
 			if err := s.st.ResolveIssue(ctx, iss.ID, resolution, p.ApprovedBy); err == nil {
-				s.emit(ctx, "issue.resolved", iss.ID, p.ApprovedBy, map[string]any{"resolution": resolution, "plan": planID})
+				s.emit(ctx, "issue.resolved", iss.ID, p.ApprovedBy, s.waitingNote(ctx, iss, map[string]any{"resolution": resolution, "plan": planID}))
 			}
 		} else if err := s.st.ReopenIssue(ctx, iss.ID); err == nil {
 			s.emit(ctx, "issue.updated", iss.ID, "system", map[string]any{"status": store.IssueOpen, "plan": planID})
 		}
 	}
+}
+
+// waitingNote handles an Issue of guest:config that is resolved while
+// values of its Target wait for a restart (D-195): it adds a system
+// comment that names them, and the count to the event data. The engine
+// writes the waiting list before the Issue is resolved.
+func (s *Service) waitingNote(ctx context.Context, iss store.Issue, data map[string]any) map[string]any {
+	if iss.Resource != wire.GuestConfigID {
+		return data
+	}
+	b, err := s.st.GetBinding(ctx, state.KindTarget, iss.Target)
+	if err != nil {
+		return data
+	}
+	data["waits_for_restart"] = len(b.Waiting)
+	if len(b.Waiting) == 0 {
+		return data
+	}
+	var parts []string
+	for _, w := range b.Waiting {
+		parts = append(parts, fmt.Sprintf("%s %d is set and waits for a restart of the VM. The VM uses %d.", w.Attr, w.To, w.From))
+	}
+	body := "Resolved, but not active: " + strings.Join(parts, " ")
+	if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: body}); err != nil {
+		return data
+	}
+	return data
 }

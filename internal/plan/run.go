@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -170,10 +172,14 @@ func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *
 	if ctx.Err() != nil {
 		status = "failed"
 	}
-	if err := e.st.FinishRun(fin, run.ID, status); err != nil {
+	// The waiting list of every Target of the Run, succeeded or failed,
+	// before the Issue hook (D-195, write point b).
+	e.recordWaiting(fin, set, targets)
+	waits := e.waitsOfRun(fin, run.ID)
+	if err := e.st.FinishRun(fin, run.ID, status, waits); err != nil {
 		e.log.Error("finish run", "run", run.ID, "err", err)
 	}
-	e.emit(fin, "run.finished", subject, "system", map[string]any{"plan": p.ID, "status": status})
+	e.emit(fin, "run.finished", subject, "system", map[string]any{"plan": p.ID, "status": status, "waits_for_restart": waits})
 	if e.cfg.OnPlanDone != nil {
 		e.cfg.OnPlanDone(fin, p.ID, status == "succeeded")
 	}
@@ -277,22 +283,25 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 
 	// 1. Guest step.
 	newAgent := false
+	hellos := e.hellos(tp.Target)
 	if guestChange != nil {
 		s.set(ctx, wire.GuestConfigID, wire.StatusRunning, nil, "")
-		changes, err := e.guestStep(ctx, run, tp, r, guestChange.Risk)
+		res, err := e.guestStep(ctx, run, tp, r, *guestChange)
 		switch {
 		case errors.Is(err, errRefused):
-			s.set(ctx, wire.GuestConfigID, wire.StatusRefused, changes, err.Error())
+			s.set(ctx, wire.GuestConfigID, wire.StatusRefused, res.changes, err.Error())
 		case err != nil:
-			s.set(ctx, wire.GuestConfigID, wire.StatusFailed, changes, err.Error())
+			s.set(ctx, wire.GuestConfigID, wire.StatusFailed, res.changes, err.Error())
 		default:
-			s.set(ctx, wire.GuestConfigID, wire.StatusApplied, changes, "")
+			s.set(ctx, wire.GuestConfigID, wire.StatusApplied, res.changes, res.output)
 		}
 		if err != nil {
 			s.failRest(ctx, "the guest step failed")
 			return false
 		}
-		newAgent = tp.Guest == "create" || tp.Guest == "reenroll"
+		// After a new boot the old link may still look online: the
+		// resource steps wait for a hello of the new boot (D-194).
+		newAgent = tp.Guest == "create" || tp.Guest == "reenroll" || res.restarted
 	}
 	if r == nil { // the target was deleted
 		return s.ok
@@ -301,7 +310,11 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// 2. Wait for the agent.
 	if newAgent || !e.cfg.Agents.Online(tp.Target) {
 		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"phase": "enrolling", "run": run.ID})
-		if err := e.waitOnline(ctx, tp.Target); err != nil {
+		after := -1 // any hello
+		if newAgent {
+			after = hellos
+		}
+		if err := e.waitOnline(ctx, tp.Target, after); err != nil {
 			s.failRest(ctx, err.Error())
 			return false
 		}
@@ -352,12 +365,25 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 
 var errRefused = errors.New("refused: the guest changed since the Plan; its changes are above the approved risk")
 
-func (e *Engine) waitOnline(ctx context.Context, target string) error {
+// hellos returns how many hellos the target's agent sent since the
+// controller started. It counts every hello, not only one of a new boot:
+// a link reconnect between the count and the restart ends the wait
+// early (review N1). The resource steps still need the agent online, and
+// the agent observes again before it applies (D-075).
+func (e *Engine) hellos(target string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hello[target]
+}
+
+// waitOnline waits until the agent is online and, when after >= 0, has
+// sent a hello after the count after: a hello of a new boot.
+func (e *Engine) waitOnline(ctx context.Context, target string, after int) error {
 	deadline := time.NewTimer(e.cfg.EnrollTimeout)
 	defer deadline.Stop()
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
-	for !e.cfg.Agents.Online(target) {
+	for !e.cfg.Agents.Online(target) || (after >= 0 && e.hellos(target) <= after) {
 		select {
 		case <-tick.C:
 		case <-deadline.C:
@@ -369,90 +395,173 @@ func (e *Engine) waitOnline(ctx context.Context, target string) error {
 	return nil
 }
 
+// guestResult is what the guest step did.
+type guestResult struct {
+	changes   []wire.Change // recorded in the step
+	output    string
+	restarted bool // the guest had a new boot
+}
+
 // guestStep does the driver part of a target. It returns the changes it made.
-func (e *Engine) guestStep(ctx context.Context, run store.Run, tp TargetPlan, r *state.Rendered, approved wire.Risk) ([]wire.Change, error) {
+func (e *Engine) guestStep(ctx context.Context, run store.Run, tp TargetPlan, r *state.Rendered, planned ResourceChange) (guestResult, error) {
+	var res guestResult
 	switch tp.Guest {
 	case "delete":
 		b, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target)
 		if err != nil {
-			return nil, err
+			return res, err
 		}
 		if err := e.cfg.Driver.Delete(ctx, driver.GuestID(b.Ref)); err != nil && !errors.Is(err, driver.ErrNotFound) {
-			return nil, err
+			return res, err
 		}
-		return nil, e.st.DeleteBinding(ctx, state.KindTarget, tp.Target)
+		return res, e.st.DeleteBinding(ctx, state.KindTarget, tp.Target)
 
 	case "create":
 		spec, err := e.guestSpec(tp.Target, r)
 		if err != nil {
-			return nil, err
+			return res, err
 		}
 		if spec.Image, err = e.fetchImage(ctx, run.RevisionID, r.Image); err != nil {
-			return nil, err
+			return res, err
 		}
 		token, _, err := e.cfg.Agents.NewEnrollToken(ctx, tp.Target)
 		if err != nil {
-			return nil, err
+			return res, err
 		}
 		id, err := e.cfg.Driver.Create(ctx, spec, driver.Bootstrap{Token: token})
 		if err != nil {
-			return nil, err
+			return res, err
 		}
 		digest := ""
 		if st, err := e.cfg.Driver.Observe(ctx, id); err == nil {
 			digest = st.Digest
 		}
-		return createChanges(spec), e.st.PutBinding(ctx, store.Binding{Kind: state.KindTarget, Name: tp.Target, Ref: string(id), Digest: digest})
+		res.changes = createChanges(spec)
+		return res, e.st.PutBinding(ctx, store.Binding{Kind: state.KindTarget, Name: tp.Target, Ref: string(id), Digest: digest})
 
 	case "update", "reenroll":
-		b, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target)
-		if err != nil {
-			return nil, err
-		}
-		id := driver.GuestID(b.Ref)
-		desired, err := e.guestSpec(tp.Target, r)
-		if err != nil {
-			return nil, err
-		}
-		observed, err := e.cfg.Driver.Observe(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		changes, err := e.cfg.Driver.Diff(desired, observed)
-		if err != nil {
-			return nil, err
-		}
-		if wire.MaxRisk(changes).Exceeds(approved) {
-			return changes, errRefused
-		}
-		var boot *driver.Bootstrap
-		if tp.Guest == "reenroll" {
-			token, _, err := e.cfg.Agents.NewEnrollToken(ctx, tp.Target)
-			if err != nil {
-				return nil, err
-			}
-			boot = &driver.Bootstrap{Token: token}
-			changes = append(changes, wire.Change{Attr: driver.AttrEnrollToken, Sensitive: true, Risk: wire.RiskDisruptive})
-		}
-		if len(changes) > 0 {
-			if err := e.cfg.Driver.Update(ctx, id, changes, boot); err != nil {
-				return changes, err
-			}
-		}
-		if boot != nil { // the token takes effect at the next cold start
-			if err := e.cfg.Driver.Power(ctx, id, driver.PowerRestart); err != nil {
-				return changes, err
-			}
-		}
-		if st, err := e.cfg.Driver.Observe(ctx, id); err == nil {
-			b.Digest = st.Digest
-			if err := e.st.PutBinding(ctx, b); err != nil {
-				return changes, err
-			}
-		}
-		return changes, nil
+		return e.updateGuest(ctx, tp, r, planned)
 	}
-	return nil, fmt.Errorf("plan: unknown guest action %q", tp.Guest)
+	return res, fmt.Errorf("plan: unknown guest action %q", tp.Guest)
+}
+
+// updateGuest is the guest step of an existing guest (D-194). It observes
+// the power state before any write and uses the rule of the Plan with it.
+func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Rendered, planned ResourceChange) (guestResult, error) {
+	var res guestResult
+	b, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target)
+	if err != nil {
+		return res, err
+	}
+	id := driver.GuestID(b.Ref)
+	desired, err := e.guestSpec(tp.Target, r)
+	if err != nil {
+		return res, err
+	}
+	observed, err := e.cfg.Driver.Observe(ctx, id)
+	if err != nil {
+		return res, err
+	}
+	changes, err := e.cfg.Driver.Diff(desired, observed)
+	if err != nil {
+		return res, err
+	}
+	reenroll := tp.Guest == "reenroll"
+	running := observed.Power == driver.PowerRunning
+	// B1: a guest that someone started after the Plan was made is not
+	// restarted. No token, no write, no power action.
+	if reenroll && running && !r.AllowRestart {
+		return res, errors.New(textReenrollRuns)
+	}
+	recorded, restart, err := restartRule(changes, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
+	if err != nil {
+		return res, err
+	}
+	if restart && !reenroll && !hasAttr(planned.Changes, wire.AttrRestart) {
+		return guestResult{changes: recorded}, errors.New(textRestartNotPlanned)
+	}
+	for _, c := range planned.Changes {
+		if c.Attr == AttrAllowRestart { // Plan-only: recorded, never written
+			recorded = append([]wire.Change{c}, recorded...)
+		}
+	}
+	res.changes = recorded
+	if wire.MaxRisk(recorded).Exceeds(planned.Risk) {
+		return res, errRefused
+	}
+	var boot *driver.Bootstrap
+	if reenroll {
+		token, _, err := e.cfg.Agents.NewEnrollToken(ctx, tp.Target)
+		if err != nil {
+			return res, err
+		}
+		boot = &driver.Bootstrap{Token: token}
+		recorded = append(recorded, wire.Change{Attr: driver.AttrEnrollToken, Sensitive: true, Risk: wire.RiskDisruptive})
+		res.changes = recorded
+	}
+	if write := driverChanges(recorded); len(write) > 0 {
+		if err := e.cfg.Driver.Update(ctx, id, write, boot); err != nil {
+			return res, err
+		}
+	}
+	after, err := e.cfg.Driver.Observe(ctx, id)
+	if err != nil {
+		return res, err
+	}
+	switch {
+	case reenroll && !running:
+		// Start, never restart: a guest that someone started meanwhile
+		// is not restarted (D-194).
+		if err := e.cfg.Driver.Power(ctx, id, driver.PowerStart); err != nil {
+			return res, err
+		}
+		res.restarted = true
+		if after, err = e.cfg.Driver.Observe(ctx, id); err != nil {
+			return res, err
+		}
+		if after.TokenPending {
+			return res, errors.New(textStartedOutside)
+		}
+	case restart:
+		// The bridge first: a bridge that waits is no reason to restart.
+		if _, err := checkWritten(recorded, desired, after); err != nil {
+			return res, err
+		}
+		if reenroll || after.TokenPending || len(driver.WaitingGuest(desired, after)) > 0 {
+			if err := e.cfg.Driver.Power(ctx, id, driver.PowerRestart); err != nil {
+				return res, e.restartFailed(ctx, id, err)
+			}
+			res.restarted = true
+			if after, err = e.cfg.Driver.Observe(ctx, id); err != nil {
+				return res, err
+			}
+			if w := driver.WaitingGuest(desired, after); len(w) > 0 || after.TokenPending {
+				return res, fmt.Errorf("after the restart a value still waits for a stop and start (%s); check the VM in Proxmox", waitingNames(w, after.TokenPending))
+			}
+		} else {
+			// Proxmox applied it live: the planned restart is skipped.
+			recorded = slices.DeleteFunc(recorded, func(c wire.Change) bool { return c.Attr == wire.AttrRestart })
+		}
+	}
+	recorded, err = checkWritten(recorded, desired, after)
+	res.changes = recorded
+	if err != nil {
+		return res, err
+	}
+	res.output = waitingOutput(recorded)
+	b.Digest = after.Digest
+	return res, e.st.PutBinding(ctx, b)
+}
+
+func waitingNames(w []wire.Change, token bool) string {
+	var names []string
+	for _, c := range w {
+		names = append(names, c.Attr)
+	}
+	if token {
+		names = append(names, driver.AttrEnrollToken)
+	}
+	return strings.Join(names, ", ")
 }
 
 // fetchImage asks the driver for the image of a new guest and returns
@@ -504,7 +613,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if err := e.st.FailUnfinishedSteps(ctx, run.ID, "the controller restarted during the Run"); err != nil {
 			return err
 		}
-		if err := e.st.FinishRun(ctx, run.ID, "failed"); err != nil {
+		if err := e.st.FinishRun(ctx, run.ID, "failed", e.waitsOfRun(ctx, run.ID)); err != nil {
 			return err
 		}
 		e.emit(ctx, "run.finished", fmt.Sprintf("run:%d", run.ID), "system",

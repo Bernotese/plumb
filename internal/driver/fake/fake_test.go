@@ -59,12 +59,22 @@ func TestLifecycle(t *testing.T) {
 	if err := d.Update(ctx, id, stored, nil); err != nil {
 		t.Fatal(err)
 	}
+	// The guest runs: both values wait for the next cold start (T-056).
 	after, _ := d.Observe(ctx, id)
-	if after.Spec.Cores != 4 || after.Spec.MemoryMB != 4096 || after.Digest == st.Digest {
+	if after.Spec.Cores != 2 || after.Pending == nil || after.Pending.Cores != 4 || after.Pending.MemoryMB != 4096 || after.Digest == st.Digest {
 		t.Errorf("after update: %+v", after)
 	}
 	if c, err := d.Diff(want, after); err != nil || len(c) != 0 {
 		t.Errorf("second Diff = %+v, %v", c, err)
+	}
+	if w := driver.WaitingGuest(want, after); len(w) != 2 {
+		t.Errorf("waiting = %+v", w)
+	}
+	if err := d.Power(ctx, id, driver.PowerRestart); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ = d.Observe(ctx, id); after.Spec.Cores != 4 || after.Spec.MemoryMB != 4096 || after.Pending != nil {
+		t.Errorf("after restart: %+v", after)
 	}
 
 	if err := d.Power(ctx, id, driver.PowerStop); err != nil {
@@ -183,5 +193,73 @@ func TestCreateChecks(t *testing.T) {
 	}
 	if _, err := d.FetchImage(ctx, driver.ImageSpec{Name: "x", URL: "https://x", SHA256: "abc"}); err == nil {
 		t.Error("bad checksum: want an error")
+	}
+}
+
+// TestPendingModel pins the fake's model of T-056: hotplug, a stuck
+// bridge, an outside pending value, a start of a running guest, a cold
+// restart that keeps the digest, and a restart that fails half way.
+func TestPendingModel(t *testing.T) {
+	ctx := context.Background()
+	d, id, spec := setup(t)
+
+	d.SetHotplug(true)
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrMemory, To: 4096}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := d.Observe(ctx, id); st.Spec.MemoryMB != 4096 || st.Pending != nil {
+		t.Errorf("hotplug: %+v", st)
+	}
+	d.SetHotplug(false)
+
+	d.SetBridgeStuck(true)
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrBridge, To: "vmbr9"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := d.Observe(ctx, id); st.Spec.Bridge != spec.Bridge || st.Pending == nil || st.Pending.Bridge != "vmbr9" {
+		t.Errorf("stuck bridge: %+v", st)
+	}
+	d.SetBridgeStuck(false)
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrBridge, To: spec.Bridge}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.TamperPending(id, func(s *driver.GuestSpec) { s.Cores = 8 }); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := d.Observe(ctx, id)
+	if st.Spec.Cores != spec.Cores || st.Pending == nil || st.Pending.Cores != 8 {
+		t.Errorf("outside pending: %+v", st)
+	}
+	// A start of a running guest applies nothing.
+	if err := d.Power(ctx, id, driver.PowerStart); err != nil {
+		t.Fatal(err)
+	}
+	if st2, _ := d.Observe(ctx, id); st2.Pending == nil {
+		t.Error("a start of a running guest applied the pending value")
+	}
+	// A cold restart from outside that keeps the digest.
+	if err := d.ColdRestart(id, true); err != nil {
+		t.Fatal(err)
+	}
+	if st2, _ := d.Observe(ctx, id); st2.Spec.Cores != 8 || st2.Pending != nil || st2.Digest != st.Digest {
+		t.Errorf("cold restart: %+v (digest before %s)", st2, st.Digest)
+	}
+
+	// A restart that fails at the start leaves the guest stopped.
+	d.FailRestart("start", errors.New("start failed"))
+	if err := d.Power(ctx, id, driver.PowerRestart); err == nil {
+		t.Error("restart fault: no error")
+	}
+	if st, _ := d.Observe(ctx, id); st.Power != driver.PowerStopped {
+		t.Errorf("after a failed start: %s", st.Power)
+	}
+	// A hook runs before the call.
+	d.Hook(OpPower, func() { _ = d.StartOutside(id) })
+	if err := d.Power(ctx, id, driver.PowerStart); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := d.Observe(ctx, id); st.Power != driver.PowerRunning {
+		t.Errorf("after the hook: %s", st.Power)
 	}
 }

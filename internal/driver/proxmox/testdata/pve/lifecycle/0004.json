@@ -1,10 +1,10 @@
 {
-  "body": {
-    "data": "UPID:pve:00006CB6:00080814:6AF3B76E:qmcreate:9000:plumb@pve!plumb:"
-  },
-  "form": "boot=order%3Dscsi0&cores=1&cpu=x86-64-v2-AES&description=Plumb+image+test-image%0Asha256%3Dde9d63f5e5ec5927d7548bc05b6043b87457b8c1cb9bcb95365168e8d0293b4f&ide2=local-lvm%3Acloudinit&memory=1024&name=plumb-img-test-image-de9d63f5e5ec&ostype=l26&pool=plumb&scsi0=local-lvm%3A0%2Cimport-from%3Dplumb-images%3Aimport%2Fplumb-test-image-de9d63f5e5ec.qcow2&scsihw=virtio-scsi-single&serial0=socket&vga=serial0&vmid=9000",
+  "seq": 4,
   "method": "POST",
   "path": "/nodes/pve/qemu",
-  "seq": 4,
-  "status": 200
+  "form": "boot=order%3Dscsi0&cores=1&cpu=x86-64-v2-AES&description=Plumb+image+test-image%0Asha256%3Dde9d63f5e5ec5927d7548bc05b6043b87457b8c1cb9bcb95365168e8d0293b4f&ide2=local-lvm%3Acloudinit&memory=1024&name=plumb-img-test-image-de9d63f5e5ec&ostype=l26&pool=plumb&scsi0=local-lvm%3A0%2Cimport-from%3Dplumb-images%3Aimport%2Fplumb-test-image-de9d63f5e5ec.qcow2&scsihw=virtio-scsi-single&serial0=socket&vga=serial0&vmid=9000",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:00029C34:0038B9D6:6AF43416:qmcreate:9000:plumb@pve!plumb:"
+  }
 }

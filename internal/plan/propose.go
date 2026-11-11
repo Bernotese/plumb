@@ -177,7 +177,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 			for id := range usesAny(after, in.Imported) {
 				fresh[id] = true
 			}
-			plans[i], errs[i] = e.planTarget(ctx, next, t, contains(in.Proposal.Reenroll, t), fresh)
+			plans[i], errs[i] = e.planTarget(ctx, before, next, t, contains(in.Proposal.Reenroll, t), fresh)
 		}()
 	}
 	wg.Wait()
@@ -252,12 +252,13 @@ func union(a, b []string) []string {
 // planTarget observes one target and computes its changes.
 // fresh are the resources with a new secret binding (D-156): they are not
 // observed before the approval.
-func (e *Engine) planTarget(ctx context.Context, next *state.Set, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
+// before is the render of the base revision (nil for a new Target).
+func (e *Engine) planTarget(ctx context.Context, before *state.Rendered, next *state.Set, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
 	r, err := renderOrNil(next, target)
 	if err != nil {
 		return TargetPlan{Target: target}, err
 	}
-	tp, err := e.planRendered(ctx, r, target, reenroll, fresh)
+	tp, err := e.planRendered(ctx, before, r, target, reenroll, fresh)
 	if err == nil && r != nil {
 		showOrder(&tp, r)
 	}
@@ -302,8 +303,10 @@ func showOrder(tp *TargetPlan, r *state.Rendered) {
 	}
 }
 
-// planRendered plans one target from its render (nil: the Target is deleted).
-func (e *Engine) planRendered(ctx context.Context, r *state.Rendered, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
+// planRendered plans one target from its render (nil: the Target is
+// deleted). before is the render of the base revision, for the Plan-only
+// change of allow_restart.
+func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
 	tp := TargetPlan{Target: target}
 	bind, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	exists := err == nil
@@ -365,12 +368,24 @@ func (e *Engine) planRendered(ctx context.Context, r *state.Rendered, target str
 	gchanges, err := e.cfg.Driver.Diff(desired, observed)
 	var co *driver.CreateOnlyError
 	if errors.As(err, &co) {
+		if c := pendingChange(desired, observed, co.Attr); c != nil {
+			return tp, &ProposalError{Target: target, Err: ErrCreateOnly, Msg: fmt.Sprintf(textPendingCreateOnly, co.Attr, c.From, c.To, bind.Ref)}
+		}
 		return tp, &ProposalError{Target: target, Err: ErrCreateOnly, Msg: fmt.Sprintf(
 			"%q can only be set when the guest is created (the guest has %v, the proposal wants %v); create a new target instead",
 			co.Attr, createOnlyField(observed.Spec, co.Attr), createOnlyField(desired, co.Attr))}
 	}
 	if err != nil {
 		return tp, err
+	}
+	// One rule for Plan and Run (D-194): the restart, or the flag that a
+	// value waits for one.
+	gchanges, _, err = restartRule(gchanges, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
+	if err != nil {
+		return tp, &ProposalError{Target: target, Msg: err.Error()}
+	}
+	if ac := allowRestartChange(before, r); ac != nil {
+		gchanges = append([]wire.Change{*ac}, gchanges...)
 	}
 	if reenroll {
 		tp.Guest = "reenroll"

@@ -1,10 +1,38 @@
 {
-  "body": {
-    "data": "UPID:pve:00007009:00083CBB:6AF3B7F5:qmdestroy:9000:plumb@pve!plumb:"
-  },
-  "method": "DELETE",
-  "path": "/nodes/pve/qemu/9000",
-  "query": "purge=1",
   "seq": 67,
-  "status": 200
+  "method": "GET",
+  "path": "/pools",
+  "query": "poolid=plumb&type=qemu",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "comment": "Plumb guests and templates",
+        "poolid": "plumb",
+        "members": [
+          {
+            "diskread": 0,
+            "mem": 0,
+            "netin": 0,
+            "memhost": 0,
+            "maxcpu": 1,
+            "status": "stopped",
+            "maxmem": 1073741824,
+            "uptime": 0,
+            "maxdisk": 3221225472,
+            "name": "plumb-img-test-image-de9d63f5e5ec",
+            "type": "qemu",
+            "cpu": 0,
+            "node": "pve",
+            "template": 1,
+            "id": "qemu/9000",
+            "netout": 0,
+            "diskwrite": 0,
+            "vmid": 9000,
+            "disk": 0
+          }
+        ]
+      }
+    ]
+  }
 }

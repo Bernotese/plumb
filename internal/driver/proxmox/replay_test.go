@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,8 +27,22 @@ type replayRecording struct {
 	Seq    int             `json:"seq"`
 	Method string          `json:"method"`
 	Path   string          `json:"path"`
+	Query  string          `json:"query"`
 	Status int             `json:"status"`
 	Body   json.RawMessage `json:"body"`
+}
+
+// replayKey is method and path. A config read also keeps current=1: the
+// running view and the view after the next cold start are two answers
+// (D-190).
+func replayKey(method, path, query string) string {
+	k := method + " " + path
+	if strings.HasSuffix(path, "/config") && method == "GET" {
+		if q, err := url.ParseQuery(query); err == nil && q.Get("current") == "1" {
+			k += "?current=1"
+		}
+	}
+	return k
 }
 
 // replayServer answers each method+path with its recordings in order and
@@ -60,7 +75,7 @@ func newReplay(t *testing.T, dir string) (*replayServer, *Driver) {
 		if err := json.Unmarshal(b, &r); err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
-		k := r.Method + " " + r.Path
+		k := replayKey(r.Method, r.Path, r.Query)
 		rs.queue[k] = append(rs.queue[k], r)
 	}
 	srv := httptest.NewTLSServer(http.HandlerFunc(rs.serve))
@@ -82,7 +97,7 @@ func newReplay(t *testing.T, dir string) (*replayServer, *Driver) {
 }
 
 func (rs *replayServer) serve(w http.ResponseWriter, r *http.Request) {
-	k := r.Method + " " + strings.TrimPrefix(r.URL.Path, "/api2/json")
+	k := replayKey(r.Method, strings.TrimPrefix(r.URL.Path, "/api2/json"), r.URL.RawQuery)
 	rs.mu.Lock()
 	q := rs.queue[k]
 	if len(q) == 0 {

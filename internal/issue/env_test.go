@@ -37,6 +37,10 @@ type env struct {
 	iss    *issue.Service
 	clock  *clock
 
+	// noBootHello: the fake agent does not say hello after a cold start
+	// of its guest (a real agent always does, D-061).
+	noBootHello bool
+
 	mu     sync.Mutex
 	agents map[string]*linktest.Agent
 	stops  map[string]context.CancelFunc
@@ -126,7 +130,31 @@ func (e *env) agent(target string) *linktest.Agent {
 	e.agents[target], e.stops[target] = a, cancel
 	e.mu.Unlock()
 	go a.Run(ctx)
+	// Like the real agent, a hello after each cold start of the guest.
+	go func() {
+		seen := -1
+		for ctx.Err() == nil {
+			if b, err := e.st.GetBinding(context.Background(), state.KindTarget, target); err == nil {
+				n := e.drv.Boots(driver.GuestID(b.Ref))
+				e.mu.Lock()
+				quiet := e.noBootHello
+				e.mu.Unlock()
+				if seen >= 0 && n > seen && !quiet && a.Enrolls() > 0 {
+					a.Report(ctx, wire.Report{Type: wire.ReportHello, Hello: &wire.Hello{Version: "test", Hostname: "fake", OS: "fake 1"}})
+				}
+				seen = n
+			}
+			sleep(ctx, 5*time.Millisecond)
+		}
+	}()
 	return a
+}
+
+func sleep(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
+	}
 }
 
 // stop stops the agent of a target.

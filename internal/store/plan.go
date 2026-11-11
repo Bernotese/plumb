@@ -45,6 +45,9 @@ type Run struct {
 	Status     string // running | succeeded | failed
 	StartedAt  time.Time
 	FinishedAt time.Time
+	// WaitsForRestart is the number of changes that the steps recorded
+	// with waits_for_restart (D-195). Set by FinishRun.
+	WaitsForRestart int
 }
 
 // Step is one resource of one target in a Run.
@@ -225,8 +228,8 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 	var started string
 	var finished sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, plan_id, revision_id, status, started_at, finished_at FROM run WHERE id = ?`, id).
-		Scan(&r.ID, &r.PlanID, &r.RevisionID, &r.Status, &started, &finished)
+		`SELECT id, plan_id, revision_id, status, started_at, finished_at, waits_for_restart FROM run WHERE id = ?`, id).
+		Scan(&r.ID, &r.PlanID, &r.RevisionID, &r.Status, &started, &finished, &r.WaitsForRestart)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, ErrNotFound
 	}
@@ -240,10 +243,11 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 	return r, err
 }
 
-// FinishRun sets the final status of a Run.
-func (s *Store) FinishRun(ctx context.Context, id int64, status string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE run SET status = ?, finished_at = ? WHERE id = ? AND status = 'running'`,
-		status, s.now(), id)
+// FinishRun sets the final status of a Run and the number of its
+// changes that wait for a restart (D-195).
+func (s *Store) FinishRun(ctx context.Context, id int64, status string, waits int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE run SET status = ?, finished_at = ?, waits_for_restart = ? WHERE id = ? AND status = 'running'`,
+		status, s.now(), waits, id)
 	return err
 }
 
@@ -308,26 +312,68 @@ func (s *Store) Steps(ctx context.Context, runID int64) ([]Step, error) {
 // Binding says what a document is in the driver.
 type Binding struct {
 	Kind, Name, Ref, Digest string
+	// Waiting lists the values that wait for the next stop and start of
+	// the guest (D-195). Only Target bindings use it.
+	Waiting []Waiting
+}
+
+// Waiting is one value that is set in the hypervisor and waits for the
+// next stop and start of the guest. Since is when Plumb first saw this
+// attribute with this To in the list.
+type Waiting struct {
+	Attr  string    `json:"attr"`
+	From  int       `json:"from"`
+	To    int       `json:"to"`
+	Since time.Time `json:"since"`
 }
 
 // PutBinding stores or replaces a binding.
 func (s *Store) PutBinding(ctx context.Context, b Binding) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO binding (kind, name, ref, digest, updated_at) VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT (kind, name) DO UPDATE SET ref = excluded.ref, digest = excluded.digest, updated_at = excluded.updated_at`,
-		b.Kind, b.Name, b.Ref, b.Digest, s.now())
+	waiting, err := waitingJSON(b.Waiting)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO binding (kind, name, ref, digest, waiting, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (kind, name) DO UPDATE SET ref = excluded.ref, digest = excluded.digest, waiting = excluded.waiting, updated_at = excluded.updated_at`,
+		b.Kind, b.Name, b.Ref, b.Digest, waiting, s.now())
 	return err
+}
+
+func waitingJSON(w []Waiting) (string, error) {
+	if w == nil {
+		w = []Waiting{}
+	}
+	for i := range w {
+		w[i].Since = w[i].Since.UTC()
+	}
+	raw, err := json.Marshal(w)
+	return string(raw), err
+}
+
+func scanWaiting(raw string, b *Binding) error {
+	if err := json.Unmarshal([]byte(raw), &b.Waiting); err != nil {
+		return fmt.Errorf("store: binding %s/%s: waiting: %w", b.Kind, b.Name, err)
+	}
+	if len(b.Waiting) == 0 {
+		b.Waiting = nil
+	}
+	return nil
 }
 
 // GetBinding returns a binding, or ErrNotFound.
 func (s *Store) GetBinding(ctx context.Context, kind, name string) (Binding, error) {
 	b := Binding{Kind: kind, Name: name}
-	err := s.db.QueryRowContext(ctx, `SELECT ref, digest FROM binding WHERE kind = ? AND name = ?`, kind, name).
-		Scan(&b.Ref, &b.Digest)
+	var waiting string
+	err := s.db.QueryRowContext(ctx, `SELECT ref, digest, waiting FROM binding WHERE kind = ? AND name = ?`, kind, name).
+		Scan(&b.Ref, &b.Digest, &waiting)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Binding{}, ErrNotFound
 	}
-	return b, err
+	if err != nil {
+		return Binding{}, err
+	}
+	return b, scanWaiting(waiting, &b)
 }
 
 // DeleteBinding removes a binding.
@@ -338,7 +384,7 @@ func (s *Store) DeleteBinding(ctx context.Context, kind, name string) error {
 
 // Bindings returns all bindings of a kind, ordered by name.
 func (s *Store) Bindings(ctx context.Context, kind string) ([]Binding, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, ref, digest FROM binding WHERE kind = ? ORDER BY name`, kind)
+	rows, err := s.db.QueryContext(ctx, `SELECT name, ref, digest, waiting FROM binding WHERE kind = ? ORDER BY name`, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +392,11 @@ func (s *Store) Bindings(ctx context.Context, kind string) ([]Binding, error) {
 	var out []Binding
 	for rows.Next() {
 		b := Binding{Kind: kind}
-		if err := rows.Scan(&b.Name, &b.Ref, &b.Digest); err != nil {
+		var waiting string
+		if err := rows.Scan(&b.Name, &b.Ref, &b.Digest, &waiting); err != nil {
+			return nil, err
+		}
+		if err := scanWaiting(waiting, &b); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

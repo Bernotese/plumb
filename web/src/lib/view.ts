@@ -22,6 +22,13 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
         tone: "warn",
         detail: `${s.open_issues} open issue${s.open_issues === 1 ? "" : "s"}.`,
       };
+    case "restart_needed":
+      // T-056: the full text of the state comes with the web part.
+      return {
+        label: "Restart needed",
+        tone: "warn",
+        detail: "A value is set in Proxmox and waits for a stop and start of the VM.",
+      };
     case "applying":
     case "provisioning":
     case "enrolling":

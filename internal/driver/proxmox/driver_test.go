@@ -249,8 +249,9 @@ func TestUpdate(t *testing.T) {
 	if err := d.Update(ctx, id, changes, nil); err != nil {
 		t.Fatal(err)
 	}
-	if vm.cfg["cores"] != "4" || vm.cfg["memory"] != "4096" || vm.cfg["net0"] != "virtio=BC:24:11:AA:BB:CC,bridge=vmbr1,firewall=1" {
-		t.Errorf("after update: %v", vm.cfg)
+	// The guest runs: cores and memory wait, the bridge applies live (T-056).
+	if n := vm.next(); n["cores"] != "4" || n["memory"] != "4096" || vm.cfg["net0"] != "virtio=BC:24:11:AA:BB:CC,bridge=vmbr1,firewall=1" {
+		t.Errorf("after update: %v", n)
 	}
 
 	// Re-enrollment: a new serial; the uuid and the other fields stay.
@@ -258,11 +259,11 @@ func TestUpdate(t *testing.T) {
 	if err := d.Update(ctx, id, token, &driver.Bootstrap{Token: "tok-2"}); err != nil {
 		t.Fatal(err)
 	}
-	sm := parseProps(vm.cfg["smbios1"])
+	sm := parseProps(vm.next()["smbios1"])
 	serial, _ := base64.StdEncoding.DecodeString(sm["serial"])
 	maker, _ := base64.StdEncoding.DecodeString(sm["manufacturer"])
 	if string(serial) != "tok-2" || sm["uuid"] != uuidBefore || string(maker) != "ACME" {
-		t.Errorf("smbios1 after re-enroll: %s", vm.cfg["smbios1"])
+		t.Errorf("smbios1 after re-enroll: %s", vm.next()["smbios1"])
 	}
 	if err := d.Update(ctx, id, token, nil); err == nil {
 		t.Error("token change without Bootstrap")
