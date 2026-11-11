@@ -796,6 +796,69 @@ lxc_template() {
 	TEMPLATE="$TEMPLATE_STORAGE:vztmpl/$name"
 }
 
+# Proxmox leaves $LXC_DIR/<id> behind for an id without a container:
+# pct destroy --purge keeps rules.seccomp and passthrough/ (its rmdir of the
+# dir fails, pve-container 6.1), a failed pct create keeps an empty rootfs/
+# (0700). PVE reuses the dir (pct start rewrites rules.seccomp and makes
+# passthrough/), only this script checks it. stale_lxc_entry prints the
+# first entry that is not in that known set (a regular file rules.seccomp,
+# the empty dirs passthrough and rootfs), or the dir itself when it is a
+# symbolic link, with the reason. It only reads.
+stale_lxc_entry() {
+	local dir=$LXC_DIR/$1 e name
+	[[ -L $dir ]] && { echo "$dir is a symbolic link"; return 0; }
+	[[ -d $dir ]] || return 0
+	for e in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+		[[ -e $e || -L $e ]] || continue
+		name=${e##*/}
+		if [[ -L $e ]]; then
+			echo "$e is a symbolic link"
+			return 0
+		fi
+		case $name in
+		rules.seccomp) [[ -f $e ]] || { echo "$e is not a regular file"; return 0; } ;;
+		passthrough | rootfs)
+			[[ -d $e ]] || { echo "$e is not a directory"; return 0; }
+			if [[ -n $(find "$e" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]]; then
+				echo "$e is not empty"
+				return 0
+			fi
+			;;
+		*) echo "$e is not a known leftover of Proxmox"; return 0 ;;
+		esac
+	done
+	return 0
+}
+
+# check_stale_lxc_dir stops before any change when $LXC_DIR/<id> holds
+# anything outside the known set (no container with that id).
+check_stale_lxc_dir() {
+	[[ -n $1 && $(lxc_state "$1") == none ]] || return 0
+	local bad
+	bad=$(stale_lxc_entry "$1")
+	[[ -z $bad ]] || die "$bad, and container $1 does not exist; check it by hand. Nothing was changed."
+}
+
+# clean_stale_lxc_dir removes the known leftovers and the dir: only a
+# regular file and empty dirs, never through a symbolic link, no rm -r.
+# With "die" an unknown entry stops the run; with "keep" it is kept and named.
+clean_stale_lxc_dir() {
+	local id=$1 mode=$2 dir=$LXC_DIR/$1 bad
+	[[ -e $dir || -L $dir ]] || return 0
+	bad=$(stale_lxc_entry "$id")
+	if [[ -n $bad ]]; then
+		[[ $mode == die ]] && die "$bad, and container $id does not exist; check it by hand"
+		say "Kept $dir: $bad."
+		return 0
+	fi
+	[[ -f $dir/rules.seccomp ]] && run rm -f -- "$dir/rules.seccomp"
+	local d
+	for d in passthrough rootfs; do
+		[[ -d $dir/$d ]] && run rmdir -- "$dir/$d"
+	done
+	run rmdir -- "$dir"
+}
+
 ensure_lxc() {
 	if [[ -z $LXC_ID ]]; then
 		LXC_ID=$(state_get lxc_id)
@@ -823,20 +886,7 @@ ensure_lxc() {
 	local net="name=eth0,bridge=$BRIDGE,ip=$LXC_IP"
 	[[ -n $LXC_GW ]] && net+=",gw=$LXC_GW"
 	lxc_template
-	# A pct create that failed can leave $LXC_DIR/<id>/rootfs (empty, mode
-	# 0700) behind, and the next pct create with the same id fails on it.
-	# Only empty directories of an id without a container are removed.
-	if [[ -L $LXC_DIR/$LXC_ID ]]; then
-		die "$LXC_DIR/$LXC_ID is a symbolic link, but container $LXC_ID does not exist; check it by hand"
-	fi
-	if [[ -d $LXC_DIR/$LXC_ID ]]; then
-		if [[ -d $LXC_DIR/$LXC_ID/rootfs && ! -L $LXC_DIR/$LXC_ID/rootfs ]]; then
-			run rmdir -- "$LXC_DIR/$LXC_ID/rootfs" 2>/dev/null ||
-				die "$LXC_DIR/$LXC_ID/rootfs is not empty, but container $LXC_ID does not exist; check it by hand"
-		fi
-		run rmdir -- "$LXC_DIR/$LXC_ID" 2>/dev/null ||
-			die "$LXC_DIR/$LXC_ID is not empty, but container $LXC_ID does not exist; check it by hand"
-	fi
+	clean_stale_lxc_dir "$LXC_ID" die
 	# Unprivileged, no host mount, not in the Plumb pool (ARCHITECTURE §7).
 	# mp0 is a new volume on the disk storage (not a host path) with
 	# backup=0: the key volume (D-177).
@@ -1059,6 +1109,10 @@ do_install() {
 	check_images
 	check_user_groups
 	check_key_preflight
+	# The id that ensure_lxc will use when it creates the LXC.
+	local new_id=${LXC_ID:-$(state_get lxc_id)}
+	[[ -n $new_id ]] || new_id=$(query pvesh get /cluster/nextid)
+	check_stale_lxc_dir "$new_id"
 	STRAY_ACLS=$(stray_acls)
 	if [[ -n $STRAY_ACLS ]]; then
 		say "These older rights of Plumb are not in the plan and are removed:"
@@ -1154,6 +1208,12 @@ do_remove() {
 		if [[ -n $keyvol ]] && { query pvesm list "${keyvol%%:*}" --vmid "$lxc" 2>/dev/null || true; } | grep -q "^$keyvol "; then
 			run pvesm free "$keyvol"
 		fi
+		# pct destroy leaves rules.seccomp and passthrough/ (see stale_lxc_entry).
+		if [[ $DRY_RUN == 1 ]]; then
+			say "(dry run: would remove the Proxmox leftovers rules.seccomp, passthrough/, rootfs/ and $LXC_DIR/$lxc)"
+		else
+			clean_stale_lxc_dir "$lxc" keep
+		fi
 	fi
 	if query pveum user list --output-format json | json_has userid "$PVE_USER"; then
 		run pveum user token remove "$PVE_USER" "$TOKEN_NAME" || true
@@ -1188,6 +1248,8 @@ do_remove() {
 		run rmdir -- "$images" 2>/dev/null || say "Kept $images: it holds the downloaded images (plumb-*.qcow2); remove them by hand if you want."
 	fi
 	run rm -f -- "$STATE_FILE"
+	# The dir that install.sh made for the state file, when it is empty.
+	run rmdir -- "$(dirname "$STATE_FILE")" 2>/dev/null || true
 	say "Plumb is removed."
 }
 

@@ -725,3 +725,89 @@ func TestDNSValuesAreChecked(t *testing.T) {
 		t.Errorf("env:\n%s", b)
 	}
 }
+
+// Test host (T-013 reinstall): pct destroy --purge keeps rules.seccomp and
+// an empty passthrough/ in /var/lib/lxc/<id>. --remove cleans them and the
+// empty state dir; the next install with the same id works.
+func TestRemoveThenInstallSameID(t *testing.T) {
+	h := newHost(t)
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("install: %d %s %s", code, out, errOut)
+	}
+	lxcDir := filepath.Join(filepath.Dir(h.state), "lxc", "105")
+	if code, out, errOut := h.runRemove(); code != 0 {
+		t.Fatalf("remove: %d %s %s", code, out, errOut)
+	}
+	if _, err := os.Stat(lxcDir); !os.IsNotExist(err) {
+		t.Errorf("remove kept %s: %v", lxcDir, err)
+	}
+	if _, err := os.Stat(filepath.Dir(h.stateF)); !os.IsNotExist(err) {
+		t.Errorf("remove kept the empty state dir: %v", err)
+	}
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 || index(h.calls(), "pct create 105") < 0 {
+		t.Errorf("install after remove: %d %s %s", code, out, errOut)
+	}
+}
+
+// The host as the failed run left it: leftovers of pct destroy, no
+// container, a state file without lxc_id. The install removes exactly the
+// known set; any other entry, or a symbolic link, stops it before a change.
+func TestStaleLXCDirKnownSet(t *testing.T) {
+	cases := []struct {
+		name string
+		make func(dir string)
+		ok   bool
+	}{
+		{"pct destroy leftovers", func(dir string) {}, true},
+		{"with empty rootfs", func(dir string) { os.Mkdir(filepath.Join(dir, "rootfs"), 0o700) }, true},
+		{"unknown file", func(dir string) { os.WriteFile(filepath.Join(dir, "config"), nil, 0o644) }, false},
+		{"file in passthrough", func(dir string) { os.WriteFile(filepath.Join(dir, "passthrough", "mounts"), nil, 0o644) }, false},
+		{"rules.seccomp is a dir", func(dir string) {
+			os.Remove(filepath.Join(dir, "rules.seccomp"))
+			os.Mkdir(filepath.Join(dir, "rules.seccomp"), 0o755)
+		}, false},
+		{"symlinked rules.seccomp", func(dir string) {
+			target := filepath.Join(t.TempDir(), "keep")
+			os.WriteFile(target, []byte("x"), 0o644)
+			os.Remove(filepath.Join(dir, "rules.seccomp"))
+			os.Symlink(target, filepath.Join(dir, "rules.seccomp"))
+		}, false},
+		{"symlinked passthrough", func(dir string) {
+			os.Remove(filepath.Join(dir, "passthrough"))
+			os.Symlink(t.TempDir(), filepath.Join(dir, "passthrough"))
+		}, false},
+		{"hidden file", func(dir string) { os.WriteFile(filepath.Join(dir, ".x"), nil, 0o644) }, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHost(t)
+			dir := filepath.Join(filepath.Dir(h.state), "lxc", "105")
+			os.MkdirAll(filepath.Join(dir, "passthrough"), 0o755)
+			os.WriteFile(filepath.Join(dir, "rules.seccomp"), []byte("rules"), 0o644)
+			c.make(dir)
+			os.MkdirAll(filepath.Dir(h.stateF), 0o700)
+			os.WriteFile(h.stateF, []byte("lxc_id=\npool=plumb\n"), 0o600)
+			code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
+			_, err := os.Stat(dir)
+			if c.ok {
+				if code != 0 || !os.IsNotExist(err) || index(h.calls(), "pct create 105") < 0 {
+					t.Errorf("known leftovers: %d, dir gone: %v\n%s %s", code, os.IsNotExist(err), out, errOut)
+				}
+				return
+			}
+			if code == 0 || !strings.Contains(errOut, "check it by hand") || !strings.Contains(errOut, "Nothing was changed") || err != nil {
+				t.Errorf("unknown entry: %d %q, dir kept: %v", code, errOut, err == nil)
+			}
+			for _, call := range h.calls() {
+				if mutating.MatchString(call) {
+					t.Errorf("changed the host before the stop: %s", call)
+				}
+			}
+			if c.name == "symlinked rules.seccomp" {
+				if _, err := os.Stat(filepath.Join(dir, "rules.seccomp")); err != nil {
+					t.Error("removed a symbolic link entry")
+				}
+			}
+		})
+	}
+}
