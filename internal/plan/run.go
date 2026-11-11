@@ -412,6 +412,11 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, tp TargetPlan, r 
 			return res, err
 		}
 		if err := e.cfg.Driver.Delete(ctx, driver.GuestID(b.Ref)); err != nil && !errors.Is(err, driver.ErrNotFound) {
+			return res, err // the guest may still run: its agent stays (D-211)
+		}
+		// The guest is gone: its credential (in a backup, a template or a
+		// copy of the disk) must stop working before the binding goes.
+		if err := e.cfg.Agents.Revoke(ctx, tp.Target); err != nil {
 			return res, err
 		}
 		return res, e.st.DeleteBinding(ctx, state.KindTarget, tp.Target)

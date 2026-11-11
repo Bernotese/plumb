@@ -68,6 +68,14 @@ func (a *Agent) Report(ctx context.Context, rep wire.Report) int {
 	return code
 }
 
+// Credential returns the agent's current credential ("" before the
+// enrollment), so a test can play an attacker with a copy of it.
+func (a *Agent) Credential() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cred
+}
+
 // Enrolls returns how often the agent enrolled.
 func (a *Agent) Enrolls() int {
 	a.mu.Lock()
