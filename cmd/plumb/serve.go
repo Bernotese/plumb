@@ -331,7 +331,9 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		httpSrv.Shutdown(shut)
+		if err := httpSrv.Shutdown(shut); err != nil {
+			httpSrv.Close() // review N1: the open requests did not end in 5 s
+		}
 	})
 	if f.dev {
 		// The simulated agents stop before runServer returns and the store

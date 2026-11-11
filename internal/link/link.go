@@ -196,7 +196,9 @@ func (l *Link) ServeListener(ctx context.Context, ln net.Listener) error {
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		srv.Shutdown(shut)
+		if err := srv.Shutdown(shut); err != nil {
+			srv.Close() // the open requests did not end in 5 s
+		}
 	}()
 	err := srv.Serve(tls.NewListener(ln, l.TLSConfig()))
 	if errors.Is(err, http.ErrServerClosed) {
