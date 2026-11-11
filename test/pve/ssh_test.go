@@ -127,3 +127,22 @@ func sshFailureClass(g guest) string {
 	}
 	return "other"
 }
+
+// hostFreeImport frees one import file of the image storage by its exact
+// name (pl-lead, 2026-11-11: only files of this run's images).
+func hostFreeImport(t *testing.T, file string) (string, bool) {
+	t.Helper()
+	storage := os.Getenv("PLUMB_TEST_IMAGE_STORAGE")
+	if storage == "" || strings.Trim(storage, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != "" ||
+		!reRunImport.MatchString(file) {
+		t.Fatal("refusing to free an import file outside the run pattern")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+		os.Getenv("PLUMB_TEST_PVE_SSH"), "pvesm free "+storage+":import/"+file)
+	if err := cmd.Run(); err != nil {
+		return "", false
+	}
+	return "", true
+}

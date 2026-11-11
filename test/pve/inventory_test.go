@@ -4,6 +4,7 @@ package pve_test
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -19,6 +20,28 @@ func inventory(s map[int]string) []string {
 		out = append(out, fmt.Sprintf("%d %s", n, kind))
 	}
 	return out
+}
+
+// keepForDiagnosis is a VMID whose failure must be looked at: the cleanup
+// then removes nothing (pl-lead, 2026-11-11).
+var keepForDiagnosis int
+
+var reRunImport = regexp.MustCompile(`^plumb-t015-[0-9]+-[0-9]-img-[0-9a-f]{12}\.qcow2$`)
+
+// freeImports frees the import files of this run's images, by exact name
+// only: new since the start, named by this run, and of the run pattern.
+func freeImports(t *testing.T, before, mine map[string]bool) {
+	t.Helper()
+	for f := range importFiles(t) {
+		if before[f] || !mine[f] || !reRunImport.MatchString(f) {
+			continue
+		}
+		if _, ok := hostFreeImport(t, f); !ok {
+			t.Errorf("free of import file %s failed (output withheld)", f)
+			continue
+		}
+		t.Logf("freed import file %s", f)
+	}
 }
 
 // importFiles lists the import files of the image storage (read-only).

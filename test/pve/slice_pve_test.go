@@ -24,8 +24,13 @@ func TestRealSliceAcceptance(t *testing.T) {
 	refs := []any{}
 	owned := map[int]bool{}
 	t.Cleanup(func() {
+		if keepForDiagnosis != 0 {
+			t.Logf("kept for diagnosis: VMID %d, its template, documents and import file (no cleanup)", keepForDiagnosis)
+			return
+		}
 		cleanup(a, before, expected, refs, owned)
-		checkImports(a.t, importsBefore, imports)
+		freeImports(a.t, importsBefore, imports)
+		checkImports(a.t, importsBefore, map[string]bool{})
 	})
 	for i, distro := range []string{"DEBIAN13", "UBUNTU2604"} {
 		// PLUMB_TEST_DISTROS=UBUNTU2604 runs one distribution (diagnosis).
@@ -36,10 +41,10 @@ func TestRealSliceAcceptance(t *testing.T) {
 			c := *a
 			c.t = t
 			prefix := fmt.Sprintf("t015-%d-%d", time.Now().UnixNano(), i)
-			// The Image name is stable per distribution, so its import file
-			// (plumb-<name>-<sha256[:12]>.qcow2, D-077) is reused by a later
-			// run and not downloaded again (pl-lead, 2026-11-11).
-			image, target := "t015-"+strings.ToLower(distro), prefix+"-vm"
+			// Unique Image names per run (pl-lead, 2026-11-11): a stable name
+			// hits the stale Image binding defect (run 3). The import file of
+			// this run is freed by exact name after the run.
+			image, target := prefix+"-img", prefix+"-vm"
 			sha := os.Getenv("PLUMB_TEST_IMAGE_" + distro + "_SHA256")
 			if len(sha) != 64 || strings.Trim(sha, "0123456789abcdef") != "" {
 				t.Fatal("invalid pinned checksum")
@@ -77,17 +82,23 @@ func TestRealSliceAcceptance(t *testing.T) {
 			}
 			owned[n] = true
 			g := guest{id: n, address: address, hosts: filepath.Join(t.TempDir(), "known_hosts")}
+			// The Run ends when the agent is online (enrolled); SSH may come
+			// later. Limit 6 min (pl-lead); the time is logged.
+			agentOnline := time.Now()
 			ready := false
-			deadline := time.Now().Add(2 * time.Minute)
+			deadline := time.Now().Add(6 * time.Minute)
 			for !ready && time.Now().Before(deadline) {
 				_, ready = guestSSH(t, g, "true")
 				if !ready {
-					time.Sleep(time.Second)
+					time.Sleep(2 * time.Second)
 				}
 			}
 			if !ready {
-				t.Fatalf("guest SSH ready timed out (class: %s)", sshFailureClass(g))
+				class := sshFailureClass(g)
+				keepForDiagnosis = n
+				t.Fatalf("guest SSH not ready %s after the agent came online (class: %s); VM kept", time.Since(agentOnline).Round(time.Second), class)
 			}
+			t.Logf("guest SSH ready %s after the agent came online", time.Since(agentOnline).Round(time.Second))
 			wantOS := []string{"debian 13", "ubuntu 26.04"}[i]
 			if guestRead(t, g, `. /etc/os-release; printf "%s %s" "$ID" "$VERSION_ID"`) != wantOS {
 				t.Fatal("unexpected guest distribution or release")
