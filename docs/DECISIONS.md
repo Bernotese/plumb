@@ -1,6 +1,6 @@
 # Decisions (one line each: ID · date · decision · why)
 
-Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions at the end (next: D-212; D-197 … D-210 are proposed for T-039, D-211 is reserved for T-057). In a PR, write new decisions to `docs/decisions/T-NNN.md`; `pl-lead` appends them here after the merge.
+Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions at the end (next: D-218; D-197 … D-210 are proposed for T-039, D-211 is reserved for T-057, D-212 … D-217 for T-067). In a PR, write new decisions to `docs/decisions/T-NNN.md`; `pl-lead` appends them here after the merge.
 
 - D-001 · 2026-11-10 · Scope is a homelab with one Proxmox host; no other hypervisors or clouds · user brief §4.1
 - D-002 · 2026-11-10 · Guest OS is Debian stable and current Ubuntu LTS only · user brief §4.2

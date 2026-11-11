@@ -13,6 +13,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 |---|---|---|
 | T-057 revoke the agent when its Target is deleted (security, MEDIUM) | pl-frontend | running. The credential of a deleted Target stays valid today; with a re-made Target of the same name it can receive the new desired state incl. secret values before the approval |
 | T-039 image builds (slice 2 part B, first) | pl-architect plans | plan draft on branch pl-architect/T-039-plan (D-197 … D-210 proposed); pl-backend answers 24 host questions; then review and the user's approval (the card changes the agent: `seal`) |
+| T-067 the agent reports its addresses; Issue when a guest does not use its configured address | pl-architect plans | planning (user go for the plan: 2026-11-11); changes the agent: the user approves the plan before any code |
+| T-056 extra host check: cores (the host run covered memory only) | pl-backend | queued after the T-039 host facts (user request 2026-11-11) |
 | T-038 LXC targets (slice 2 part B, second) | tbd | design only; after T-039 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
@@ -72,6 +74,5 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Nothing now.
-- Optional: say "plane die Adressmeldung" if the agent should report its real addresses (Plumb then shows an Issue when a VM does not use its configured address); the card changes the agent.
+- Nothing now. Coming for approval: the plan of T-039 (image builds) and the plan of T-067 (address report).
 - Known limit (D-192): a stock Ubuntu 26.04 image takes a static address only from the second boot; use DHCP until the image builds (T-039).
