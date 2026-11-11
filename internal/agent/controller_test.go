@@ -85,6 +85,8 @@ type controller struct {
 	linkLimits  bool           // refuse a drift report above the limits of internal/link (400)
 	rejectRes   string         // refuse every drift report that holds this resource (400)
 	driftTries  int            // drift reports answered with driftCode
+	addrsCode   int            // when set, answer every addrs report with it
+	addrsTries  int            // addrs reports answered with addrsCode
 	pollTimes   []time.Time
 	reports     []wire.Report
 	commands    chan wire.Command
@@ -179,6 +181,12 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if rep.Type == wire.ReportDrift && (c.linkLimits && overLinkLimits(rep) || c.rejectRes != "" && holds(rep, c.rejectRes)) {
 			w.WriteHeader(http.StatusBadRequest)
+			c.mu.Unlock()
+			return
+		}
+		if c.addrsCode != 0 && rep.Type == wire.ReportAddrs {
+			c.addrsTries++
+			w.WriteHeader(c.addrsCode)
 			c.mu.Unlock()
 			return
 		}
@@ -329,6 +337,12 @@ type testAgent struct {
 
 func startAgent(t *testing.T, ctl *controller, ca testCA, token string) *testAgent {
 	t.Helper()
+	return startAgentWith(t, ctl, ca, token, nil)
+}
+
+// startAgentWith is startAgent with a change of the options before New.
+func startAgentWith(t *testing.T, ctl *controller, ca testCA, token string, change func(*Options)) *testAgent {
+	t.Helper()
 	root := t.TempDir()
 	uid, gid := os.Getuid(), os.Getgid()
 	write(t, filepath.Join(root, "etc/passwd"), fmt.Sprintf("root:x:%d:%d:root:/root:/bin/bash\n", uid, gid))
@@ -340,12 +354,16 @@ func startAgent(t *testing.T, ctl *controller, ca testCA, token string) *testAge
 	}
 	cfg := Config{URL: ctl.srv.URL, CA: ca.pem, TokenFile: filepath.Join(root, "token"), StateDir: filepath.Join(t.TempDir(), "state"), FullCheck: Duration(time.Hour)}
 	r := &runner{}
-	a, err := New(Options{
+	opt := Options{
 		Config: cfg, Root: root, Runner: r, Version: "test", Hostname: "web1",
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Debounce: 100 * time.Millisecond, PollWait: 1,
 		BackoffMin: 10 * time.Millisecond, BackoffMax: 50 * time.Millisecond,
-	})
+	}
+	if change != nil {
+		change(&opt)
+	}
+	a, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
