@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -338,5 +339,49 @@ func TestContractImages(t *testing.T) {
 		if r.status != want[i] {
 			t.Errorf("call %d %s %s: %d, want %d: %s", i, r.method, r.template, r.status, want[i], r.body)
 		}
+	}
+}
+
+// Review S1 of PR #128: the import file of a running build stays off the
+// unused list, also when the document has another checksum now.
+func TestUnusedImportsKeepRunningBuild(t *testing.T) {
+	e := newEnv(t, false, withBuilds)
+	adm := e.admin()
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": builtImageDoc("web", "hi")})
+	old, other := strings.Repeat("b", 64), strings.Repeat("c", 64)
+	for _, sum := range []string{builtSHA, old, other} {
+		if _, err := e.drv.FetchImage(e.ctx, driver.ImageSpec{Name: "web", Kind: "vm", URL: "https://images.invalid/u.img", SHA256: sum}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	head, _ := e.st.Head(e.ctx)
+	run, _ := e.st.RunOfPlan(e.ctx, head.PlanID)
+	if _, err := e.st.AddImageVersion(e.ctx, store.ImageVersion{Image: "web", Trigger: store.TriggerManual, RunID: run.ID, RevisionID: head.ID,
+		RecipeSHA256: builtSHA, BaseSHA256: old, DiskGB: 10}, func(int) string { return builtSHA }); err != nil {
+		t.Fatal(err)
+	}
+	code, body := adm.do("GET", "/api/v1/images/web", nil)
+	var v struct {
+		Status struct {
+			UnusedImports []struct {
+				Volume  string `json:"volume"`
+				Command string `json:"command"`
+			} `json:"unused_imports"`
+		} `json:"status"`
+	}
+	json.Unmarshal(body, &v)
+	got := v.Status.UnusedImports
+	want := "plumb-images:import/plumb-web-" + other[:12] + ".qcow2"
+	if code != 200 || len(got) != 1 || got[0].Volume != want || got[0].Command != "pvesm free "+want {
+		t.Fatalf("unused imports: %d %s", code, body)
+	}
+	// After the build ends, its old checksum is unused too.
+	if err := e.st.FinishImageVersion(e.ctx, "web", 1, store.ImageFailed); err != nil {
+		t.Fatal(err)
+	}
+	_, body = adm.do("GET", "/api/v1/images/web", nil)
+	json.Unmarshal(body, &v)
+	if len(v.Status.UnusedImports) != 2 {
+		t.Fatalf("after the build: %s", body)
 	}
 }
