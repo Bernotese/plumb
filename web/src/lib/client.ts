@@ -29,6 +29,9 @@ export interface PlumbApi {
   logout(): Promise<void>;
   changePassword(current: string, next: string): Promise<void>;
   listImages(): Promise<ImageView[]>;
+  getImage(name: string): Promise<ImageView>;
+  /** Plans a manual build of a built Image (origin `build`, T-062). 422 for a stock Image. */
+  buildImage(name: string, reason?: string): Promise<Plan>;
   listBlocks(): Promise<BlockView[]>;
   listTargets(): Promise<TargetView[]>;
   getTarget(name: string): Promise<TargetView>;
@@ -38,7 +41,8 @@ export interface PlumbApi {
   getPlan(id: number): Promise<Plan>;
   approvePlan(id: number, comment?: string): Promise<Run>;
   getRun(id: number): Promise<Run>;
-  listIssues(): Promise<Issue[]>;
+  /** Issues, newest first; the filter uses the `target` and `status` query of GET /issues. */
+  listIssues(filter?: { target?: string; status?: Issue["status"] }): Promise<Issue[]>;
   getIssue(id: number): Promise<Issue>;
   /** `accept`, `revert` and `ignore_rule` make a Plan; `rule` is the scope of an ignore rule. */
   resolveIssue(

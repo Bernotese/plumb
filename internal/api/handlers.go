@@ -53,7 +53,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		problem(w, http.StatusConflict, "issue-changed", "Issue changed", "A new report changed the issue. Read it again and decide again.")
 	case errors.Is(err, store.ErrIssueNotOpen):
 		problem(w, http.StatusConflict, "issue-not-open", "Issue is not open", "Another Plan resolves it, or it is resolved.")
-	case errors.Is(err, issue.ErrAcceptSensitive), errors.Is(err, issue.ErrAcceptImage):
+	case errors.Is(err, issue.ErrAcceptSensitive), errors.Is(err, issue.ErrAcceptImage), errors.Is(err, issue.ErrAddressFix):
 		problem(w, http.StatusConflict, "action-not-allowed", "Action not allowed", err.Error())
 	case errors.Is(err, plan.ErrOffline):
 		problem(w, http.StatusConflict, "target-offline", "Target is offline", err.Error())
@@ -86,12 +86,16 @@ type docView struct {
 }
 
 type targetStatus struct {
-	Phase           string     `json:"phase"`
-	Agent           string     `json:"agent"`
-	Power           string     `json:"power"`
-	LastSeen        *time.Time `json:"last_seen"`
-	GuestID         *string    `json:"guest_id"`
-	IPs             []string   `json:"ips"`
+	Phase    string     `json:"phase"`
+	Agent    string     `json:"agent"`
+	Power    string     `json:"power"`
+	LastSeen *time.Time `json:"last_seen"`
+	GuestID  *string    `json:"guest_id"`
+	IPs      []string   `json:"ips"`
+	// ReportedIPs is what the agent says (D-214); never in IPs (D-216).
+	ReportedIPs     []string   `json:"reported_ips"`
+	ReportedAt      *time.Time `json:"reported_at"`
+	ReportedIPsMore bool       `json:"reported_ips_more,omitempty"`
 	AppliedRevision *int64     `json:"applied_revision"`
 	OpenIssues      int        `json:"open_issues"`
 	LastRunID       *int64     `json:"last_run_id"`
@@ -162,6 +166,10 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 	st := targetStatus{Agent: live.Agent, Power: live.Power, LastSeen: utc(live.LastSeen), GuestID: nullString(live.GuestID), IPs: live.IPs}
 	if st.IPs == nil {
 		st.IPs = []string{}
+	}
+	st.ReportedIPs, st.ReportedIPsMore = []string{}, live.ReportedMore
+	if live.Reported != nil {
+		st.ReportedIPs, st.ReportedAt = live.Reported, utc(live.ReportedAt)
 	}
 	st.Waiting = []waitingView{}
 	for _, w := range live.Waiting {

@@ -152,6 +152,12 @@ type Config struct {
 	EnrollTimeout  time.Duration
 	ApplyTimeout   time.Duration
 	Logger         *slog.Logger
+	// Now returns the time for the address list and its check (D-212,
+	// D-215). Default time.Now.
+	Now func() time.Time
+	// AddrStable is the stable time of the address check; default
+	// AddrStable. Only the dev demo shortens it.
+	AddrStable time.Duration
 }
 
 // Engine runs the change flow.
@@ -170,7 +176,8 @@ type Engine struct {
 	hello   map[string]int              // hellos per target since start (a new boot)
 	active  map[int64]bool              // Runs of this process
 	cache   *sensitiveCache
-	warned  map[string]bool // "revision/target": the cycle warning is in the log
+	warned  map[string]bool       // "revision/target": the cycle warning is in the log
+	addrs   map[string]*addrWatch // target → state of the address check (D-215)
 }
 
 // load reads a stored revision. A Target whose apply order has a cycle
@@ -220,15 +227,30 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.AddrStable <= 0 {
+		cfg.AddrStable = AddrStable
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
-		results: map[string]chan wire.Report{}, busy: map[string]int{}, hello: map[string]int{}, active: map[int64]bool{}}, nil
+		results: map[string]chan wire.Report{}, busy: map[string]int{}, hello: map[string]int{}, active: map[int64]bool{},
+		addrs: map[string]*addrWatch{}}, nil
 }
 
 // Close cancels all Runs and waits for them.
 func (e *Engine) Close() {
 	e.cancel()
 	e.runs.Wait()
+}
+
+// Hellos returns how many Hellos the agent of a target sent since the
+// engine started. A Run uses the count to see a restarted agent. For tests.
+func (e *Engine) Hellos(target string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hello[target]
 }
 
 // Wait waits until no Run is active. For tests.
@@ -278,13 +300,22 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		e.hello[d.Target]++
 		busy := e.busy[d.Target] > 0
 		e.mu.Unlock()
+		if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
+			return err // no guest: no watch list, so no secret value, and no address list (D-211, D-214)
+		}
+		if err := e.storeAddrs(ctx, d); err != nil {
+			return err
+		}
 		if busy {
 			return nil
 		}
-		if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
-			return err // no guest: no watch list, so no secret value (D-211)
-		}
 		return e.sendWatch(ctx, d.Target)
+	case wire.ReportAddrs:
+		// Not a hello: the Hello count shows a restarted agent (D-212).
+		if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
+			return err
+		}
+		return e.storeAddrs(ctx, d)
 	}
 	return nil
 }

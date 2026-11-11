@@ -28,17 +28,20 @@ type Issue struct {
 	UpdatedAt  time.Time
 	ResolvedBy string
 	ResolvedAt time.Time
+	// ReopenedAt: a new mismatch opened this guest:address Issue again
+	// after it was gone (D-215); zero otherwise.
+	ReopenedAt time.Time
 }
 
 const issueColumns = `id, target, resource, status, changes, COALESCE(resolution, ''), COALESCE(plan_id, 0),
-	opened_at, updated_at, COALESCE(resolved_by, ''), resolved_at`
+	opened_at, updated_at, COALESCE(resolved_by, ''), resolved_at, reopened_at`
 
 func scanIssue(row interface{ Scan(...any) error }) (Issue, error) {
 	var i Issue
 	var changes, opened, updated string
-	var resolved sql.NullString
+	var resolved, reopened sql.NullString
 	err := row.Scan(&i.ID, &i.Target, &i.Resource, &i.Status, &changes, &i.Resolution, &i.PlanID,
-		&opened, &updated, &i.ResolvedBy, &resolved)
+		&opened, &updated, &i.ResolvedBy, &resolved, &reopened)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Issue{}, ErrNotFound
 	}
@@ -52,7 +55,10 @@ func scanIssue(row interface{ Scan(...any) error }) (Issue, error) {
 	if i.UpdatedAt, err = parseTime(updated); err != nil {
 		return Issue{}, err
 	}
-	i.ResolvedAt, err = nullTime(resolved)
+	if i.ResolvedAt, err = nullTime(resolved); err != nil {
+		return Issue{}, err
+	}
+	i.ReopenedAt, err = nullTime(reopened)
 	return i, err
 }
 
@@ -173,4 +179,35 @@ func (s *Store) ResolveIssue(ctx context.Context, id int64, resolution, by strin
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ReopenGoneIssue opens the newest Issue of a target and resource again
+// when it was resolved as "gone" at or after since, and no other Issue of
+// them is open. It sets the changes and reopened_at. It returns ErrNotFound
+// when there is no such Issue (D-215: a flapping guest gets one Issue row).
+func (s *Store) ReopenGoneIssue(ctx context.Context, target, resource string, since time.Time, changes json.RawMessage) (Issue, error) {
+	var out Issue
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var id int64
+		err := tx.QueryRowContext(ctx,
+			`SELECT id FROM issue WHERE target = ?1 AND resource = ?2 AND status = 'resolved' AND resolution = 'gone'
+			 AND resolved_at >= ?3
+			 AND NOT EXISTS (SELECT 1 FROM issue WHERE target = ?1 AND resource = ?2 AND status <> 'resolved')
+			 ORDER BY id DESC LIMIT 1`, target, resource, formatTime(since)).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		now := s.now()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE issue SET status = 'open', resolution = NULL, resolved_by = NULL, resolved_at = NULL, plan_id = NULL,
+			 changes = ?, updated_at = ?, reopened_at = ? WHERE id = ?`, string(changes), now, now, id); err != nil {
+			return err
+		}
+		out, err = scanIssue(tx.QueryRowContext(ctx, `SELECT `+issueColumns+` FROM issue WHERE id = ?`, id))
+		return err
+	})
+	return out, err
 }

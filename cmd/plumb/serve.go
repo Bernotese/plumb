@@ -228,6 +228,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		Store: st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
 		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
 		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
+		AddrStable: devAddrStable(f.devDemo),
 	})
 	if err != nil {
 		return err
