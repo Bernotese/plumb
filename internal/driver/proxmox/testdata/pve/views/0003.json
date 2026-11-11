@@ -1,0 +1,111 @@
+{
+  "body": {
+    "data": [
+      {
+        "key": "memory",
+        "value": "1024"
+      },
+      {
+        "key": "digest",
+        "value": "049f4b0dc35bed04556ce83cb9163ea60857aef5"
+      },
+      {
+        "key": "boot",
+        "value": "order=scsi0"
+      },
+      {
+        "key": "sshkeys",
+        "value": "ssh-ed25519%20AAAAtestkey-t012-test-guest"
+      },
+      {
+        "key": "scsi0",
+        "value": "local-lvm:vm-9001-disk-0,size=10G"
+      },
+      {
+        "key": "net0",
+        "value": "virtio=BC:24:11:00:00:01,bridge=vmbr0"
+      },
+      {
+        "key": "meta",
+        "value": "creation-qemu=11.1.3,ctime=1794389226"
+      },
+      {
+        "key": "ide2",
+        "value": "local-lvm:vm-9001-cloudinit,media=cdrom,size=4M"
+      },
+      {
+        "key": "nameserver",
+        "value": "192.0.2.10"
+      },
+      {
+        "key": "ostype",
+        "value": "l26"
+      },
+      {
+        "key": "cores",
+        "value": 2
+      },
+      {
+        "key": "description",
+        "value": "plumb-image: t056h1-1794389219-img\nManaged by Plumb. Do not change it here."
+      },
+      {
+        "key": "ciupgrade",
+        "value": 0
+      },
+      {
+        "key": "ciuser",
+        "value": "plumb"
+      },
+      {
+        "key": "ipconfig0",
+        "value": "ip=dhcp"
+      },
+      {
+        "key": "smbios1",
+        "value": "base64=1,serial=aG9zdC10ZXN0LXRva2VuLTE=,uuid=2f02d17b-cab5-446c-8be4-b42db1081a34"
+      },
+      {
+        "key": "serial0",
+        "value": "socket"
+      },
+      {
+        "key": "cpu",
+        "value": "x86-64-v2-AES"
+      },
+      {
+        "key": "scsihw",
+        "value": "virtio-scsi-single"
+      },
+      {
+        "key": "vmgenid",
+        "value": "b8e7bf01-81e5-466a-bcdc-e90d4e0f6f58"
+      },
+      {
+        "key": "onboot",
+        "value": 1
+      },
+      {
+        "key": "searchdomain",
+        "value": "plumb.test"
+      },
+      {
+        "key": "name",
+        "value": "t056h1-1794389219-vm"
+      },
+      {
+        "key": "cicustom",
+        "value": "vendor=plumb-snippets:snippets/plumb-vendor.yaml"
+      },
+      {
+        "key": "vga",
+        "value": "serial0"
+      }
+    ]
+  },
+  "method": "GET",
+  "note": "T-056 H1, real: running VM, nothing pending",
+  "path": "/nodes/pve/qemu/9001/pending",
+  "seq": 3,
+  "status": 200
+}

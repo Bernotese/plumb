@@ -1,10 +1,20 @@
 {
-  "body": {
-    "data": "UPID:pve:00006FF6:00083C87:6AF3B7F4:qmdestroy:9001:plumb@pve!plumb:"
-  },
-  "method": "DELETE",
-  "path": "/nodes/pve/qemu/9001",
-  "query": "destroy-unreferenced-disks=1&purge=1",
   "seq": 62,
-  "status": 200
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:0002A3F5:0038EE4D:6AF4349D:qmstop:9001:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "starttime": 1794389149,
+      "type": "qmstop",
+      "upid": "UPID:pve:0002A3F5:0038EE4D:6AF4349D:qmstop:9001:plumb@pve!plumb:",
+      "pid": 173045,
+      "pstart": 3731021,
+      "user": "plumb@pve",
+      "tokenid": "plumb",
+      "status": "running",
+      "id": "9001",
+      "node": "pve"
+    }
+  }
 }
