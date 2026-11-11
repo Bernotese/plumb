@@ -41,6 +41,29 @@ type Agent struct {
 	watch     []wire.Resource
 	failing   map[string]string // resource id → apply error
 	commands  []wire.CommandType
+	addrs     []string // the address list of the Hello; nil: none (an old agent)
+}
+
+// SetAddrs sets the address list that the next Hello holds. nil means no
+// list, like an agent from before T-069.
+func (a *Agent) SetAddrs(list []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.addrs = slices.Clone(list)
+}
+
+// SendAddrs sets the address list and sends it as an addrs report. It
+// returns the HTTP status.
+func (a *Agent) SendAddrs(ctx context.Context, list []string) int {
+	a.SetAddrs(list)
+	return a.Report(ctx, wire.Report{Type: wire.ReportAddrs, Addrs: list})
+}
+
+// hello is the Hello of the agent.
+func (a *Agent) hello() *wire.Hello {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return &wire.Hello{Version: "test", Hostname: "fake", OS: "fake 1", Addrs: slices.Clone(a.addrs)}
 }
 
 // New returns an agent that talks to h. token reads the token source, as
@@ -214,7 +237,7 @@ func (a *Agent) enroll(ctx context.Context) bool {
 	a.cred = resp.Credential
 	a.enrolls++
 	a.mu.Unlock()
-	a.report(ctx, wire.Report{Type: wire.ReportHello, Hello: &wire.Hello{Version: "test", Hostname: "fake", OS: "fake 1"}})
+	a.report(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()})
 	return true
 }
 

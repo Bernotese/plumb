@@ -48,30 +48,76 @@ func (s *Set) Render(target string) (*Rendered, error) { return s.render(target,
 // render renders one Target. total is the shared budget of a Validate
 // call, or nil.
 func (s *Set) render(target string, total *budget) (*Rendered, error) {
-	t, ok := s.targets[target]
+	u, ok := s.targetUnit(target)
 	if !ok {
 		return nil, Errors{{Kind: KindTarget, Name: target, Msg: "Target does not exist"}}
 	}
-	errf := func(path, format string, args ...any) Errors {
-		return Errors{{Kind: KindTarget, Name: target, Path: path, Msg: fmt.Sprintf(format, args...)}}
+	return s.renderUnit(u, total)
+}
+
+// unit is what renderUnit renders: a Target, or the build of an Image
+// (D-197). Paths point into the document, for the error texts.
+type unit struct {
+	kind, name   string
+	typ          string
+	image        string
+	allowRestart bool
+	guest        map[string]any
+	blocks       []blockUse
+	overrides    map[string]map[string]any
+	blocksPath   string // "/spec/blocks" or "/spec/build/blocks"
+	guestPath    string // "/spec/guest" or "/spec/build/guest"
+}
+
+func (s *Set) targetUnit(name string) (*unit, bool) {
+	t, ok := s.targets[name]
+	if !ok {
+		return nil, false
 	}
-	if errs := s.checkTarget(target); len(errs) > 0 {
+	return &unit{kind: KindTarget, name: name, typ: t.Type, image: t.Image, allowRestart: t.AllowRestart,
+		guest: t.Guest, blocks: t.Blocks, overrides: t.Overrides,
+		blocksPath: "/spec/blocks", guestPath: "/spec/guest"}, true
+}
+
+func (s *Set) imageUnit(name string) (*unit, bool) {
+	img, ok := s.images[name]
+	if !ok || img.Build == nil {
+		return nil, false
+	}
+	return &unit{kind: KindImage, name: name, typ: img.Type, image: name,
+		guest: img.Build.Guest, blocks: img.Build.Blocks,
+		blocksPath: "/spec/build/blocks", guestPath: "/spec/build/guest"}, true
+}
+
+func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
+	errf := func(path, format string, args ...any) Errors {
+		return Errors{{Kind: u.kind, Name: u.name, Path: path, Msg: fmt.Sprintf(format, args...)}}
+	}
+	if errs := s.checkUnit(u); len(errs) > 0 {
 		return nil, errs
 	}
+	t := u
+	target := u.name
 	sch := mustSchemas()
-	out := &Rendered{Target: target, Kind: wire.Kind(t.Type), Image: t.Image, AllowRestart: t.AllowRestart}
+	out := &Rendered{Target: target, Kind: wire.Kind(t.typ), Image: t.image, AllowRestart: t.allowRestart}
+	if u.kind == KindImage {
+		out.Target = ""
+	}
 	out.Guest = wire.Resource{
 		ID:    wire.GuestConfigID,
 		Type:  GuestType,
-		Attrs: withDefaults(t.Guest, sch.guestDefaults),
+		Attrs: withDefaults(t.guest, sch.guestDefaults),
+	}
+	if u.kind == KindImage {
+		out.Guest.Attrs = withDefaults(withDefaults(t.guest, sch.buildGuestDefaults), sch.guestDefaults)
 	}
 
 	bud := newBudget(s.limits, total)
 	nonce := newNonce()          // markers of this render only (D-088)
 	where := map[string]string{} // resource id → path of its origin
 	byID := map[string]*wire.Resource{}
-	first := make([]int, len(t.Blocks)+1) // use i has out.Resources[first[i]:first[i+1]]
-	for i, use := range t.Blocks {
+	first := make([]int, len(t.blocks)+1) // use i has out.Resources[first[i]:first[i+1]]
+	for i, use := range t.blocks {
 		first[i] = len(out.Resources)
 		b := s.blocks[use.Use]
 		params := templateData(withDefaults(use.Params, b.defaults)).(map[string]any)
@@ -80,13 +126,13 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 				params[p] = secretValue{marker: renderMarker(nonce, name)}
 			}
 		}
-		usePath := ptr("/spec/blocks", i)
+		usePath := ptr(u.blocksPath, i)
 		for j, br := range b.resources {
 			origin := fmt.Sprintf("%s (Block %q /spec/resources/%d)", usePath, use.Use, j)
 			rt, _ := resource.Lookup(br.Type)
 			if !rt.Supports(out.Kind) {
 				return nil, errf(usePath, "Block %q /spec/resources/%d: resource type %s does not support %s targets",
-					use.Use, j, br.Type, t.Type)
+					use.Use, j, br.Type, t.typ)
 			}
 			attrs, err := renderValue(br.Attrs, params, bud, ptr("/spec/resources", j, br.Type))
 			if err == nil {
@@ -121,7 +167,7 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 			out.Resources = append(out.Resources, wire.Resource{ID: id, Type: br.Type, Block: use.id(), Attrs: am})
 		}
 	}
-	first[len(t.Blocks)] = len(out.Resources)
+	first[len(t.blocks)] = len(out.Resources)
 	for i := range out.Resources {
 		byID[out.Resources[i].ID] = &out.Resources[i]
 	}
@@ -131,11 +177,11 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	// overrides, so an override of restart_on still replaces the full list
 	// (D-053). The list keeps its JSON form ([]any of strings): the checks
 	// below and the Plan read it like a list from a Block.
-	for i, use := range t.Blocks {
+	for i, use := range t.blocks {
 		for _, id := range s.blocks[use.Use].restarts {
 			svc, ok := byID[id]
 			if !ok {
-				return nil, errf(ptr("/spec/blocks", i),
+				return nil, errf(ptr(u.blocksPath, i),
 					"Block %q (use %q) restarts %s, but %s is not on this target; add the Block that provides it",
 					use.Use, use.id(), id, id)
 			}
@@ -162,8 +208,8 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	byID[wire.GuestConfigID] = &out.Guest
 
 	// Overrides replace single rendered attributes. They are not templates.
-	ids := make([]string, 0, len(t.Overrides))
-	for id := range t.Overrides {
+	ids := make([]string, 0, len(t.overrides))
+	for id := range t.overrides {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -177,7 +223,7 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 		if rt, ok := resource.Lookup(r.Type); ok {
 			keyAttr = rt.Key
 		}
-		for attr, v := range t.Overrides[id] {
+		for attr, v := range t.overrides[id] {
 			if _, isRef := refName(v); isRef {
 				return nil, errf(ptr(path, attr), "an override cannot hold a secret reference (D-088)")
 			}
@@ -207,15 +253,15 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 
 	// Every attribute set must match the schema of its type.
 	if err := sch.guest.Validate(out.Guest.Attrs); err != nil {
-		return nil, schemaErrors(KindTarget, target, "/spec/guest", err)
+		return nil, schemaErrors(u.kind, target, u.guestPath, err)
 	}
 	for _, r := range out.Resources {
 		if err := sch.resources[r.Type].Validate(r.Attrs); err != nil {
-			errs := schemaErrors(KindTarget, target, "", err)
+			errs := schemaErrors(u.kind, target, "", err)
 			for _, e := range errs {
 				e.Msg = fmt.Sprintf("resource %s from %s: attribute %s: %s", r.ID, where[r.ID], e.Path, e.Msg)
-				e.Path = "/spec/blocks"
-				if _, over := t.Overrides[r.ID]; over {
+				e.Path = u.blocksPath
+				if _, over := t.overrides[r.ID]; over {
 					e.Msg += " (the resource has overrides)"
 				}
 			}
@@ -227,7 +273,7 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	for _, r := range out.Resources {
 		for k, id := range wire.RestartOn(r) {
 			if _, ok := byID[id]; !ok || id == wire.GuestConfigID || id == r.ID {
-				return nil, errf("/spec/blocks", "resource %s from %s: restart_on/%d: %q is not another resource on this target",
+				return nil, errf(u.blocksPath, "resource %s from %s: restart_on/%d: %q is not another resource on this target",
 					r.ID, where[r.ID], k, id)
 			}
 		}
@@ -236,7 +282,7 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	// after (D-167, D-168): each id is a resource of this target that the
 	// agent applies, from another use. The first resource of the use
 	// carries the ids; the rest of the use follows by the listed order.
-	for i, use := range t.Blocks {
+	for i, use := range t.blocks {
 		after := s.blocks[use.Use].after
 		if len(after) == 0 {
 			continue
@@ -248,16 +294,39 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 		for _, id := range after {
 			switch _, ok := byID[id]; {
 			case !ok || id == wire.GuestConfigID:
-				return nil, errf(ptr("/spec/blocks", i),
+				return nil, errf(ptr(u.blocksPath, i),
 					"Block %q (use %q) comes after %s, but %s is not on this target; add the Block that provides it",
 					use.Use, use.id(), id, id)
 			case own[id]:
-				return nil, errf(ptr("/spec/blocks", i),
+				return nil, errf(ptr(u.blocksPath, i),
 					"Block %q (use %q) comes after %s, which is its own resource; resources of one Block already apply in the listed order",
 					use.Use, use.id(), id)
 			}
 		}
 		out.Resources[first[i]].After = append([]string(nil), after...)
+	}
+
+	// No resource may write, link or remove the agent's own paths, or
+	// manage its service (D-207). A stored revision from before this rule still loads; the
+	// agent refuses the resource (T-060).
+	if !s.stored {
+		if c := wire.AgentConflicts(out.Resources); len(c) > 0 {
+			if c[0].Attr == "name" {
+				return nil, errf(u.blocksPath, "resource %s from %s: the service %q is the Plumb agent; a Block cannot stop, mask or change it (D-207)",
+					c[0].ID, where[c[0].ID], c[0].Value)
+			}
+			return nil, errf(u.blocksPath, "resource %s from %s: %s resolves to %q, a path of the Plumb agent; a Block cannot change the agent's files (D-207)",
+				c[0].ID, where[c[0].ID], c[0].Attr, c[0].Value)
+		}
+	}
+	// An Image build holds no secret (D-202). The use check refuses every
+	// reference; this catches a marker that came in any other way (N2).
+	if u.kind == KindImage {
+		for _, r := range out.Resources {
+			if len(r.Sensitive) > 0 {
+				return nil, errf(u.blocksPath, "resource %s from %s: an Image cannot hold a secret (D-202)", r.ID, where[r.ID])
+			}
+		}
 	}
 
 	// The apply order must exist: no cycle through the listed order of a
@@ -267,7 +336,7 @@ func (s *Set) render(target string, total *budget) (*Rendered, error) {
 	if _, err := wire.Order(out.Resources); err != nil {
 		var oe *wire.OrderError
 		if !s.stored || !errors.As(err, &oe) || oe.Reason != wire.OrderCycle {
-			return nil, errf("/spec/blocks", "%v", err)
+			return nil, errf(u.blocksPath, "%v", err)
 		}
 		out.cycle = err.Error()
 	}

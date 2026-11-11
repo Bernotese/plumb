@@ -94,7 +94,10 @@
                   >{t.status.ignored_drift.length} ignored by rule</span
                 >{/if}</td
             >
-            <td class="mono">{t.document.spec.image}</td>
+            <td class="mono"
+              >{t.document.spec.image}{#if t.status.image_version}
+                v{t.status.image_version}{/if}</td
+            >
             <td class="nowrap">{g.cores} CPU · {g.memory / 1024} GiB · {g.disk} GiB</td>
             <td
               ><span class="sr-only">Configured:&nbsp;</span><span class="mono"

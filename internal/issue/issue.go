@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/plan"
@@ -35,6 +36,16 @@ var ErrNotOpen = store.ErrIssueNotOpen
 // ErrAcceptImage is returned for accept of an image or kind drift: a guest
 // cannot take another image or kind, so there is nothing to write.
 var ErrAcceptImage = errors.New("issue: accept is not possible for the image or the kind of a guest; revert it or create a new target")
+
+// ErrAddressFix is returned for revert and accept of a guest:address
+// Issue: ip is create-only, and the Proxmox config is right; the guest
+// does not use it (D-185, D-215). Only the ignore actions apply.
+var ErrAddressFix = errors.New("issue: the guest does not use its configured address; Plumb cannot revert or accept this (restart the guest, or ignore it)")
+
+// reopenWindow: a new address mismatch within this time after the Issue
+// was gone opens the same Issue again, which then stays open at least this
+// long (D-215).
+const reopenWindow = time.Hour
 
 // Service keeps Issues.
 type Service struct {
@@ -92,6 +103,17 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 			if err != nil {
 				return err
 			}
+			if it.Resource == wire.GuestAddressID {
+				// A flapping guest gets one Issue row (D-215).
+				iss, err := s.st.ReopenGoneIssue(ctx, target, it.Resource, s.st.Now().Add(-reopenWindow), raw)
+				if err == nil {
+					s.emit(ctx, "issue.updated", iss.ID, "system", map[string]any{"target": target, "resource": it.Resource, "status": store.IssueOpen, "reopened": true})
+					continue
+				}
+				if !errors.Is(err, store.ErrNotFound) {
+					return err
+				}
+			}
 			iss, opened, err := s.st.UpsertIssue(ctx, target, it.Resource, raw)
 			if err != nil {
 				return err
@@ -118,6 +140,9 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 			}
 			if iss.Status != store.IssueOpen {
 				continue // a Plan resolves it; its Run decides
+			}
+			if !iss.ReopenedAt.IsZero() && s.st.Now().Sub(iss.ReopenedAt) < reopenWindow {
+				continue // opened again: it stays open for an hour (D-215)
 			}
 			if err := s.st.ResolveIssue(ctx, iss.ID, "gone", "system"); err != nil {
 				return err
@@ -160,6 +185,9 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	}
 	if iss.Status != store.IssueOpen {
 		return store.Plan{}, ErrNotOpen
+	}
+	if iss.Resource == wire.GuestAddressID && (action == ActionRevert || action == ActionAccept) {
+		return store.Plan{}, ErrAddressFix
 	}
 	var changes []wire.Change
 	if err := json.Unmarshal(iss.Changes, &changes); err != nil {

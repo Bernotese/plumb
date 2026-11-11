@@ -41,10 +41,16 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 		return err
 	}
 	var errs []error
+	now := e.cfg.Now()
+	seen := map[string]bool{}
 	for _, b := range binds {
+		seen[b.Name] = true
 		e.mu.Lock()
 		busy := e.busy[b.Name] > 0
 		e.mu.Unlock()
+		if err := e.checkAddress(ctx, b.Name, busy, now); err != nil {
+			errs = append(errs, err)
+		}
 		if busy {
 			continue
 		}
@@ -90,6 +96,13 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	e.mu.Lock()
+	for t := range e.addrs {
+		if !seen[t] {
+			delete(e.addrs, t) // the target lost its guest
+		}
+	}
+	e.mu.Unlock()
 	return errors.Join(errs...)
 }
 
@@ -104,6 +117,12 @@ type Live struct {
 	Busy     bool   // a Run works on the target
 	// Waiting are the values that wait for a stop and start (D-195).
 	Waiting []store.Waiting
+	// Reported is the address list of the agent, only while it is online
+	// and the list is known (D-214). Display data: never a connect target
+	// and never used to authorize (D-216). IPs stays the configured address.
+	Reported     []string
+	ReportedAt   time.Time
+	ReportedMore bool // the guest has more than wire.MaxAddrs addresses
 }
 
 // Live reads the live status of a target from the agent table, the link
@@ -117,6 +136,13 @@ func (e *Engine) Live(ctx context.Context, target string) (Live, error) {
 		l.Agent, l.LastSeen = "offline", a.LastSeenAt
 		if e.cfg.Agents.Online(target) {
 			l.Agent = "online"
+		}
+		r, known, err := e.reported(ctx, target, l.Agent == "online")
+		if err != nil {
+			return l, err
+		}
+		if known {
+			l.Reported, l.ReportedAt, l.ReportedMore = r.List, r.At, r.Truncated
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return l, err

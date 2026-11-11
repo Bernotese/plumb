@@ -26,6 +26,7 @@
     waitingLines,
     waitingSince,
   } from "../lib/view";
+  import { smallestDisk } from "../lib/images";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
@@ -111,6 +112,13 @@
     } as Record<string, string>;
   });
 
+  // D-202: a Target from a built image needs at least the disk of its template.
+  const diskNote = $derived.by(() => {
+    const min = smallestDisk(images.find((i) => i.document.name === image)?.document.spec);
+    if (editing || min === null) return {} as Record<string, string>;
+    return { disk: `At least ${min} GiB: the template of image ${image} has ${min} GiB.` };
+  });
+
   const blockByName = (n: string) => blocks.find((b) => b.document.name === n);
 
   function makeUse(use: string, id = "", params: Record<string, unknown> = {}): Use {
@@ -183,6 +191,13 @@
     if (!image) e["image"] = "Choose an image.";
     if (!reason.trim()) e["reason"] = "Say why you make this change.";
     guestErrors = validate(guestFields, guest);
+    // D-202: the disk of a Target from a built image cannot be smaller than the template.
+    const min = smallestDisk(images.find((i) => i.document.name === image)?.document.spec);
+    if (!editing && min !== null && !guestErrors["disk"] && Number(guest["disk"]) < min)
+      guestErrors = {
+        ...guestErrors,
+        disk: `At least ${min} GiB: the template of image ${image} has ${min} GiB, and a disk cannot shrink.`,
+      };
     const seen: string[] = [];
     for (const u of uses) {
       u.errors = validate(u.fields, u.values);
@@ -355,7 +370,11 @@
             {/each}
           </select>
           {#if editing}<span class="hint" id="t-image-hint"
-              >The image is used only to create the guest.</span
+              >{#if existing?.status.image_version}<span id="t-image-version" class="block"
+                  >Made from image {existing.document.spec.image} v{existing.status
+                    .image_version}.</span
+                >
+              {/if}The image is used only to create the guest.</span
             >{/if}
         </div>
         <div class="field">
@@ -374,7 +393,7 @@
         prefix="guest"
         readonly={editing ? CREATE_ONLY : []}
         readonlyHint="Create-only: it cannot change on an existing target."
-        notes={addressNote}
+        notes={{ ...addressNote, ...diskNote }}
       />
       <div class="field">
         <label class="check">
@@ -503,6 +522,9 @@
   }
   .warn {
     color: var(--color-warn);
+  }
+  .block {
+    display: block;
   }
   .mismatch {
     border-left: 4px solid var(--color-warn);

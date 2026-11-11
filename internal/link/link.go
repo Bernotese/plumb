@@ -570,6 +570,15 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// A bad address list in a Hello makes the list unknown; the Hello
+	// itself is taken, so display data never cuts the link (D-212). The
+	// log holds the reason, never the list.
+	if h := rep.Hello; h != nil && h.Addrs != nil {
+		if err := wire.CheckAddrs(h.Addrs, h.AddrsTruncated); err != nil {
+			l.log.Warn("hello with a bad address list; list set to unknown", "target", agent.Target, "reason", err)
+			h.Addrs, h.AddrsTruncated = nil, false
+		}
+	}
 
 	// Source 1 of D-062: the head revision. It reads the store, so it runs
 	// before l.mu is taken.
@@ -672,6 +681,11 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if l.cfg.OnReport != nil {
 		if err := l.cfg.OnReport(r.Context(), Delivery{Target: agent.Target, AgentID: agent.ID, Report: rep}); err != nil {
+			if errors.Is(err, ErrTooOften) {
+				w.Header().Set("Retry-After", "30")
+				writeError(w, http.StatusTooManyRequests, "address list changed too often")
+				return
+			}
 			l.log.Error("report handler", "target", agent.Target, "err", err)
 			if rep.Type == wire.ReportResult {
 				l.mu.Lock()
@@ -751,8 +765,16 @@ func reportHasText(rep wire.Report) bool {
 	return false
 }
 
+// ErrTooOften is returned by OnReport for a report that changes stored
+// data more often than its limit allows (an address list, D-212). link
+// answers 429; the agent sends the data again later.
+var ErrTooOften = errors.New("link: report changes data too often")
+
 // validateReport checks a report against the wire types and limits.
 func validateReport(rep wire.Report) error {
+	if rep.Type != wire.ReportAddrs && (rep.Addrs != nil || rep.AddrsTruncated || rep.AddrsUnknown) {
+		return errors.New("addrs only in an addrs report")
+	}
 	switch rep.Type {
 	case wire.ReportResult, wire.ReportProgress:
 		if rep.CommandID == "" {
@@ -774,6 +796,16 @@ func validateReport(rep wire.Report) error {
 			if len(f) > maxHelloField || !printable(f) {
 				return errors.New("bad hello field")
 			}
+		}
+	case wire.ReportAddrs:
+		if rep.CommandID != "" || rep.Hello != nil || len(rep.Items) > 0 || rep.Error != "" {
+			return errors.New("addrs has only the addrs fields")
+		}
+		if rep.AddrsUnknown && (rep.Addrs != nil || rep.AddrsTruncated) {
+			return errors.New("addrs_unknown has no list")
+		}
+		if err := wire.CheckAddrs(rep.Addrs, rep.AddrsTruncated); err != nil {
+			return err // the reason, never the list
 		}
 	default:
 		return fmt.Errorf("unknown report type %q", rep.Type)

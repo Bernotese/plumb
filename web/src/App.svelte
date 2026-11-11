@@ -17,6 +17,9 @@
   import RunView from "./screens/RunView.svelte";
   import TargetForm from "./screens/TargetForm.svelte";
   import Targets from "./screens/Targets.svelte";
+  import Images from "./screens/Images.svelte";
+  import ImageForm from "./screens/ImageForm.svelte";
+  import ImageScreen from "./screens/ImageView.svelte";
 
   // The API: /api/v1 of the controller (T-014). A mock build
   // (VITE_PLUMB_MOCK=1, `npm run dev:mock`, development only) uses the
@@ -133,6 +136,10 @@
         href={href({ name: "targets" })}
         aria-current={navCurrent(["targets", "target-new", "target-edit"])}>Targets</a
       >
+      <a
+        href={href({ name: "images" })}
+        aria-current={navCurrent(["images", "image", "image-new", "image-edit"])}>Images</a
+      >
       <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue", "rules"])}
         >Issues</a
       >
@@ -176,6 +183,14 @@
     <TargetForm {api} />
   {:else if route.name === "target-edit"}
     {#key route.target}<TargetForm {api} name={route.target} />{/key}
+  {:else if route.name === "images"}
+    <Images {api} />
+  {:else if route.name === "image-new"}
+    <ImageForm {api} />
+  {:else if route.name === "image"}
+    {#key route.image}<ImageScreen {api} name={route.image} />{/key}
+  {:else if route.name === "image-edit"}
+    {#key route.image}<ImageForm {api} name={route.image} />{/key}
   {:else if route.name === "plan"}
     {#key route.id}<PlanView {api} id={route.id} />{/key}
   {:else if route.name === "run"}

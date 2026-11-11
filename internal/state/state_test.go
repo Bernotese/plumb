@@ -183,14 +183,3 @@ func TestCanonical(t *testing.T) {
 		}
 	}
 }
-
-// Until T-059 and T-062, a built Image is valid by the schema but refused
-// by Validate, so it cannot be used as a stock image by mistake.
-func TestValidateRefusesBuildUntilImplemented(t *testing.T) {
-	const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	doc := Doc{Kind: KindImage, Name: "web", Spec: json.RawMessage(`{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"guest":{"disk":10,"bridge":"vmbr0"}}}`)}
-	_, err := Validate([]Doc{doc})
-	if err == nil || !strings.Contains(err.Error(), "not available yet") {
-		t.Fatalf("Validate = %v, want the not-available error", err)
-	}
-}

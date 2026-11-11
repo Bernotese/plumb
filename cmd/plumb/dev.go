@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // The agent binary is built first by make build into agentbin/ (D-071).
@@ -39,6 +41,30 @@ func agentBinary() []byte {
 
 // devTargets are the simulated guests of --dev.
 var devTargets = []string{"web1", "web2"}
+
+// The demo Target with a static address whose guest uses another one
+// (D-215, T-070). Only --dev-demo has it.
+const (
+	demoAddrTarget   = "db1"
+	demoAddrReported = "10.99.0.107"
+)
+
+// devAddrStable is the stable time of the address check: the demo opens
+// its guest:address Issue at once, so it exists before the e2e tests run
+// and is not the newest Issue. 0 is the default of the engine.
+func devAddrStable(demo bool) time.Duration {
+	if demo {
+		return time.Nanosecond
+	}
+	return 0
+}
+
+// demoDocs is the extra seed of --dev-demo.
+func demoDocs() []state.Doc {
+	return []state.Doc{{Kind: state.KindTarget, Name: demoAddrTarget, Spec: json.RawMessage(`{"type":"vm","image":"ubuntu-26.04",` +
+		`"guest":{"cores":1,"memory":1024,"disk":10,"bridge":"vmbr0","ip":"192.168.1.20/24","gateway":"192.168.1.1"},` +
+		`"blocks":[{"use":"motd","params":{"text":"Hello from db1"}}]}`)}}
+}
 
 func devDocs() []state.Doc {
 	d := func(kind, name, spec string) state.Doc {
@@ -179,6 +205,13 @@ func (d *devAgents) start(ctx context.Context, target, ref string) {
 		return boot.Token, ok
 	}
 	a := linktest.New(d.lk.Handler(), token)
+	// The simulated guest reports the address that the fake driver gave
+	// it; the demo Target reports another one (D-215).
+	if target == demoAddrTarget {
+		a.SetAddrs([]string{demoAddrReported})
+	} else if st, err := d.drv.Observe(ctx, driver.GuestID(ref)); err == nil {
+		a.SetAddrs(append([]string{}, st.IPs...))
+	}
 	actx, cancel := context.WithCancel(ctx)
 	d.agents[target] = &devAgent{ref: ref, a: a, cancel: cancel}
 	d.wg.Add(1)
@@ -209,7 +242,11 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	p, err := eng.Propose(ctx, plan.Input{Proposal: plan.Proposal{Put: devDocs()}, Reason: "dev seed", Author: "system"})
+	docs := devDocs()
+	if demo {
+		docs = append(docs, demoDocs()...)
+	}
+	p, err := eng.Propose(ctx, plan.Input{Proposal: plan.Proposal{Put: docs}, Reason: "dev seed", Author: "system"})
 	if err != nil {
 		return err
 	}
@@ -227,7 +264,7 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, agents *devAgents, log *slog.Logger) error {
 	eng.Wait()
 	deadline := time.Now().Add(30 * time.Second)
-	for _, t := range devTargets {
+	for _, t := range append(slices.Clone(devTargets), demoAddrTarget) {
 		for !lk.Online(t) {
 			if time.Now().After(deadline) {
 				return fmt.Errorf("dev demo: %s is not online", t)
@@ -238,6 +275,17 @@ func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.L
 			case <-time.After(50 * time.Millisecond):
 			}
 		}
+	}
+	// The guest:address Issue of db1 first, so it is not the newest Issue:
+	// its guest reports another address than its static ip (D-215). Two
+	// checks: the first starts the stable time, the second opens it.
+	for range 2 {
+		if err := eng.CheckGuests(ctx); err != nil {
+			return err
+		}
+	}
+	if _, err := st.OpenIssue(ctx, demoAddrTarget, wire.GuestAddressID); err != nil {
+		return fmt.Errorf("dev demo: no address issue on %s: %w", demoAddrTarget, err)
 	}
 	// Two more drift Issues for the ignore actions (T-036 e2e): someone
 	// edits the nginx site of web1 and removes its nginx package. They are
