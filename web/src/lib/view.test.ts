@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { Plan, TargetView } from "./types";
+import type { Issue, Plan, TargetView } from "./types";
 import {
+  addressIssueText,
   applyStepEvent,
   changeView,
   humanOnlyReasons,
   maxRisk,
+  mismatchLine,
+  reportedAddrs,
+  reportedText,
   targetState,
   valueText,
 } from "./view";
@@ -164,5 +168,37 @@ describe("humanOnlyReasons (D-099)", () => {
     expect(humanOnlyReasons({ ...base, human_only: ["secret-binding"], targets: [] })).toEqual([
       "It gives a secret to a target that did not get it before.",
     ]);
+  });
+});
+
+describe("reported addresses (T-071)", () => {
+  const st = (s: Partial<TargetView["status"]>) =>
+    ({ ...target("ready").status, ...s }) as TargetView["status"];
+  const issue = (from: unknown, to: unknown) =>
+    ({ changes: [{ attr: "ip", from, to, risk: "read" }] }) as unknown as Issue;
+
+  it("has no list while reported_at is null", () => {
+    expect(reportedAddrs(st({ reported_ips: [], reported_at: null }))).toBeNull();
+    expect(reportedAddrs(st({}))).toBeNull();
+  });
+
+  it.each([
+    [[], false, "no address"],
+    [["192.0.2.1", "fd00::1"], false, "192.0.2.1, fd00::1"],
+    [["192.0.2.1"], true, "192.0.2.1 + more"],
+  ])("%#: %j more=%s", (ips, more, out) => {
+    const r = reportedAddrs(
+      st({ reported_ips: ips, reported_at: "2026-11-10T09:00:00Z", reported_ips_more: more }),
+    );
+    expect(r && reportedText(r)).toBe(out);
+  });
+
+  it("writes the Issue text and the mismatch line", () => {
+    const i = issue(["192.0.2.107"], "192.0.2.41");
+    expect(addressIssueText(i)).toBe(
+      "The guest does not use the configured address 192.0.2.41. It reports: 192.0.2.107.",
+    );
+    expect(mismatchLine(i)).toBe("Configured: 192.0.2.41 — the guest reports 192.0.2.107");
+    expect(addressIssueText(issue([], "192.0.2.41"))).toContain("It reports: no address.");
   });
 });

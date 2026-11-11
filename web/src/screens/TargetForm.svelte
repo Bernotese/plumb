@@ -10,14 +10,19 @@
     type Field,
     type Values,
   } from "../lib/schemaForm";
-  import type { BlockView, ImageView, TargetSpec, TargetView } from "../lib/types";
+  import type { BlockView, ImageView, Issue, TargetSpec, TargetView } from "../lib/types";
   import {
     ALLOW_RESTART_HELP,
     ALLOW_RESTART_LABEL,
     CREATE_ONLY,
+    GUEST_ADDRESS,
     REENROLL_REFUSED,
+    REPORTED_TITLE,
     WAITING_ACTIONS,
     formatTime,
+    mismatchLine,
+    reportedAddrs,
+    reportedText,
     waitingLines,
     waitingSince,
   } from "../lib/view";
@@ -64,6 +69,35 @@
   let reenrollError = $state<unknown>(null);
   let reenrollBusy = $state(false);
   let nextKey = 0;
+
+  // T-071: the open guest:address Issue of this Target, for the mismatch line.
+  let addressIssue = $state<Issue | null>(null);
+  $effect(() => {
+    const t = existing;
+    addressIssue = null;
+    if (!t || t.status.open_issues === 0) return;
+    let stale = false;
+    api.listIssues().then(
+      (list) => {
+        if (stale) return;
+        addressIssue =
+          list.find(
+            (i) =>
+              i.target === t.document.name && i.resource === GUEST_ADDRESS && i.status === "open",
+          ) ?? null;
+      },
+      // The line is extra information; the page works without it.
+      () => {},
+    );
+    return () => (stale = true);
+  });
+  const reported = $derived(existing ? reportedAddrs(existing.status) : null);
+  const configured = $derived(
+    existing
+      ? existing.status.ips?.join(", ") ||
+          ((existing.document.spec.guest.ip ?? "dhcp") === "dhcp" ? "DHCP" : "–")
+      : "",
+  );
 
   const waitingFrom = $derived(waitingSince(existing?.status.waiting ?? []));
   // The stored setting decides the re-enrollment, not the unsaved checkbox.
@@ -235,6 +269,30 @@
 
 <h1 id="page-title" tabindex="-1">{editing ? `Edit target ${name}` : "New target"}</h1>
 <ProblemBox error={loadError} />
+{#if existing}
+  <section class="card addr-card" class:mismatch={addressIssue} aria-labelledby="addr-title">
+    <h2 id="addr-title">Address</h2>
+    {#if addressIssue}
+      <p class="warn" id="addr-mismatch">
+        {mismatchLine(addressIssue)} ·
+        <a href={href({ name: "issue", id: addressIssue.id })}>Issue {addressIssue.id}</a>
+      </p>
+    {/if}
+    <dl class="addrs">
+      <dt>Configured</dt>
+      <dd class="mono">{configured}</dd>
+      <dt>Reported <span class="mark">by the guest</span></dt>
+      <dd title={REPORTED_TITLE}>
+        {#if reported}
+          <span class="mono">{reportedText(reported)}</span>
+          <span class="muted"> · at {formatTime(existing.status.reported_at)}</span>
+        {:else}
+          <span class="muted">No list: the agent is offline or does not report addresses.</span>
+        {/if}
+      </dd>
+    </dl>
+  </section>
+{/if}
 {#if existing?.status.ignored_drift?.length}
   {@const drift = existing.status.ignored_drift}
   <section class="card" aria-labelledby="ignored-title">
@@ -448,6 +506,36 @@
   }
   .warn {
     color: var(--color-warn);
+  }
+  .mismatch {
+    border-left: 4px solid var(--color-warn);
+  }
+  .addr-card h2 {
+    margin-top: 0;
+  }
+  .addrs {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+  }
+  @media (max-width: 600px) {
+    .addrs {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+    .addrs dd {
+      margin-bottom: var(--space-2);
+    }
+  }
+  .addrs dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .mark {
+    font-weight: normal;
+    font-style: italic;
+    color: var(--color-text-muted);
   }
   .drift {
     margin: 0 0 var(--space-2);
