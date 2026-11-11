@@ -480,10 +480,22 @@ type UnusedImport struct {
 	Command   string
 }
 
-// UnusedImports lists the import files of a built Image that its current
-// checksum does not need. Plumb never deletes them; a person runs Command.
+// UnusedImports lists the import files of a built Image that no checksum
+// needs: not the checksum of the document, and not the base checksum of a
+// build that runs now (the document may have changed after its approval;
+// review S1 of PR #128). Plumb never deletes them; a person runs Command.
 // A driver without the list gives none.
 func (e *Engine) UnusedImports(ctx context.Context, image, sha256 string) ([]UnusedImport, error) {
+	needed := map[string]bool{sha256: true}
+	versions, err := e.st.ImageVersions(ctx, image)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range versions {
+		if v.Status == store.ImageBuilding {
+			needed[v.BaseSHA256] = true
+		}
+	}
 	objs, err := e.cfg.Driver.ListImages(ctx, image)
 	if errors.Is(err, driver.ErrNotImplemented) {
 		return nil, nil
@@ -493,16 +505,28 @@ func (e *Engine) UnusedImports(ctx context.Context, image, sha256 string) ([]Unu
 	}
 	var out []UnusedImport
 	for _, o := range objs {
-		if o.Kind != driver.ImageImportFile || (sha256 != "" && o.Digest == sha256) {
-			continue
-		}
-		if sha256 != "" && len(sha256) >= 12 && strings.HasSuffix(o.Name, "-"+sha256[:12]+".qcow2") {
+		if o.Kind != driver.ImageImportFile || usesImport(o, needed) {
 			continue
 		}
 		out = append(out, UnusedImport{Volume: o.Name, SizeBytes: o.SizeBytes, Command: FreeCommand(image, o.Name)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Volume < out[j].Volume })
 	return out, nil
+}
+
+// usesImport reports whether an import file is the download of a needed
+// checksum: by the checksum that the driver read, or by the name, which
+// holds the first 12 hex digits (D-077).
+func usesImport(o driver.ImageObject, needed map[string]bool) bool {
+	if needed[o.Digest] {
+		return true
+	}
+	for sum := range needed {
+		if len(sum) >= 12 && strings.HasSuffix(o.Name, "-"+sum[:12]+".qcow2") {
+			return true
+		}
+	}
+	return false
 }
 
 // strict names (T-064 review): the storage id and an import file that
