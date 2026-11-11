@@ -785,8 +785,15 @@ func validateReport(rep wire.Report) error {
 		return errors.New("too many items")
 	}
 	for i, it := range rep.Items {
-		if _, _, ok := wire.SplitID(it.Resource); !ok || len(it.Resource) > 4096 {
+		typ, _, ok := wire.SplitID(it.Resource)
+		if !ok || len(it.Resource) > 4096 {
 			return fmt.Errorf("item %d: bad resource id", i)
+		}
+		// Only the types that an agent manages. guest:config and
+		// guest:address belong to the controller: an item of them from an
+		// agent would open or close their Issues (T-070 review B1).
+		if !wire.AgentType(typ) {
+			return fmt.Errorf("item %d: resource type %q is not an agent resource", i, typ)
 		}
 		if !agentStatuses[it.Status] {
 			return fmt.Errorf("item %d: bad status %q", i, it.Status)
