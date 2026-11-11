@@ -19,9 +19,6 @@ import (
 // its recipe, schedule or retention (D-201).
 const HumanOnlyImageRecipe = "image-recipe"
 
-// DiskLimitPercent is the limit that a Plan shows (D-203). The check
-// itself is the disk gate of T-074, which part B of T-062 uses.
-const DiskLimitPercent = 85
 
 // ErrStockImage is wrapped when a build is asked for an Image without
 // spec.build.
@@ -172,7 +169,7 @@ func (e *Engine) planImages(ctx context.Context, base, next *state.Set, force, f
 					Risk: wire.RiskReversible, Unverified: true, After: res.After})
 			}
 			ip.Build = bp
-			disk, dnotes := e.diskUse(ctx, name)
+			disk, dnotes := e.diskUse(ctx, name, r.Recipe.DiskGB)
 			ip.Disk = disk
 			notes = append(notes, dnotes...)
 		}
@@ -230,7 +227,7 @@ func (e *Engine) planRemovals(ctx context.Context, name string, versions []store
 // or the thin-pool metadata use is unknown (T-061 review). The check
 // before the build is the disk gate of T-074 (part B); ReservedBytes comes
 // from it then.
-func (e *Engine) diskUse(ctx context.Context, image string) (*DiskUse, []string) {
+func (e *Engine) diskUse(ctx context.Context, image string, diskGB int) (*DiskUse, []string) {
 	ds, err := e.cfg.Driver.DiskSpace(ctx)
 	if errors.Is(err, driver.ErrNotImplemented) {
 		return nil, nil
@@ -238,8 +235,12 @@ func (e *Engine) diskUse(ctx context.Context, image string) (*DiskUse, []string)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("Image %s: the use of the disk storage is unknown (%v); the build checks it again before it starts.", image, err)}
 	}
-	u := &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes, LimitPercent: DiskLimitPercent}
+	u := &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes,
+		ReservedBytes: e.disk.Reserved(), LimitPercent: e.disk.Limit()}
 	var notes []string
+	if err := e.disk.Check(ctx, int64(diskGB)*GiB, fmt.Sprintf("the %d GiB build disk of Image %s", diskGB, image)); err != nil {
+		notes = append(notes, fmt.Sprintf("The build would not start now: %v.", err))
+	}
 	if !ds.MetaKnown {
 		notes = append(notes, fmt.Sprintf("Image %s: thin-pool metadata use is unknown.", image))
 	}
@@ -307,9 +308,6 @@ func (e *Engine) ProposeBuild(ctx context.Context, image, trigger, reason, autho
 	if !info.Built {
 		return store.Plan{}, &ProposalError{Msg: fmt.Sprintf("Image %q has no build part; only a built Image can be built", image), Err: ErrStockImage}
 	}
-	if !e.cfg.ImageBuilds {
-		return store.Plan{}, &ProposalError{Msg: textBuildsOff}
-	}
 	images, notes, err := e.planImages(ctx, base, base, image, trigger)
 	if err != nil {
 		return store.Plan{}, err
@@ -329,7 +327,6 @@ func (e *Engine) ProposeBuild(ctx context.Context, image, trigger, reason, autho
 	return p, nil
 }
 
-const textBuildsOff = "image builds are not available yet (T-062 part B)"
 
 // recipeStale reports whether a recipe of the image part differs at set.
 func recipeStale(set *state.Set, images []ImagePlan) (bool, error) {
@@ -551,5 +548,6 @@ func (e *Engine) DiskUse(ctx context.Context) *DiskUse {
 	if err != nil {
 		return nil
 	}
-	return &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes, LimitPercent: DiskLimitPercent}
+	return &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes,
+		ReservedBytes: e.disk.Reserved(), LimitPercent: e.disk.Limit()}
 }

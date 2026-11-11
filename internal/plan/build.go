@@ -188,8 +188,7 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		}
 	}
 	if !s.ok {
-		s.failRest(ctx, "a resource of the build failed")
-		return false
+		return false // fail marks the rest: nothing was converted
 	}
 
 	// 5. Seal, as a handshake (B1): the controller takes the result and
@@ -362,7 +361,7 @@ func (e *Engine) waitStopped(ctx context.Context, gid driver.GuestID, deadline t
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(e.cfg.pollInterval()):
+		case <-time.After(e.cfg.PowerPoll):
 		}
 	}
 }
@@ -521,7 +520,15 @@ func (e *Engine) recoverBuilds(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	live := map[string]bool{} // Images that a Run of this process builds
 	for _, v := range building {
+		e.mu.Lock()
+		active := e.active[v.RunID]
+		e.mu.Unlock()
+		if active {
+			live[v.Image] = true
+			continue
+		}
 		if err := e.cfg.Agents.Revoke(ctx, buildLink(v.Image)); err != nil {
 			return err
 		}
@@ -530,9 +537,19 @@ func (e *Engine) recoverBuilds(ctx context.Context) error {
 		}
 		e.imageVersionEvent(ctx, v.Image, v.Version, store.ImageFailed, v.RunID)
 	}
-	if err := e.removeBuildGuests(ctx, ""); err != nil {
-		// The guests stay; the next build of each Image tries again.
-		e.log.Error("recover: build guests not removed", "err", err)
+	guests, err := e.cfg.Driver.ListBuilds(ctx)
+	if err != nil {
+		// The guests stay; the next build of each Image removes them.
+		e.log.Error("recover: build guests not listed", "err", err)
+		return nil
+	}
+	for _, g := range guests {
+		if live[g.Image] {
+			continue
+		}
+		if err := e.removeBuildGuests(ctx, g.Image); err != nil {
+			e.log.Error("recover: build guest not removed", "image", g.Image, "guest", g.ID, "err", err)
+		}
 	}
 	return nil
 }

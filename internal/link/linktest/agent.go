@@ -50,6 +50,15 @@ type Agent struct {
 	onSeal    func() // see OnSeal
 	sealFail  string // a step that fails; "" for none
 	sealStuck bool   // the guest does not power off after seal
+	noMark    bool   // the agent does not take the build mark
+}
+
+// NoBuildMark makes the agent ignore the build mark, like an agent that
+// got a normal enrollment: it refuses seal.
+func (a *Agent) NoBuildMark(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.noMark = on
 }
 
 // OnSeal sets a hook that runs after a seal result was taken, where the
@@ -277,7 +286,7 @@ func (a *Agent) enroll(ctx context.Context) bool {
 	a.mu.Lock()
 	// The build mark counts only at a first enrollment from an empty
 	// state; a later one clears it (T-058 review S1, T-060).
-	a.build = resp.Build && a.enrolls == 0 && !a.watched
+	a.build = resp.Build && a.enrolls == 0 && !a.watched && !a.noMark
 	a.cred = resp.Credential
 	a.enrolls++
 	a.mu.Unlock()

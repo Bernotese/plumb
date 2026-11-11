@@ -7,16 +7,52 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
-func withBuilds(c *plan.Config) { c.ImageBuilds = true }
+// withBuilds makes the build timeouts short for tests.
+func withBuilds(c *plan.Config) {
+	c.BuildEnrollTimeout, c.SealTimeout, c.PowerPoll = 5*time.Second, 2*time.Second, 10*time.Millisecond
+}
 
 var builtSHA = strings.Repeat("a", 64)
+
+// buildAgents starts a fake agent for every build guest that appears, as
+// the vendor snippet does in a real clone. The agent seals like the real
+// one (linktest) and then powers the guest off. tune sets it up first.
+func (e *env) buildAgents(tune func(*linktest.Agent)) {
+	e.t.Helper()
+	seen := map[driver.GuestID]bool{}
+	go func() {
+		for e.ctx.Err() == nil {
+			builds, _ := e.drv.ListBuilds(e.ctx)
+			for _, b := range builds {
+				if seen[b.ID] {
+					continue
+				}
+				seen[b.ID] = true
+				id := b.ID
+				a := linktest.New(e.link.Handler(), func() (string, bool) {
+					boot, ok := e.drv.Bootstrap(id)
+					return boot.Token, ok
+				})
+				a.OnSeal(func() { e.drv.StopOutside(id) })
+				if tune != nil {
+					tune(a)
+				}
+				go a.Run(e.ctx)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+}
 
 func builtImageDoc(name, motd string) []state.Doc {
 	return []state.Doc{
@@ -102,6 +138,7 @@ func (e *env) addVersion(image string, status string) int {
 
 func TestBuildPlanOfAChange(t *testing.T) {
 	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
 	adm := e.admin()
 	p, _ := e.plan(adm, map[string]any{"reason": "new image", "put": builtImageDoc("web", "hi")}, 201)
 	if p.Risk != "reversible" || len(p.HumanOnly) != 1 || p.HumanOnly[0] != plan.HumanOnlyImageRecipe {
@@ -120,7 +157,7 @@ func TestBuildPlanOfAChange(t *testing.T) {
 		t.Fatalf("approve: %d %s", code, body)
 	}
 	e.eng.Wait()
-	// The lane ran (part A: it fails at its first step) and shows in the Run.
+	// The lane ran and shows in the Run with every step.
 	run, _ := e.st.RunOfPlan(e.ctx, p.ID)
 	code, body := adm.do("GET", "/api/v1/runs/"+itoa(run.ID), nil)
 	var rv struct {
@@ -136,7 +173,8 @@ func TestBuildPlanOfAChange(t *testing.T) {
 	}
 	json.Unmarshal(body, &rv)
 	if code != 200 || len(rv.Targets) != 0 || len(rv.Images) != 1 || rv.Images[0].Image != "web" || rv.Images[0].Version != 1 ||
-		rv.Images[0].Status != "failed" || rv.Images[0].Steps[0].Resource != "image:base" {
+		rv.Images[0].Status != "succeeded" || len(rv.Images[0].Steps) != 6 || rv.Images[0].Steps[0].Resource != "image:base" ||
+		rv.Images[0].Steps[5].Resource != "image:retention" {
 		t.Fatalf("run: %d %s", code, body)
 	}
 	// A Block change reaches the built Image: image-recipe again.
@@ -148,8 +186,11 @@ func TestBuildPlanOfAChange(t *testing.T) {
 
 func TestBuildPlanManual(t *testing.T) {
 	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
 	adm := e.admin()
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": append(builtImageDoc("web", "hi"), imageDoc("stock", "0"))})
+	// v1 is ready; a manual build of v2 keeps it (keep 2); v3 removes v1.
+	e.manualBuild(adm, "web", 2, nil)
 	// Stock and unknown Images.
 	if code, body := adm.do("POST", "/api/v1/images/stock/build", nil); code != 422 {
 		t.Fatalf("stock: %d %s", code, body)
@@ -157,8 +198,6 @@ func TestBuildPlanManual(t *testing.T) {
 	if code, body := adm.do("POST", "/api/v1/images/nope/build", nil); code != 404 {
 		t.Fatalf("unknown: %d %s", code, body)
 	}
-	e.addVersion("web", store.ImageReady)
-	e.addVersion("web", store.ImageReady)
 	code, body := adm.do("POST", "/api/v1/images/web/build", map[string]any{"reason": "fresh packages"})
 	var p planOut
 	json.Unmarshal(body, &p)
@@ -190,10 +229,59 @@ func TestBuildPlanManual(t *testing.T) {
 	if head.PlanID == p.ID {
 		t.Fatal("a build Plan committed a revision")
 	}
+	// v3 is ready, v1 is removed by retention, v2 stays (keep 2).
+	vs, _ := e.st.ImageVersions(e.ctx, "web")
+	if len(vs) != 3 || vs[0].Status != store.ImageReady || vs[1].Status != store.ImageReady || vs[2].Status != store.ImageRemoved {
+		t.Fatalf("versions after the third build: %+v", vs)
+	}
+	objs, _ := e.drv.ListImages(e.ctx, "web")
+	n := 0
+	for _, o := range objs {
+		if o.Kind == driver.ImageVersionTemplate {
+			n++
+			if o.Version == 1 {
+				t.Error("the template of v1 is still there")
+			}
+		}
+	}
+	if n != 2 {
+		t.Errorf("version templates = %d, want 2", n)
+	}
+}
+
+// manualBuild proposes and approves a manual build and checks its end.
+func (e *env) manualBuild(c *client, image string, wantVersion int, wantStatus *string) {
+	e.t.Helper()
+	code, body := c.do("POST", "/api/v1/images/"+image+"/build", nil)
+	var p planOut
+	json.Unmarshal(body, &p)
+	if code != 201 || p.Images[0].Build.Version != wantVersion {
+		e.t.Fatalf("build: %d %s", code, body)
+	}
+	if code, body := c.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		e.t.Fatalf("approve build: %d %s", code, body)
+	}
+	e.eng.Wait()
+	v, err := e.st.GetImageVersion(e.ctx, image, wantVersion)
+	want := store.ImageReady
+	if wantStatus != nil {
+		want = *wantStatus
+	}
+	if err != nil || v.Status != want {
+		steps := ""
+		if run, err := e.st.RunOfPlan(e.ctx, p.ID); err == nil {
+			ss, _ := e.st.Steps(e.ctx, run.ID)
+			for _, s := range ss {
+				steps += "\n" + s.Resource + " " + s.Status + " " + s.Output
+			}
+		}
+		e.t.Fatalf("version %d = %+v %v, want %s%s", wantVersion, v, err, want, steps)
+	}
 }
 
 func TestBuildPlanStaleByRecipe(t *testing.T) {
 	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
 	adm := e.admin()
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": builtImageDoc("web", "hi")})
 	code, body := adm.do("POST", "/api/v1/images/web/build", nil)
@@ -214,6 +302,7 @@ func TestBuildPlanStaleByRecipe(t *testing.T) {
 
 func TestBuildRunning(t *testing.T) {
 	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
 	adm := e.admin()
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": builtImageDoc("web", "hi")})
 	_, body := adm.do("POST", "/api/v1/images/web/build", nil)
@@ -238,19 +327,18 @@ func TestTargetOfBuiltImage(t *testing.T) {
 	if !strings.Contains(body, "approve the build first") {
 		t.Fatalf("same plan: %s", body)
 	}
+	// A failed first build: no ready version.
+	e.buildAgents(func(a *linktest.Agent) { a.FailSeal(wire.SealStepHostKeys) })
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "image", "put": builtImageDoc("web", "hi")})
 	_, body = e.plan(adm, map[string]any{"reason": "target", "put": []state.Doc{target}}, 422)
 	if !strings.Contains(body, "build the Image first") {
 		t.Fatalf("no ready version: %s", body)
 	}
-	e.addVersion("web", store.ImageFailed)
-	e.plan(adm, map[string]any{"reason": "target", "put": []state.Doc{target}}, 422)
-	e.addVersion("web", store.ImageReady)
-	e.plan(adm, map[string]any{"reason": "target", "put": []state.Doc{target}}, 201)
 }
 
 func TestImageStatus(t *testing.T) {
 	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
 	adm := e.admin()
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": append(builtImageDoc("web", "hi"), imageDoc("stock", "0"))})
 	e.addVersion("web", store.ImageFailed)
@@ -271,8 +359,8 @@ func TestImageStatus(t *testing.T) {
 		} `json:"status"`
 	}
 	json.Unmarshal(body, &v)
-	if code != 200 || v.Status == nil || len(v.Status.Versions) != 3 || v.Status.Versions[0].Version != 3 ||
-		v.Status.Building == nil || *v.Status.Building != 3 || v.Status.LastBuild == nil || v.Status.LastBuild.Version != 2 ||
+	if code != 200 || v.Status == nil || len(v.Status.Versions) != 4 || v.Status.Versions[0].Version != 4 ||
+		v.Status.Building == nil || *v.Status.Building != 4 || v.Status.LastBuild == nil || v.Status.LastBuild.Version != 3 ||
 		v.Status.UnusedImports == nil {
 		t.Fatalf("image status: %d %s", code, body)
 	}
@@ -302,6 +390,7 @@ func (e *env) runPlanAnyStatus(c *client, req map[string]any) {
 func TestContractImages(t *testing.T) {
 	k := loadContract(t)
 	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
 	adm := e.admin()
 	var calls []recorded
 	call := func(method, path, template string, body any) []byte {
@@ -346,6 +435,7 @@ func TestContractImages(t *testing.T) {
 // unused list, also when the document has another checksum now.
 func TestUnusedImportsKeepRunningBuild(t *testing.T) {
 	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
 	adm := e.admin()
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": builtImageDoc("web", "hi")})
 	old, other := strings.Repeat("b", 64), strings.Repeat("c", 64)
@@ -356,8 +446,9 @@ func TestUnusedImportsKeepRunningBuild(t *testing.T) {
 	}
 	head, _ := e.st.Head(e.ctx)
 	run, _ := e.st.RunOfPlan(e.ctx, head.PlanID)
-	if _, err := e.st.AddImageVersion(e.ctx, store.ImageVersion{Image: "web", Trigger: store.TriggerManual, RunID: run.ID, RevisionID: head.ID,
-		RecipeSHA256: builtSHA, BaseSHA256: old, DiskGB: 10}, func(int) string { return builtSHA }); err != nil {
+	running, err := e.st.AddImageVersion(e.ctx, store.ImageVersion{Image: "web", Trigger: store.TriggerManual, RunID: run.ID, RevisionID: head.ID,
+		RecipeSHA256: builtSHA, BaseSHA256: old, DiskGB: 10}, func(int) string { return builtSHA })
+	if err != nil {
 		t.Fatal(err)
 	}
 	code, body := adm.do("GET", "/api/v1/images/web", nil)
@@ -376,7 +467,7 @@ func TestUnusedImportsKeepRunningBuild(t *testing.T) {
 		t.Fatalf("unused imports: %d %s", code, body)
 	}
 	// After the build ends, its old checksum is unused too.
-	if err := e.st.FinishImageVersion(e.ctx, "web", 1, store.ImageFailed); err != nil {
+	if err := e.st.FinishImageVersion(e.ctx, "web", running.Version, store.ImageFailed); err != nil {
 		t.Fatal(err)
 	}
 	_, body = adm.do("GET", "/api/v1/images/web", nil)

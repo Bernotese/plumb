@@ -582,7 +582,7 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad report")
 		return
 	}
-	if err := validateReport(rep); err != nil {
+	if err := validateReport(rep, strings.HasPrefix(agent.Target, wire.BuildLinkPrefix)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -787,7 +787,9 @@ func reportHasText(rep wire.Report) bool {
 var ErrTooOften = errors.New("link: report changes data too often")
 
 // validateReport checks a report against the wire types and limits.
-func validateReport(rep wire.Report) error {
+// validateReport checks the form of a report. build: the agent is the
+// agent of a build guest; only its results may hold seal Items (D-205).
+func validateReport(rep wire.Report, build bool) error {
 	if rep.Type != wire.ReportAddrs && (rep.Addrs != nil || rep.AddrsTruncated || rep.AddrsUnknown) {
 		return errors.New("addrs only in an addrs report")
 	}
@@ -840,7 +842,8 @@ func validateReport(rep wire.Report) error {
 		// Only the types that an agent manages. guest:config and
 		// guest:address belong to the controller: an item of them from an
 		// agent would open or close their Issues (T-070 review B1).
-		if !wire.AgentType(typ) {
+		seal := typ == wire.SealItemType && build && rep.Type == wire.ReportResult
+		if !wire.AgentType(typ) && !seal {
 			return fmt.Errorf("item %d: resource type %q is not an agent resource", i, typ)
 		}
 		if !agentStatuses[it.Status] {

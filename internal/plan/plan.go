@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,10 +159,13 @@ type Config struct {
 	// AddrStable is the stable time of the address check; default
 	// AddrStable. Only the dev demo shortens it.
 	AddrStable time.Duration
-	// ImageBuilds turns image builds on (T-039). Off: a proposal with a
-	// built Image is refused, as before T-062. Part A of T-062 plans and
-	// approves builds; part B runs them and turns this on by default.
-	ImageBuilds bool
+	// Timeouts of an image build (T-039 Plan §2). Defaults: enroll 20 min,
+	// seal 5 min (the apply uses ApplyTimeout).
+	BuildEnrollTimeout time.Duration
+	SealTimeout        time.Duration
+	// PowerPoll is how often a build lane reads the power state after
+	// seal; default 2 s.
+	PowerPoll time.Duration
 	// DiskLimitPercent is the limit of the disk gate for creates and
 	// builds (D-219); default DefaultDiskLimitPercent.
 	DiskLimitPercent int
@@ -238,6 +242,15 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.BuildEnrollTimeout == 0 {
+		cfg.BuildEnrollTimeout = DefaultBuildEnrollTimeout
+	}
+	if cfg.SealTimeout == 0 {
+		cfg.SealTimeout = DefaultSealTimeout
+	}
+	if cfg.PowerPoll == 0 {
+		cfg.PowerPoll = 2 * time.Second
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -338,6 +351,9 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 // bound reports whether a target has a guest binding. Agent reports of a
 // target without one are dropped (D-211).
 func (e *Engine) bound(ctx context.Context, target string) (bool, error) {
+	if strings.HasPrefix(target, wire.BuildLinkPrefix) {
+		return false, nil // a build guest: no watch, no drift, no address list (D-203)
+	}
 	_, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	if errors.Is(err, store.ErrNotFound) {
 		e.log.Warn("agent report for a target without a guest dropped", "target", target)

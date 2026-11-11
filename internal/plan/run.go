@@ -318,7 +318,7 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	hellos := e.hellos(tp.Target)
 	if guestChange != nil {
 		s.set(ctx, wire.GuestConfigID, wire.StatusRunning, nil, "")
-		res, err := e.guestStep(ctx, run, tp, r, *guestChange)
+		res, err := e.guestStep(ctx, run, set, tp, r, *guestChange)
 		switch {
 		case errors.Is(err, errRefused):
 			s.set(ctx, wire.GuestConfigID, wire.StatusRefused, res.changes, err.Error())
@@ -435,7 +435,7 @@ type guestResult struct {
 }
 
 // guestStep does the driver part of a target. It returns the changes it made.
-func (e *Engine) guestStep(ctx context.Context, run store.Run, tp TargetPlan, r *state.Rendered, planned ResourceChange) (guestResult, error) {
+func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, tp TargetPlan, r *state.Rendered, planned ResourceChange) (guestResult, error) {
 	var res guestResult
 	switch tp.Guest {
 	case "delete":
@@ -458,7 +458,13 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, tp TargetPlan, r 
 		if err != nil {
 			return res, err
 		}
-		if spec.Image, err = e.fetchImage(ctx, run.RevisionID, r.Image); err != nil {
+		// A built Image: the newest ready version (D-200); a stock Image:
+		// the base template (D-188).
+		if info, ok := set.ImageInfo(r.Image); ok && info.Built {
+			if spec.Image, spec.ImageVersion, err = e.newestVersion(ctx, r.Image); err != nil {
+				return res, err
+			}
+		} else if spec.Image, err = e.fetchImage(ctx, run.RevisionID, r.Image); err != nil {
 			return res, err
 		}
 		// T-074: the full disk counts until the clone is done; then the
@@ -646,6 +652,11 @@ func (e *Engine) fetchImage(ctx context.Context, revision int64, name string) (d
 func (e *Engine) Recover(ctx context.Context) error {
 	runs, err := e.st.RunningRuns(ctx)
 	if err != nil {
+		return err
+	}
+	// Builds first: their versions fail, their agents are revoked and
+	// their guests removed (S4).
+	if err := e.recoverBuilds(ctx); err != nil {
 		return err
 	}
 	for _, run := range runs {

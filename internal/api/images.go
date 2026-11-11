@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 )
 
@@ -92,8 +93,15 @@ func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus,
 		return nil, err
 	}
 	st := &imageStatus{Versions: []imageVersionView{}, UnusedImports: []unusedImportView{}}
+	byVersion, err := s.targetsOfImage(ctx, d.Name)
+	if err != nil {
+		return nil, err
+	}
 	for _, v := range versions { // newest first
 		vv := versionView(v)
+		if t := byVersion[v.Version]; t != nil {
+			vv.Targets = t
+		}
 		st.Versions = append(st.Versions, vv)
 		if v.Status == store.ImageBuilding && st.Building == nil {
 			n := v.Version
@@ -118,9 +126,35 @@ func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus,
 	return st, nil
 }
 
+// targetsOfImage maps a version to the Targets of the head revision that
+// were cloned from it: the version marker that the driver reads (D-200).
+func (s *Server) targetsOfImage(ctx context.Context, image string) (map[int][]string, error) {
+	_, docs, err := s.headDocs(ctx, state.KindTarget)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int][]string{}
+	for _, d := range docs {
+		var t struct {
+			Spec struct {
+				Image string `json:"image"`
+			} `json:"spec"`
+		}
+		if json.Unmarshal(d.Body, &t) != nil || t.Spec.Image != image {
+			continue
+		}
+		live, err := s.cfg.Plans.Live(ctx, d.Name)
+		if err != nil {
+			return nil, err
+		}
+		if live.ImageVersion > 0 {
+			out[live.ImageVersion] = append(out[live.ImageVersion], d.Name)
+		}
+	}
+	return out, nil
+}
+
 func versionView(v store.ImageVersion) imageVersionView {
-	// The Targets made from each version come with part B of T-062,
-	// which records the version of a create.
 	return imageVersionView{Version: v.Version, Status: v.Status, Trigger: v.Trigger, RunID: v.RunID, Revision: v.RevisionID,
 		RecipeSHA256: v.RecipeSHA256, BaseSHA256: v.BaseSHA256, DiskGB: v.DiskGB, StartedAt: v.StartedAt.UTC(),
 		FinishedAt: utc(v.FinishedAt), RemovedAt: utc(v.RemovedAt), Targets: []string{}}

@@ -120,10 +120,6 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if err != nil {
 		return store.Plan{}, err
 	}
-	// Without builds a built Image would be used as a stock image.
-	if built := next.BuiltImages(); len(built) > 0 && !e.cfg.ImageBuilds {
-		return store.Plan{}, &ProposalError{Msg: fmt.Sprintf("Image %q has spec.build: %s", built[0], textBuildsOff)}
-	}
 
 	// Touched targets: added, removed, rendered differently, or named.
 	touched := map[string]bool{}
