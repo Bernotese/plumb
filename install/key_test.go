@@ -118,6 +118,54 @@ func TestKeyInitNeedsTerminal(t *testing.T) {
 	}
 }
 
+func TestPreflightPctExecDoesNotConsumeConfirmation(t *testing.T) {
+	h := newHost(t)
+	config := "hostname: plumb\ndescription: plumb-installer-lxc Plumb controller\nmp0: local-lvm:vm-105-disk-1,mp=/var/lib/plumb/key,backup=0\n"
+	if err := os.WriteFile(filepath.Join(h.state, "lxc.105"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.state, "key.105"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, output, errors := h.runTTY(t, "y\n", "--lxc-id", "105", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("install did not read the pretyped confirmation: %d\n%s\n%s", code, output, errors)
+	}
+	if !strings.Contains(output, "Continue? [type y]") {
+		t.Errorf("confirmation prompt missing: %s", output)
+	}
+	code, output, errors = h.run([]string{"PLUMB_INSTALL_ASSUME_ROOT=1"}, "--dry-run", "--lxc-id", "105", "--plumb-binary", h.plumb)
+	if code != 0 || strings.Contains(output, "lxc-attach") || strings.Contains(output, "plumb key init") {
+		t.Errorf("dry run printed key init for an existing key: %d\n%s\n%s", code, output, errors)
+	}
+}
+
+func TestKeyInitWaitsForRecoveryKeyAcknowledgement(t *testing.T) {
+	h := newHost(t)
+	code, output, errors := h.runTTY(t, "y\n\n", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("install did not finish after key acknowledgement: %d\n%s\n%s", code, output, errors)
+	}
+	key, prompt := strings.Index(output, "FAKERECOVERYKEY"), strings.Index(output, "Write the recovery key down, then press Enter")
+	if key < 0 || prompt < key {
+		t.Errorf("recovery key acknowledgement did not follow key init:\n%s", output)
+	}
+}
+
+func TestKeyInitEOFStillRestartsService(t *testing.T) {
+	h := newHost(t)
+	code, output, errors := h.runTTY(t, "y\n\x04", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("install stopped at EOF after key init: %d\n%s\n%s", code, output, errors)
+	}
+	if index(h.calls(), "pct exec 105 -- systemctl restart plumb.service") < 0 {
+		t.Errorf("plumb.service did not restart after EOF at key acknowledgement: %v", h.calls())
+	}
+	if strings.Contains(output, "then press Enter ") {
+		t.Errorf("recovery key prompt has a trailing space: %s", output)
+	}
+}
+
 func TestKeyInitFailureStopsBeforeStart(t *testing.T) {
 	h := newHost(t)
 	code, _, errOut := h.run(append(asRoot, "FAKE_KEYINIT_FAIL=1"), "--yes", "--plumb-binary", h.plumb)

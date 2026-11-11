@@ -11,13 +11,15 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-015 slice acceptance, real-host part | pl-codex-qa | **go** (2026-11-11): the controller runs on the test host; pl-backend prepares the settings, then pl-codex-qa writes and runs `test/pve/slice_pve_test.go` |
-| T-054 installer minors from the real host (typed-ahead answer lost, dry-run text) | pl-codex-fix | running |
+| T-015 slice acceptance, real-host part | pl-codex-qa wrote, pl-backend runs | **Debian 13 with a static address: passed on the real host** (82 s). Ubuntu 26.04: the stock image takes no static address (upstream, D-192); the user accepts slice 1 with Ubuntu on DHCP. pl-backend runs the Ubuntu part with DHCP. Test: PR #90 + branch pl-backend/T-015-real-host |
+| T-055 no Image binding (found by T-015) | pl-frontend | PR #92: QA passed (6 mutations caught, tests merged into the branch), review: go after one fix (S1, a name-only match must never be deleted). Host checks later by pl-backend |
+| T-056 pending guest config (found by T-015) | pl-architect re-plans, then tbd | user decision D-193: restart for a cores/memory change is a setting per VM; when it says no, the value waits and Plumb shows it. pl-architect updates the card (name + default of the setting). The parts without the restart can start |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
 ## Done (2026-11-10 and 2026-11-11)
+- T-054 (2026-11-11): installer minors from the real host (PR #89): a typed-ahead answer is no longer lost, the dry run is quiet about key init when the key exists, Enter prompt after the recovery key.
 - **T-053 (2026-11-11): `plumb serve` uses the Proxmox driver; the controller runs on the real host** (PR #87; D-182 … D-184). Start-up check before the data dir, exit 78 for failures a restart cannot repair. Real host: repair run of the installer, service up with 0 restarts, UI + first login + password change, 5 of 5 negative starts, hookscript check, a new VM provisioned and enrolled in 32 s, SSH host keys kept after an outside cloud-init change (D-185), delete through a Plan (token refused, admin approved). Open: `--remove` and a fresh install on the host (after T-015).
 - **T-013 + T-052 (2026-11-11): minimal installer, proven on the real host** (PR #26): six roles with exact rights, user, token, pool, two storages, unprivileged LXC with a key volume, `plumb key init` on a TTY; a half-installed host is repaired; 12 of 12 forbidden token actions refused by the real Proxmox. Found by real runs and fixed: token ACL order, umask at `pct create`, template architecture. Decisions D-081 … D-084, D-177 … D-179, D-180 (user: an agent may run the installer on the test host only). Open real-host items moved to T-053.
 - **T-012 (2026-11-11): Proxmox VM driver, proven on the real host** (PR #20): 22 host items, `make test-pve` runs the whole VM life cycle inside the LXC (token stays there), 69 recorded real answers as replay test data with a leak-scan test. Found on the host and fixed: stale `template` flag, cleanup that hid errors, parallel image fetch race. Decisions D-076 … D-079, D-185 (cloud-init inputs are create-only, guests keep SSH host keys), D-186 (no package upgrade at first boot, user), D-187 (DNS set at create). Not tested: bridge change on a real guest (the host has one bridge).
@@ -67,4 +69,5 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Nothing now.
+- Nothing now. Coming: the name and the default of the restart setting of T-056 (proposal of pl-architect).
+- Known limit (D-192): a stock Ubuntu 26.04 image takes no static address on Proxmox; use DHCP until the image builds (T-039).

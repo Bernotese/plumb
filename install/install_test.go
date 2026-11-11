@@ -90,6 +90,32 @@ func (h *host) run(env []string, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+func (h *host) runTTY(t *testing.T, input string, args ...string) (int, string, string) {
+	t.Helper()
+	script, err := exec.LookPath("script")
+	if err != nil {
+		t.Skip("script is needed to provide a terminal")
+	}
+	command := []string{"bash", "install.sh", "--snippet-dir", h.snippet, "--image-dir", h.images()}
+	command = append(command, args...)
+	for i := range command {
+		command[i] = "'" + strings.ReplaceAll(command[i], "'", "'\\''") + "'"
+	}
+	cmd := exec.Command(script, "-qefc", strings.Join(command, " "), "/dev/null")
+	cmd.Env = append(append([]string{}, h.env...), "PLUMB_INSTALL_ASSUME_ROOT=1")
+	cmd.Stdin = strings.NewReader(input)
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	err = cmd.Run()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return code, out.String(), errOut.String()
+}
+
 func (h *host) images() string { return filepath.Join(filepath.Dir(h.state), "images") }
 
 func (h *host) calls() []string {

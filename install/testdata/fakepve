@@ -269,6 +269,7 @@ pct)
 	exec)
 		id=$2
 		shift 3 # pct exec ID --
+		if [[ -t 0 || -p /dev/stdin ]]; then IFS= read -r _ || true; fi
 		case "$*" in
 		"hostname -I") echo "fd00::50 192.168.1.50" ;;
 		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
