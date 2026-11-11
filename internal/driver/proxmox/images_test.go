@@ -212,9 +212,13 @@ func TestMakeImage(t *testing.T) {
 	if !strings.Contains(cfg["scsi0"], ":base-"+string(gid)+"-disk-0") {
 		t.Errorf("scsi0 %q", cfg["scsi0"])
 	}
-	// A second call refuses: it is a template now.
-	if _, err := d.MakeImage(ctx, gid, driver.BuiltImage{Image: "web", Version: 2, Digest: tDigest}); err == nil {
-		t.Error("MakeImage of a template")
+	// A second call of the same version is a success (review N1); the
+	// template is not written again.
+	if again, err := d.MakeImage(ctx, gid, driver.BuiltImage{Image: "web", Version: 2, Digest: tDigest}); err != nil || again != ref {
+		t.Errorf("again: %s %v", again, err)
+	}
+	if n := f.countExact(key); n != 2 {
+		t.Errorf("%d config writes after the second call", n)
 	}
 }
 
@@ -659,5 +663,68 @@ func TestDiskSpace(t *testing.T) {
 	f.mu.Unlock()
 	if _, err = d.DiskSpace(ctx); err == nil {
 		t.Fatal("no size: no error")
+	}
+}
+
+// Review N1 of PR #125: a conversion that fails on our side but ends on
+// the host. MakeImage waits for the lock and reports success; a template
+// that got the build name back is finished with the version name.
+func TestMakeImageLateConversion(t *testing.T) {
+	for _, mode := range []string{"lock", "afterWrite"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFakePVE(t)
+			d := f.driver(t)
+			_, gid := built(t, f, d, "web", 1)
+			f.mu.Lock()
+			f.lateConvert = mode
+			f.mu.Unlock()
+			img := driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest}
+			ref, err := d.MakeImage(context.Background(), gid, img)
+			if err != nil || string(ref) != string(gid) {
+				t.Fatalf("%s %v", ref, err)
+			}
+			cfg := f.cfgOf(gid)
+			if cfg["template"] != "1" || cfg["name"] != "plumb-img-web-v1" || !isVersionOf(cfg["description"], "web", 1, tDigest) {
+				t.Fatalf("config %v", cfg)
+			}
+			if got, err := d.FindImage(context.Background(), "web", 1, tDigest); err != nil || got != ref {
+				t.Fatalf("find %s %v", got, err)
+			}
+		})
+	}
+}
+
+// MakeImage again: a done version is a success; a template with the build
+// name and marker (a rest of the race) is finished; anything else is refused.
+func TestMakeImageAgain(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	ctx := context.Background()
+	_, gid := built(t, f, d, "web", 1)
+	img := driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest}
+	ref, err := d.MakeImage(ctx, gid, img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := d.MakeImage(ctx, gid, img); err != nil || again != ref {
+		t.Fatalf("again: %s %v", again, err)
+	}
+	if _, err := d.MakeImage(ctx, gid, driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest2}); err == nil {
+		t.Error("another digest on a done version")
+	}
+	f.addVM(9060, fakePool, map[string]string{"name": "plumb-build-web-v2", "template": "1", "description": "plumb-build: web v2\nPlumb image build."}, false)
+	f.mu.Lock()
+	f.vms[9060].template = true
+	f.mu.Unlock()
+	img2 := driver.BuiltImage{Image: "web", Version: 2, Digest: tDigest}
+	if ref, err := d.MakeImage(ctx, "9060", img2); err != nil || ref != "9060" {
+		t.Fatalf("finish: %s %v", ref, err)
+	}
+	if cfg := f.cfgOf(9060); cfg["name"] != "plumb-img-web-v2" || !isVersionOf(cfg["description"], "web", 2, tDigest) {
+		t.Fatalf("not finished: %v", cfg)
+	}
+	f.addVM(9061, fakePool, map[string]string{"name": "plumb-build-web-v3", "template": "1", "description": "plumb-image: web"}, false)
+	if _, err := d.MakeImage(ctx, "9061", driver.BuiltImage{Image: "web", Version: 3, Digest: tDigest}); err == nil {
+		t.Error("a template without the build marker was renamed")
 	}
 }

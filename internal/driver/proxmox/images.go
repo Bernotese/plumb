@@ -198,9 +198,22 @@ func (d *Driver) MakeImage(ctx context.Context, gid driver.GuestID, img driver.B
 	if err != nil {
 		return "", err
 	}
-	switch {
-	case m.Template == 1 || cfg["template"] == "1":
+	if m.Template == 1 || cfg["template"] == "1" {
+		// A call again after a conversion that ended on the host only
+		// (review N1 of PR #125): a done version is a success, and a
+		// template that still has the build name and marker is finished.
+		switch {
+		case cfg["name"] == versionName(img.Image, img.Version) && isVersionOf(cfg["description"], img.Image, img.Version, img.Digest):
+			return driver.ImageRef(strconv.Itoa(id)), nil
+		case cfg["name"] == bname && hasLine(cfg["description"], buildLine(img.Image, img.Version)) && cfg["lock"] == "":
+			if err := d.nameVersion(ctx, id, cfg["digest"], img); err != nil {
+				return "", err
+			}
+			return driver.ImageRef(strconv.Itoa(id)), nil
+		}
 		return "", fmt.Errorf("proxmox: VMID %d is already a template", id)
+	}
+	switch {
 	case cfg["name"] != bname:
 		return "", fmt.Errorf("proxmox: VMID %d has the name %q, not the build name %s", id, cfg["name"], bname)
 	case !hasLine(cfg["description"], buildLine(img.Image, img.Version)):
@@ -235,31 +248,64 @@ func (d *Driver) MakeImage(ctx context.Context, gid driver.GuestID, img driver.B
 		return "", fmt.Errorf("proxmox: clear the build guest %d (its config may have changed after the check): %w", id, err)
 	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/template", nil); err != nil {
-		// Give the guest its build name and marker back, so the engine's
-		// cleanup of build guests (D-203) still finds and proves it.
-		return "", errors.Join(fmt.Errorf("proxmox: convert to template: %w", err), d.restoreBuild(ctx, id, img))
+		return d.afterFailedConversion(ctx, id, img, fmt.Errorf("proxmox: convert to template: %w", err))
 	}
 	return driver.ImageRef(strconv.Itoa(id)), nil
 }
 
-// restoreBuild writes the build name and marker back after a failed
-// conversion. It writes nothing to a template.
-func (d *Driver) restoreBuild(ctx context.Context, id int, img driver.BuiltImage) error {
+// afterFailedConversion decides what a failed or timed-out conversion left
+// (review N1 of PR #125). It waits until the VM has no lock, so a
+// conversion that still runs on the host ends first. A template now is a
+// success: the one write gave it the version name already. Else it writes
+// the build name and marker back, so the engine's cleanup of build guests
+// (D-203) still finds and proves the guest. If the conversion ends on the
+// host after that write, the template is finished with the version name.
+func (d *Driver) afterFailedConversion(ctx context.Context, id int, img driver.BuiltImage, convErr error) (driver.ImageRef, error) {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
+	ref := driver.ImageRef(strconv.Itoa(id))
+	left := func(err error) (driver.ImageRef, error) {
+		return "", errors.Join(convErr, fmt.Errorf("proxmox: VMID %d may keep the template name %s; check it and remove it by hand (qm destroy %d): %w",
+			id, versionName(img.Image, img.Version), id, err))
+	}
+	if err := d.waitUnlocked(cleanup, id); err != nil {
+		return left(err)
+	}
 	cfg, err := d.config(cleanup, id)
 	if err != nil {
-		return fmt.Errorf("proxmox: VMID %d keeps the template name; remove it by hand: %w", id, err)
+		return left(err)
 	}
 	if cfg["template"] == "1" {
-		return nil // the conversion worked after all
+		return ref, nil // the conversion ended on the host
 	}
 	if err := d.c.MaybeTask(cleanup, d.cfg.Node, "POST", vmPath(d, id)+"/config", url.Values{
 		"digest":      {cfg["digest"]},
 		"name":        {buildName(img.Image, img.Version)},
 		"description": {buildLine(img.Image, img.Version) + "\nPlumb image build. Do not change it here."},
 	}); err != nil {
-		return fmt.Errorf("proxmox: VMID %d keeps the template name; remove it by hand: %w", id, err)
+		return left(err)
+	}
+	if cfg, err = d.config(cleanup, id); err != nil {
+		return left(err)
+	}
+	if cfg["template"] == "1" { // it ended between the two reads
+		if err := d.nameVersion(cleanup, id, cfg["digest"], img); err != nil {
+			return left(err)
+		}
+		return ref, nil
+	}
+	return "", convErr
+}
+
+// nameVersion gives a template the version name and description (a write
+// on a template works with the token, host A2).
+func (d *Driver) nameVersion(ctx context.Context, id int, digest string, img driver.BuiltImage) error {
+	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", url.Values{
+		"digest":      {digest},
+		"name":        {versionName(img.Image, img.Version)},
+		"description": {versionDescription(img)},
+	}); err != nil {
+		return fmt.Errorf("proxmox: name template %d %s: %w", id, versionName(img.Image, img.Version), err)
 	}
 	return nil
 }

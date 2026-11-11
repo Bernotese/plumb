@@ -102,7 +102,13 @@ type fakePVE struct {
 	parentInContent bool
 	writeOnStatus   int
 	failTemplate    bool
-	contentStatus   int // a status for the volume list of the disk storage
+	// lateConvert: the next conversion fails on our side but ends on the
+	// host (review N1 of PR #125). "lock": the VM shows "lock: template"
+	// for two config reads, then it is a template. "afterWrite": it is a
+	// template right after the next config write.
+	lateConvert   string
+	lateID        int
+	contentStatus int // a status for the volume list of the disk storage
 }
 
 type fakeVM struct {
@@ -559,6 +565,12 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 		if f.lockReads[id] > 0 {
 			f.lockReads[id]--
 			out["lock"] = "create"
+			if f.lateConvert == "lock" && f.lateID == id {
+				out["lock"] = "template"
+				if f.lockReads[id] == 0 {
+					f.convert(id, vm)
+				}
+			}
 		}
 		if r.Form.Get("current") != "1" && f.writeDuringRead > 0 {
 			f.writeDuringRead-- // someone writes between the two reads
@@ -608,6 +620,9 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 				delete(vm.pending, k) // a write of the running value removes the pending one
 			}
 		}
+		if f.lateConvert == "afterWrite" && f.lateID == id {
+			f.convert(id, vm)
+		}
 		reply(w, 200, f.task(key))
 	case r.Method == "PUT" && sub == "/resize":
 		want := r.Form.Get("size")
@@ -624,15 +639,19 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			fail(w, 500, "convert to template failed", nil)
 			return
 		}
+		if f.lateConvert != "" {
+			f.lateID = id
+			if f.lateConvert == "lock" {
+				f.lockReads[id] = 2
+			}
+			fail(w, 500, "proxy timeout", nil)
+			return
+		}
 		if vm.running {
 			fail(w, 500, "you can't convert a running VM to a template", nil)
 			return
 		}
-		// Like lvmthin (host A1): the disk becomes base-<id>-disk-N; the
-		// cloud-init volume keeps its name.
-		vm.cfg["scsi0"] = strings.Replace(vm.cfg["scsi0"], fmt.Sprintf(":vm-%d-disk-", id), fmt.Sprintf(":base-%d-disk-", id), 1)
-		vm.template = true
-		vm.cfg["template"] = "1"
+		f.convert(id, vm)
 		reply(w, 200, nil) // synchronous in the schema
 	case r.Method == "POST" && sub == "/clone":
 		newid, _ := strconv.Atoi(r.Form.Get("newid"))
@@ -736,4 +755,13 @@ func (f *fakePVE) countExact(key string) int {
 		}
 	}
 	return n
+}
+
+// convert makes a VM a template. Like lvmthin (host A1): the disk becomes
+// base-<id>-disk-N; the cloud-init volume keeps its name.
+func (f *fakePVE) convert(id int, vm *fakeVM) {
+	vm.cfg["scsi0"] = strings.Replace(vm.cfg["scsi0"], fmt.Sprintf(":vm-%d-disk-", id), fmt.Sprintf(":base-%d-disk-", id), 1)
+	vm.template = true
+	vm.cfg["template"] = "1"
+	f.lateConvert, f.lateID = "", 0
 }
