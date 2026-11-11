@@ -78,7 +78,7 @@ func TestFetchImageLockedVMIsBusy(t *testing.T) {
 	f := newFakePVE(t)
 	d := f.driver(t)
 	f.addVM(9005, fakePool, map[string]string{"name": templateName(image)}, false)
-	f.lockReads[9005] = 100
+	f.lockReads[9005] = 1 << 30 // a lock that stays: busy after ImageLockWait
 	_, err := d.FetchImage(context.Background(), image)
 	if err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Fatalf("err = %v", err)

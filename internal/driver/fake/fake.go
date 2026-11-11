@@ -52,6 +52,7 @@ type Driver struct {
 	guests   map[driver.GuestID]*guest
 	images   map[string]driver.ImageRef // name+sha → ref
 	nextID   int
+	nextTpl  int // refs are never used twice, also after RemoveImage
 	failures map[Op][]error
 	calls    map[Op]int
 }
@@ -65,6 +66,7 @@ func New() *Driver {
 		guests:   map[driver.GuestID]*guest{},
 		images:   map[string]driver.ImageRef{},
 		nextID:   100,
+		nextTpl:  9000,
 		failures: map[Op][]error{},
 		calls:    map[Op]int{},
 	}
@@ -190,10 +192,31 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		if r, ok := d.images[key]; ok {
 			return r, nil
 		}
-		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", 9000+len(d.images)))
+		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
+		d.nextTpl++
 		d.images[key] = ref
 		return ref, nil
 	})
+}
+
+// RemoveImage removes an image as if someone destroyed the template on
+// the host (T-055). Guests of the image stay. The next FetchImage of the
+// same spec makes it again with a new ref.
+func (d *Driver) RemoveImage(ref driver.ImageRef) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for k, r := range d.images {
+		if r == ref {
+			delete(d.images, k)
+		}
+	}
+}
+
+// Images returns the number of images.
+func (d *Driver) Images() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.images)
 }
 
 func (d *Driver) hasImage(ref driver.ImageRef) bool {
@@ -211,7 +234,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		if !d.hasImage(spec.Image) {
 			return "", fmt.Errorf("fake: image %s: %w", spec.Image, driver.ErrNotFound)
 		}
-		if spec.Name == "" || spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
+		if spec.Name == "" || spec.ImageName == "" || spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
 			return "", errors.New("fake: incomplete guest spec")
 		}
 		for _, g := range d.guests {
@@ -226,6 +249,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		}
 		d.nextID++
 		spec.SSHKeys = append([]string(nil), spec.SSHKeys...)
+		spec.Image = "" // like Proxmox: the guest keeps the Image name, not the ref (D-189)
 		d.guests[id] = &guest{spec: spec, power: driver.PowerRunning, token: boot.Token, ip: ip}
 		return id, nil
 	})

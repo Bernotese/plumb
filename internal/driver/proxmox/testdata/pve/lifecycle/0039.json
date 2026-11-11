@@ -7,7 +7,7 @@
       "ciuser": "plumb",
       "cores": 1,
       "cpu": "x86-64-v2-AES",
-      "description": "plumb-image: 9000\nManaged by Plumb. Do not change it here.",
+      "description": "plumb-image: test-image\nManaged by Plumb. Do not change it here.",
       "digest": "4da5e208d8b45a68e076dbfc1fc10a7bc2aad493",
       "ide2": "local-lvm:vm-9001-cloudinit,media=cdrom,size=4M",
       "ipconfig0": "ip=dhcp",

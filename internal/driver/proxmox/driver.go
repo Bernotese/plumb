@@ -49,6 +49,10 @@ type Config struct {
 	// StartWait and StartPoll bound the retries of the start-up check on
 	// /version (D-183). Default 60 s and 5 s.
 	StartWait, StartPoll time.Duration
+	// ImageLockWait and ImageLockPoll bound the wait of FetchImage for a
+	// lock on a VM with the template name (D-188): another Target can
+	// make or convert the same template. Default 2 min and 1 s.
+	ImageLockWait, ImageLockPoll time.Duration
 }
 
 // Driver is the Proxmox VE driver.
@@ -61,6 +65,12 @@ type Driver struct {
 	// the other's VM for a half-made rest. One controller per host (D-001).
 	imageMu    sync.Mutex
 	imageLocks map[string]*sync.Mutex
+
+	// reserved holds the VMIDs that nextID gave to a running Create or
+	// FetchImage (T-055): /cluster/nextid gives the same free id to two
+	// parallel calls until one of them made its VM.
+	idMu     sync.Mutex
+	reserved map[int]bool
 }
 
 // imageLock returns the lock of one template name.
@@ -117,6 +127,12 @@ func New(cfg Config) (*Driver, error) {
 	}
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 120 * time.Second
+	}
+	if cfg.ImageLockWait == 0 {
+		cfg.ImageLockWait = 2 * time.Minute
+	}
+	if cfg.ImageLockPoll == 0 {
+		cfg.ImageLockPoll = time.Second
 	}
 	return &Driver{cfg: cfg, c: cfg.Client}, nil
 }
@@ -209,8 +225,14 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 }
 
 // nextID returns a free VMID in the range.
+// The caller must call releaseID when its VM exists or is gone.
 func (d *Driver) nextID(ctx context.Context) (int, error) {
+	d.idMu.Lock()
+	defer d.idMu.Unlock()
 	for id := d.cfg.VMIDMin; id <= d.cfg.VMIDMax; id++ {
+		if d.reserved[id] {
+			continue
+		}
 		var got string
 		err := d.c.Get(ctx, "/cluster/nextid", url.Values{"vmid": {strconv.Itoa(id)}}, &got)
 		var ae *APIError
@@ -220,9 +242,20 @@ func (d *Driver) nextID(ctx context.Context) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		if d.reserved == nil {
+			d.reserved = map[int]bool{}
+		}
+		d.reserved[id] = true
 		return id, nil
 	}
 	return 0, fmt.Errorf("proxmox: no free VMID in %d–%d", d.cfg.VMIDMin, d.cfg.VMIDMax)
+}
+
+// releaseID ends the reservation of nextID.
+func (d *Driver) releaseID(id int) {
+	d.idMu.Lock()
+	defer d.idMu.Unlock()
+	delete(d.reserved, id)
 }
 
 func notFound(err error) error {
@@ -250,8 +283,20 @@ func importFile(spec driver.ImageSpec) string {
 }
 
 // imageMarker is a line in the description of a guest that names the
-// template it was cloned from. Proxmox keeps no such link (D-077).
+// Image document it was made from (D-189). It is the create-only
+// attribute image; a re-made template does not change it.
 const imageMarker = "plumb-image: "
+
+// hasChecksum reports whether a template description holds the full
+// checksum line that FetchImage writes (D-188).
+func hasChecksum(description, sum string) bool {
+	for _, line := range strings.Split(description, "\n") {
+		if strings.TrimSpace(line) == "sha256="+sum {
+			return true
+		}
+	}
+	return false
+}
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -260,7 +305,10 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // FetchImage downloads the image into the image storage with the pinned
 // SHA-256 (Proxmox checks it), creates a VM that imports it, adds a
 // cloud-init drive and turns it into a template. It is idempotent: an
-// existing template of the same name and checksum is reused.
+// existing template of the same name and checksum is reused, and an
+// existing import file is not downloaded again. The engine calls it before
+// every create (D-188), so a template that someone destroyed or moved out
+// of the pool is made again.
 func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.ImageRef, error) {
 	if spec.Kind != wire.KindVM {
 		return "", fmt.Errorf("proxmox: only VM images in this version, not %q", spec.Kind)
@@ -272,30 +320,9 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	lock := d.imageLock(name)
 	lock.Lock()
 	defer lock.Unlock()
-	ms, err := d.members(ctx)
-	if err != nil {
-		return "", err
-	}
-	// The template flag comes from the guest config, not from the list
-	// (see member): a fresh template must never look half-made. A VM with
-	// a lock is busy (a create, clone or conversion runs): it is never
-	// half-made either (review S2).
-	var halfMade []int
-	for _, m := range ms {
-		if m.Name != name || m.VMID < d.cfg.VMIDMin || m.VMID > d.cfg.VMIDMax {
-			continue
-		}
-		cfg, err := d.config(ctx, m.VMID)
-		if err != nil {
-			return "", err
-		}
-		if l := cfg["lock"]; l != "" {
-			return "", fmt.Errorf("proxmox: image VM %d is busy (lock %s); try again later", m.VMID, l)
-		}
-		if cfg["template"] == "1" {
-			return driver.ImageRef(strconv.Itoa(m.VMID)), nil
-		}
-		halfMade = append(halfMade, m.VMID)
+	ref, halfMade, err := d.findTemplate(ctx, name, spec.SHA256)
+	if err != nil || ref != "" {
+		return ref, err
 	}
 	// A VM with the template's name that is no template is the rest of a
 	// failed earlier try: remove it before the next try (review T-012 #6).
@@ -333,6 +360,7 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	if err != nil {
 		return "", err
 	}
+	defer d.releaseID(id)
 	if err := d.c.Task(ctx, d.cfg.Node, "POST", d.node()+"/qemu", url.Values{
 		"vmid": {strconv.Itoa(id)}, "name": {name}, "pool": {d.cfg.Pool},
 		"ostype": {"l26"}, "memory": {"1024"}, "cores": {"1"}, "cpu": {"x86-64-v2-AES"},
@@ -347,6 +375,56 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		return "", halfMadeLeft(fmt.Errorf("proxmox: convert to template: %w", err), id, d.removeHalfMade(ctx, id, name))
 	}
 	return driver.ImageRef(strconv.Itoa(id)), nil
+}
+
+// findTemplate looks for a VM with the template name in the pool and the
+// VMID range. It returns the ref of a template with the full checksum, or
+// the VMIDs of half-made VMs of that name. The template flag comes from
+// the guest config, not from the list (see member): a fresh template must
+// never look half-made. A VM with a lock is busy (a create, clone or
+// conversion runs; review S2): it is never half-made, and findTemplate
+// waits up to ImageLockWait for the lock to go (D-188). A template with
+// the name but another checksum is an error that removes nothing.
+func (d *Driver) findTemplate(ctx context.Context, name, sum string) (driver.ImageRef, []int, error) {
+	deadline := time.Now().Add(d.cfg.ImageLockWait)
+	for {
+		ms, err := d.members(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		var halfMade []int
+		busy, busyLock := 0, ""
+		for _, m := range ms {
+			if m.Name != name || m.VMID < d.cfg.VMIDMin || m.VMID > d.cfg.VMIDMax {
+				continue
+			}
+			cfg, err := d.config(ctx, m.VMID)
+			if err != nil {
+				return "", nil, err
+			}
+			switch {
+			case cfg["lock"] != "":
+				busy, busyLock = m.VMID, cfg["lock"]
+			case cfg["template"] == "1" && !hasChecksum(cfg["description"], sum):
+				return "", nil, fmt.Errorf("proxmox: template VM %d has the name %s but not the checksum sha256=%s in its description; Plumb does not use or remove it: check it and remove it by hand (qm destroy %d)", m.VMID, name, sum, m.VMID)
+			case cfg["template"] == "1":
+				return driver.ImageRef(strconv.Itoa(m.VMID)), nil, nil
+			default:
+				halfMade = append(halfMade, m.VMID)
+			}
+		}
+		if busy == 0 {
+			return "", halfMade, nil
+		}
+		if !time.Now().Before(deadline) {
+			return "", nil, fmt.Errorf("proxmox: image VM %d is busy (lock %s); try again later", busy, busyLock)
+		}
+		select {
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		case <-time.After(d.cfg.ImageLockPoll):
+		}
+	}
 }
 
 // --- Create ---
@@ -423,6 +501,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	if err != nil {
 		return "", err
 	}
+	defer d.releaseID(id)
 	if err := d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, tpl)+"/clone", url.Values{
 		"newid": {strconv.Itoa(id)}, "name": {spec.Name}, "pool": {d.cfg.Pool},
 		"full": {"1"}, "storage": {d.cfg.DiskStorage},
@@ -432,7 +511,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		return "", halfMadeLeft(fmt.Errorf("proxmox: clone: %w", err), id, d.removeHalfMade(ctx, id, spec.Name))
 	}
 	gid := driver.GuestID(strconv.Itoa(id))
-	if err := d.configure(ctx, id, tpl, spec, boot.Token); err != nil {
+	if err := d.configure(ctx, id, spec, boot.Token); err != nil {
 		return "", scrub(halfMadeLeft(err, id, d.removeHalfMade(ctx, id, spec.Name)), boot.Token)
 	}
 	return gid, nil
@@ -543,10 +622,14 @@ func checkSpec(s driver.GuestSpec) error {
 	if s.Cores < 1 || s.MemoryMB < 16 || s.DiskGB < 1 {
 		return errors.New("proxmox: cores, memory and disk must be positive")
 	}
+	// The Image name goes into the description marker (D-189): one line.
+	if strings.TrimSpace(s.ImageName) != s.ImageName || s.ImageName == "" || strings.ContainsAny(s.ImageName, "\r\n") {
+		return fmt.Errorf("proxmox: bad image name %q", s.ImageName)
+	}
 	return nil
 }
 
-func (d *Driver) configure(ctx context.Context, id, tpl int, spec driver.GuestSpec, token string) error {
+func (d *Driver) configure(ctx context.Context, id int, spec driver.GuestSpec, token string) error {
 	cfg, err := d.config(ctx, id)
 	if err != nil {
 		return err
@@ -559,7 +642,7 @@ func (d *Driver) configure(ctx context.Context, id, tpl int, spec driver.GuestSp
 		"ciuser":      {spec.User},
 		"cicustom":    {"vendor=" + d.cfg.SnippetStorage + ":snippets/" + d.cfg.Snippet},
 		"smbios1":     {smbios(cfg["smbios1"], token)},
-		"description": {imageMarker + strconv.Itoa(tpl) + "\nManaged by Plumb. Do not change it here."},
+		"description": {imageMarker + spec.ImageName + "\nManaged by Plumb. Do not change it here."},
 		"onboot":      {"1"},
 		// No package upgrade at first boot outside a Plan (D-186); Proxmox
 		// sets package_upgrade: true without it. Create-only (D-185).
@@ -682,8 +765,8 @@ func specOf(name string, cfg map[string]string) driver.GuestSpec {
 	}
 	s.DiskGB = sizeGB(parseProps(cfg["scsi0"])["size"])
 	for _, line := range strings.Split(cfg["description"], "\n") {
-		if ref, ok := strings.CutPrefix(strings.TrimSpace(line), imageMarker); ok {
-			s.Image = driver.ImageRef(ref)
+		if name, ok := strings.CutPrefix(strings.TrimSpace(line), imageMarker); ok {
+			s.ImageName = name
 		}
 	}
 	return s

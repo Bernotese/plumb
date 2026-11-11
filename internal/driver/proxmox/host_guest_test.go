@@ -66,7 +66,7 @@ func TestHostGuestStep(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		spec := driver.GuestSpec{Name: "plumb-host-guest", Kind: wire.KindVM, Image: ref, Cores: 1, MemoryMB: 1024, DiskGB: 8,
+		spec := driver.GuestSpec{Name: "plumb-host-guest", Kind: wire.KindVM, ImageName: hostImage().Name, Image: ref, Cores: 1, MemoryMB: 1024, DiskGB: 8,
 			Bridge: os.Getenv("PLUMB_PVE_BRIDGE"), IP: "dhcp", User: "plumb", SSHKeys: []string{key}}
 		id, err := d.Create(ctx, spec, driver.Bootstrap{Token: "host-test-token-1"})
 		if err != nil {
