@@ -642,6 +642,14 @@ func TestAddrsReportIsNoHello(t *testing.T) {
 		}
 		return n
 	}
+	// Wait for the seed Run's asynchronous watch before taking the baseline.
+	deadline := time.Now().Add(5 * time.Second)
+	for watches() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no initial watch")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	w := watches()
 	e.send("web1", otherIP)
 	time.Sleep(100 * time.Millisecond)
