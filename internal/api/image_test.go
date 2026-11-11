@@ -202,7 +202,7 @@ func TestBuiltImageRefusedUntilT062(t *testing.T) {
 	built := doc(state.KindImage, "web", `{"type":"vm","url":"https://images.invalid/u.img","sha256":"`+strings.Repeat("0", 64)+
 		`","build":{"guest":{"disk":10,"bridge":"vmbr0"}}}`)
 	code, body := e.admin().do("POST", "/api/v1/plans", map[string]any{"reason": "build", "put": []state.Doc{built}})
-	if code != 422 || !strings.Contains(string(body), "not available yet (T-062)") {
+	if code != 422 || !strings.Contains(string(body), "not available yet (T-062 part B)") {
 		t.Fatalf("propose a built Image: %d %s", code, body)
 	}
 }

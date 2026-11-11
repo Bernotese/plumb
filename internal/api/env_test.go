@@ -59,7 +59,7 @@ type env struct {
 	seen     [][]byte // every response body, for the secret scan
 }
 
-func newEnv(t *testing.T, dev bool) *env {
+func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
@@ -82,10 +82,14 @@ func newEnv(t *testing.T, dev bool) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, err = plan.New(plan.Config{Store: st, Events: e.events, Agents: e.link, Driver: e.drv, Secrets: e.sec, Logger: log,
+	cfg := plan.Config{Store: st, Events: e.events, Agents: e.link, Driver: e.drv, Secrets: e.sec, Logger: log,
 		OnDrift:        func(ctx context.Context, tg string, rep wire.Report) error { return iss.Intake(ctx, tg, rep) },
 		OnPlanDone:     func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
-		ObserveTimeout: 5 * time.Second, EnrollTimeout: 5 * time.Second, ApplyTimeout: 5 * time.Second})
+		ObserveTimeout: 5 * time.Second, EnrollTimeout: 5 * time.Second, ApplyTimeout: 5 * time.Second}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	eng, err = plan.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

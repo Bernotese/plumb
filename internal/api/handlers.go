@@ -57,6 +57,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		problem(w, http.StatusConflict, "action-not-allowed", "Action not allowed", err.Error())
 	case errors.Is(err, plan.ErrOffline):
 		problem(w, http.StatusConflict, "target-offline", "Target is offline", err.Error())
+	case errors.Is(err, store.ErrBuildRunning):
+		problem(w, http.StatusConflict, "build-running", "A build is running", err.Error())
 	case errors.Is(err, plan.ErrTargetBusy):
 		problem(w, http.StatusConflict, "target-busy", "Target is busy", err.Error())
 	case errors.As(err, &se):
@@ -82,7 +84,9 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 type docView struct {
 	Revision int64           `json:"revision"`
 	Document json.RawMessage `json:"document"`
-	Status   *targetStatus   `json:"status,omitempty"`
+	// Status is a *targetStatus for a Target, an *imageStatus for a built
+	// Image, and missing for every other document.
+	Status any `json:"status,omitempty"`
 }
 
 type targetStatus struct {
@@ -91,7 +95,9 @@ type targetStatus struct {
 	Power    string     `json:"power"`
 	LastSeen *time.Time `json:"last_seen"`
 	GuestID  *string    `json:"guest_id"`
-	IPs      []string   `json:"ips"`
+	// ImageVersion is the built version the guest was cloned from (D-200).
+	ImageVersion *int     `json:"image_version,omitempty"`
+	IPs          []string `json:"ips"`
 	// ReportedIPs is what the agent says (D-214); never in IPs (D-216).
 	ReportedIPs     []string   `json:"reported_ips"`
 	ReportedAt      *time.Time `json:"reported_at"`
@@ -155,6 +161,15 @@ func (s *Server) docView(ctx context.Context, head int64, d store.DocRow) (docVi
 		}
 		v.Status = &st
 	}
+	if d.Kind == state.KindImage {
+		st, err := s.imageStatus(ctx, d)
+		if err != nil {
+			return docView{}, err
+		}
+		if st != nil {
+			v.Status = st
+		}
+	}
 	return v, nil
 }
 
@@ -164,6 +179,10 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 		return targetStatus{}, err
 	}
 	st := targetStatus{Agent: live.Agent, Power: live.Power, LastSeen: utc(live.LastSeen), GuestID: nullString(live.GuestID), IPs: live.IPs}
+	if live.ImageVersion > 0 {
+		v := live.ImageVersion
+		st.ImageVersion = &v
+	}
 	if st.IPs == nil {
 		st.IPs = []string{}
 	}

@@ -1,6 +1,6 @@
 # T-062 – Image builds: engine build lane, retention, API
 
-- **Owner:** pl-backend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa (T-065)
+- **Owner:** pl-architect   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa (T-065)
 - **Size:** L   · **Depends on:** T-059, T-061 (T-060 for the end-to-end slice)   · **Parent:** T-039
 
 ## Goal
@@ -27,7 +27,11 @@ An approved Plan builds a new image version, Targets are made from it, and old v
 - The clock and `system` approval (T-063). A Run that builds and then creates Targets.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+Two PRs (pl-lead agreed). **Part A** `pl-architect/T-062-engine` (Plan side, builds off by `plan.Config.ImageBuilds`):
+- Migration `0010_plan_images` (`plan.images`); `store.ApproveBuildPlan` (no revision, Run pinned to the checked head), `PendingPlans`; `MarkStalePlans` skips origin `build`.
+- Engine: `Plan.images` (build on a new or changed recipe, trigger change; removals preview: ready versions beyond keep, base templates of another checksum, all on delete); `image-recipe` by content; propose refusals (no ready version; same Plan builds it); `ProposeBuild` (manual/schedule); approval of a build Plan by recipe hash (head change without recipe change keeps it; recipe change marks it stale after every commit); one build per Image (`build-running`, also a `building` row).
+- API: `POST /images/{name}/build`, `ImageView.status` (versions, building, last build, unused imports with the strict `pvesm free` form, disk), `Plan.images`, `Run.images`, `TargetStatus.image_version`; contract test `TestContractImages`.
+- An image lane fails at `image:base` in part A. Open for part B: the lane, build token + link guard, seal handshake (T-060), revoke + T-073 guard, disk gate of T-074, retention, Recover, Target from the newest version, version Targets list, `image.version` events, flag on.
 
 ## Note from the T-064 review (pl-lead, 2026-11-11)
 - The list of unused import files feeds a command line that the user runs as root (`pvesm free …`, with a Copy button in the web). The API must list only volume names that Plumb itself made, checked by a strict pattern (`plumb-<name>-<sha256[:12]>.qcow2`, D-077), and give the command in exactly this form, with no quotes: `pvesm free <storage>:import/plumb-<name>-<12 hex>.qcow2` (the strict name holds no shell character). The web offers Copy only for a line that matches `^pvesm free [A-Za-z][A-Za-z0-9._-]*:import/plumb-[a-z0-9][a-z0-9.-]*-[0-9a-f]{12}\.qcow2$` (PR #123, `safeFreeCommand`), so any other form loses the Copy button. A name that does not match is listed without a command. Test with a file name that holds shell characters.

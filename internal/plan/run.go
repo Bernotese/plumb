@@ -44,6 +44,13 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 			return store.Run{}, err
 		}
 	}
+	images, err := imagePlans(p)
+	if err != nil {
+		return store.Run{}, err
+	}
+	if p.Origin == OriginBuild {
+		return e.approveBuild(ctx, p, principal, images)
+	}
 	var targets []TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return store.Run{}, err
@@ -82,6 +89,15 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 			e.release(names)
 		}
 	}()
+	slots, err := e.reserveImages(ctx, images)
+	if err != nil {
+		return store.Run{}, err
+	}
+	defer func() {
+		if !started {
+			e.release(slots)
+		}
+	}()
 	var prop Proposal
 	if err := json.Unmarshal(p.Proposal, &prop); err != nil {
 		return store.Run{}, err
@@ -118,7 +134,8 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	}
 	e.emit(ctx, "plan.approved", fmt.Sprintf("plan:%d", planID), principal, map[string]any{"revision": rev.ID, "run": run.ID})
 	e.emit(ctx, "revision.committed", fmt.Sprintf("revision:%d", rev.ID), p.Author, map[string]any{"plan": planID})
-	// Every other pending Plan is now stale.
+	// Every other pending Plan is now stale; a build Plan only when its
+	// recipe changed (D-199).
 	if ids, err := e.st.MarkStalePlans(ctx); err == nil {
 		for _, id := range ids {
 			e.emit(ctx, "plan.stale", fmt.Sprintf("plan:%d", id), "system", nil)
@@ -127,28 +144,35 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 			}
 		}
 	}
+	e.staleBuildPlans(ctx, next)
 
+	started = true
+	e.start(p, run, next, targets, images, slots)
+	return run, nil
+}
+
+// start runs a Plan in the background. The target names and the image
+// slots are reserved; each is released when its lane ends.
+func (e *Engine) start(p store.Plan, run store.Run, set *state.Set, targets []TargetPlan, images []ImagePlan, slots []string) {
 	e.mu.Lock()
 	e.active[run.ID] = true
 	e.mu.Unlock()
-	started = true
 	e.runs.Add(1)
 	go func() {
 		defer e.runs.Done()
-		e.execute(e.ctx, p, run, next, targets)
+		e.execute(e.ctx, p, run, set, targets, images)
 		e.mu.Lock()
 		delete(e.active, run.ID)
 		e.mu.Unlock()
 	}()
-	return run, nil
 }
 
-// execute runs all targets of a Plan in parallel. A failed target does
-// not stop the others.
-func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *state.Set, targets []TargetPlan) {
+// execute runs all targets and image lanes of a Plan in parallel. A failed
+// lane does not stop the others.
+func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *state.Set, targets []TargetPlan, images []ImagePlan) {
 	subject := fmt.Sprintf("run:%d", run.ID)
 	e.emit(ctx, "run.started", subject, "system", map[string]any{"plan": p.ID})
-	ok := make([]bool, len(targets))
+	ok := make([]bool, len(targets)+len(images))
 	var wg sync.WaitGroup
 	for i, tp := range targets {
 		wg.Add(1)
@@ -156,6 +180,14 @@ func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *
 			defer wg.Done()
 			ok[i] = e.runTarget(ctx, p, run, set, tp)
 			e.release([]string{tp.Target})
+		}()
+	}
+	for i, ip := range images {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok[len(targets)+i] = e.runImage(ctx, p, run, set, ip)
+			e.release([]string{imageSlot(ip.Image)})
 		}()
 	}
 	wg.Wait()

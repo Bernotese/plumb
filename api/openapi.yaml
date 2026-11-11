@@ -319,7 +319,6 @@ paths:
       tags: [images]
       operationId: buildImage
       summary: Propose a build of an image
-      x-plumb-planned: T-062
       description: |
         Creates a Plan of origin `build` (trigger `manual`) that builds a new version of a built
         Image from the recipe of the head revision (D-199). The Plan changes no document, and its
@@ -944,7 +943,7 @@ paths:
         409; a Plan is also stale when a secret that it uses has another version (D-089).
         A Plan of origin `build` commits no revision; it is stale when the recipe of its Image at
         the head differs from `images[].build.recipe_sha256`, and it returns 409 `build-running`
-        while a build of the same Image runs (D-199, planned: T-062).
+        while a build of the same Image runs (D-199).
       security:
         - session: []
         - token: [apply]
@@ -2116,7 +2115,7 @@ components:
       description: |
         The object is in a state that does not allow the action: a stale Plan, a moved head
         revision, or an issue that is not open. Slice 2 codes: `secret-in-use`,
-        `secret-conflict`, `nothing-to-do`. Image builds (T-062): `build-running`.
+        `secret-conflict`, `nothing-to-do`. Image builds: `build-running`.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -2311,8 +2310,7 @@ components:
         status:
           $ref: "#/components/schemas/ImageStatus"
           description: |
-            Builds and versions of a built Image (D-198). Missing for a stock Image, and missing
-            until T-062 serves it.
+            Builds and versions of a built Image (D-198). Missing for a stock Image.
     ImageStatus:
       type: object
       additionalProperties: false
@@ -2477,7 +2475,7 @@ components:
           description: |
             The version of a built Image that the guest was cloned from (D-200), read from the guest
             description. `null` for a stock Image or when unknown. Information only: a new version
-            changes no Target. Missing until T-062 serves it.
+            changes no Target. Missing for a stock Image.
         ips:
           type: array
           description: |
@@ -2673,7 +2671,7 @@ components:
           enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build]
           description: |
             What made the Plan. `build`: a manual or scheduled image build with no document
-            change (D-199, planned: T-062).
+            change (D-199).
         issue_id:
           $ref: "#/components/schemas/NullableId"
           description: The issue, for `revert`, `accept` and `ignore_rule`.
@@ -2716,7 +2714,7 @@ components:
             a normal Plan. `secret-binding`: a target and resource gets a secret that it did not
             get in the base revision. `rule-change`: the Plan puts, changes or deletes a Rule.
             `image-recipe`: the Plan makes or deletes a built Image, or changes its recipe,
-            `schedule` or `retention`, also through a changed Block (D-201, planned: T-062).
+            `schedule` or `retention`, also through a changed Block (D-201).
             The server computes it from the content of the proposal, for every origin.
           items:
             type: string
@@ -3247,7 +3245,7 @@ components:
           pattern: "^(plan|run|issue|target|revision|token|secret|image):.+$"
           description: |
             `<kind>:<id or name>`, for example `plan:12` or `target:web1`. `image.version` (subject
-            `image:<name>`, planned: T-062): a version of the Image changed its status.
+            `image:<name>`): a version of the Image changed its status.
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }
         data:

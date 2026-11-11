@@ -158,6 +158,10 @@ type Config struct {
 	// AddrStable is the stable time of the address check; default
 	// AddrStable. Only the dev demo shortens it.
 	AddrStable time.Duration
+	// ImageBuilds turns image builds on (T-039). Off: a proposal with a
+	// built Image is refused, as before T-062. Part A of T-062 plans and
+	// approves builds; part B runs them and turns this on by default.
+	ImageBuilds bool
 }
 
 // Engine runs the change flow.
