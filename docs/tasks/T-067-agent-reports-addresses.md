@@ -109,3 +109,7 @@ T-069, T-070 and the mock part of T-071 run in parallel. No card needs T-039.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+
+## Notes of pl-lead (2026-11-11)
+- The plan is reviewed (PR #106). It waits for the user's approval; D-212 … D-217 stay PROPOSED until then.
+- Nit of pl-reviewer for T-070: a Hello over the 30 s limit (list dropped) must not count as "no addrs field" and must not clear the stored list. Add a test.
