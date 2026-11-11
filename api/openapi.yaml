@@ -388,7 +388,9 @@ paths:
                       power: running
                       last_seen: "2026-11-10T09:14:02Z"
                       guest_id: "9001"
-                      ips: [192.168.1.41]
+                      ips: []
+                      reported_ips: [192.168.1.41, "fd00::41"]
+                      reported_at: "2026-11-10T08:02:11Z"
                       applied_revision: 7
                       open_issues: 1
                       last_run_id: 3
@@ -406,14 +408,16 @@ paths:
                         blocks: [{ use: motd }]
                         overrides: {}
                     status:
-                      phase: ready
+                      phase: drifted
                       agent: online
                       power: running
                       last_seen: "2026-11-10T09:14:05Z"
                       guest_id: "9002"
                       ips: [192.168.1.20]
+                      reported_ips: [192.168.1.107]
+                      reported_at: "2026-11-10T09:01:30Z"
                       applied_revision: 6
-                      open_issues: 0
+                      open_issues: 1
                       last_run_id: 2
                       waiting: []
                   - revision: 7
@@ -432,7 +436,9 @@ paths:
                       power: running
                       last_seen: "2026-11-10T09:14:01Z"
                       guest_id: "9003"
-                      ips: [192.168.1.43]
+                      ips: []
+                      reported_ips: [192.168.1.43]
+                      reported_at: "2026-11-10T07:55:00Z"
                       applied_revision: 5
                       open_issues: 0
                       last_run_id: 4
@@ -454,6 +460,8 @@ paths:
                       last_seen: "2026-11-09T22:40:00Z"
                       guest_id: "9004"
                       ips: []
+                      reported_ips: []
+                      reported_at: null
                       applied_revision: 5
                       open_issues: 0
                       last_run_id: 1
@@ -475,7 +483,9 @@ paths:
                       power: running
                       last_seen: "2026-11-10T09:14:03Z"
                       guest_id: "9005"
-                      ips: [192.168.1.45]
+                      ips: []
+                      reported_ips: [192.168.1.45]
+                      reported_at: "2026-11-10T09:00:40Z"
                       applied_revision: 7
                       open_issues: 0
                       last_run_id: 3
@@ -517,7 +527,9 @@ paths:
                   power: running
                   last_seen: "2026-11-10T09:14:02Z"
                   guest_id: "9001"
-                  ips: [192.168.1.41]
+                  ips: []
+                  reported_ips: [192.168.1.41, "fd00::41"]
+                  reported_at: "2026-11-10T08:02:11Z"
                   applied_revision: 7
                   open_issues: 0
                   last_run_id: 3
@@ -960,6 +972,19 @@ paths:
                     changes:
                       - { attr: content, sensitive: true, risk: reversible }
                     actions: [revert]
+                    plan_id: null
+                    resolution: null
+                    comments: []
+                  - id: 10
+                    target: db1
+                    resource: "guest:address"
+                    status: open
+                    risk: read
+                    opened_at: "2026-11-10T09:03:30Z"
+                    updated_at: "2026-11-10T09:03:30Z"
+                    changes:
+                      - { attr: ip, from: [192.168.1.107], to: 192.168.1.20, risk: read }
+                    actions: [ignore_once, ignore_rule]
                     plan_id: null
                     resolution: null
                     comments: []
@@ -2183,7 +2208,31 @@ components:
           description: Proxmox VMID.
         ips:
           type: array
+          description: |
+            The address of the Proxmox config (D-079). It never holds a value that the guest chose
+            (D-214), so a client may connect to it. Empty for a `dhcp` Target.
           items: { type: string }
+        reported_ips:
+          type: array
+          description: |
+            The addresses that the agent in the guest reports (D-212, D-214), "reported by the
+            guest". For display only: root in the guest can send any list, so never use it to
+            authorize or as a connect target (D-216). IPv4 first, then IPv6, sorted; at most 16; no
+            loopback, link-local or multicast address. Empty when the agent is offline, when it
+            reports no list (an old agent, D-217), or when the guest has no address. Missing on an
+            older controller.
+          maxItems: 16
+          items: { type: string, examples: ["192.0.2.41", "fd00::41"] }
+        reported_at:
+          $ref: "#/components/schemas/NullableTime"
+          description: |
+            When the controller took the list in `reported_ips`. `null` when the list is empty
+            for a reason in `reported_ips`.
+        reported_ips_more:
+          type: boolean
+          description: |
+            The guest has more than 16 addresses; `reported_ips` shows the first 16. Missing means
+            `false`.
         applied_revision:
           type: [integer, "null"]
           description: Newest revision applied to this target.
@@ -2535,13 +2584,22 @@ components:
       enum: [accept, revert, ignore_once, ignore_rule]
       description: |
         `accept` and `revert` (D-068), `ignore_once` (D-091), `ignore_rule` (D-092). See
-        `POST /issues/{id}/resolve` for who may use them.
+        `POST /issues/{id}/resolve` for who may use them. An Issue on `guest:address` offers
+        only `ignore_once` and `ignore_rule` (D-215).
     Issue:
       type: object
       additionalProperties: false
       description: |
         Drift of one resource on one target. Drift on `guest:config` comes from Proxmox, all
         other drift from the agent.
+
+        `guest:address` (D-215): a Target with a static `ip` whose agent has not reported that
+        address for 2 minutes. The Proxmox config is right; the guest does not use it. It has one
+        change `{attr: ip, from: [the reported list], to: "<configured address>", risk: read}`.
+        `actions` are `ignore_once` and `ignore_rule` only: `ip` is create-only (D-185), so
+        `accept` and `revert` get 409. It is resolved as `gone` by `system` when the address has
+        been in the reported list for 2 minutes. A new mismatch within 1 hour after that opens
+        the same Issue again.
       required:
         - id
         - target
@@ -2558,7 +2616,7 @@ components:
       properties:
         id: { $ref: "#/components/schemas/Id" }
         target: { $ref: "#/components/schemas/Name" }
-        resource: { type: string, examples: ["file:/etc/motd"] }
+        resource: { type: string, examples: ["file:/etc/motd", "guest:config", "guest:address"] }
         status: { $ref: "#/components/schemas/IssueStatus" }
         risk:
           $ref: "#/components/schemas/Risk"
@@ -2811,7 +2869,9 @@ components:
     Event:
       type: object
       additionalProperties: false
-      description: One entry of the append-only event log.
+      description: |
+        One entry of the append-only event log. `target.addrs`: the address list that the agent
+        of a Target reports changed (D-214); `data` holds no address, read the Target.
       required: [seq, type, time, subject, actor, data]
       properties:
         seq: { type: integer, format: int64, minimum: 1 }
@@ -2828,6 +2888,7 @@ components:
             - issue.updated
             - issue.resolved
             - target.status
+            - target.addrs
             - revision.committed
             - token.created
             - token.revoked
