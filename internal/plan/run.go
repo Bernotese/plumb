@@ -412,6 +412,11 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, tp TargetPlan, r 
 			return res, err
 		}
 		if err := e.cfg.Driver.Delete(ctx, driver.GuestID(b.Ref)); err != nil && !errors.Is(err, driver.ErrNotFound) {
+			return res, err // the guest may still run: its agent stays (D-211)
+		}
+		// The guest is gone: its credential (in a backup, a template or a
+		// copy of the disk) must stop working before the binding goes.
+		if err := e.cfg.Agents.Revoke(ctx, tp.Target); err != nil {
 			return res, err
 		}
 		return res, e.st.DeleteBinding(ctx, state.KindTarget, tp.Target)
@@ -613,6 +618,9 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if err := e.st.FailUnfinishedSteps(ctx, run.ID, "the controller restarted during the Run"); err != nil {
 			return err
 		}
+		if err := e.finishDeletes(ctx, run); err != nil {
+			return err
+		}
 		if err := e.st.FinishRun(ctx, run.ID, "failed", e.waitsOfRun(ctx, run.ID)); err != nil {
 			return err
 		}
@@ -620,6 +628,46 @@ func (e *Engine) Recover(ctx context.Context) error {
 			map[string]any{"plan": run.PlanID, "status": "failed", "reason": "controller restart"})
 		if e.cfg.OnPlanDone != nil {
 			e.cfg.OnPlanDone(ctx, run.PlanID, false)
+		}
+	}
+	return nil
+}
+
+// finishDeletes ends the delete steps that a crash cut off (D-211): when
+// the guest of a deleted target is gone but its binding is still there,
+// the agent is revoked and the binding deleted, as the step would have
+// done. A guest that still exists keeps its agent and binding.
+func (e *Engine) finishDeletes(ctx context.Context, run store.Run) error {
+	p, err := e.st.GetPlan(ctx, run.PlanID)
+	if err != nil {
+		return err
+	}
+	var targets []TargetPlan
+	if err := json.Unmarshal(p.Changes, &targets); err != nil {
+		return err
+	}
+	for _, tp := range targets {
+		if tp.Guest != "delete" {
+			continue
+		}
+		b, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target)
+		if errors.Is(err, store.ErrNotFound) {
+			continue // the step finished
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); !errors.Is(err, driver.ErrNotFound) {
+			if err != nil {
+				e.log.Warn("recover: guest of a deleted target not checked; agent kept", "target", tp.Target, "err", err)
+			}
+			continue
+		}
+		if err := e.cfg.Agents.Revoke(ctx, tp.Target); err != nil {
+			return err
+		}
+		if err := e.st.DeleteBinding(ctx, state.KindTarget, tp.Target); err != nil {
+			return err
 		}
 	}
 	return nil
