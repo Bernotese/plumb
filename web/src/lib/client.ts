@@ -29,6 +29,9 @@ export interface PlumbApi {
   logout(): Promise<void>;
   changePassword(current: string, next: string): Promise<void>;
   listImages(): Promise<ImageView[]>;
+  getImage(name: string): Promise<ImageView>;
+  /** Plans a manual build of a built Image (origin `build`, T-062). 422 for a stock Image. */
+  buildImage(name: string, reason?: string): Promise<Plan>;
   listBlocks(): Promise<BlockView[]>;
   listTargets(): Promise<TargetView[]>;
   getTarget(name: string): Promise<TargetView>;

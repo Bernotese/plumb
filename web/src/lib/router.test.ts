@@ -7,6 +7,10 @@ const routes: Route[] = [
   { name: "targets" },
   { name: "target-new" },
   { name: "target-edit", target: "web1" },
+  { name: "images" },
+  { name: "image-new" },
+  { name: "image", image: "ubuntu-26.04" },
+  { name: "image-edit", image: "ubuntu-web" },
   { name: "plan", id: 12 },
   { name: "run", id: 3 },
   { name: "issues" },
@@ -31,12 +35,16 @@ describe("router", () => {
     expect(parse("")).toEqual({ name: "targets" });
     expect(parse("#/")).toEqual({ name: "targets" });
   });
-  it.each(["#/plans/abc", "#/plans/0", "#/plans/12/x", "#/targets/Bad_Name/edit", "#/nothing"])(
-    "%s is not found",
-    (h) => {
-      expect(parse(h).name).toBe("not-found");
-    },
-  );
+  it.each([
+    "#/plans/abc",
+    "#/plans/0",
+    "#/plans/12/x",
+    "#/targets/Bad_Name/edit",
+    "#/images/Bad_Name",
+    "#/nothing",
+  ])("%s is not found", (h) => {
+    expect(parse(h).name).toBe("not-found");
+  });
 });
 
 describe("skip link and other in-page anchors", () => {

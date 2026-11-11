@@ -7,6 +7,12 @@ import type {
   BlockDoc,
   BlockView,
   DocumentChange,
+  DiskUse,
+  ImageDoc,
+  ImagePlan,
+  ImageRun,
+  ImageSpec,
+  ImageVersion,
   ImageView,
   Change,
   Issue,
@@ -31,9 +37,11 @@ import type {
   TargetView,
 } from "../types";
 import { CREATE_ONLY, maxRisk, REENROLL_REFUSED } from "../view";
+import { diskUse, nextSlot } from "../images";
 import { toYaml } from "../yaml";
 import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
+import { buildRuns, diskRefusal, GIB, seedImages, seedTargets } from "./imageSeed";
 
 /** Banner of a mock build. */
 export const MOCK_BANNER = "Demo data: this build uses a mock of the Plumb API.";
@@ -340,11 +348,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   }
 
   const images = exampleItems<ImageView>(example("listImages", 200));
+  seedImages(images);
   const blockViews = exampleItems<BlockView>(example("listBlocks", 200));
   const blocks = new Map(blockViews.map((b) => [b.document.name, b.document]));
   const targets = new Map(
     exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]),
   );
+  seedTargets(targets);
 
   // Slice 2 demo data that the examples of the list operations do not show
   // (D-140): the Block "app" with a secret parameter, as in the
@@ -474,7 +484,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   for (const r of [
     ...exampleItems<Run>(example("listRuns", 200)),
     example("getRun", 200),
-    buildRunFixture(),
+    ...buildRuns(),
   ])
     runs.set(r.id, r);
   const issues = new Map<number, Issue>();
@@ -739,12 +749,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
 
   function newPlan(
     fields: Pick<Plan, "origin" | "issue_id" | "reason" | "targets" | "warnings"> &
-      Partial<Pick<Plan, "human_only" | "rollback_to">>,
+      Partial<Pick<Plan, "human_only" | "rollback_to" | "images">>,
   ): Plan {
     const s = auth();
     const all = fields.targets.flatMap((t) =>
       t.resources.flatMap((r) => r.changes.map((c) => c.risk)),
     );
+    // A build or a template removal changes no guest: reversible (D-201).
+    if (fields.images?.length) all.push("reversible");
     const p: Plan = {
       id: nextPlan++,
       status: "pending",
@@ -761,6 +773,450 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     plans.set(p.id, p);
     emit("plan.created", `plan:${p.id}`, { risk: p.risk });
     return structuredClone(p);
+  }
+
+  // --- T-064: image builds (D-197 … D-210) ---
+
+  const findImage = (name: string) => images.find((i) => i.document.name === name);
+
+  /** The recipe hash of a built Image (D-199): base, upgrade, build disk, Blocks. */
+  function recipeHash(spec: ImageSpec): string {
+    const text = recipeText(spec);
+    // The examples name their own hash (Plan 21): an unchanged seed recipe keeps it.
+    const seeded = seedRecipes.get(text);
+    if (seeded) return seeded;
+    let h = "";
+    for (let i = 0; h.length < 64; i++) h += mockHash(`${i}:${text}`).padStart(8, "0");
+    return h.slice(0, 64);
+  }
+  function recipeText(spec: ImageSpec): string {
+    return JSON.stringify([
+      spec.type,
+      spec.url,
+      spec.sha256,
+      spec.build?.upgrade ?? true,
+      spec.build?.guest.disk,
+      // Defaults are the same recipe: no id = the Block name, no params = {}.
+      // A parameter at its default is the same recipe (the server hashes the rendered resources).
+      (spec.build?.blocks ?? []).map((b) => {
+        const params: Record<string, unknown> = {};
+        for (const [k, p] of Object.entries(blocks.get(b.use)?.spec.params?.properties ?? {})) {
+          const d = (p as { default?: unknown }).default;
+          if (d !== undefined) params[k] = d;
+        }
+        Object.assign(params, b.params ?? {});
+        const sorted = Object.fromEntries(
+          Object.entries(params).sort(([x], [y]) => x.localeCompare(y)),
+        );
+        return [b.use, b.id ?? b.use, sorted];
+      }),
+    ]);
+  }
+  const seedRecipes = new Map<string, string>();
+  for (const i of images) {
+    const newest = i.status?.versions[0];
+    if (i.document.spec.build && newest)
+      seedRecipes.set(recipeText(i.document.spec), newest.recipe_sha256);
+  }
+
+  /** The disk storage now; running builds hold their disk (D-203). */
+  function diskNow(): DiskUse {
+    const base = images.find((i) => i.status?.disk)?.status?.disk;
+    const d: DiskUse = base
+      ? structuredClone(base)
+      : {
+          storage: "local-lvm",
+          total_bytes: 0,
+          used_bytes: 0,
+          reserved_bytes: 0,
+          limit_percent: 85,
+        };
+    d.reserved_bytes =
+      images
+        .flatMap((i) => i.status?.versions ?? [])
+        .filter((v) => v.status === "building")
+        .reduce((a, v) => a + v.disk_gb, 0) * GIB;
+    return d;
+  }
+
+  /** Refuses Blocks with a secret in an Image (D-202): writeOnly parameters or {secret: …}. */
+  function checkImageDoc(img: ImageDoc, at: number) {
+    const spec = img.spec;
+    const fail = (pointer: string, message: string) => {
+      throw problem("validation", "Validation failed", 422, message, {
+        errors: [{ pointer: `/put/${at}/spec${pointer}`, message }],
+      });
+    };
+    if (!spec.build && (spec.retention || spec.schedule))
+      fail("/build", "retention and schedule need build.");
+    (spec.build?.blocks ?? []).forEach((use, n) => {
+      const block = blocks.get(use.use);
+      if (!block) fail(`/build/blocks/${n}/use`, `Block "${use.use}" does not exist.`);
+      const props = Object.entries(block?.spec.params?.properties ?? {});
+      if (props.some(([, p]) => (p as { writeOnly?: boolean }).writeOnly === true))
+        fail(
+          `/build/blocks/${n}/use`,
+          `Block "${use.use}" has a secret parameter. An Image cannot hold a secret.`,
+        );
+      if (Object.values(use.params ?? {}).some((v) => secretName(v) !== undefined))
+        fail(`/build/blocks/${n}/params`, "An Image cannot hold a secret.");
+    });
+  }
+
+  const nextVersion = (view: ImageView | undefined) =>
+    Math.max(0, ...(view?.status?.versions ?? []).map((v) => v.version)) + 1;
+
+  /** Templates that the retention step removes (D-209). */
+  function removals(
+    view: ImageView | undefined,
+    keep: number,
+    building: boolean,
+    next?: ImageSpec,
+  ): ImagePlan["removes"] {
+    const name = view?.document.name ?? "";
+    const ready = (view?.status?.versions ?? [])
+      .filter((v) => v.status === "ready")
+      .sort((a, b) => b.version - a.version);
+    const out: ImagePlan["removes"] = ready
+      .slice(next ? Math.max(0, keep - (building ? 1 : 0)) : 0)
+      .map((v) => ({
+        kind: "version",
+        name: `plumb-img-${name}-v${v.version}`,
+        version: v.version,
+      }));
+    const old = view?.document.spec;
+    if (old && next && old.sha256 !== next.sha256)
+      out.push({
+        kind: "base",
+        name: `plumb-img-${name}-${old.sha256.slice(0, 12)}`,
+        version: null,
+      });
+    return out;
+  }
+
+  function buildPlanOf(
+    view: ImageView | undefined,
+    spec: ImageSpec,
+    trigger: ImageVersion["trigger"],
+  ): NonNullable<ImagePlan["build"]> {
+    const build = spec.build;
+    if (!build) throw problem("unprocessable", "Not a built image", 422, "The image has no build.");
+    const rendered = render(
+      {
+        type: "vm",
+        image: "",
+        guest: build.guest,
+        blocks: build.blocks ?? [],
+      } as TargetDoc["spec"],
+      blocks,
+    );
+    return {
+      version: nextVersion(view),
+      trigger,
+      upgrade: build.upgrade ?? true,
+      recipe_sha256: recipeHash(spec),
+      resources: rendered.map((r) => ({
+        resource: r.id,
+        action: "create",
+        risk: "reversible",
+        changes: [],
+        unverified: true,
+      })),
+    };
+  }
+
+  /** The Image part of a proposal: builds, removals, the human-only reason. */
+  function planImages(proposal: Proposal): { images: ImagePlan[]; recipe: boolean } {
+    const out: ImagePlan[] = [];
+    let recipe = false;
+    (proposal.put ?? []).forEach((doc, at) => {
+      if (doc.kind !== "Image") return;
+      const img = doc as ImageDoc;
+      checkImageDoc(img, at);
+      const view = findImage(img.name);
+      const old = view?.document.spec;
+      if (!img.spec.build) {
+        if (old?.build) {
+          recipe = true;
+          out.push({ image: img.name, removes: removals(view, 0, false) });
+        }
+        return;
+      }
+      const changed = !old?.build || recipeHash(old) !== recipeHash(img.spec);
+      if (
+        changed ||
+        JSON.stringify([old.schedule, old.retention]) !==
+          JSON.stringify([img.spec.schedule, img.spec.retention])
+      )
+        recipe = true;
+      const keep = img.spec.retention?.keep ?? 3;
+      if (changed) {
+        out.push({
+          image: img.name,
+          build: buildPlanOf(view, img.spec, "change"),
+          removes: removals(view, keep, true, img.spec),
+          disk: diskNow(),
+        });
+      } else {
+        const removes = removals(view, keep, false, img.spec);
+        if (removes.length) out.push({ image: img.name, removes });
+      }
+    });
+    for (const ref of proposal.delete ?? []) {
+      if (ref.kind !== "Image") continue;
+      const user = [...targets.values()].find((t) => t.document.spec.image === ref.name);
+      if (user)
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `Target "${user.document.name}" uses image "${ref.name}".`,
+        );
+      const view = findImage(ref.name);
+      if (view?.document.spec.build) {
+        recipe = true;
+        out.push({ image: ref.name, removes: removals(view, 0, false) });
+      }
+    }
+    return { images: out, recipe };
+  }
+
+  /** The Target part of D-202: a smaller disk than the template, or no ready version yet. */
+  function checkTargetImage(t: TargetDoc, at: number, isNew: boolean) {
+    const view = findImage(t.spec.image);
+    const min = view?.document.spec.build?.guest.disk;
+    if (min !== undefined && t.spec.guest.disk < min) {
+      const message = `The disk must be at least ${min} GiB: the template of image ${t.spec.image} has ${min} GiB, and a disk cannot shrink.`;
+      throw problem("validation", "Validation failed", 422, message, {
+        errors: [{ pointer: `/put/${at}/spec/guest/disk`, message }],
+      });
+    }
+    if (
+      isNew &&
+      view?.document.spec.build &&
+      !view.status?.versions.some((v) => v.status === "ready")
+    )
+      throw problem(
+        "validation",
+        "Validation failed",
+        422,
+        `Image ${t.spec.image} has no ready version. Build the image first.`,
+      );
+  }
+
+  function imageLanes(p: Plan): ImageRun[] {
+    return (p.images ?? []).flatMap((ip) => {
+      if (!ip.build) return [];
+      const steps = [
+        "image:base",
+        "guest:config",
+        ...ip.build.resources.map((r) => r.resource),
+        "image:seal",
+        "image:template",
+        "image:retention",
+      ];
+      return [
+        {
+          image: ip.image,
+          version: Math.max(ip.build.version, nextVersion(findImage(ip.image))),
+          trigger: ip.build.trigger,
+          status: "running" as const,
+          steps: steps.map((resource) => ({
+            resource,
+            action:
+              resource.startsWith("image:") || resource === "guest:config"
+                ? null
+                : ("create" as const),
+            status: "pending" as const,
+            changes: [],
+            output: "",
+            started_at: null,
+            finished_at: null,
+          })),
+        },
+      ];
+    });
+  }
+
+  /** Removes templates: the version rows become `removed` (D-209). */
+  function retain(ip: ImagePlan) {
+    const view = findImage(ip.image);
+    for (const r of ip.removes) {
+      const v = view?.status?.versions.find((x) => x.version === r.version);
+      if (v && v.status === "ready") {
+        v.status = "removed";
+        v.removed_at = now();
+      }
+    }
+  }
+
+  /** One build lane: version row, steps, the disk check, retention. */
+  async function buildLane(run: Run, lane: ImageRun, plan: Plan): Promise<boolean> {
+    const view = findImage(lane.image);
+    const spec = view?.document.spec;
+    if (!view || !spec?.build) {
+      lane.status = "failed";
+      return false;
+    }
+    view.status ??= {
+      versions: [],
+      building: null,
+      last_build: null,
+      next_build_at: null,
+      unused_imports: [],
+    };
+    const st = view.status;
+    const free = diskNow();
+    const v: ImageVersion = {
+      version: lane.version,
+      status: "building",
+      trigger: lane.trigger,
+      run_id: run.id,
+      revision: run.revision,
+      recipe_sha256: recipeHash(spec),
+      base_sha256: spec.sha256,
+      disk_gb: spec.build.guest.disk,
+      started_at: now(),
+      finished_at: null,
+      removed_at: null,
+      targets: [],
+    };
+    st.versions.unshift(v);
+    st.building = v.version;
+    emit("image.version", `image:${lane.image}`, { version: v.version, status: v.status });
+    const finish = (status: "ready" | "failed") => {
+      v.status = status;
+      v.finished_at = now();
+      st.building = null;
+      st.last_build = structuredClone(v);
+      lane.status = status === "ready" ? "succeeded" : "failed";
+      emit("image.version", `image:${lane.image}`, { version: v.version, status });
+    };
+    for (const step of lane.steps) {
+      await sleep(stepDelay);
+      step.status = "running";
+      step.started_at = now();
+      emit("run.step", `run:${run.id}`, {
+        image: lane.image,
+        resource: step.resource,
+        status: "running",
+      });
+      await sleep(stepDelay);
+      step.finished_at = now();
+      if (step.resource === "guest:config") {
+        const use = diskUse(free, v.disk_gb);
+        if (use.over) {
+          step.status = "failed";
+          step.output = diskRefusal(free.storage, use.after, free.limit_percent);
+          for (const rest of lane.steps) if (rest.status === "pending") rest.status = "skipped";
+          emit("run.step", `run:${run.id}`, {
+            image: lane.image,
+            resource: step.resource,
+            status: "failed",
+          });
+          finish("failed");
+          return false;
+        }
+      }
+      if (step.resource === "image:template") step.output = `plumb-img-${lane.image}-v${v.version}`;
+      if (step.resource === "image:seal") step.output = "10 steps, guest powered off";
+      const ip = plan.images?.find((x) => x.image === lane.image);
+      if (step.resource === "image:retention" && ip) retain(ip);
+      step.status =
+        step.resource === "image:base" ||
+        (step.resource === "image:retention" && !ip?.removes.length)
+          ? "unchanged"
+          : "applied";
+      emit("run.step", `run:${run.id}`, {
+        image: lane.image,
+        resource: step.resource,
+        status: step.status,
+      });
+    }
+    finish("ready");
+    return true;
+  }
+
+  /** Puts or deletes Image documents after an approved proposal. */
+  function applyImageDocs(proposal: Proposal | undefined) {
+    for (const ref of proposal?.delete ?? []) {
+      if (ref.kind !== "Image") continue;
+      const i = images.findIndex((x) => x.document.name === ref.name);
+      if (i >= 0) images.splice(i, 1);
+    }
+    for (const doc of proposal?.put ?? []) {
+      if (doc.kind !== "Image") continue;
+      const img = doc as ImageDoc;
+      let view = findImage(img.name);
+      if (!view) {
+        view = { revision: head, document: img };
+        images.push(view);
+      }
+      view.revision = head;
+      view.document = img;
+      if (!img.spec.build) {
+        delete view.status;
+        continue;
+      }
+      view.status ??= {
+        versions: [],
+        building: null,
+        last_build: null,
+        next_build_at: null,
+        unused_imports: [],
+      };
+      view.status.next_build_at = img.spec.schedule
+        ? nextSlot(img.spec.schedule, new Date()).toISOString()
+        : null;
+    }
+  }
+
+  /** Approval of a build Plan: no revision; stale when the recipe moved (D-199). */
+  function approveBuild(p: Plan, s: Session): Run {
+    for (const ip of p.images ?? []) {
+      const view = findImage(ip.image);
+      if (
+        !view?.document.spec.build ||
+        recipeHash(view.document.spec) !== ip.build?.recipe_sha256
+      ) {
+        p.status = "stale";
+        emit("plan.stale", `plan:${p.id}`, {});
+        throw problem(
+          "stale",
+          "Plan is stale",
+          409,
+          `The recipe of image ${ip.image} changed. Make a new plan.`,
+        );
+      }
+      if (view.status?.building)
+        throw problem(
+          "build-running",
+          "Build running",
+          409,
+          `Image ${ip.image} builds version ${view.status.building} now. Wait until it ends.`,
+        );
+    }
+    p.status = "approved";
+    p.approved_by = s.principal;
+    p.approved_at = now();
+    const run: Run = {
+      id: nextRun++,
+      plan_id: p.id,
+      revision: head,
+      status: "running",
+      waits_for_restart: 0,
+      started_at: now(),
+      finished_at: null,
+      targets: [],
+      images: imageLanes(p),
+    };
+    p.run_id = run.id;
+    runs.set(run.id, run);
+    emit("plan.approved", `plan:${p.id}`, { run_id: run.id });
+    const job = simulate(run, p, () => {});
+    active.add(job);
+    void job.finally(() => active.delete(job));
+    return structuredClone(run);
   }
 
   async function simulate(run: Run, plan: Plan, apply: () => void) {
@@ -791,7 +1247,11 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       if (target) target.status.phase = target.status.open_issues > 0 ? "drifted" : "ready";
     }
     apply();
-    run.status = "succeeded";
+    let ok = true;
+    for (const lane of run.images ?? []) ok = (await buildLane(run, lane, plan)) && ok;
+    // A Plan that only lowers keep or deletes an Image removes templates here.
+    for (const ip of plan.images ?? []) if (!ip.build) retain(ip);
+    run.status = ok ? "succeeded" : "failed";
     run.finished_at = now();
     emit("run.finished", `run:${run.id}`, { status: run.status });
   }
@@ -922,6 +1382,46 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       auth();
       return structuredClone(images);
     },
+    async getImage(name) {
+      auth();
+      const i = findImage(name);
+      if (!i) throw new ApiError(example("getImage", 404));
+      const out = structuredClone(i);
+      if (out.status) out.status.disk = diskNow();
+      return out;
+    },
+    async buildImage(name, reason) {
+      auth();
+      const view = findImage(name);
+      if (!view) throw new ApiError(example("getImage", 404));
+      if (!view.document.spec.build)
+        throw problem(
+          "unprocessable",
+          "Not a built image",
+          422,
+          `Image ${name} is a stock image. Add a build to it first.`,
+        );
+      return newPlan({
+        origin: "build",
+        issue_id: null,
+        reason: reason?.trim() || `Build image ${name}.`,
+        targets: [],
+        warnings: [],
+        images: [
+          {
+            image: name,
+            build: buildPlanOf(view, view.document.spec, "manual"),
+            removes: removals(
+              view,
+              view.document.spec.retention?.keep ?? 3,
+              true,
+              view.document.spec,
+            ),
+            disk: diskNow(),
+          },
+        ],
+      });
+    },
     async listBlocks() {
       auth();
       return structuredClone(blockViews);
@@ -944,12 +1444,18 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         });
       }
       const planTargets: Plan["targets"] = [];
-      const humanOnly = new Set<"secret-binding" | "rule-change">();
+      const humanOnly = new Set<NonNullable<Plan["human_only"]>[number]>();
       const warnings: string[] = [];
-      for (const doc of proposal.put ?? []) {
+      const imagePart = planImages(proposal);
+      if (imagePart.recipe) humanOnly.add("image-recipe");
+      for (const [at, doc] of (proposal.put ?? []).entries()) {
         if (doc.kind !== "Target") continue;
         const t = doc as TargetDoc;
-        if (!images.some((i) => i.document.name === t.spec.image)) {
+        const known =
+          images.some((i) => i.document.name === t.spec.image) ||
+          (proposal.put ?? []).some((d) => d.kind === "Image" && d.name === t.spec.image);
+        if (known) checkTargetImage(t, at, !targets.has(t.name));
+        if (!known) {
           throw problem(
             "validation",
             "Validation failed",
@@ -1026,6 +1532,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         targets: planTargets,
         warnings,
         human_only: [...humanOnly],
+        ...(imagePart.images.length ? { images: imagePart.images } : {}),
       });
       pendingDocs.set(p.id, proposal);
       return p;
@@ -1046,6 +1553,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "Only a person can approve this plan.",
         );
       }
+      if (p.status === "pending" && p.origin === "build") return approveBuild(p, s);
       if (p.status === "stale" || (p.status === "pending" && p.base_revision !== head)) {
         if (p.status !== "stale") {
           p.status = "stale";
@@ -1055,8 +1563,6 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       if (p.status !== "pending")
         throw problem("conflict", "Plan is not pending", 409, `Plan ${id} is ${p.status}.`);
-      if (p.origin === "build")
-        throw problem("not-in-mock", "Not in the demo yet", 409, "Image builds come with T-064.");
       const proposal = pendingDocs.get(p.id);
       const docs = new Map(findRevision(head).docs);
       for (const d of proposal?.put ?? []) docs.set(docKey(d), structuredClone(d));
@@ -1099,6 +1605,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           })),
         })),
       };
+      const lanes = imageLanes(p);
+      if (lanes.length) run.images = lanes;
       p.run_id = run.id;
       runs.set(run.id, run);
       emit("plan.approved", `plan:${p.id}`, { run_id: run.id });
@@ -1111,6 +1619,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       emit("revision.committed", `revision:${head}`, { plan_id: p.id });
       const job = simulate(run, p, () => {
+        applyImageDocs(proposal);
         for (const ref of proposal?.delete ?? [])
           if (ref.kind === "Target") targets.delete(ref.name);
         for (const doc of proposal?.put ?? []) {
@@ -1618,49 +2127,4 @@ function mockHash(s: string): string {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return (h >>> 0).toString(16);
-}
-
-/**
- * The Run of version 3 of the built Image ubuntu-web in the listImages
- * example (contract T-058): one build lane with the steps of D-199.
- */
-function buildRunFixture(): Run {
-  const at = (m: number, sec = 0) =>
-    `2026-11-08T03:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}Z`;
-  const step = (resource: string, from: string, to: string, output = "") => ({
-    resource,
-    action: null,
-    status: "applied" as const,
-    changes: [],
-    output,
-    started_at: from,
-    finished_at: to,
-  });
-  return {
-    id: 19,
-    plan_id: 20,
-    revision: 7,
-    status: "succeeded",
-    started_at: at(0),
-    finished_at: at(6, 12),
-    waits_for_restart: 0,
-    targets: [],
-    images: [
-      {
-        image: "ubuntu-web",
-        version: 3,
-        trigger: "schedule",
-        status: "succeeded",
-        steps: [
-          { ...step("image:base", at(0), at(0, 2)), status: "unchanged" },
-          step("guest:config", at(0, 2), at(0, 30)),
-          { ...step("package:nginx", at(4, 13), at(4, 40)), action: "create" },
-          { ...step("service:nginx", at(4, 40), at(4, 41)), action: "create" },
-          step("image:seal", at(4, 41), at(4, 55), "10 steps, guest powered off"),
-          step("image:template", at(4, 55), at(5, 1), "plumb-img-ubuntu-web-v3"),
-          { ...step("image:retention", at(5, 1), at(6, 12)), status: "unchanged" },
-        ],
-      },
-    ],
-  };
 }

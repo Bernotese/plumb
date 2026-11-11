@@ -6,6 +6,7 @@
   import { formatTime, humanOnlyReasons } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ChangeTable from "../ui/ChangeTable.svelte";
+  import ImagePlanPart from "../ui/ImagePlanPart.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import RiskBadge from "../ui/RiskBadge.svelte";
 
@@ -25,6 +26,24 @@
     void load();
   });
 
+  // The build disk of each Image of the Plan, for the disk check (D-203).
+  let buildDisk = $state<Record<string, number>>({});
+  $effect(() => {
+    const names = (plan?.images ?? []).filter((i) => i.build).map((i) => i.image);
+    for (const n of names) {
+      if (n in buildDisk) continue;
+      api.getImage(n).then(
+        (v) => {
+          const d = v.document.spec.build?.guest.disk;
+          if (d !== undefined) buildDisk = { ...buildDisk, [n]: d };
+        },
+        // A new Image is not at the head yet; the Plan shows the use without it.
+        () => {},
+      );
+    }
+  });
+  const builds = $derived((plan?.images ?? []).filter((i) => i.build).length);
+
   const count = $derived(
     plan
       ? plan.targets.flatMap((t) => t.resources).filter((r) => r.action !== "restart").length
@@ -42,6 +61,7 @@
     accept: "Accept the guest value of an issue",
     revert: "Revert drift of an issue",
     reenroll: "Re-enroll a target",
+    build: "Image build (no document change)",
   };
   const actionLabel = {
     create: "Create",
@@ -96,7 +116,7 @@
       <dd>
         {count} resource change{count === 1 ? "" : "s"}{restarts
           ? `, ${restarts} restart${restarts === 1 ? "" : "s"}`
-          : ""}
+          : ""}{builds ? `, ${builds} image build${builds === 1 ? "" : "s"}` : ""}
       </dd>
       {#if plan.origin !== "proposal"}
         <dt>Origin</dt>
@@ -132,6 +152,14 @@
 
   {#each plan.warnings as w, i (i)}
     <p class="banner warn">{w}</p>
+  {/each}
+
+  {#each plan.images ?? [] as part (part.image)}
+    <ImagePlanPart
+      {part}
+      humanOnly={plan.human_only?.includes("image-recipe") ?? false}
+      buildDiskGb={buildDisk[part.image]}
+    />
   {/each}
 
   {#each plan.targets as t (t.target)}
