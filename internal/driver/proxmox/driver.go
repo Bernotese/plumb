@@ -42,6 +42,13 @@ type Config struct {
 	// guest a new cloud-init instance. Create-only (D-185).
 	Nameservers  []string
 	SearchDomain string
+	// Bridge is the only bridge of the install (PLUMB_PVE_BRIDGE): the
+	// token has SDN.Use on it alone (D-081). Create and Update refuse any
+	// other bridge before a Proxmox call (D-184).
+	Bridge string
+	// StartWait and StartPoll bound the retries of the start-up check on
+	// /version (D-183). Default 60 s and 5 s.
+	StartWait, StartPoll time.Duration
 }
 
 // Driver is the Proxmox VE driver.
@@ -104,6 +111,9 @@ func New(cfg Config) (*Driver, error) {
 	}
 	if err := checkDNS(cfg.Nameservers, cfg.SearchDomain); err != nil {
 		return nil, err
+	}
+	if !reBridge.MatchString(cfg.Bridge) {
+		return nil, fmt.Errorf("proxmox: the bridge of the install is required (PLUMB_PVE_BRIDGE), not %q", cfg.Bridge)
 	}
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 120 * time.Second
@@ -399,6 +409,9 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	if err := checkSpec(spec); err != nil {
 		return "", err
 	}
+	if err := d.checkBridge(spec.Bridge); err != nil {
+		return "", err
+	}
 	tpl, m, err := d.own(ctx, string(spec.Image))
 	if err != nil {
 		return "", fmt.Errorf("proxmox: image %s: %w", spec.Image, err)
@@ -501,6 +514,14 @@ var (
 	reIPv4   = regexp.MustCompile(`^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$`)
 	reUser   = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 )
+
+// checkBridge refuses a bridge other than the one of the install (D-184).
+func (d *Driver) checkBridge(b string) error {
+	if b != d.cfg.Bridge {
+		return fmt.Errorf("proxmox: bridge %q is not the bridge of this install (%s); the token may use only %s (D-184)", b, d.cfg.Bridge, d.cfg.Bridge)
+	}
+	return nil
+}
 
 func checkSpec(s driver.GuestSpec) error {
 	if !reBridge.MatchString(s.Bridge) {
@@ -713,6 +734,15 @@ func (d *Driver) Diff(desired driver.GuestSpec, observed driver.GuestState) ([]w
 // re-enrollment the new token as SMBIOS serial. A create-only attribute is
 // refused. The serial takes effect at the next cold start (Power restart).
 func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.Change, boot *driver.Bootstrap) error {
+	// The bridge rule comes first, before any Proxmox call (D-184).
+	for _, c := range changes {
+		if c.Attr == driver.AttrBridge {
+			b, _ := c.To.(string)
+			if err := d.checkBridge(b); err != nil {
+				return err
+			}
+		}
+	}
 	id, _, err := d.own(ctx, string(gid))
 	if err != nil {
 		return err

@@ -126,6 +126,12 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	if err := runServer(ctx, f, stdout, log); err != nil {
 		fmt.Fprintln(stderr, "plumb serve:", err)
+		// A start failure that a restart cannot repair: exit 78, so
+		// systemd does not start it again every 5 s (D-183).
+		var ce *errConfig
+		if errors.As(err, &ce) {
+			return 78
+		}
 		return 1
 	}
 	return 0
@@ -158,7 +164,12 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	case "fake":
 		drv = fake.New()
 	default:
-		return errors.New("the Proxmox driver needs the host configuration that the installer writes (T-013); use --dev to try Plumb")
+		// Before anything touches the data directory (D-183).
+		d, err := proxmoxDriver(ctx, os.Getenv, log)
+		if err != nil {
+			return err
+		}
+		drv = d
 	}
 	if f.data == "" {
 		dir, err := os.MkdirTemp("", "plumb-dev-*")

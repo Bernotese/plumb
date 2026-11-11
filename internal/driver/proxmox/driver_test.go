@@ -241,6 +241,7 @@ func TestUpdate(t *testing.T) {
 	st, _ := d.Observe(ctx, id)
 	want := guest(ref)
 	want.Cores, want.MemoryMB, want.Bridge = 4, 4096, "vmbr1"
+	d.cfg.Bridge = "vmbr1" // an install on vmbr1: the guard of net0 is under test (D-184 refuses another bridge)
 	changes, err := d.Diff(want, st)
 	if err != nil || len(changes) != 3 {
 		t.Fatalf("diff: %+v %v", changes, err)
@@ -440,6 +441,7 @@ func TestUpdateWritesNoCloudInitInput(t *testing.T) {
 	st, _ := d.Observe(ctx, id)
 	want := guest(ref)
 	want.Bridge = "vmbr1"
+	d.cfg.Bridge = "vmbr1" // see TestUpdate
 	changes, err := d.Diff(want, st)
 	if err != nil || len(changes) != 1 {
 		t.Fatalf("diff: %+v %v", changes, err)
@@ -530,7 +532,7 @@ func TestCreateSetsDNS(t *testing.T) {
 func TestNewChecksDNS(t *testing.T) {
 	f := newFakePVE(t)
 	base := Config{Client: f.client(t), Node: "pve", Pool: "plumb", DiskStorage: "d", ImageStorage: "i",
-		SnippetStorage: "s", Snippet: "v.yaml", VMIDMin: 9000, VMIDMax: 9099}
+		SnippetStorage: "s", Snippet: "v.yaml", VMIDMin: 9000, VMIDMax: 9099, Bridge: "vmbr0"}
 	for name, tc := range map[string]struct {
 		servers []string
 		domain  string
@@ -551,5 +553,32 @@ func TestNewChecksDNS(t *testing.T) {
 		if _, err := New(cfg); (err == nil) != tc.ok {
 			t.Errorf("%s: err = %v", name, err)
 		}
+	}
+}
+
+// D-184: a bridge other than the one of the install is refused before any
+// Proxmox call, in Create and in Update.
+func TestOtherBridgeRefused(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	ctx := context.Background()
+	ref, _ := d.FetchImage(ctx, image)
+	f.mu.Lock()
+	before := len(f.log)
+	f.mu.Unlock()
+	spec := guest(ref)
+	spec.Bridge = "vmbr9"
+	if _, err := d.Create(ctx, spec, driver.Bootstrap{Token: "tok-1"}); err == nil ||
+		!strings.Contains(err.Error(), `bridge "vmbr9" is not the bridge of this install (vmbr0)`) {
+		t.Errorf("Create: %v", err)
+	}
+	if err := d.Update(ctx, "9001", []wire.Change{{Attr: driver.AttrBridge, From: "vmbr0", To: "vmbr9"}}, nil); err == nil ||
+		!strings.Contains(err.Error(), "vmbr9") {
+		t.Errorf("Update: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if n := len(f.log) - before; n != 0 {
+		t.Errorf("%d Proxmox requests: %v", n, f.log[before:])
 	}
 }

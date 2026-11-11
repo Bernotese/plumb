@@ -156,4 +156,8 @@ This also closes the open T-013 items "repair run", "UI + first login" and "agen
 - `make test-pve` gets `./test/pve/...` as a second step. The driver tests and the slice test share pool and VMID range (9000–9099): never run both at once.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- `pl-backend/T-053-serve-proxmox-driver` (code part; real-host steps after the review) · `make lint test build` pass.
+- `cmd/plumb/pve.go`: `pveSettings` (14 variables incl. D-187; one message names every missing/bad one; the secret never in a text; `os.Unsetenv` after reading), `startError` (texts of the plan's table; `errConfig` → exit 78, no answer → exit 1), `proxmoxDriver` runs before the data directory.
+- `internal/driver/proxmox/check.go`: `Check` = `/version` (retry only dial/timeout/5xx/595, every `StartPoll` for `StartWait`), pool, node storages (D-081 content rules), `SDN.Use` when readable; typed errors; TLS/401 untouched for `errors.As`.
+- D-184: `Config.Bridge` required; `Create`/`Update` refuse another bridge with zero requests.
+- Tests: `check_test.go` (fake PVE: versions, 401 one request, 503/595 retry, unreachable, cancel, pool, node 595 one request, storages, two problems, bridge right), `pve_test.go` (settings table, start against a TLS fake with the canary secret, unknown issuer / wrong name / bad token / bad CA file → 78 with empty `--data`, no password, no listener; `--dev` sends zero requests), `serve_test.go` updated.
