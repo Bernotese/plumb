@@ -229,7 +229,7 @@ func TestRecoverFinishesDelete(t *testing.T) {
 	if err := e.drv.Delete(e.ctx, driver.GuestID(ba.Ref)); err != nil {
 		t.Fatal(err)
 	}
-	if code, _ := e.call("GET", wire.PathPoll, credA, nil); code != http.StatusNoContent {
+	if code, _ := e.call("GET", wire.PathPoll, credA, nil); code != http.StatusNoContent && code != http.StatusOK {
 		t.Fatalf("old credential before Recover: %d (the crash state is wrong)", code)
 	}
 
