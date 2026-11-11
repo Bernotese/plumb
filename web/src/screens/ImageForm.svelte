@@ -475,7 +475,7 @@
           {/if}
           {#if every !== "none"}
             <div class="field">
-              <label for="i-at">Time (UTC)</label>
+              <label for="i-at">Time (UTC, 24 h)</label>
               <input
                 id="i-at"
                 type="time"
@@ -486,7 +486,7 @@
               <span class="hint" id="i-at-hint"
                 >{nextBuild
                   ? `Next build: ${nextBuild.toLocaleString()} (your local time).`
-                  : "HH:MM in UTC."}</span
+                  : "HH:MM, 24 h, in UTC."}</span
               >
               {#if errors["at"]}<span class="error" id="i-at-error">{errors["at"]}</span>{/if}
             </div>

