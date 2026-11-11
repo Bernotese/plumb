@@ -44,7 +44,7 @@ API:    TargetStatus.ips = reported list, ips_source: reported | configured
 - **Bounds and form.** At most 16 addresses. Each one is an IPv4 or IPv6 address in canonical text (`netip.ParseAddr`, then `String()` must give the same text): no zone, no prefix length, no IPv4-mapped IPv6, no duplicate. Refused kinds: loopback, link-local, multicast, unspecified. The list is sorted (IPv4 first). The agent cuts a longer list to 16 after the sort.
 - **A bad list.** In a Hello: the controller takes the Hello and stores "list unknown" (one log line); it does not refuse the Hello, so display data can never cut the link to a guest. In an `addrs` report: 400, and the agent drops the report until its next change.
 - **Rate.** The controller writes only when the list differs from the stored one. `link` takes one `addrs` report per agent in 10 s (429 for more).
-- **Store.** Two new columns on `agent`: `addrs` (JSON list or NULL = unknown) and `addrs_at` (time when this list arrived). Only the latest list is kept: no history, and no address in the event log. The row goes away with a re-enrollment and with the revoke of T-057. Migration number: `pl-lead` gives it (T-039 plans one too).
+- **Store.** Two new columns on `agent`: `addrs` (JSON list or NULL = unknown) and `addrs_at` (time when this list arrived). Only the latest list is kept: no history, and no address in the event log. The row goes away with a re-enrollment and with the revoke of T-057. Migration 0008 (number from `pl-lead`; T-039 gets 0009. If the merge order turns, `pl-lead` renumbers before the merge).
 - **API.** `TargetStatus.ips` keeps its name. It holds the reported list when the agent is online and the list is known; else the configured static address as today (D-079). New optional fields (D-100): `ips_source` (`reported` | `configured`) and `ips_reported_at`. `Issue.resource` can be `guest:address`; its `actions` are `ignore_once` and `ignore_rule` only. An event `target.addrs` (subject `target:<name>`, no address in it) tells the UI to read again.
 
 ### 2. The agent
@@ -92,7 +92,7 @@ API:    TargetStatus.ips = reported list, ips_source: reported | configured
 |---|---|---|---|
 | T-068 | Contract: `wire` (Hello.addrs, report `addrs`), OpenAPI (`ips_source`, `ips_reported_at`, `guest:address`), mock examples | pl-architect | – |
 | T-069 | Agent: address list, filter, Hello, send on change; guest test | pl-backend | T-068 |
-| T-070 | Controller: link check and limit, migration, engine check with grace, Issue rule, status view, dev demo | pl-backend (second lane) | T-068 |
+| T-070 | Controller: link check and limit, migration 0008, engine check with grace, Issue rule, status view, dev demo | pl-backend (second lane) | T-068 |
 | T-071 | Web: address mark, mismatch line, Issue screen for `guest:address` | pl-frontend | T-068 (mock), T-070 (real API) |
 | T-072 | QA: tests against T-069 … T-071, the two security tests, the real-host check with pl-backend | pl-codex-qa | all |
 
