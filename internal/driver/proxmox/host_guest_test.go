@@ -10,6 +10,7 @@
 //	reenroll  Update with the token PLUMB_PVE_ENROLL (a test string), then
 //	          a cold restart (Power restart; not with PLUMB_PVE_NORESTART=1)
 //	cifield   change the cloud-init field searchdomain, then a cold restart
+//	restart   a cold restart (Power restart) only
 //	missing   a VMID in the range that is not ours; prints the raw answer
 //	tasklog   prints the log of the latest task of PLUMB_PVE_VMID
 //	mismatch  FetchImage with a wrong SHA-256 must fail
@@ -115,6 +116,10 @@ func TestHostGuestStep(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := d.Power(ctx, id, driver.PowerRestart); err != nil {
+			t.Fatal(err)
+		}
+	case "restart":
+		if err := d.Power(ctx, stepVMID(t), driver.PowerRestart); err != nil {
 			t.Fatal(err)
 		}
 	case "missing":

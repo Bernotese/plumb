@@ -41,8 +41,9 @@ ssh=(ssh -o BatchMode=yes "$PLUMB_TEST_PVE_SSH")
 setting() { "${ssh[@]}" "pct exec $lxc -- sed -n 's/^$1=//p' /etc/plumb/plumb.env"; }
 range=$(setting PLUMB_PVE_VMID_RANGE)
 disk=$(setting PLUMB_PVE_DISK)
-[[ $range =~ ^([0-9]+)-([0-9]+)$ && $disk =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
-	{ echo "test-pve: cannot read PLUMB_PVE_VMID_RANGE / PLUMB_PVE_DISK from plumb.env"; exit 1; }
+[[ $disk =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "test-pve: cannot read PLUMB_PVE_DISK from plumb.env"; exit 1; }
+# Last match of the test: BASH_REMATCH holds the range.
+[[ $range =~ ^([0-9]+)-([0-9]+)$ ]] || { echo "test-pve: cannot read PLUMB_PVE_VMID_RANGE from plumb.env"; exit 1; }
 lo=${BASH_REMATCH[1]} hi=${BASH_REMATCH[2]}
 
 # snapshot prints the guests and the disks of the range, one per line.
