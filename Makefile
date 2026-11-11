@@ -67,9 +67,11 @@ lint-web: $(WEB_DEPS)
 test-guest:
 	bash test/guest/run.sh
 
-## test-pve: tests against a real Proxmox host (stub; T-012 and T-013 fill it)
+## test-pve: driver tests on the real test host (scripts/test-pve.sh). The test
+## binary runs inside the Plumb LXC with its plumb.env, so the token never
+## leaves it; fails when a guest of the Plumb range is left.
 test-pve:
-	@echo "test-pve: not implemented yet (T-012, T-013)"; exit 1
+	scripts/test-pve.sh
 
 clean:
 	rm -f bin/plumb bin/plumb-agent

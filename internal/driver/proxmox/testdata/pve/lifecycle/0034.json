@@ -1,0 +1,10 @@
+{
+  "body": {
+    "data": "UPID:pve:00006DD9:00080C0A:6AF3B778:qmconfig:9001:plumb@pve!plumb:"
+  },
+  "form": "cores=2&digest=a9992f5a8485b4e3e43edbacad53897a6dc2464c&memory=1536",
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9001/config",
+  "seq": 34,
+  "status": 200
+}
