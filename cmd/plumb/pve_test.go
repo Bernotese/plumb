@@ -85,7 +85,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 				map[string]any{"storage": "plumb-snippets", "content": "snippets", "enabled": 1, "active": 1},
 			}
 		case "/access/permissions":
-			data = map[string]any{"/sdn/zones/localnetwork/vmbr0": map[string]int{"SDN.Use": 1}}
+			data = map[string]any{"/sdn/zones/localnetwork/vmbr0": map[string]int{"SDN.Use": 0}} // as on the test host
 		default:
 			w.WriteHeader(500)
 			io.WriteString(w, `{"data":null,"message":"no such call in the fake"}`)
@@ -155,14 +155,16 @@ func TestPVESettings(t *testing.T) {
 		"URL with user":   {map[string]string{"PLUMB_PVE_URL": "https://root@pve:8006"}, "PLUMB_PVE_URL must be"},
 		"token id space":  {map[string]string{"PLUMB_PVE_TOKEN_ID": "plumb@pve!plu mb"}, "PLUMB_PVE_TOKEN_ID must be"},
 		"secret with =":   {map[string]string{secretVar: canary + "=x"}, "PLUMB_PVE_SECRET must be one word"},
-		"range reversed":  {map[string]string{"PLUMB_PVE_VMID_RANGE": "9099-9000"}, "PLUMB_PVE_VMID_RANGE must be"},
-		"range below 100": {map[string]string{"PLUMB_PVE_VMID_RANGE": "10-99"}, "PLUMB_PVE_VMID_RANGE must be"},
-		"range text":      {map[string]string{"PLUMB_PVE_VMID_RANGE": "all"}, "PLUMB_PVE_VMID_RANGE must be"},
-		"bridge comma":    {map[string]string{"PLUMB_PVE_BRIDGE": "vmbr0,tag=5"}, "PLUMB_PVE_BRIDGE must be"},
-		"pool with /":     {map[string]string{"PLUMB_PVE_POOL": "a/b"}, "PLUMB_PVE_POOL must be"},
-		"four DNS":        {map[string]string{"PLUMB_PVE_NAMESERVER": "192.0.2.1,192.0.2.2,192.0.2.3,192.0.2.4"}, "PLUMB_PVE_NAMESERVER must be"},
-		"DNS name":        {map[string]string{"PLUMB_PVE_NAMESERVER": "dns.example"}, "PLUMB_PVE_NAMESERVER must be"},
-		"domain space":    {map[string]string{"PLUMB_PVE_SEARCHDOMAIN": "a b"}, "PLUMB_PVE_SEARCHDOMAIN must be"},
+		// Review S1: a token id pasted with its secret never echoes the value.
+		"token id with secret": {map[string]string{"PLUMB_PVE_TOKEN_ID": "plumb@pve!plumb=" + canary}, "PLUMB_PVE_TOKEN_ID must be"},
+		"range reversed":       {map[string]string{"PLUMB_PVE_VMID_RANGE": "9099-9000"}, "PLUMB_PVE_VMID_RANGE must be"},
+		"range below 100":      {map[string]string{"PLUMB_PVE_VMID_RANGE": "10-99"}, "PLUMB_PVE_VMID_RANGE must be"},
+		"range text":           {map[string]string{"PLUMB_PVE_VMID_RANGE": "all"}, "PLUMB_PVE_VMID_RANGE must be"},
+		"bridge comma":         {map[string]string{"PLUMB_PVE_BRIDGE": "vmbr0,tag=5"}, "PLUMB_PVE_BRIDGE must be"},
+		"pool with /":          {map[string]string{"PLUMB_PVE_POOL": "a/b"}, "PLUMB_PVE_POOL must be"},
+		"four DNS":             {map[string]string{"PLUMB_PVE_NAMESERVER": "192.0.2.1,192.0.2.2,192.0.2.3,192.0.2.4"}, "PLUMB_PVE_NAMESERVER must be"},
+		"DNS name":             {map[string]string{"PLUMB_PVE_NAMESERVER": "dns.example"}, "PLUMB_PVE_NAMESERVER must be"},
+		"domain space":         {map[string]string{"PLUMB_PVE_SEARCHDOMAIN": "a b"}, "PLUMB_PVE_SEARCHDOMAIN must be"},
 		"control chars, long": {map[string]string{"PLUMB_PVE_NODE": "\x1b[31m" + strings.Repeat("n", 300)},
 			`PLUMB_PVE_NODE must be a Proxmox name (letters, digits, . _ -), not "\x1b[31m`},
 		"two bad, one missing": {map[string]string{"PLUMB_PVE_POOL": "a b", "PLUMB_PVE_BRIDGE": "x,y", "PLUMB_PVE_DISK": ""},
@@ -274,7 +276,7 @@ func TestServeProxmoxFailures(t *testing.T) {
 		code int
 	}{
 		"missing settings": {func() { clearPVE(t) }, "the Proxmox settings are missing: PLUMB_PVE_URL", 78},
-		"unknown issuer":   {func() { setPVE(t, h.srv.URL, other) }, "the CA in " + other + " did not sign it", 78},
+		"unknown issuer":   {func() { setPVE(t, h.srv.URL, other) }, "the CA in " + other + " (PLUMB_PVE_CA) did not sign it", 78},
 		"wrong name": {func() {
 			setPVE(t, strings.Replace(h.srv.URL, "127.0.0.1", "localhost.", 1), h.ca)
 		}, "does not name localhost.", 78},

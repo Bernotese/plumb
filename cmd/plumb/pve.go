@@ -68,8 +68,10 @@ func pveSettings(getenv func(string) string) (proxmox.ClientConfig, proxmox.Conf
 		return v
 	}
 	badf := func(name, form, v string) {
-		if name == secretVar {
-			bad = append(bad, name+" must be "+form) // never the value
+		// Never the value of the secret or of the token id: a token id
+		// pasted as user@realm!name=<secret> holds the secret (review S1).
+		if name == secretVar || name == "PLUMB_PVE_TOKEN_ID" {
+			bad = append(bad, name+" must be "+form)
 			return
 		}
 		bad = append(bad, fmt.Sprintf("%s must be %s, not %s", name, form, shown(v)))
@@ -178,7 +180,7 @@ func startError(err error, cc proxmox.ClientConfig) error {
 		if ua.Cert != nil {
 			issuer = ua.Cert.Issuer.String()
 		}
-		return configErr("the certificate of %s is from %q; the CA in %s did not sign it. If the node uses its own CA, copy /etc/pve/pve-root-ca.pem of the node to %s; for another certificate, put its CA there",
+		return configErr("the certificate of %s is from %q; the CA in %s (PLUMB_PVE_CA) did not sign it. If the node uses its own CA, copy /etc/pve/pve-root-ca.pem of the node to %s; for another certificate, put its CA there",
 			cc.URL, issuer, caPath, caPath)
 	case errors.As(err, &he):
 		var names []string
@@ -240,7 +242,7 @@ func proxmoxDriver(ctx context.Context, getenv func(string) string, log *slog.Lo
 	c, err := proxmox.NewClient(cc)
 	if err != nil {
 		if cc.CAFile != "" {
-			return nil, configErr("cannot read the Proxmox CA file %s: %s", cc.CAFile,
+			return nil, configErr("cannot read the Proxmox CA file %s (PLUMB_PVE_CA): %s", cc.CAFile,
 				strings.TrimPrefix(strings.TrimPrefix(err.Error(), "proxmox: "), "CA file: "))
 		}
 		return nil, configErr("%v", err)

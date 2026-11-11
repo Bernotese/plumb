@@ -4,7 +4,9 @@ package proxmox
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -197,5 +199,58 @@ func TestCheckPermissionsUnreadable(t *testing.T) {
 	f.perms = nil
 	if _, err := checkDriver(t, f).Check(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Review B1: /access/permissions holds the propagate flag as the value; the
+// key is the grant (test host: {"SDN.Use": 0} on the bridge path).
+func TestHasRight(t *testing.T) {
+	const path = "/sdn/zones/localnetwork/vmbr0"
+	for name, tc := range map[string]struct {
+		perms map[string]map[string]int
+		want  bool
+	}{
+		"on the path, propagate 0": {map[string]map[string]int{path: {"SDN.Use": 0}}, true},
+		"on the path, propagate 1": {map[string]map[string]int{path: {"SDN.Use": 1}}, true},
+		"parent, propagate 1":      {map[string]map[string]int{"/sdn": {"SDN.Use": 1}}, true},
+		"root, propagate 1":        {map[string]map[string]int{"/": {"SDN.Use": 1}}, true},
+		"parent, propagate 0":      {map[string]map[string]int{"/sdn/zones": {"SDN.Use": 0}}, false},
+		"other right on the path":  {map[string]map[string]int{path: {"SDN.Audit": 0}}, false},
+		"other bridge":             {map[string]map[string]int{"/sdn/zones/localnetwork/vmbr1": {"SDN.Use": 0}}, false},
+	} {
+		if got := hasRight(tc.perms, path, "SDN.Use"); got != tc.want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+}
+
+// A grant through a parent with propagate passes the check too.
+func TestCheckBridgeRightFromParent(t *testing.T) {
+	f := newFakePVE(t)
+	f.perms = map[string]map[string]int{"/sdn/zones": {"SDN.Use": 1}}
+	if _, err := checkDriver(t, f).Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Review S2: /version answered, then the connection is lost: "no answer"
+// (exit 1), not a host problem (exit 78).
+func TestCheckTransportErrorAfterVersion(t *testing.T) {
+	for _, p := range []string{"/pools", "/nodes/pve/storage"} {
+		f := newFakePVE(t)
+		f.dropPath = p
+		_, err := checkDriver(t, f).Check(context.Background())
+		var ue *UnreachableError
+		var hp *HostProblems
+		if !errors.As(err, &ue) || errors.As(err, &hp) {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+}
+
+// Review N1: a TLS alert is never tried again.
+func TestTLSAlertNotRetried(t *testing.T) {
+	if retryable(fmt.Errorf("proxmox: GET /version: %w", tls.AlertError(42))) {
+		t.Error("a TLS alert is retried")
 	}
 }

@@ -166,7 +166,8 @@ func isTLS(err error) bool {
 	var ci x509.CertificateInvalidError
 	var rh tls.RecordHeaderError
 	var ve *tls.CertificateVerificationError
-	return errors.As(err, &ua) || errors.As(err, &he) || errors.As(err, &ci) || errors.As(err, &rh) || errors.As(err, &ve)
+	var ae tls.AlertError
+	return errors.As(err, &ua) || errors.As(err, &he) || errors.As(err, &ci) || errors.As(err, &rh) || errors.As(err, &ve) || errors.As(err, &ae)
 }
 
 // parseVersion reads "9.2.26" (or "9.2"); the compare is numeric.
@@ -195,7 +196,8 @@ func (d *Driver) checkPool(ctx context.Context, hp *HostProblems) error {
 		hp.Problems = append(hp.Problems, HostProblem{Kind: ProblemPool, ID: d.cfg.Pool})
 		return nil
 	case err != nil:
-		return err
+		// No answer after /version answered: exit 1, a restart can fix it.
+		return &UnreachableError{URL: d.c.URL(), Err: err}
 	}
 	for _, p := range pools {
 		if p.PoolID == d.cfg.Pool {
@@ -222,7 +224,7 @@ func (d *Driver) checkStorages(ctx context.Context, hp *HostProblems) error {
 		hp.Problems = append(hp.Problems, HostProblem{Kind: ProblemNode, ID: d.cfg.Node})
 		return nil
 	case err != nil:
-		return err
+		return &UnreachableError{URL: d.c.URL(), Err: err}
 	}
 	want := []struct {
 		id   string
@@ -270,9 +272,32 @@ func (d *Driver) checkBridgeRight(ctx context.Context, hp *HostProblems) {
 	if err := d.c.Get(ctx, "/access/permissions", nil, &perms); err != nil || len(perms) == 0 {
 		return
 	}
-	if perms["/sdn/zones/localnetwork/"+d.cfg.Bridge]["SDN.Use"] != 1 {
+	if !hasRight(perms, "/sdn/zones/localnetwork/"+d.cfg.Bridge, "SDN.Use") {
 		hp.Problems = append(hp.Problems, HostProblem{Kind: ProblemBridge, ID: d.cfg.Bridge})
 	}
+}
+
+// hasRight reads GET /access/permissions: path → privilege → propagate
+// flag. The key itself is the grant; its value says only whether it
+// reaches the paths below (test host: install.sh sets SDN.Use on the
+// bridge with propagate 0, and the answer is {"SDN.Use": 0}). So a right
+// is held when the key is on the path, or on a parent path with 1.
+func hasRight(perms map[string]map[string]int, path, priv string) bool {
+	if _, ok := perms[path][priv]; ok {
+		return true
+	}
+	for p := path; p != "/"; {
+		i := strings.LastIndex(p, "/")
+		if i <= 0 {
+			p = "/"
+		} else {
+			p = p[:i]
+		}
+		if perms[p][priv] == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // URL is the API base of the client, for the start line and the texts.

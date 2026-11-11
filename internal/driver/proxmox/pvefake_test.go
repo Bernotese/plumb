@@ -69,7 +69,8 @@ type fakePVE struct {
 	storageStatus int
 	noPool        bool
 	perms         map[string]map[string]int
-	authFails     int // requests refused with 401
+	authFails     int    // requests refused with 401
+	dropPath      string // a request to this path loses its connection
 }
 
 type fakeVM struct {
@@ -103,7 +104,9 @@ func newFakePVE(t *testing.T) *fakePVE {
 			{"storage": "local", "content": "import", "enabled": 1, "active": 1, "type": "dir"},
 			{"storage": "plumb-snippets", "content": "snippets", "enabled": 1, "active": 1, "type": "dir"},
 		},
-		perms: map[string]map[string]int{"/sdn/zones/localnetwork/vmbr0": {"SDN.Use": 1}, "/pool/plumb": {"VM.Allocate": 1}}, params: map[string]url.Values{},
+		// Like the test host: the value is the propagate flag; install.sh
+		// sets the bridge ACL with propagate 0.
+		perms: map[string]map[string]int{"/sdn/zones/localnetwork/vmbr0": {"SDN.Use": 0}, "/pool/plumb": {"VM.Allocate": 1}}, params: map[string]url.Values{},
 		echoParam: map[string]string{}, notJSON: map[string]bool{}, nullAnswer: map[string]bool{}}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -253,6 +256,14 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if f.dropPath != "" && path == f.dropPath {
+		if hj, ok := w.(http.Hijacker); ok {
+			if conn, _, err := hj.Hijack(); err == nil {
+				conn.Close()
+				return
+			}
+		}
+	}
 	switch {
 	case r.Method == "GET" && path == "/version":
 		if len(f.versionStatus) > 0 {
