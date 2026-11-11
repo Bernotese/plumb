@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -257,4 +258,17 @@ type CreateOnlyError struct {
 
 func (e *CreateOnlyError) Error() string {
 	return fmt.Sprintf("driver: %q can only be set when the guest is created", e.Attr)
+}
+
+// OverLimit is the exact disk rule of D-203 and T-074: need is over the
+// limit when need × 100 > limit × total, in integer bytes with no
+// rounding. A total of 0 or less is always over (an unknown size is no
+// room). The web (overLimit in web/src/lib/images.ts) uses the same rule.
+func OverLimit(need, total int64, limitPercent int) bool {
+	if total <= 0 {
+		return true
+	}
+	n := new(big.Int).Mul(big.NewInt(need), big.NewInt(100))
+	l := new(big.Int).Mul(big.NewInt(int64(limitPercent)), big.NewInt(total))
+	return n.Cmp(l) > 0
 }
