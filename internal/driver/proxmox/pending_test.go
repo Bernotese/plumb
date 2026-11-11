@@ -179,3 +179,15 @@ func TestRestartTimeoutPinned(t *testing.T) {
 		t.Errorf("shutdown params: %v", p)
 	}
 }
+
+// TestObserveNoDigest: two answers without a digest are not one state of
+// the config (review of #100): Observe fails instead of comparing "" with "".
+func TestObserveNoDigest(t *testing.T) {
+	f, d, id, _ := newRunningGuest(t)
+	f.mu.Lock()
+	f.noDigest = true
+	f.mu.Unlock()
+	if _, err := d.Observe(context.Background(), id); err == nil || !strings.Contains(err.Error(), "has no digest") {
+		t.Errorf("observe without digests: %v", err)
+	}
+}

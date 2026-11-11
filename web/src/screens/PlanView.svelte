@@ -196,6 +196,7 @@
           <ChangeTable
             changes={r.changes}
             caption="Changes of {r.resource}"
+            resource={r.resource}
             fromLabel="Now on the guest"
             toLabel="After the apply"
           />

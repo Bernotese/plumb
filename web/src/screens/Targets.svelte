@@ -3,7 +3,7 @@
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { TargetView } from "../lib/types";
-  import { formatTime, targetState } from "../lib/view";
+  import { ageText, formatTime, targetState, waitingSince } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
@@ -56,6 +56,7 @@
         {#each targets as t (t.document.name)}
           {@const st = targetState(t)}
           {@const g = t.document.spec.guest}
+          {@const since = waitingSince(t.status.waiting ?? [])}
           <tr>
             <th scope="row">
               <a class="mono" href={href({ name: "target-edit", target: t.document.name })}
@@ -65,7 +66,16 @@
             <td
               ><Badge tone={st.tone} label={st.label} title={st.detail} /><span class="sr-only"
                 >: {st.detail}</span
-              >{#if t.status.ignored_drift?.length}<span class="ignored"
+              >{#if since}{#if t.status.phase !== "restart_needed"}
+                  <span class="extra"
+                    ><Badge
+                      tone="warn"
+                      label="Restart needed"
+                      title="Values set in Proxmox wait for a stop and start of the VM."
+                    /></span
+                  >{/if}<span class="ignored" title={formatTime(since)}
+                  >waiting for {ageText(since)}</span
+                >{/if}{#if t.status.ignored_drift?.length}<span class="ignored"
                   >{t.status.ignored_drift.length} ignored by rule</span
                 >{/if}</td
             >
@@ -85,6 +95,9 @@
     display: block;
     font-size: var(--text-xs);
     color: var(--color-text-muted);
+  }
+  .extra {
+    margin-left: var(--space-1);
   }
   .flush {
     padding: 0;
