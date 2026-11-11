@@ -24,3 +24,9 @@ Image builds work on the real Proxmox host for Debian 13 and Ubuntu 26.04, and t
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+
+## Must-checks added by reviews (pl-lead, 2026-11-11)
+- T-060 review S2: the dracut step of seal is not proven in CI (the test container has no dracut). On the real host, for an Ubuntu 26.04 version: `lsinitrd` of the new initrd shows no network module, and a clone with a static address takes it at the first boot, 5 of 5 boots (D-192, D-220).
+- T-061 host finding B (D-222): scan the cloud-init volume of each version template: no user, hostname or vendor part of the build guest.
+- T-061 host finding A (D-221): the linked-clone limit on lvmthin is documented; show the documented behaviour once.
+- Thin-pool metadata: the Plan shows "unknown" (no Sys.Audit); record the text.
