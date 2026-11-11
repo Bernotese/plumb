@@ -74,7 +74,7 @@ func createOnlyValue(s GuestSpec, attr string) any {
 	case AttrKind:
 		return s.Kind
 	case AttrImage:
-		return s.Image
+		return s.ImageName
 	case AttrDisk:
 		return s.DiskGB
 	case AttrIP:

@@ -134,7 +134,7 @@ func TestFetchImage(t *testing.T) {
 }
 
 func guest(ref driver.ImageRef) driver.GuestSpec {
-	return driver.GuestSpec{Name: "web1", Kind: wire.KindVM, Image: ref, Cores: 2, MemoryMB: 2048, DiskGB: 20, Bridge: "vmbr0",
+	return driver.GuestSpec{Name: "web1", Kind: wire.KindVM, ImageName: "debian", Image: ref, Cores: 2, MemoryMB: 2048, DiskGB: 20, Bridge: "vmbr0",
 		IP: "10.0.0.5/24", Gateway: "10.0.0.1", User: "plumb",
 		SSHKeys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOm me@laptop", "ssh-rsa AAAAB3Nza+/= other key"}}
 }
@@ -274,8 +274,14 @@ func TestUpdate(t *testing.T) {
 	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrBridge, To: "vmbr0,firewall=0"}}, nil); err == nil {
 		t.Error("bridge injection")
 	}
-	if _, err := d.Diff(guest("1"), st); !errors.As(err, &co) {
+	other := guest("1")
+	other.ImageName = "ubuntu"
+	if _, err := d.Diff(other, st); !errors.As(err, &co) || co.Attr != driver.AttrImage {
 		t.Errorf("image change: %v", err)
+	}
+	// A new template ref is no change (D-189).
+	if c, err := d.Diff(guest("9999"), st); err != nil || len(c) != 0 {
+		t.Errorf("new image ref: %v %v", c, err)
 	}
 }
 
