@@ -102,9 +102,9 @@ type targetState struct {
 	// new token exists and no agent has enrolled with it yet.
 	agentID     string
 	queue       []wire.Command
-	wake        chan struct{} // closed and replaced when a command is queued
+	wake        chan struct{}               // closed and replaced when a command is queued
 	outstanding map[string]wire.CommandType // command id → type, until its result
-	sensitive   map[string][]string // resource id → sensitive attributes; a key means "known"
+	sensitive   map[string][]string         // resource id → sensitive attributes; a key means "known"
 	// secrets holds the sensitive desired values that link sent, per
 	// resource. They are masked in Output and Error (defence in depth).
 	secrets  map[string][]string

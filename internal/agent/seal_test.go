@@ -75,7 +75,7 @@ func buildGuest(t *testing.T, root string) (shadow string) {
 		"var/log/syslog": "build-host 10.0.0.9 plumb-build", "var/log/syslog.1": "old", "var/log/dpkg.log.2.gz": "old",
 		"var/log/apt/history.log": "x", "var/log/journal/0123/system.journal": "j",
 		"var/log/cloud-init-output.log": "upgrade log", "tmp/a/b": "x", "var/tmp/c": "x", "root/.bash_history": "ls",
-		"etc/shadow": "root:secret",
+		"etc/shadow":                 "root:secret",
 		"etc/plumb-agent/agent.json": "{}", "etc/plumb-agent/ca.pem": "pem", "usr/local/bin/plumb-agent": "bin",
 		"usr/local/sbin/plumb-agent-install": "sh", "etc/systemd/system/plumb-agent.service": "[Unit]",
 	}
