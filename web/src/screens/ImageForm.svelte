@@ -1,5 +1,6 @@
 <script lang="ts">
-  import imageSchema from "../../../internal/state/schema/image.json";
+  // Only "properties": the "examples" of the schema hold demo data that must not ship (check-dist).
+  import { properties as imageProps } from "../../../internal/state/schema/image.json";
   import type { PlumbApi } from "../lib/client";
   import { pointerErrors } from "../lib/formErrors";
   import { WEEKDAYS, nextSlot, weekdayName, type Schedule, type Weekday } from "../lib/images";
@@ -19,9 +20,9 @@
   let { api, name }: { api: PlumbApi; name?: string } = $props();
 
   // One schema source (D-043): the build guest form comes from the Image schema.
-  const specProps = imageSchema.properties.spec.properties;
+  const specProps = imageProps.spec.properties;
   const guestFields: Field[] = fieldsOf(specProps.build.properties.guest as never);
-  const namePattern = new RegExp(imageSchema.properties.name.pattern, "u");
+  const namePattern = new RegExp(imageProps.name.pattern, "u");
   const urlPattern = new RegExp(specProps.url.pattern, "u");
   const shaPattern = new RegExp(specProps.sha256.pattern, "u");
   const atPattern = new RegExp(specProps.schedule.properties.at.pattern, "u");
