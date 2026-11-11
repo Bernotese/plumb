@@ -206,7 +206,7 @@ func (d *Driver) MakeImage(ctx context.Context, gid driver.GuestID, img driver.B
 		case cfg["name"] == versionName(img.Image, img.Version) && isVersionOf(cfg["description"], img.Image, img.Version, img.Digest):
 			return driver.ImageRef(strconv.Itoa(id)), nil
 		case cfg["name"] == bname && hasLine(cfg["description"], buildLine(img.Image, img.Version)) && cfg["lock"] == "":
-			if err := d.nameVersion(ctx, id, cfg["digest"], img); err != nil {
+			if err := d.nameVersion(ctx, id, cfg, img); err != nil {
 				return "", err
 			}
 			return driver.ImageRef(strconv.Itoa(id)), nil
@@ -228,23 +228,7 @@ func (d *Driver) MakeImage(ctx context.Context, gid driver.GuestID, img driver.B
 	if st != "stopped" {
 		return "", fmt.Errorf("proxmox: build guest %d is %s, not stopped", id, st)
 	}
-	var del []string
-	for _, k := range makeImageDelete {
-		if _, ok := cfg[k]; ok {
-			del = append(del, k)
-		}
-	}
-	params := url.Values{
-		"digest":      {cfg["digest"]},
-		"name":        {versionName(img.Image, img.Version)},
-		"description": {versionDescription(img)},
-		"ciupgrade":   {"0"},
-		"smbios1":     {withoutSerial(cfg["smbios1"])},
-	}
-	if len(del) > 0 {
-		params.Set("delete", strings.Join(del, ","))
-	}
-	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params); err != nil {
+	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", versionParams(cfg, img)); err != nil {
 		return "", fmt.Errorf("proxmox: clear the build guest %d (its config may have changed after the check): %w", id, err)
 	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/template", nil); err != nil {
@@ -289,7 +273,7 @@ func (d *Driver) afterFailedConversion(ctx context.Context, id int, img driver.B
 		return left(err)
 	}
 	if cfg["template"] == "1" { // it ended between the two reads
-		if err := d.nameVersion(cleanup, id, cfg["digest"], img); err != nil {
+		if err := d.nameVersion(cleanup, id, cfg, img); err != nil {
 			return left(err)
 		}
 		return ref, nil
@@ -297,14 +281,36 @@ func (d *Driver) afterFailedConversion(ctx context.Context, id int, img driver.B
 	return "", convErr
 }
 
-// nameVersion gives a template the version name and description (a write
-// on a template works with the token, host A2).
-func (d *Driver) nameVersion(ctx context.Context, id int, digest string, img driver.BuiltImage) error {
-	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", url.Values{
-		"digest":      {digest},
+// versionParams is the one config write that turns a build guest into a
+// version (D-208, host A2): the digest of cfg, the version name and
+// description, ciupgrade=0, smbios1 without the serial, and the delete of
+// the bootstrap values and DNS that cfg still has.
+func versionParams(cfg map[string]string, img driver.BuiltImage) url.Values {
+	params := url.Values{
+		"digest":      {cfg["digest"]},
 		"name":        {versionName(img.Image, img.Version)},
 		"description": {versionDescription(img)},
-	}); err != nil {
+		"ciupgrade":   {"0"},
+		"smbios1":     {withoutSerial(cfg["smbios1"])},
+	}
+	var del []string
+	for _, k := range makeImageDelete {
+		if _, ok := cfg[k]; ok {
+			del = append(del, k)
+		}
+	}
+	if len(del) > 0 {
+		params.Set("delete", strings.Join(del, ","))
+	}
+	return params
+}
+
+// nameVersion finishes a template that still has the build name: the same
+// clear set as the first write (review of PR #125: a guest converted by
+// hand before MakeImage still has the token serial, ciuser and ciupgrade=1).
+// A write on a template works with the token (host A2).
+func (d *Driver) nameVersion(ctx context.Context, id int, cfg map[string]string, img driver.BuiltImage) error {
+	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", versionParams(cfg, img)); err != nil {
 		return fmt.Errorf("proxmox: name template %d %s: %w", id, versionName(img.Image, img.Version), err)
 	}
 	return nil

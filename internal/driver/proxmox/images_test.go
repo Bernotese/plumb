@@ -728,3 +728,38 @@ func TestMakeImageAgain(t *testing.T) {
 		t.Error("a template without the build marker was renamed")
 	}
 }
+
+// Review of PR #125: a build guest that a person converted by hand before
+// MakeImage still has the bootstrap values. Finishing it clears them in the
+// same write as the first MakeImage write.
+func TestMakeImageFinishClearsBootstrap(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	_, gid := built(t, f, d, "web", 1)
+	id, _ := strconv.Atoi(string(gid))
+	f.mu.Lock()
+	f.convert(id, f.vms[id])
+	f.mu.Unlock()
+	before := f.cfgOf(gid)
+	if !strings.Contains(before["smbios1"], "serial=") || before["ciuser"] != "plumb-build" {
+		t.Fatalf("setup: %v", before)
+	}
+	img := driver.BuiltImage{Image: "web", Version: 1, Digest: tDigest}
+	ref, err := d.MakeImage(context.Background(), gid, img)
+	if err != nil || string(ref) != string(gid) {
+		t.Fatalf("%s %v", ref, err)
+	}
+	cfg := f.cfgOf(gid)
+	for _, k := range []string{"sshkeys", "ciuser", "ipconfig0", "cicustom", "nameserver", "searchdomain", "onboot"} {
+		if _, ok := cfg[k]; ok {
+			t.Errorf("%s is still set: %q", k, cfg[k])
+		}
+	}
+	if cfg["ciupgrade"] != "0" || cfg["smbios1"] != "uuid="+parseProps(before["smbios1"])["uuid"] ||
+		cfg["name"] != "plumb-img-web-v1" || !isVersionOf(cfg["description"], "web", 1, tDigest) {
+		t.Errorf("config %v", cfg)
+	}
+	if p := f.lastParams("POST /nodes/pve/qemu/" + string(gid) + "/config"); p.Get("digest") == "" {
+		t.Error("the finish write has no digest")
+	}
+}
