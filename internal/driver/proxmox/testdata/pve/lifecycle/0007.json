@@ -1,0 +1,9 @@
+{
+  "body": {
+    "data": "UPID:pve:00006D0D:00080974:6AF3B772:qmtemplate:9000:plumb@pve!plumb:"
+  },
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9000/template",
+  "seq": 7,
+  "status": 200
+}

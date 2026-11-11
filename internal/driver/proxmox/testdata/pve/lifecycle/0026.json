@@ -1,0 +1,21 @@
+{
+  "body": {
+    "data": {
+      "exitstatus": "OK",
+      "id": "9001",
+      "node": "pve",
+      "pid": 28063,
+      "pstart": 527267,
+      "starttime": 1794357111,
+      "status": "stopped",
+      "tokenid": "plumb",
+      "type": "qmstart",
+      "upid": "UPID:pve:00006D9F:00080BA3:6AF3B777:qmstart:9001:plumb@pve!plumb:",
+      "user": "plumb@pve"
+    }
+  },
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:00006D9F:00080BA3:6AF3B777:qmstart:9001:plumb@pve!plumb:/status",
+  "seq": 26,
+  "status": 200
+}

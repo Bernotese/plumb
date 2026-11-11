@@ -67,11 +67,11 @@ lint-web: $(WEB_DEPS)
 test-guest:
 	bash test/guest/run.sh
 
-## test-pve: tests against a real Proxmox host; needs the PLUMB_PVE_* variables
-## (internal/driver/proxmox/host_test.go). T-013 adds the installer checks.
+## test-pve: driver tests on the real test host (scripts/test-pve.sh). The test
+## binary runs inside the Plumb LXC with its plumb.env, so the token never
+## leaves it; fails when a guest of the Plumb range is left.
 test-pve:
-	@test -n "$$PLUMB_PVE_URL" || { echo "test-pve: set PLUMB_PVE_URL and the other PLUMB_PVE_* variables (see internal/driver/proxmox/host_test.go)"; exit 1; }
-	go test -tags pve -count=1 -timeout 45m ./internal/driver/proxmox/...
+	scripts/test-pve.sh
 
 clean:
 	rm -f bin/plumb bin/plumb-agent

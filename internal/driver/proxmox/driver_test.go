@@ -489,3 +489,18 @@ func TestCheckUpdateParams(t *testing.T) {
 		t.Error("a net0 without a MAC was changed")
 	}
 }
+
+// D-186: Create sets ciupgrade=0, so a new VM upgrades no package at its
+// first boot.
+func TestCreateSetsNoUpgrade(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	ctx := context.Background()
+	ref, _ := d.FetchImage(ctx, image)
+	if _, err := d.Create(ctx, guest(ref), driver.Bootstrap{Token: "tok-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.lastParams("POST /nodes/pve/qemu/9001/config").Get("ciupgrade"); got != "0" {
+		t.Errorf("ciupgrade = %q, want 0", got)
+	}
+}

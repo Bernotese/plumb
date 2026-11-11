@@ -1,26 +1,18 @@
 //go:build pve
 
-// Real-host tests (make test-pve). They need a Proxmox VE host prepared
-// by the installer (T-013) and these variables:
+// Real-host tests (make test-pve → scripts/test-pve.sh). The script runs
+// the test binary inside the Plumb LXC with /etc/plumb/plumb.env, which the
+// installer (T-013) wrote: PLUMB_PVE_URL, _TOKEN_ID, _SECRET, _CA, _NODE,
+// _POOL (plumb), _DISK, _IMAGES, _SNIPPETS, _SNIPPET, _BRIDGE. The script
+// adds PLUMB_PVE_IMAGE_URL and PLUMB_PVE_IMAGE_SHA256.
 //
-//	PLUMB_PVE_URL, PLUMB_PVE_TOKEN_ID, PLUMB_PVE_SECRET, PLUMB_PVE_CA,
-//	PLUMB_PVE_NODE, PLUMB_PVE_POOL (plumb-test), PLUMB_PVE_DISK,
-//	PLUMB_PVE_IMAGES, PLUMB_PVE_SNIPPETS, PLUMB_PVE_SNIPPET,
-//	PLUMB_PVE_BRIDGE, PLUMB_PVE_IMAGE_URL, PLUMB_PVE_IMAGE_SHA256
-//
-// The VMID range is 9000–9099 (ARCHITECTURE §8). Every test removes
-// what it made.
+// The VMID range is 9000–9099 (ARCHITECTURE §8). Every test removes what
+// it made. PLUMB_PVE_RECORD=DIR records the answers (record_test.go).
 package proxmox
 
 import (
-	"context"
-	"net/url"
 	"os"
 	"testing"
-	"time"
-
-	"github.com/Bernotese/plumb/internal/driver"
-	"github.com/Bernotese/plumb/internal/wire"
 )
 
 func hostDriver(t *testing.T) *Driver {
@@ -37,6 +29,14 @@ func hostDriver(t *testing.T) *Driver {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// PLUMB_PVE_RECORD=DIR writes every exchange to DIR (testdata/pve form,
+	// scrubbed, no header). Copy it into testdata/pve after a leak check.
+	if dir := os.Getenv("PLUMB_PVE_RECORD"); dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		c.http.Transport = newRecorder(c.http.Transport, dir, env("PLUMB_PVE_URL"), env("PLUMB_PVE_NODE"))
+	}
 	d, err := New(Config{Client: c, Node: env("PLUMB_PVE_NODE"), Pool: env("PLUMB_PVE_POOL"),
 		DiskStorage: env("PLUMB_PVE_DISK"), ImageStorage: env("PLUMB_PVE_IMAGES"),
 		SnippetStorage: env("PLUMB_PVE_SNIPPETS"), Snippet: env("PLUMB_PVE_SNIPPET"), VMIDMin: 9000, VMIDMax: 9099})
@@ -48,58 +48,5 @@ func hostDriver(t *testing.T) *Driver {
 
 // TestHostLifecycle: import, create, observe, update, re-enroll, delete.
 func TestHostLifecycle(t *testing.T) {
-	d := hostDriver(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	ref, err := d.FetchImage(ctx, driver.ImageSpec{Name: "test-image", Kind: wire.KindVM,
-		URL: os.Getenv("PLUMB_PVE_IMAGE_URL"), SHA256: os.Getenv("PLUMB_PVE_IMAGE_SHA256")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Delete refuses templates, so the test removes its own template
-	// through the client (review T-012 #10): no guest stays behind.
-	t.Cleanup(func() {
-		id, m, err := d.own(context.Background(), string(ref))
-		if err != nil || m.Template != 1 {
-			t.Errorf("cleanup of template %s: %v", ref, err)
-			return
-		}
-		if err := d.c.Task(context.Background(), d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}}); err != nil {
-			t.Errorf("cleanup of template %s: %v (remove it by hand)", ref, err)
-		}
-	})
-	spec := driver.GuestSpec{Name: "plumb-host-test", Kind: wire.KindVM, Image: ref, Cores: 1, MemoryMB: 1024, DiskGB: 8,
-		Bridge: os.Getenv("PLUMB_PVE_BRIDGE"), IP: "dhcp", User: "plumb"}
-	id, err := d.Create(ctx, spec, driver.Bootstrap{Token: "host-test-token-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := d.Delete(context.Background(), id); err != nil {
-			t.Errorf("cleanup: %v (remove VMID %s by hand)", err, id)
-		}
-	})
-	st, err := d.Observe(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c, err := d.Diff(spec, st); err != nil || len(c) != 0 {
-		t.Errorf("round trip on the host: %+v %v (observed %+v)", c, err, st.Spec)
-	}
-	spec.Cores, spec.MemoryMB = 2, 1536
-	changes, _ := d.Diff(spec, st)
-	if err := d.Update(ctx, id, changes, nil); err != nil {
-		t.Fatal(err)
-	}
-	token := []wire.Change{{Attr: driver.AttrEnrollToken, Sensitive: true, Risk: wire.RiskDisruptive}}
-	if err := d.Update(ctx, id, token, &driver.Bootstrap{Token: "host-test-token-2"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.Power(ctx, id, driver.PowerRestart); err != nil {
-		t.Fatal(err)
-	}
-	after, err := d.Observe(ctx, id)
-	if err != nil || after.Power != driver.PowerRunning || after.Digest == st.Digest || after.Spec.Cores != 2 {
-		t.Errorf("after update: %+v %v", after, err)
-	}
+	runLifecycle(t, hostDriver(t), hostImage(), os.Getenv("PLUMB_PVE_BRIDGE"))
 }

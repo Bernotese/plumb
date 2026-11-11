@@ -432,6 +432,9 @@ func (d *Driver) configure(ctx context.Context, id, tpl int, spec driver.GuestSp
 		"smbios1":     {smbios(cfg["smbios1"], token)},
 		"description": {imageMarker + strconv.Itoa(tpl) + "\nManaged by Plumb. Do not change it here."},
 		"onboot":      {"1"},
+		// No package upgrade at first boot outside a Plan (D-186); Proxmox
+		// sets package_upgrade: true without it. Create-only (D-185).
+		"ciupgrade": {"0"},
 	}
 	if len(spec.SSHKeys) > 0 {
 		params.Set("sshkeys", sshKeysParam(spec.SSHKeys))
