@@ -1,0 +1,10 @@
+{
+  "seq": 6,
+  "method": "POST",
+  "path": "/nodes/pve/qemu",
+  "form": "boot=order%3Dscsi0\u0026cores=1\u0026cpu=x86-64-v2-AES\u0026description=Plumb+image+test-image%0Asha256%3Dde9d63f5e5ec5927d7548bc05b6043b87457b8c1cb9bcb95365168e8d0293b4f\u0026ide2=local-lvm%3Acloudinit\u0026memory=1024\u0026name=plumb-img-test-image-de9d63f5e5ec\u0026ostype=l26\u0026pool=plumb\u0026scsi0=local-lvm%3A0%2Cimport-from%3Dplumb-images%3Aimport%2Fplumb-test-image-de9d63f5e5ec.qcow2\u0026scsihw=virtio-scsi-single\u0026serial0=socket\u0026vga=serial0\u0026vmid=9000",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:000094C5:000C8ABC:6AF4D19C:qmcreate:9000:plumb@pve!plumb:"
+  }
+}

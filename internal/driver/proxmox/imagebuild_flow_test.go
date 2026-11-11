@@ -117,15 +117,28 @@ func runImageBuild(t *testing.T, d *Driver, img driver.ImageSpec, bridge string)
 	t.Logf("host fact: linked clone %d: disk lines %v (base in line: %v), volume parent seen: %v",
 		lid, diskVolumes(scan.configs[lid]), inConfig, inParent)
 	err = d.RemoveImage(ctx, version)
-	if err == nil || !strings.Contains(err.Error(), "linked clones") {
-		t.Errorf("RemoveImage under a linked clone: %v (if neither sign is seen, the limit goes into the docs)", err)
+	removed := false
+	if inConfig || inParent {
+		if err == nil || !strings.Contains(err.Error(), "linked clones") {
+			t.Errorf("RemoveImage under a linked clone: %v", err)
+		}
+	} else {
+		// D-221: lvmthin shows the token neither sign, so RemoveImage
+		// removes the template; the thin clone keeps its data (T-061 log).
+		t.Logf("host fact: no linked-clone sign (D-221); RemoveImage under the clone: %v", err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		removed = true
 	}
 	if err := d.Delete(ctx, driver.GuestID(strconv.Itoa(lid))); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.RemoveImage(ctx, version); err != nil {
-		t.Fatal(err)
+	if !removed {
+		if err := d.RemoveImage(ctx, version); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := d.RemoveImage(ctx, baseObj); err != nil {
 		t.Fatal(err)

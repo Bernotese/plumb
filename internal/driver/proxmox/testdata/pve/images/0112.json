@@ -1,0 +1,9 @@
+{
+  "seq": 112,
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9002/status/stop",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:000097D9:000C9413:6AF4D1B4:qmstop:9002:plumb@pve!plumb:"
+  }
+}

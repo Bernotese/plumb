@@ -1,0 +1,21 @@
+{
+  "seq": 150,
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:000098A6:000C95AC:6AF4D1B8:qmdestroy:9000:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "user": "plumb@pve",
+      "node": "pve",
+      "upid": "UPID:pve:000098A6:000C95AC:6AF4D1B8:qmdestroy:9000:plumb@pve!plumb:",
+      "pid": 39078,
+      "starttime": 1794429368,
+      "exitstatus": "OK",
+      "tokenid": "plumb",
+      "id": "9000",
+      "status": "stopped",
+      "type": "qmdestroy",
+      "pstart": 824748
+    }
+  }
+}

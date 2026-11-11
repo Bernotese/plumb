@@ -1,0 +1,10 @@
+{
+  "seq": 93,
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9002/config",
+  "form": "cicustom=vendor%3Dplumb-snippets%3Asnippets%2Fplumb-vendor.yaml\u0026ciupgrade=0\u0026ciuser=plumb\u0026cores=1\u0026description=plumb-image%3A+test-image%0Aplumb-image-version%3A+1%0AManaged+by+Plumb.+Do+not+change+it+here.\u0026ipconfig0=ip%3Ddhcp\u0026memory=1024\u0026nameserver=192.0.2.10\u0026net0=virtio%2Cbridge%3Dvmbr0\u0026onboot=1\u0026searchdomain=plumb.test\u0026smbios1=base64%3D1%2Cserial%3DaG9zdC10ZXN0LXRva2VuLWltZw%3D%3D%2Cuuid%3Db123bad6-42f8-4bc9-bc81-e61900e01ded",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:00009787:000C930B:6AF4D1B1:qmconfig:9002:plumb@pve!plumb:"
+  }
+}

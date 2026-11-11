@@ -1,0 +1,18 @@
+{
+  "seq": 4,
+  "method": "GET",
+  "path": "/nodes/pve/storage/plumb-images/content",
+  "query": "content=import",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "size": 341180416,
+        "volid": "plumb-images:import/plumb-test-image-de9d63f5e5ec.qcow2",
+        "ctime": 1794429242,
+        "format": "qcow2",
+        "content": "import"
+      }
+    ]
+  }
+}

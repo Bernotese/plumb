@@ -1,0 +1,10 @@
+{
+  "seq": 26,
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9000/clone",
+  "form": "full=1\u0026name=plumb-build-test-image-v1\u0026newid=9001\u0026pool=plumb\u0026storage=local-lvm",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:0000954F:000C8CB7:6AF4D1A1:qmclone:9000:plumb@pve!plumb:"
+  }
+}

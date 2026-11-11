@@ -1,0 +1,29 @@
+{
+  "seq": 141,
+  "method": "GET",
+  "path": "/nodes/pve/qemu/9002/status/current",
+  "status": 200,
+  "body": {
+    "data": {
+      "uptime": 0,
+      "netout": 0,
+      "clipboard": null,
+      "disk": 0,
+      "qmpstatus": "stopped",
+      "status": "stopped",
+      "maxdisk": 10737418240,
+      "name": "plumb-host-test-linked",
+      "vmid": 9002,
+      "memhost": 0,
+      "cpus": 1,
+      "cpu": 0,
+      "netin": 0,
+      "maxmem": 1073741824,
+      "serial": 1,
+      "mem": 0,
+      "ha": {
+        "managed": 0
+      }
+    }
+  }
+}

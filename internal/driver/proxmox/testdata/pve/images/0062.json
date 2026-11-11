@@ -1,0 +1,9 @@
+{
+  "seq": 62,
+  "method": "POST",
+  "path": "/nodes/pve/qemu/9001/template",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:0000969E:000C9069:6AF4D1AB:qmtemplate:9001:plumb@pve!plumb:"
+  }
+}

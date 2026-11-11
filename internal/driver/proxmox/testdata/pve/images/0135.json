@@ -1,0 +1,10 @@
+{
+  "seq": 135,
+  "method": "DELETE",
+  "path": "/nodes/pve/qemu/9001",
+  "query": "destroy-unreferenced-disks=1\u0026purge=1",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:00009846:000C9500:6AF4D1B6:qmdestroy:9001:plumb@pve!plumb:"
+  }
+}
