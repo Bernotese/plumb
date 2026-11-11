@@ -11,7 +11,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-056 pending guest config, restart setting per Target (found by T-015) | pl-frontend (web), pl-backend (host checks) | **backend part on main** (PR #96, 2026-11-11; D-190, D-191, D-193 … D-196; migration 0007; real host recordings). Web part: PR #100 in QA and review (labels, "Restart needed" badge, `allow_restart` checkbox, re-enroll section, Ubuntu hint). Host checks H2 … H5: pl-backend, after the controller on the host has the new build |
+| T-056 pending guest config, restart setting per Target (found by T-015) | pl-backend (host checks) | **code on main**: backend (PR #96) and web (PR #100, 2026-11-11). Open: host checks H2 … H5 and the sharper T-015 assertion. They wait for an installer fix: a repair run did not replace the running binary and still reported success (PR #102, in review) |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).

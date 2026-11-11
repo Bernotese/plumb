@@ -64,6 +64,15 @@
     </div>
     <a href={href({ name: "plan", id: run.plan_id })}>Plan {run.plan_id}</a>
   </div>
+  {#if run.waits_for_restart > 0}
+    <p class="card waits" id="run-waits">
+      {run.waits_for_restart}
+      {run.waits_for_restart === 1 ? "change waits" : "changes wait"} for a restart of the VM: set in
+      Proxmox, not active until the next stop and start. See {#each run.targets as t, i (t.target)}{i
+          ? ", "
+          : ""}<a href={href({ name: "target-edit", target: t.target })}>{t.target}</a>{/each}.
+    </p>
+  {/if}
   {#each run.targets as t (t.target)}
     <h2>
       Target <span class="mono">{t.target}</span>
@@ -98,6 +107,9 @@
 {/if}
 
 <style>
+  .waits {
+    border-left: 4px solid var(--color-warn);
+  }
   .flush {
     padding: 0;
     overflow: hidden;

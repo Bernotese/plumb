@@ -12,6 +12,7 @@
     readonly = [],
     readonlyHint = "Cannot change after create.",
     api,
+    notes = {},
   }: {
     fields: Field[];
     values: Values;
@@ -21,6 +22,8 @@
     readonlyHint?: string;
     /** Needed for secret parameters (secret picker). */
     api?: PlumbApi;
+    /** Extra warnings per field name, shown under the field (for example D-192). */
+    notes?: Record<string, string>;
   } = $props();
 
   const fid = (f: Field) => `${prefix}-${f.name}`;
@@ -37,6 +40,7 @@
   function describe(f: Field): string | undefined {
     const ids = [];
     if (f.description || ro(f) || f.kind === "secret") ids.push(`${fid(f)}-hint`);
+    if (notes[f.name]) ids.push(`${fid(f)}-note`);
     if (errors[f.name]) ids.push(`${fid(f)}-error`);
     return ids.length ? ids.join(" ") : undefined;
   }
@@ -132,6 +136,9 @@
       {#if f.description || ro(f) || f.kind === "secret"}
         <span class="hint" id="{fid(f)}-hint">{hintText(f)}</span>
       {/if}
+      {#if notes[f.name]}
+        <span class="hint note" id="{fid(f)}-note">{notes[f.name]}</span>
+      {/if}
       {#if errors[f.name]}
         <span class="error" id="{fid(f)}-error">{errors[f.name]}</span>
       {/if}
@@ -140,6 +147,9 @@
 </div>
 
 <style>
+  .note {
+    color: var(--color-warn);
+  }
   .wide {
     grid-column: 1 / -1;
   }

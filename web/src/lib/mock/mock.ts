@@ -29,7 +29,7 @@ import type {
   TargetDoc,
   TargetView,
 } from "../types";
-import { CREATE_ONLY, maxRisk } from "../view";
+import { CREATE_ONLY, maxRisk, REENROLL_REFUSED } from "../view";
 import { toYaml } from "../yaml";
 import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
@@ -214,6 +214,8 @@ export function planTarget(
   old: TargetDoc["spec"] | undefined,
   next: TargetDoc["spec"],
   blocks: Map<string, BlockDoc>,
+  /** The power state of the guest: only a running VM waits or restarts (D-194). */
+  power: string = "running",
 ): ResourcePlan[] {
   const out: ResourcePlan[] = [];
   const g = next.guest as Record<string, unknown>;
@@ -241,6 +243,17 @@ export function planTarget(
         });
       }
       changes.push({ attr, from: og[attr], to: g[attr], risk: "disruptive" });
+    }
+    // T-056 (D-194), for a running VM: off, cores and memory wait; on, the
+    // Plan has the restart. A stopped VM takes them at its next start. The
+    // setting itself is a Plan-only line.
+    const allow = next.allow_restart === true;
+    const cold =
+      power === "running" ? changes.filter((c) => c.attr === "cores" || c.attr === "memory") : [];
+    if (!allow) for (const c of cold) Object.assign(c, { waits_for_restart: true });
+    else if (cold.length) changes.push({ attr: "restart", risk: "disruptive" });
+    if ((old.allow_restart === true) !== allow) {
+      changes.unshift({ attr: "allow_restart", from: !allow, to: allow, risk: "read" });
     }
     if (changes.length) out.push(resourcePlan("guest:config", "update", changes));
   }
@@ -938,7 +951,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           );
         }
         const old = targets.get(t.name)?.document.spec;
-        let resources = planTarget(old, t.spec, blocks);
+        let resources = planTarget(old, t.spec, blocks, targets.get(t.name)?.status.power);
         const used = plannedSecrets(t.spec);
         const before = bindings(old);
         const fresh = [...bindings(t.spec)].filter((b) => !before.has(b));
@@ -1306,6 +1319,36 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         changes: diffDocs(before?.docs ?? new Map(), to.docs),
       };
     },
+    async reenrollTarget(name, reason) {
+      auth();
+      const t = targets.get(name);
+      if (!t) throw problem("not-found", "Not found", 404, `Target ${name} does not exist.`);
+      // D-194: a running VM with allow_restart off is not restarted.
+      if (t.document.spec.allow_restart !== true && t.status.power === "running") {
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `plan: target ${name}: ${REENROLL_REFUSED}`,
+        );
+      }
+      return newPlan({
+        origin: "reenroll",
+        issue_id: null,
+        reason: reason || `re-enroll ${name}`,
+        targets: [
+          {
+            target: name,
+            resources: [
+              resourcePlan("guest:config", "update", [
+                { attr: "enroll_token", sensitive: true, risk: "disruptive" },
+              ]),
+            ],
+          },
+        ],
+        warnings: [],
+      });
+    },
     async rollbackRevision(n, reason) {
       auth();
       if (!reason.trim()) {
@@ -1335,6 +1378,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
             targets.get(c.name)?.document.spec,
             (c.after as TargetDoc).spec,
             blocks,
+            targets.get(c.name)?.status.power,
           ),
         }));
       const warnings = changes
