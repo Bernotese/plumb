@@ -27,6 +27,15 @@
 - D-187: without the two DNS settings `serve` must stop at the start and name them (same rule as every required setting). The real-host steps need an `install.sh` that writes them (PR #26).
 - The start-up check must see the raw transport error (`*url.Error`, x509) for its error table: do not pass it through the driver's `scrub()` first, because a scrubbed error loses the type for `errors.As`.
 
+## Real-host items moved here from T-013 (pl-lead, 2026-11-11)
+PR #26 merges before these run; they need a `plumb serve` that starts. Do them with the real-host steps of this card:
+- [ ] Repair run of `install.sh` on the test host (key exists: no key init); it appends the D-187 lines to `plumb.env`.
+- [ ] UI reachable, first login with the printed admin password, password change.
+- [ ] Vendor snippet written after the first start; agent unit starts in a fresh VM (D-161 note in the T-013 card).
+- [ ] `hookscript` negative check with the token (a snippet exists now).
+- [ ] An outside cloud-init change (root: `qm set --searchdomain` + cold restart) keeps the SSH host key fingerprint (D-185 B).
+- [ ] `--remove` on the host (pl-lead gives the go; D-180), then a fresh install.
+
 ## Out of scope
 - Changes to `install/install.sh` (report a defect to `pl-lead`). Reload of the settings without a restart. A UI page for the host state.
 - A degraded mode (UI up while Proxmox is down). A check of the bridge at propose time.
