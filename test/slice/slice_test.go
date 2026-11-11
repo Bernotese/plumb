@@ -17,26 +17,7 @@ import (
 
 func TestSliceAcceptance(t *testing.T) {
 	srv, bearer, runner, root := fixture(t)
-	call := func(method, path string, body any, status int) map[string]any {
-		t.Helper()
-		raw, err := json.Marshal(body)
-		must(t, err)
-		req, err := http.NewRequest(method, srv.URL+"/api/v1"+path, bytes.NewReader(raw))
-		must(t, err)
-		req.Header.Set("Authorization", "Bearer "+bearer)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := (&http.Client{Timeout: 12 * time.Second}).Do(req)
-		must(t, err)
-		defer resp.Body.Close()
-		b, err := io.ReadAll(resp.Body)
-		must(t, err)
-		if resp.StatusCode != status {
-			t.Fatalf("%s %s: %d %s", method, path, resp.StatusCode, b)
-		}
-		var out map[string]any
-		must(t, json.Unmarshal(b, &out))
-		return out
-	}
+	call := sliceCall(t, srv.URL, bearer)
 	wait := func(label string, ready func() bool) {
 		t.Helper()
 		start := time.Now()
@@ -146,5 +127,28 @@ func TestSliceAcceptance(t *testing.T) {
 	must(t, err)
 	if !bytes.Contains(raw, []byte(`manual accepted drift\n`)) {
 		t.Fatal("accepted content missing from target revision")
+	}
+}
+
+func sliceCall(t *testing.T, url, bearer string) func(string, string, any, int) map[string]any {
+	return func(method, path string, body any, status int) map[string]any {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		must(t, err)
+		req, err := http.NewRequest(method, url+"/api/v1"+path, bytes.NewReader(raw))
+		must(t, err)
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := (&http.Client{Timeout: 12 * time.Second}).Do(req)
+		must(t, err)
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		must(t, err)
+		if resp.StatusCode != status {
+			t.Fatalf("%s %s: %d %s", method, path, resp.StatusCode, b)
+		}
+		var out map[string]any
+		must(t, json.Unmarshal(b, &out))
+		return out
 	}
 }
