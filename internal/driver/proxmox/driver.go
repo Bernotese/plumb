@@ -1128,3 +1128,35 @@ func (d *Driver) Delete(ctx context.Context, gid driver.GuestID) error {
 }
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+// --- Image builds: stubs until T-061 (contract T-058) ---
+
+// CreateBuild is not implemented yet (T-061).
+func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot driver.Bootstrap) (driver.GuestID, error) {
+	return "", driver.ErrNotImplemented
+}
+
+// MakeImage is not implemented yet (T-061).
+func (d *Driver) MakeImage(ctx context.Context, id driver.GuestID, img driver.BuiltImage) (driver.ImageRef, error) {
+	return "", driver.ErrNotImplemented
+}
+
+// FindImage is not implemented yet (T-061).
+func (d *Driver) FindImage(ctx context.Context, image string, version int, digest string) (driver.ImageRef, error) {
+	return "", driver.ErrNotImplemented
+}
+
+// ListImages is not implemented yet (T-061).
+func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageObject, error) {
+	return nil, driver.ErrNotImplemented
+}
+
+// RemoveImage is not implemented yet (T-061).
+func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error {
+	return driver.ErrNotImplemented
+}
+
+// DiskSpace is not implemented yet (T-061).
+func (d *Driver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
+	return driver.DiskSpace{}, driver.ErrNotImplemented
+}

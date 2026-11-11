@@ -56,7 +56,7 @@ type Driver struct {
 	guests   map[driver.GuestID]*guest
 	images   map[string]driver.ImageRef // name+sha → ref
 	nextID   int
-	nextTpl  int // refs are never used twice, also after RemoveImage
+	nextTpl  int // refs are never used twice, also after DestroyTemplate
 	failures map[Op][]error
 	calls    map[Op]int
 	hooks    map[Op][]func()
@@ -360,10 +360,11 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	})
 }
 
-// RemoveImage removes an image as if someone destroyed the template on
+// DestroyTemplate removes an image as if someone destroyed the template on
 // the host (T-055). Guests of the image stay. The next FetchImage of the
-// same spec makes it again with a new ref.
-func (d *Driver) RemoveImage(ref driver.ImageRef) {
+// same spec makes it again with a new ref. It is a test helper, not the
+// guarded driver method RemoveImage.
+func (d *Driver) DestroyTemplate(ref driver.ImageRef) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for k, r := range d.images {
@@ -571,4 +572,36 @@ func (d *Driver) Delete(ctx context.Context, id driver.GuestID) error {
 		delete(d.guests, id)
 		return nil
 	})
+}
+
+// --- Image builds: stubs until T-061 (contract T-058) ---
+
+// CreateBuild is not implemented yet (T-061).
+func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot driver.Bootstrap) (driver.GuestID, error) {
+	return "", driver.ErrNotImplemented
+}
+
+// MakeImage is not implemented yet (T-061).
+func (d *Driver) MakeImage(ctx context.Context, id driver.GuestID, img driver.BuiltImage) (driver.ImageRef, error) {
+	return "", driver.ErrNotImplemented
+}
+
+// FindImage is not implemented yet (T-061).
+func (d *Driver) FindImage(ctx context.Context, image string, version int, digest string) (driver.ImageRef, error) {
+	return "", driver.ErrNotImplemented
+}
+
+// ListImages is not implemented yet (T-061).
+func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageObject, error) {
+	return nil, driver.ErrNotImplemented
+}
+
+// RemoveImage is not implemented yet (T-061).
+func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error {
+	return driver.ErrNotImplemented
+}
+
+// DiskSpace is not implemented yet (T-061).
+func (d *Driver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
+	return driver.DiskSpace{}, driver.ErrNotImplemented
 }

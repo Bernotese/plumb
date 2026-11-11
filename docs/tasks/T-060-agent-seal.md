@@ -13,6 +13,7 @@ The agent in a build guest makes the guest clean for a template, and it can neve
 ## Acceptance criteria
 - [ ] Steps 1 … 11 of Plan §4 in this order, fixed in the agent; `dracut` step only when the command exists; upgrade check ignores phased packages; `userdel -r -f`.
 - [ ] Review S1: build mark and `watch` mark in the credential file, same atomic write; build mark written only at enrollment, cleared by a normal enrollment; `watch` mark never taken back (also after a restart). The agent refuses `file`/`directory`/`symlink` on its own paths (agent side of T-059). Test: a Block that tries to write the mark → `seal` still `refused`.
+- [ ] Review of T-058 (S1): the agent takes `build=true` only at a first enrollment from an empty state (no credential, never a `watch`); a re-enrollment with `build=true` leaves the mark unset; no enrollment clears the `watch` mark. Tests for all three.
 - [ ] Guards: no build mark or a `watch` seen → `refused`, nothing changed. Controller side: `link.Send` takes `seal` only for a link name with prefix `build:` (unit test).
 - [ ] Review B1: order result → controller takes it → remove credential, desired list, unit, config, CA, install script, binary → `sync` → `systemctl poweroff`. The agent sends no second result.
 - [ ] Review S6: the `/var/log` walk uses `lstat`, opens with `O_NOFOLLOW`, stays on one file system, never writes through a symbolic link (test: link to `/etc/shadow`).

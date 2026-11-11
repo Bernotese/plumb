@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://plumb.invalid/schema/doc/image.json",
   "title": "Image",
-  "description": "A base image that Plumb imports into Proxmox as a template.",
+  "description": "A base image that Plumb imports into Proxmox as a template, or builds versioned templates from (D-197).",
   "type": "object",
   "required": [
     "kind",
@@ -49,8 +49,279 @@
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
           "description": "Pinned checksum of the download. Plumb refuses any other file."
+        },
+        "build": {
+          "type": "object",
+          "required": [
+            "guest"
+          ],
+          "additionalProperties": false,
+          "description": "Present: Plumb builds templates from the base image (url, sha256) plus Blocks, then runs seal (D-197, D-205). Only for type vm (LXC: T-038).",
+          "properties": {
+            "blocks": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "object",
+                "required": [
+                  "use"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "use": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+                    "description": "Name of a Block document."
+                  },
+                  "params": {
+                    "type": "object",
+                    "default": {}
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$",
+                    "description": "Id of this use of the Block. Default: the Block name. Two uses of the same Block need different ids. It names the order group of the rendered resources."
+                  }
+                }
+              },
+              "description": "Blocks that the build applies before seal (D-197). Same shape as Target.blocks. A secret reference or a writeOnly parameter is refused (D-202)."
+            },
+            "upgrade": {
+              "type": "boolean",
+              "default": true,
+              "description": "Upgrade all packages in the build (cloud-init, D-204). seal fails when packages are left to upgrade."
+            },
+            "guest": {
+              "type": "object",
+              "required": [
+                "disk",
+                "bridge"
+              ],
+              "additionalProperties": false,
+              "description": "The temporary build guest. disk is the smallest disk of a Target from this Image (D-202).",
+              "properties": {
+                "cores": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256,
+                  "default": 1
+                },
+                "memory": {
+                  "type": "integer",
+                  "minimum": 512,
+                  "default": 1024,
+                  "description": "MiB."
+                },
+                "disk": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1024,
+                  "description": "GiB. The template gets this size."
+                },
+                "bridge": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,14}$",
+                  "description": "Proxmox bridge, for example vmbr0."
+                },
+                "ip": {
+                  "type": "string",
+                  "default": "dhcp",
+                  "pattern": "^(dhcp|(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([0-9]|[12][0-9]|3[0-2]))$",
+                  "description": "dhcp or an IPv4 address in CIDR form for the build guest."
+                },
+                "gateway": {
+                  "type": "string",
+                  "pattern": "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$",
+                  "description": "IPv4 gateway for a static ip."
+                }
+              },
+              "dependentSchemas": {
+                "gateway": {
+                  "required": [
+                    "ip"
+                  ],
+                  "properties": {
+                    "ip": {
+                      "not": {
+                        "const": "dhcp"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Which versions stay (D-209). Needs build.",
+          "properties": {
+            "keep": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 3,
+              "description": "Number of newest ready versions that stay."
+            }
+          }
+        },
+        "schedule": {
+          "$comment": "additionalProperties: true in the sub-schemas is a no-op for JSON Schema; it keeps Redocly's example check (recommended-strict) from closing them.",
+          "type": "object",
+          "required": [
+            "every",
+            "at"
+          ],
+          "additionalProperties": false,
+          "description": "Rebuild on a clock, in UTC (D-210). Needs build. weekday only with every: week, day only with every: month.",
+          "properties": {
+            "every": {
+              "enum": [
+                "day",
+                "week",
+                "month"
+              ]
+            },
+            "at": {
+              "type": "string",
+              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+              "description": "HH:MM, UTC."
+            },
+            "weekday": {
+              "enum": [
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat",
+                "sun"
+              ]
+            },
+            "day": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 28,
+              "description": "Day of the month."
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "every": {
+                  "const": "day"
+                }
+              },
+              "additionalProperties": true
+            },
+            {
+              "properties": {
+                "every": {
+                  "const": "week"
+                }
+              },
+              "required": [
+                "weekday"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "properties": {
+                "every": {
+                  "const": "month"
+                }
+              },
+              "required": [
+                "day"
+              ],
+              "additionalProperties": true
+            }
+          ],
+          "dependentSchemas": {
+            "weekday": {
+              "properties": {
+                "every": {
+                  "const": "week"
+                }
+              },
+              "additionalProperties": true
+            },
+            "day": {
+              "properties": {
+                "every": {
+                  "const": "month"
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "description": "A stock image (no build) is imported as is. With build, Plumb makes versioned templates from it (D-197).",
+      "dependentRequired": {
+        "retention": [
+          "build"
+        ],
+        "schedule": [
+          "build"
+        ]
+      },
+      "dependentSchemas": {
+        "build": {
+          "$comment": "additionalProperties: true in the sub-schemas is a no-op for JSON Schema; it keeps Redocly's example check (recommended-strict) from closing them.",
+          "properties": {
+            "type": {
+              "const": "vm"
+            }
+          },
+          "additionalProperties": true
         }
       }
     }
-  }
+  },
+  "examples": [
+    {
+      "kind": "Image",
+      "name": "debian-13",
+      "spec": {
+        "type": "vm",
+        "url": "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2",
+        "sha256": "9a8b7c6d5e4f30211203f4e5d6c7b8a99a8b7c6d5e4f30211203f4e5d6c7b8a9"
+      }
+    },
+    {
+      "kind": "Image",
+      "name": "ubuntu-web",
+      "spec": {
+        "title": "Ubuntu 26.04 with Nginx",
+        "type": "vm",
+        "url": "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img",
+        "sha256": "3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382",
+        "build": {
+          "blocks": [
+            {
+              "use": "nginx"
+            }
+          ],
+          "upgrade": true,
+          "guest": {
+            "cores": 1,
+            "memory": 1024,
+            "disk": 10,
+            "bridge": "vmbr0",
+            "ip": "dhcp"
+          }
+        },
+        "retention": {
+          "keep": 3
+        },
+        "schedule": {
+          "every": "week",
+          "weekday": "sun",
+          "at": "03:00"
+        }
+      }
+    }
+  ]
 }
