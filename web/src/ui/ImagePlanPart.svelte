@@ -43,7 +43,13 @@
       only when it is created.
     </p>
     {#if b.resources.length}
-      <div class="table-wrap">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        class="table-wrap"
+        tabindex="0"
+        role="region"
+        aria-label="Resources of the build guest of {part.image}, scrolls sideways"
+      >
         <table>
           <caption class="sr-only">Resources of the build guest of {part.image}</caption>
           <thead>

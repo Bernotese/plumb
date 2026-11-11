@@ -85,7 +85,13 @@
       Target <span class="mono">{t.target}</span>
       <Badge tone={tone[t.status] ?? "muted"} label={t.status} />
     </h2>
-    <div class="table-wrap card flush">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="table-wrap card flush"
+      tabindex="0"
+      role="region"
+      aria-label="Steps on {t.target}, scrolls sideways"
+    >
       <table>
         <caption class="sr-only">Steps on {t.target}</caption>
         <thead>
@@ -115,7 +121,13 @@
       <span class="muted">version {b.version} · {TRIGGER_TEXT[b.trigger]}</span>
       <Badge tone={tone[b.status] ?? "muted"} label={b.status} />
     </h2>
-    <div class="table-wrap card flush">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="table-wrap card flush"
+      tabindex="0"
+      role="region"
+      aria-label="Build steps of image {b.image} version {b.version}, scrolls sideways"
+    >
       <table>
         <caption class="sr-only">Build steps of image {b.image} version {b.version}</caption>
         <thead>
