@@ -19,7 +19,9 @@
   } = $props();
 </script>
 
-<div class="table-wrap">
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+
+<div class="table-wrap" tabindex="0" role="group" aria-label="{caption}, scrolls sideways">
   <table>
     <caption class="sr-only">{caption}</caption>
     <thead>

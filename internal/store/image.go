@@ -208,3 +208,22 @@ func (s *Store) SetImageScheduleSlot(ctx context.Context, image string, slot tim
 		 ON CONFLICT (image) DO UPDATE SET last_slot = excluded.last_slot`, image, formatTime(slot))
 	return err
 }
+
+// ImageVersionsOfRun returns the versions that a Run builds or built.
+func (s *Store) ImageVersionsOfRun(ctx context.Context, runID int64) ([]ImageVersion, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+imageVersionColumns+` FROM image_version WHERE run_id = ? ORDER BY image`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ImageVersion
+	for rows.Next() {
+		v, err := scanImageVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}

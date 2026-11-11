@@ -25,9 +25,12 @@ type Plan struct {
 	RollbackTo   int64 // the revision of a rollback (D-131); 0: none
 	// HumanOnly lists why only a human session may approve (D-099):
 	// "rule-change", "secret-binding". Empty for a normal Plan.
-	HumanOnly  []string
-	Proposal   json.RawMessage
-	Changes    json.RawMessage
+	HumanOnly []string
+	Proposal  json.RawMessage
+	Changes   json.RawMessage
+	// Images is the image part of the Plan (D-199): a JSON array, [] for
+	// none.
+	Images     json.RawMessage
 	Risk       string
 	Status     string
 	Reason     string
@@ -89,9 +92,9 @@ func jsonOr(v json.RawMessage, def string) string {
 func (s *Store) CreatePlan(ctx context.Context, p Plan) (Plan, error) {
 	created := s.now()
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO plan (base_revision, origin, issue_id, rollback_to, human_only, proposal, changes, risk, status, reason, author, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?) RETURNING id`,
-		nullID(p.BaseRevision), p.Origin, nullID(p.IssueID), nullID(p.RollbackTo), humanOnlyJSON(p.HumanOnly), jsonOr(p.Proposal, "{}"), jsonOr(p.Changes, "[]"),
+		`INSERT INTO plan (base_revision, origin, issue_id, rollback_to, human_only, proposal, changes, images, risk, status, reason, author, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?) RETURNING id`,
+		nullID(p.BaseRevision), p.Origin, nullID(p.IssueID), nullID(p.RollbackTo), humanOnlyJSON(p.HumanOnly), jsonOr(p.Proposal, "{}"), jsonOr(p.Changes, "[]"), jsonOr(p.Images, "[]"),
 		p.Risk, p.Reason, p.Author, created).Scan(&p.ID)
 	if err != nil {
 		return Plan{}, fmt.Errorf("store: create plan: %w", err)
@@ -101,14 +104,14 @@ func (s *Store) CreatePlan(ctx context.Context, p Plan) (Plan, error) {
 	return p, nil
 }
 
-const planColumns = `id, COALESCE(base_revision, 0), origin, COALESCE(issue_id, 0), COALESCE(rollback_to, 0), human_only, proposal, changes, risk, status,
+const planColumns = `id, COALESCE(base_revision, 0), origin, COALESCE(issue_id, 0), COALESCE(rollback_to, 0), human_only, proposal, changes, images, risk, status,
 	reason, author, COALESCE(approved_by, ''), created_at, approved_at`
 
 func scanPlan(row interface{ Scan(...any) error }) (Plan, error) {
 	var p Plan
-	var humanOnly, proposal, changes, created string
+	var humanOnly, proposal, changes, images, created string
 	var approved sql.NullString
-	err := row.Scan(&p.ID, &p.BaseRevision, &p.Origin, &p.IssueID, &p.RollbackTo, &humanOnly, &proposal, &changes, &p.Risk, &p.Status,
+	err := row.Scan(&p.ID, &p.BaseRevision, &p.Origin, &p.IssueID, &p.RollbackTo, &humanOnly, &proposal, &changes, &images, &p.Risk, &p.Status,
 		&p.Reason, &p.Author, &p.ApprovedBy, &created, &approved)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Plan{}, ErrNotFound
@@ -116,7 +119,7 @@ func scanPlan(row interface{ Scan(...any) error }) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	p.Proposal, p.Changes = json.RawMessage(proposal), json.RawMessage(changes)
+	p.Proposal, p.Changes, p.Images = json.RawMessage(proposal), json.RawMessage(changes), json.RawMessage(images)
 	if err := json.Unmarshal([]byte(humanOnly), &p.HumanOnly); err != nil {
 		return Plan{}, fmt.Errorf("store: plan %d: human_only: %w", p.ID, err)
 	}
@@ -198,12 +201,80 @@ func (s *Store) ApprovePlan(ctx context.Context, planID int64, approvedBy string
 	return out, run, nil
 }
 
+// ErrHeadMoved is returned by ApproveBuildPlan when the head is not the
+// revision that the caller checked. The caller checks again.
+var ErrHeadMoved = errors.New("store: the head revision moved")
+
+// ApproveBuildPlan approves a pending Plan of origin build (D-199): it
+// commits no revision. The Run is pinned to the head revision, which must
+// be head: the revision whose recipe the caller compared with the Plan.
+func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy string, head int64) (Run, error) {
+	var run Run
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var status, origin string
+		err := tx.QueryRowContext(ctx, `SELECT status, origin FROM plan WHERE id = ?`, planID).Scan(&status, &origin)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if origin != "build" {
+			return fmt.Errorf("store: plan %d has origin %s, not build", planID, origin)
+		}
+		if status != PlanPending {
+			return ErrPlanNotPending
+		}
+		now, err := headTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if now != head || head == 0 {
+			return ErrHeadMoved
+		}
+		at := s.now()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE plan SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ?`, approvedBy, at, planID); err != nil {
+			return err
+		}
+		run = Run{PlanID: planID, RevisionID: head, Status: "running"}
+		run.StartedAt, _ = parseTime(at)
+		return tx.QueryRowContext(ctx,
+			`INSERT INTO run (plan_id, revision_id, status, started_at) VALUES (?, ?, 'running', ?) RETURNING id`,
+			planID, head, at).Scan(&run.ID)
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	return run, nil
+}
+
+// PendingPlans returns the pending Plans of one origin, oldest first.
+func (s *Store) PendingPlans(ctx context.Context, origin string) ([]Plan, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+planColumns+` FROM plan WHERE status = 'pending' AND origin = ? ORDER BY id`, origin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Plan
+	for rows.Next() {
+		p, err := scanPlan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // MarkStalePlans marks every pending Plan whose base is not the head as
-// stale. It returns their ids.
+// stale. It returns their ids. A Plan of origin build is not stale by a
+// head change: only its recipe counts (D-199); the engine checks it.
 func (s *Store) MarkStalePlans(ctx context.Context) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`UPDATE plan SET status = 'stale'
-		 WHERE status = 'pending' AND COALESCE(base_revision, 0) <> (SELECT COALESCE(MAX(id), 0) FROM revision)
+		 WHERE status = 'pending' AND origin <> 'build' AND COALESCE(base_revision, 0) <> (SELECT COALESCE(MAX(id), 0) FROM revision)
 		 RETURNING id`)
 	if err != nil {
 		return nil, err
