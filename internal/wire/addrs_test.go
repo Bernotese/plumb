@@ -83,6 +83,7 @@ func TestSortAddrs(t *testing.T) {
 		netip.MustParseAddr("::ffff:10.0.0.1"),
 		netip.MustParseAddr("192.0.2.41"),
 		netip.MustParseAddr("2001:db8::1"),
+		{}, // zero Addr: dropped
 	}
 	got, cut := SortAddrs(in)
 	want := []string{"10.0.0.1", "192.0.2.41", "2001:db8::1", "fd00::41"}

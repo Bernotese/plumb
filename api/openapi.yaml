@@ -2226,8 +2226,8 @@ components:
         reported_at:
           $ref: "#/components/schemas/NullableTime"
           description: |
-            When the controller took the list in `reported_ips`. `null` when the list is empty
-            for a reason in `reported_ips`.
+            When the controller took the list in `reported_ips`. `null` when the list is unknown
+            or the agent is offline; set when the list is known, also when it is empty.
         reported_ips_more:
           type: boolean
           description: |
