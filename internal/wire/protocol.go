@@ -161,6 +161,9 @@ const (
 	ReportProgress ReportType = "progress" // step update while an apply runs
 	ReportDrift    ReportType = "drift"    // a watched resource differs
 	ReportHello    ReportType = "hello"    // sent after start and after a reconnect
+	// ReportAddrs carries a changed address list (D-212). It is not a
+	// second Hello: the controller counts Hellos to see a restarted agent.
+	ReportAddrs ReportType = "addrs"
 )
 
 // Report is every message from the agent after enrollment.
@@ -170,6 +173,10 @@ type Report struct {
 	Items     []Item     `json:"items,omitempty"`
 	Hello     *Hello     `json:"hello,omitempty"` // only for hello
 	Error     string     `json:"error,omitempty"` // the command failed as a whole
+	// Addrs and AddrsTruncated are only for addrs. A missing list means
+	// an empty list: the guest has no address to report.
+	Addrs          []string `json:"addrs,omitempty"`
+	AddrsTruncated bool     `json:"addrs_truncated,omitempty"`
 }
 
 // Hello describes the agent and its guest.
@@ -177,6 +184,14 @@ type Hello struct {
 	Version  string `json:"version"`
 	Hostname string `json:"hostname"`
 	OS       string `json:"os"` // for example "ubuntu 26.04"
+	// Addrs is the address list of the guest (D-212, CheckAddrs). A new
+	// agent always sends it, also empty ([]). A missing field or null
+	// (nil) means "this agent does not report addresses" (an old agent,
+	// D-217): the controller sets the stored list to unknown.
+	Addrs []string `json:"addrs"`
+	// AddrsTruncated: the guest has more than MaxAddrs addresses; Addrs
+	// holds the first MaxAddrs in sort order.
+	AddrsTruncated bool `json:"addrs_truncated,omitempty"`
 }
 
 // Status is the state of one resource in a Report.
