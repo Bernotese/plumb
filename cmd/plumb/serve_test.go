@@ -40,15 +40,16 @@ func TestServeFlags(t *testing.T) {
 			t.Errorf("%v: production mode = %+v", tc.args, f)
 		}
 	}
-	// Without --dev the controller refuses to start until the Proxmox
-	// driver exists (T-012); it never falls back to the fake.
+	// Without --dev and without the Proxmox settings the controller stops
+	// with exit 78 and names them (D-182); it never falls back to the fake.
+	clearPVE(t)
 	var out, errOut bytes.Buffer
 	keyed := t.TempDir()
 	os.Mkdir(filepath.Join(keyed, "key"), 0o700)
 	if err := secret.WriteKeyFile(defaultKeyFile(keyed), secret.NewKey()); err != nil {
 		t.Fatal(err)
 	}
-	if code := serve(context.Background(), []string{"--data", keyed}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "installer") {
+	if code := serve(context.Background(), []string{"--data", keyed}, &out, &errOut); code != 78 || !strings.Contains(errOut.String(), "the Proxmox settings are missing") {
 		t.Errorf("serve without --dev: %d %q", code, errOut.String())
 	}
 	if code := serve(context.Background(), []string{"--dev", "--driver", "proxmox"}, &out, &errOut); code != 2 {
