@@ -87,6 +87,7 @@ type controller struct {
 	driftTries  int            // drift reports answered with driftCode
 	addrsCode   int            // when set, answer every addrs report with it
 	addrsTries  int            // addrs reports answered with addrsCode
+	build       bool           // the enrollment answer says build (image build guest)
 	pollTimes   []time.Time
 	reports     []wire.Report
 	commands    chan wire.Command
@@ -123,7 +124,7 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 		c.enrolled = append(c.enrolled, req.Token)
 		cred := fmt.Sprintf("cred-%d", len(c.enrolled))
 		c.creds[cred] = true
-		_ = json.NewEncoder(w).Encode(wire.EnrollResponse{AgentID: "agent-1", Credential: cred})
+		_ = json.NewEncoder(w).Encode(wire.EnrollResponse{AgentID: "agent-1", Credential: cred, Build: c.build})
 		return
 	}
 	cred := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

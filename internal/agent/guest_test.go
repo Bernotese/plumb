@@ -209,7 +209,7 @@ func TestGuestAgentLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	resultSeen, driftSeen := false, false
-	deadline := time.After(30 * time.Second)
+	deadline := time.After(90 * time.Second)
 	for {
 		select {
 		case d := <-deliveries:

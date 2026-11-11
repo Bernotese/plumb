@@ -172,8 +172,9 @@ type Driver interface {
 	// DiskSpace reads the use of the disk storage of guests.
 	DiskSpace(ctx context.Context) (DiskSpace, error)
 	// ListBuilds lists the build guests in the pool and the VMID range:
-	// guests with the build marker and the exact build name, no template
-	// (D-203). Recover and every new build of an Image remove them.
+	// guests with the build marker and the exact build name (D-203).
+	// Recover and every new build of an Image remove them; a converted one
+	// has Template set and stays.
 	ListBuilds(ctx context.Context) ([]BuildGuest, error)
 	// RemoveBuild stops and deletes the build guest of image v<version>
 	// after the full guard of T-073: in the range, in the pool, the exact
@@ -220,6 +221,10 @@ type BuildGuest struct {
 	ID      GuestID
 	Image   string
 	Version int
+	// Template: the guest was converted but never named as a version (a
+	// conversion that ended after its error, T-061 review N1). RemoveBuild
+	// refuses it; it is shown, not adopted and not removed.
+	Template bool
 }
 
 // ImageObjectKind says what an ImageObject is.

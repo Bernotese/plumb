@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/Bernotese/plumb/internal/resource"
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -49,6 +51,10 @@ type Options struct {
 	// reports and two reads; default 35 s, a margin over the store limit
 	// of 30 s of the controller (D-212), so network jitter gives no 429.
 	AddrsEvery, AddrsGap time.Duration
+
+	// Sync flushes the file systems before the power-off at the end of
+	// seal; default unix.Sync. Tests record it.
+	Sync func()
 }
 
 // Agent is one agent process.
@@ -86,6 +92,8 @@ type Agent struct {
 	addrTry   time.Time // last address report, sent or not
 	addrRead  time.Time // last read at a poll round
 	addrErr   bool      // the last read failed (log once)
+
+	sealedCmd string // id of a seal that ended without a failed step (under mu)
 }
 
 // New builds an agent. It reads the stored credential and desired list.
@@ -129,6 +137,9 @@ func New(opt Options) (*Agent, error) {
 	}
 	if opt.AddrsGap <= 0 {
 		opt.AddrsGap = 35 * time.Second
+	}
+	if opt.Sync == nil {
+		opt.Sync = unix.Sync
 	}
 	c, err := newClient(cfg, time.Duration(opt.PollWait)*time.Second)
 	if err != nil {
@@ -221,8 +232,17 @@ func (a *Agent) Run(ctx context.Context) error {
 				connected = a.connError(ctx, err, &b, connected)
 				continue
 			}
+			sent := pending.CommandID
 			pending = nil
 			b.reset()
+			if a.sealedBy(sent) {
+				// Review B1: the controller took the result of seal. The
+				// agent sends nothing more: it removes itself, syncs and
+				// powers off. It does not poll again, also when that fails.
+				_ = a.finishSeal(ctx)
+				<-ctx.Done()
+				return ctx.Err()
+			}
 		}
 		if err := a.sendAddrs(ctx, time.Now()); err != nil {
 			connected = a.connError(ctx, err, &b, connected)
@@ -305,8 +325,12 @@ func (a *Agent) enroll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := a.state.saveCredential(resp.Credential); err != nil {
+	id, err := a.state.enrolled(resp.Credential, resp.Build)
+	if err != nil {
 		return fmt.Errorf("store credential: %w", err)
+	}
+	if resp.Build && !id.Build {
+		a.log.Warn("enrollment answer says build, but this agent is not new; it will not seal")
 	}
 	a.credMu.Lock()
 	a.cred = resp.Credential
@@ -314,7 +338,7 @@ func (a *Agent) enroll(ctx context.Context) error {
 	if err := disableCloudInit(a.opt.CloudInitFlag); err != nil {
 		a.log.Error("disable cloud-init", "err", err)
 	}
-	a.log.Info("enrolled", "agent_id", resp.AgentID)
+	a.log.Info("enrolled", "agent_id", resp.AgentID, "build", id.Build)
 	return nil
 }
 

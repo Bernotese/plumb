@@ -36,8 +36,10 @@ func TestListAndRemoveBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].ID != gid || list[0].Image != "web" || list[0].Version != 2 {
-		t.Fatalf("ListBuilds = %+v, want only %s", list, gid)
+	// The build guest, and the converted rest (9052) with Template set.
+	if len(list) != 2 || list[0].ID != gid || list[0].Image != "web" || list[0].Version != 2 || list[0].Template ||
+		list[1].ID != "9052" || !list[1].Template || list[1].Version != 7 {
+		t.Fatalf("ListBuilds = %+v, want %s and the template 9052", list, gid)
 	}
 	for _, c := range []struct {
 		id      int

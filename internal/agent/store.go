@@ -129,23 +129,103 @@ func (s stateDir) write(name string, data []byte) error {
 	return os.Rename(tmp.Name(), s.path(name))
 }
 
-// credential returns the stored credential, or "" when there is none.
-func (s stateDir) credential() (string, error) {
-	b, err := os.ReadFile(s.path(credentialFile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
-	return strings.TrimSpace(string(b)), err
+// identity is the content of the credential file. The marks of seal
+// (D-207, review S1 of T-039) are in the same file as the credential, so
+// one atomic write changes them together:
+//   - Build: the enrollment answer said build, at a first enrollment from
+//     an empty state. Only then may the agent seal.
+//   - Watch: the agent got a watch command once. It is never cleared,
+//     also not by an enrollment or a restart; a watched agent never seals.
+//   - Enrolled: the agent enrolled once. It stays after a 401, so a later
+//     enrollment is never "first".
+//
+// The file is JSON. A file of an older agent holds only the credential
+// (plain text); it reads as enrolled, without the build mark.
+type identity struct {
+	Credential string `json:"credential"`
+	Build      bool   `json:"build,omitempty"`
+	Watch      bool   `json:"watch,omitempty"`
+	Enrolled   bool   `json:"enrolled,omitempty"`
 }
 
-func (s stateDir) saveCredential(c string) error { return s.write(credentialFile, []byte(c+"\n")) }
-
-func (s stateDir) dropCredential() error {
-	err := os.Remove(s.path(credentialFile))
+// identity reads the credential file. A missing file is the empty state.
+func (s stateDir) identity() (identity, bool, error) {
+	b, err := os.ReadFile(s.path(credentialFile))
 	if errors.Is(err, fs.ErrNotExist) {
+		return identity{}, false, nil
+	}
+	if err != nil {
+		return identity{}, true, err
+	}
+	t := strings.TrimSpace(string(b))
+	if !strings.HasPrefix(t, "{") {
+		return identity{Credential: t, Enrolled: t != ""}, true, nil
+	}
+	var id identity
+	if err := json.Unmarshal(b, &id); err != nil {
+		return identity{}, true, fmt.Errorf("credential file: %w", err)
+	}
+	return id, true, nil
+}
+
+func (s stateDir) saveIdentity(id identity) error {
+	b, err := json.Marshal(id)
+	if err != nil {
+		return err
+	}
+	return s.write(credentialFile, append(b, '\n'))
+}
+
+// credential returns the stored credential, or "" when there is none.
+func (s stateDir) credential() (string, error) {
+	id, _, err := s.identity()
+	return id.Credential, err
+}
+
+// saveCredential stores the credential of a normal enrollment: the build
+// mark is cleared, the watch mark stays.
+func (s stateDir) saveCredential(c string) error {
+	_, err := s.enrolled(c, false)
+	return err
+}
+
+// enrolled stores the credential of an enrollment and returns the stored
+// identity. build is taken only from an empty state: no credential file
+// (never enrolled, never a watch) and no desired list (review S1 of T-058).
+// Every other enrollment clears the build mark. The watch mark stays.
+func (s stateDir) enrolled(cred string, build bool) (identity, error) {
+	old, exists, err := s.identity()
+	if err != nil {
+		return identity{}, err
+	}
+	_, derr := os.Lstat(s.path(desiredFile))
+	empty := !exists && errors.Is(derr, fs.ErrNotExist)
+	id := identity{Credential: cred, Build: build && empty, Watch: old.Watch, Enrolled: true}
+	return id, s.saveIdentity(id)
+}
+
+// markWatch sets the watch mark for good and clears the build mark.
+func (s stateDir) markWatch() error {
+	id, _, err := s.identity()
+	if err != nil {
+		return err
+	}
+	if id.Watch && !id.Build {
 		return nil
 	}
-	return err
+	id.Watch, id.Build = true, false
+	return s.saveIdentity(id)
+}
+
+// dropCredential forgets the credential and keeps the marks: a 401 must
+// not make a watched agent look new.
+func (s stateDir) dropCredential() error {
+	id, exists, err := s.identity()
+	if err != nil || !exists {
+		return err
+	}
+	id.Credential = ""
+	return s.saveIdentity(id)
 }
 
 // desired returns the stored desired list (empty when there is none).

@@ -23,6 +23,16 @@ func mode(t *testing.T, path string) os.FileMode {
 	return fi.Mode().Perm()
 }
 
+// storedCred reads the credential from the credential file.
+func storedCred(t *testing.T, dir string) string {
+	t.Helper()
+	id, _, err := stateDir{dir: dir}.identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id.Credential
+}
+
 func TestEnroll(t *testing.T) {
 	ca := newCA(t)
 	ctl := newController(t, ca, "tok-1")
@@ -34,8 +44,8 @@ func TestEnroll(t *testing.T) {
 		t.Fatalf("hello = %+v", hello)
 	}
 	credFile := filepath.Join(ta.cfg.StateDir, credentialFile)
-	if b, _ := os.ReadFile(credFile); strings.TrimSpace(string(b)) != "cred-1" {
-		t.Fatalf("credential file = %q", b)
+	if got := storedCred(t, ta.cfg.StateDir); got != "cred-1" {
+		t.Fatalf("credential file = %q", got)
 	}
 	if m := mode(t, credFile); m != 0o600 {
 		t.Fatalf("credential mode = %v", m)
@@ -85,8 +95,8 @@ func TestReenrollAfter401(t *testing.T) {
 	if rejected < 1 || rejected > 2 {
 		t.Fatalf("calls with the dropped credential = %d", rejected)
 	}
-	if b, _ := os.ReadFile(filepath.Join(ta.cfg.StateDir, credentialFile)); strings.TrimSpace(string(b)) != "cred-2" {
-		t.Fatalf("credential file = %q", b)
+	if got := storedCred(t, ta.cfg.StateDir); got != "cred-2" {
+		t.Fatalf("credential file = %q", got)
 	}
 }
 
@@ -370,8 +380,8 @@ func TestBusyIsNotRevoked(t *testing.T) {
 			if waits < 2 {
 				t.Fatalf("only %d poll gaps of >= 1 s after two busy answers", waits)
 			}
-			if b, _ := os.ReadFile(filepath.Join(ta.cfg.StateDir, credentialFile)); strings.TrimSpace(string(b)) != "cred-1" {
-				t.Fatalf("credential changed: %q", b)
+			if got := storedCred(t, ta.cfg.StateDir); got != "cred-1" {
+				t.Fatalf("credential changed: %q", got)
 			}
 		})
 	}

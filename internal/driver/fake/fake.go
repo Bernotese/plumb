@@ -75,6 +75,8 @@ type guest struct {
 	boots          int    // cold starts, Create included
 	// build is set on the build guest of an image version (D-203).
 	build *driver.BuiltImage
+	// template: a build guest that a late conversion left (LeftTemplate).
+	template bool
 }
 
 // Driver is the fake driver. The zero value is not usable; call New.
@@ -810,6 +812,16 @@ func (d *Driver) UnlinkClone(ref driver.ImageRef) {
 	}
 }
 
+// LeftTemplate turns a build guest into a template that was never named as
+// a version, like a conversion that ended after its error (T-061 N1).
+func (d *Driver) LeftTemplate(id driver.GuestID) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if g, ok := d.guests[id]; ok && g.build != nil {
+		g.template, g.power = true, driver.PowerStopped
+	}
+}
+
 // BuildOf returns the version whose build guest id is, if any.
 func (d *Driver) BuildOf(id driver.GuestID) (driver.BuiltImage, bool) {
 	d.mu.Lock()
@@ -827,7 +839,7 @@ func (d *Driver) ListBuilds(ctx context.Context) ([]driver.BuildGuest, error) {
 		var out []driver.BuildGuest
 		for id, g := range d.guests {
 			if g.build != nil {
-				out = append(out, driver.BuildGuest{ID: id, Image: g.build.Image, Version: g.build.Version})
+				out = append(out, driver.BuildGuest{ID: id, Image: g.build.Image, Version: g.build.Version, Template: g.template})
 			}
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -843,7 +855,7 @@ func (d *Driver) RemoveBuild(ctx context.Context, id driver.GuestID, image strin
 		if !ok {
 			return driver.ErrNotFound
 		}
-		if g.build == nil || g.build.Image != image || g.build.Version != version || g.spec.Name != fmt.Sprintf("plumb-build-%s-v%d", image, version) {
+		if g.build == nil || g.template || g.build.Image != image || g.build.Version != version || g.spec.Name != fmt.Sprintf("plumb-build-%s-v%d", image, version) {
 			return fmt.Errorf("fake: guest %s is not the build guest of %s v%d; not removed", id, image, version)
 		}
 		delete(d.guests, id)

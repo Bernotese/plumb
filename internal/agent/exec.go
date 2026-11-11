@@ -42,9 +42,19 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) wire.Report {
 		if err := json.Unmarshal(cmd.Body, &body); err != nil {
 			return fail(fmt.Errorf("watch body: %w", err))
 		}
+		// The watch mark first: a watched agent never seals (D-207).
+		if err := a.state.markWatch(); err != nil {
+			return fail(fmt.Errorf("store watch mark: %w", err))
+		}
 		if err := a.setDesired(body.Resources); err != nil {
 			return fail(err)
 		}
+	case wire.CommandSeal:
+		var body wire.SealBody
+		if err := json.Unmarshal(cmd.Body, &body); err != nil {
+			return fail(fmt.Errorf("seal body: %w", err))
+		}
+		rep.Items = a.seal(ctx, cmd.ID, body)
 	default:
 		return fail(fmt.Errorf("unknown command type %q", cmd.Type))
 	}
@@ -54,6 +64,12 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) wire.Report {
 // observeOne observes and diffs one resource.
 func (a *Agent) observeOne(ctx context.Context, r wire.Resource) (resource.Resource, wire.Item) {
 	item := wire.Item{Resource: r.ID}
+	// D-207: never the agent's own files or unit, also through a link
+	// that exists only in the guest (review S1 of T-059).
+	if why := a.ownPathRefusal(r); why != "" {
+		item.Status, item.Output = wire.StatusRefused, resource.SafeOutput(r, why)
+		return nil, item
+	}
 	rs, err := resource.New(r, a.env)
 	if err != nil {
 		item.Status, item.Output = wire.StatusFailed, resource.SafeOutput(r, err.Error())
@@ -85,7 +101,7 @@ func (a *Agent) observe(ctx context.Context, list []wire.Resource) []wire.Item {
 		}
 	}
 	for i, r := range list {
-		if c, ok := resource.RestartChange(r, changed); ok && items[i].Status != wire.StatusFailed {
+		if c, ok := resource.RestartChange(r, changed); ok && items[i].Status != wire.StatusFailed && items[i].Status != wire.StatusRefused {
 			items[i].Changes = append(items[i].Changes, c)
 			items[i].Status = wire.StatusDiffers
 		}
@@ -231,7 +247,7 @@ func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk, plann
 		}
 	}
 	rs, item := a.observeOne(ctx, s.r)
-	if item.Status == wire.StatusFailed {
+	if item.Status == wire.StatusFailed || item.Status == wire.StatusRefused {
 		s.item = item
 		return
 	}

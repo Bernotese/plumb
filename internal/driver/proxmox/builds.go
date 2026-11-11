@@ -11,9 +11,9 @@ import (
 	"github.com/Bernotese/plumb/internal/driver"
 )
 
-// ListBuilds lists the build guests in the pool and the range (D-203): no
-// template, a marker line "plumb-build: <image> v<N>" and the exact name
-// plumb-build-<image>-v<N>. Name and template come from the config, as in
+// ListBuilds lists the build guests in the pool and the range (D-203): a
+// marker line "plumb-build: <image> v<N>" and the exact name
+// plumb-build-<image>-v<N>; a converted one has Template set. Name and template come from the config, as in
 // own. A guest whose name and marker do not match is not listed.
 func (d *Driver) ListBuilds(ctx context.Context) ([]driver.BuildGuest, error) {
 	ms, err := d.members(ctx)
@@ -32,14 +32,12 @@ func (d *Driver) ListBuilds(ctx context.Context) ([]driver.BuildGuest, error) {
 		if err != nil {
 			return nil, err
 		}
-		if cfg["template"] == "1" {
-			continue
-		}
 		image, version, ok := parseBuildLine(lineValue(cfg["description"], buildMarker))
 		if !ok || cfg["name"] != buildName(image, version) {
 			continue
 		}
-		out = append(out, driver.BuildGuest{ID: driver.GuestID(strconv.Itoa(m.VMID)), Image: image, Version: version})
+		out = append(out, driver.BuildGuest{ID: driver.GuestID(strconv.Itoa(m.VMID)), Image: image, Version: version,
+			Template: cfg["template"] == "1"})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

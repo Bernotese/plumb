@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -20,8 +21,14 @@ import (
 // version is left.
 func (e *env) noBuildLeft(image string) {
 	e.t.Helper()
-	if b, err := e.drv.ListBuilds(e.ctx); err != nil || len(b) != 0 {
-		e.t.Errorf("build guests left: %+v %v", b, err)
+	b, err := e.drv.ListBuilds(e.ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for _, g := range b {
+		if !g.Template {
+			e.t.Errorf("build guest left: %+v", g)
+		}
 	}
 	if _, err := e.st.AgentByTarget(e.ctx, wire.BuildLinkPrefix+image); !errors.Is(err, store.ErrNotFound) {
 		e.t.Errorf("the build agent of %s can still log in: %v", image, err)
@@ -268,3 +275,55 @@ func TestLinkSealGuards(t *testing.T) {
 }
 
 var _ = json.Marshal
+
+// Review N2 of #133: a power read that fails is tried again; three in a
+// row fail the build, and nothing is converted.
+func TestBuildObserveRetries(t *testing.T) {
+	for _, c := range []struct {
+		failures int
+		want     string
+	}{{2, store.ImageReady}, {3, store.ImageFailed}} {
+		e := newEnv(t, false, withBuilds)
+		e.buildAgents(nil)
+		adm := e.admin()
+		for i := 0; i < c.failures; i++ {
+			e.drv.Fail(fake.OpObserve, errors.New("proxmox: 596 connection timed out"))
+		}
+		e.runPlanAnyStatus(adm, map[string]any{"reason": "image", "put": builtImageDoc("web", "hi")})
+		if v, _ := e.st.GetImageVersion(e.ctx, "web", 1); v.Status != c.want {
+			t.Errorf("%d failed reads: v1 %s, want %s", c.failures, v.Status, c.want)
+		}
+		e.noBuildLeft("web")
+	}
+}
+
+// Review N1 of #133: a build guest that was converted but never named as a
+// version is shown in the Image status, survives a new build and is never
+// used.
+func TestLeftTemplateShown(t *testing.T) {
+	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
+	adm := e.admin()
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "image", "put": builtImageDoc("web", "hi")})
+	objs, _ := e.drv.ListImages(e.ctx, "web")
+	var base driver.ImageRef
+	for _, o := range objs {
+		if o.Kind == driver.ImageBaseTemplate {
+			base = o.Ref
+		}
+	}
+	rest, err := e.drv.CreateBuild(e.ctx, driver.BuildSpec{Image: "web", Version: 9, Base: base, Cores: 1, MemoryMB: 1024, DiskGB: 10, Bridge: "vmbr0", IP: "dhcp"},
+		driver.Bootstrap{Token: "rest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.drv.LeftTemplate(rest)
+	want := `"left_templates":[{"name":"plumb-build-web-v9","guest_id":"` + string(rest) + `"}]`
+	if code, body := adm.do("GET", "/api/v1/images/web", nil); code != 200 || !strings.Contains(string(body), want) {
+		t.Fatalf("image status: %d %s", code, body)
+	}
+	e.manualBuild(adm, "web", 2, nil)
+	if _, err := e.drv.Observe(e.ctx, rest); err != nil {
+		t.Fatalf("the rest was touched: %v", err)
+	}
+}

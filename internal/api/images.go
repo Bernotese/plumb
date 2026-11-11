@@ -70,6 +70,13 @@ type imageStatus struct {
 	NextBuildAt   *time.Time         `json:"next_build_at"`
 	UnusedImports []unusedImportView `json:"unused_imports"`
 	Disk          *diskUseView       `json:"disk,omitempty"`
+	// LeftTemplates are converted build rests (T-061 N1); missing = none.
+	LeftTemplates []leftTemplateView `json:"left_templates,omitempty"`
+}
+
+type leftTemplateView struct {
+	Name    string `json:"name"`
+	GuestID string `json:"guest_id"`
 }
 
 // imageStatus is the status of a built Image, or nil for a stock Image.
@@ -119,6 +126,13 @@ func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus,
 		}
 	} else {
 		s.log.Warn("image status: unused imports", "image", d.Name, "err", err)
+	}
+	if left, err := s.cfg.Plans.LeftTemplates(ctx, d.Name); err == nil {
+		for _, l := range left {
+			st.LeftTemplates = append(st.LeftTemplates, leftTemplateView{Name: l.Name, GuestID: l.GuestID})
+		}
+	} else {
+		s.log.Warn("image status: build rests", "image", d.Name, "err", err)
 	}
 	if u := s.cfg.Plans.DiskUse(ctx); u != nil {
 		st.Disk = &diskUseView{Storage: u.Storage, TotalBytes: u.TotalBytes, UsedBytes: u.UsedBytes, ReservedBytes: u.ReservedBytes, LimitPercent: u.LimitPercent}
