@@ -187,6 +187,12 @@ func (a *Agent) sealInitramfs(ctx context.Context, _ wire.SealBody) (wire.Status
 	if !a.commandIn("dracut") {
 		return skippedStep("no dracut in this guest")
 	}
+	// T-066 re-check: dracut copies /etc/hostname, /etc/hosts and
+	// /etc/machine-id into the initrd, so they are reset before it runs.
+	// The cloud-init step (5) resets them again (no change then).
+	if err := a.resetIdentityFiles(); err != nil {
+		return failedStep("%v", err)
+	}
 	if err := writeGuestFile(a.opt.Root, dracutConf, []byte(dracutConfText)); err != nil {
 		return failedStep("%v", err)
 	}
@@ -268,29 +274,47 @@ func (a *Agent) sealCloudInit(ctx context.Context, _ wire.SealBody) (wire.Status
 	if _, err := a.opt.Runner.Run(ctx, "cloud-init", "clean", "--logs", "--seed", "--machine-id", "--configs", "all"); err != nil {
 		return failedStep("%v", err)
 	}
-	// T-066 F1: the build hostname must not reach a clone. /etc/hostname
-	// gets the neutral name; cloud-init (set_hostname, a new instance)
-	// sets the clone's own name at its first boot.
+	if err := a.resetIdentityFiles(); err != nil {
+		return failedStep("%v", err)
+	}
+	return applied("cloud-init state, logs, seed, configs and machine-id reset; hostname " + neutralHostname)
+}
+
+// resetIdentityFiles removes the build guest's identity from the files in
+// /etc that a clone must make again (T-066 F1): /etc/hostname gets the
+// neutral name (cloud-init's set_hostname sets the clone's own name at its
+// first boot), the build name leaves /etc/hosts, and /etc/machine-id gets
+// "uninitialized" (as "cloud-init clean --machine-id" writes it; systemd
+// makes a new id at the first boot). In place, never through a link.
+func (a *Agent) resetIdentityFiles() error {
 	old, err := readGuestFile(a.opt.Root, "/etc/hostname", 4096)
 	if err != nil {
-		return failedStep("%v", err)
+		return err
 	}
 	old = strings.TrimSpace(old)
 	if err := rewriteGuestFile(a.opt.Root, "/etc/hostname", []byte(neutralHostname+"\n")); err != nil {
-		return failedStep("%v", err)
+		return err
 	}
 	if old != "" && old != neutralHostname {
 		hosts, err := readGuestFile(a.opt.Root, "/etc/hosts", 1<<20)
 		if err != nil {
-			return failedStep("%v", err)
+			return err
 		}
 		if clean := cleanHosts(hosts, old); clean != hosts {
 			if err := rewriteGuestFile(a.opt.Root, "/etc/hosts", []byte(clean)); err != nil {
-				return failedStep("%v", err)
+				return err
 			}
 		}
 	}
-	return applied("cloud-init state, logs, seed, configs and machine-id reset; hostname " + neutralHostname)
+	// A link fails here (readGuestFile); a missing file stays missing.
+	id, err := readGuestFile(a.opt.Root, "/etc/machine-id", 4096)
+	if err != nil {
+		return err
+	}
+	if id != "" || guestRegular(a.opt.Root, "/etc/machine-id") {
+		return rewriteGuestFile(a.opt.Root, "/etc/machine-id", []byte("uninitialized\n"))
+	}
+	return nil
 }
 
 // neutralHostname is the hostname of a template (T-066 F1).
