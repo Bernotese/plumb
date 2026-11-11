@@ -135,3 +135,24 @@ func TestObserveDigestSkew(t *testing.T) {
 		t.Errorf("a lasting skew: %v", err)
 	}
 }
+
+// TestRestartTimeoutPinned: the Plan text says "hard power-off after 2
+// minutes" (D-194); the default and the shutdown call must agree.
+func TestRestartTimeoutPinned(t *testing.T) {
+	if DefaultShutdownTimeout.Seconds() != 120 {
+		t.Fatalf("DefaultShutdownTimeout = %v; the Plan text names 2 minutes", DefaultShutdownTimeout)
+	}
+	f, _, id, _ := newRunningGuest(t)
+	d, err := New(Config{Client: f.client(t), Node: fakeNode, Pool: fakePool, Nameservers: []string{"192.0.2.53"}, SearchDomain: "plumb.test", Bridge: "vmbr0",
+		DiskStorage: "local-lvm", ImageStorage: "local", SnippetStorage: "plumb-snippets", Snippet: "plumb-vendor.yaml", VMIDMin: 9000, VMIDMax: 9099})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Power(context.Background(), id, driver.PowerRestart); err != nil {
+		t.Fatal(err)
+	}
+	p := f.lastParams("POST /nodes/pve/qemu/9001/status/shutdown")
+	if p.Get("timeout") != "120" || p.Get("forceStop") != "1" {
+		t.Errorf("shutdown params: %v", p)
+	}
+}

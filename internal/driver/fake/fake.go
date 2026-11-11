@@ -46,6 +46,7 @@ type guest struct {
 	gen            int // bumped on every config change
 	ip             string
 	frozen         string // a digest that a cold start kept (ColdRestart)
+	boots          int    // cold starts, Create included
 }
 
 // Driver is the fake driver. The zero value is not usable; call New.
@@ -229,6 +230,18 @@ func (g *guest) coldStart() {
 		g.frozen = ""
 	}
 	g.power = driver.PowerRunning
+	g.boots++
+}
+
+// Boots returns how often a guest had a cold start (Create counts), so a
+// test agent can say hello after each boot, like the real agent.
+func (d *Driver) Boots(id driver.GuestID) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if g, ok := d.guests[id]; ok {
+		return g.boots
+	}
+	return 0
 }
 
 func equalSpec(a, b driver.GuestSpec) bool {
@@ -390,7 +403,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		spec.Image = "" // like Proxmox: the guest keeps the Image name, not the ref (D-189)
 		next := spec
 		next.SSHKeys = append([]string(nil), spec.SSHKeys...)
-		d.guests[id] = &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip}
+		d.guests[id] = &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1}
 		return id, nil
 	})
 }

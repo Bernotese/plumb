@@ -392,6 +392,8 @@ paths:
                       applied_revision: 7
                       open_issues: 1
                       last_run_id: 3
+                      waiting:
+                        - { attr: memory, from: 1024, to: 2048, since: "2026-11-09T16:02:00Z" }
                   - revision: 6
                     document:
                       kind: Target
@@ -399,6 +401,7 @@ paths:
                       spec:
                         type: vm
                         image: debian-13
+                        allow_restart: true
                         guest: { cores: 4, memory: 8192, disk: 100, bridge: vmbr0, ip: 192.168.1.20/24 }
                         blocks: [{ use: motd }]
                         overrides: {}
@@ -412,6 +415,7 @@ paths:
                       applied_revision: 6
                       open_issues: 0
                       last_run_id: 2
+                      waiting: []
                   - revision: 7
                     document:
                       kind: Target
@@ -432,6 +436,7 @@ paths:
                       applied_revision: 5
                       open_issues: 0
                       last_run_id: 4
+                      waiting: []
                   - revision: 5
                     document:
                       kind: Target
@@ -452,6 +457,31 @@ paths:
                       applied_revision: 5
                       open_issues: 0
                       last_run_id: 1
+                      waiting: []
+                  - revision: 7
+                    document:
+                      kind: Target
+                      name: worker1
+                      spec:
+                        type: vm
+                        image: debian-13
+                        allow_restart: false
+                        guest: { cores: 2, memory: 4096, disk: 20, bridge: vmbr0, ip: dhcp }
+                        blocks: [{ use: motd }]
+                        overrides: {}
+                    status:
+                      phase: restart_needed
+                      agent: online
+                      power: running
+                      last_seen: "2026-11-10T09:14:03Z"
+                      guest_id: "9005"
+                      ips: [192.168.1.45]
+                      applied_revision: 7
+                      open_issues: 0
+                      last_run_id: 3
+                      waiting:
+                        - { attr: memory, from: 2048, to: 4096, since: "2026-11-10T09:00:06Z" }
+                        - { attr: cores, from: 1, to: 2, since: "2026-11-10T09:00:06Z" }
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -491,6 +521,7 @@ paths:
                   applied_revision: 7
                   open_issues: 0
                   last_run_id: 3
+                  waiting: []
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -767,6 +798,7 @@ paths:
                 status: running
                 started_at: "2026-11-10T09:00:03Z"
                 finished_at: null
+                waits_for_restart: 0
                 targets:
                   - target: web1
                     status: running
@@ -814,6 +846,7 @@ paths:
                     status: succeeded
                     started_at: "2026-11-10T09:00:03Z"
                     finished_at: "2026-11-10T09:00:09Z"
+                    waits_for_restart: 0
                     targets:
                       - target: web1
                         status: succeeded
@@ -850,6 +883,7 @@ paths:
                 status: failed
                 started_at: "2026-11-10T09:30:03Z"
                 finished_at: "2026-11-10T09:30:41Z"
+                waits_for_restart: 0
                 targets:
                   - target: web1
                     status: failed
@@ -2177,7 +2211,7 @@ components:
       properties:
         attr: { type: string, enum: [cores, memory] }
         from: { type: integer, description: The value that the VM uses now. }
-        to: { type: integer, description: The desired value; set in Proxmox, not active yet. }
+        to: { type: integer, description: "The desired value: set in Proxmox, not active yet." }
         since:
           $ref: "#/components/schemas/Time"
           description: |

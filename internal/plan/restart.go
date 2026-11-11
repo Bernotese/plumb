@@ -3,7 +3,6 @@ package plan
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -33,10 +32,11 @@ const (
 	textWaitsOutput       = "%s: set in Proxmox, waits for a stop and start of the VM"
 )
 
-// RestartTimeout is the time a clean shutdown gets before Proxmox powers
-// the guest off hard (forceStop). The Plan text names it ("2 minutes"),
-// so a test pins it.
-const RestartTimeout = 120 * time.Second
+// userText is an error whose text is a sentence for the user, as the
+// card words it (it may start with a capital and end with a period).
+type userText string
+
+func (t userText) Error() string { return string(t) }
 
 // restartRule is the one rule of Plan and Run for a guest that may need
 // a cold start (D-194, table C). changes are the changes of DiffGuest,
@@ -50,7 +50,7 @@ func restartRule(changes, waiting []wire.Change, power driver.Power, allow, reen
 	}
 	if reenroll {
 		if !allow {
-			return nil, false, errors.New(TextReenrollRefused)
+			return nil, false, userText(TextReenrollRefused)
 		}
 		return out, true, nil // the one restart of the re-enrollment makes all of them active
 	}
@@ -122,7 +122,7 @@ func checkWritten(recorded []wire.Change, desired driver.GuestSpec, after driver
 		switch {
 		case c.Attr == driver.AttrBridge:
 			if after.Spec.Bridge != desired.Bridge {
-				return out, errors.New(textBridgeStuck)
+				return out, userText(textBridgeStuck)
 			}
 		case driver.IsColdStart(c.Attr):
 			want, _ := driver.IntValue(c.To)
@@ -133,7 +133,7 @@ func checkWritten(recorded []wire.Change, desired driver.GuestSpec, after driver
 			case next == want:
 				out[i].WaitsForRestart = true
 			default:
-				return out, fmt.Errorf("Proxmox did not take the value of %s: the VM has %d, after the next stop and start %d, desired %d", c.Attr, run, next, want)
+				return out, userText(fmt.Sprintf("Proxmox did not take the value of %s: the VM has %d, after the next stop and start %d, desired %d", c.Attr, run, next, want))
 			}
 		}
 	}

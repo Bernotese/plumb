@@ -127,7 +127,7 @@ func New(cfg Config) (*Driver, error) {
 		return nil, fmt.Errorf("proxmox: the bridge of the install is required (PLUMB_PVE_BRIDGE), not %q", cfg.Bridge)
 	}
 	if cfg.ShutdownTimeout == 0 {
-		cfg.ShutdownTimeout = 120 * time.Second
+		cfg.ShutdownTimeout = DefaultShutdownTimeout
 	}
 	if cfg.ImageLockWait == 0 {
 		cfg.ImageLockWait = 2 * time.Minute
@@ -674,6 +674,12 @@ func (d *Driver) configure(ctx context.Context, id int, spec driver.GuestSpec, t
 	}
 	return nil
 }
+
+// DefaultShutdownTimeout is the clean shutdown time of a restart before
+// Proxmox powers the guest off hard (forceStop). The Plan text of a
+// restart names it ("hard power-off after 2 minutes", D-194), so a test
+// pins it.
+const DefaultShutdownTimeout = 120 * time.Second
 
 // --- Observe ---
 
