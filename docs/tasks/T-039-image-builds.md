@@ -1,4 +1,4 @@
-# T-039 – Image builds: Blocks, seal, retention, schedule   (**blocked: test host**)
+# T-039 – Image builds: Blocks, seal, retention, schedule   (test host ready since 2026-11-11; needs the plan)
 
 - **Owner:** pl-backend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** L (will be split)   · **Depends on:** test host (D-041), T-012 and the agent PRs (#8, #13) on `main`
@@ -18,6 +18,10 @@ Plumb builds its own templates from a base image plus Blocks, keeps versions, re
 - [ ] `pl-architect` turns the design into a plan with the facts from the host: template conversion, linked and full clones per storage, what `seal` must reset on Debian 13 and Ubuntu 26.04, delete rules for templates with clones.
 - [ ] Parts that need no host (schema, version table, retention choice, schedule clock) can become their own unblocked card then.
 - [ ] Needs new architecture decisions.
+- [ ] Facts from the real host that the plan must cover (pl-lead, 2026-11-11):
+  - D-192: `seal` (or a Block) removes initramfs networking on dracut images (Ubuntu 26.04), so a Plumb-built Ubuntu template takes a static address. Proof on the host: static address applied at the first and at a later boot.
+  - D-185 / pl-architect: an image build must remove the SSH host keys before the template is made.
+  - D-188 (T-055): there is no Image binding; a template is found by name + full SHA-256 in the pool. Templates and import files are never deleted by the driver (D-077): the retention rule of this card decides who deletes them.
 
 ## Out of scope
 - Signed image checksums. Images for other distributions.
