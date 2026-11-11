@@ -85,6 +85,34 @@ describe("image page", () => {
     expect(copies).toHaveLength(st.unused_imports.length - 1);
   });
 
+  it("lists left templates with name and VMID, and no command (T-062 N1)", async () => {
+    const api = adminApi();
+    show(ImageScreen, { api, name: "ubuntu-web" });
+    await until(() => text().includes("Unused import files"));
+    expect(text()).not.toContain("Left templates"); // missing field: none
+
+    reset();
+    const real = await api.getImage("ubuntu-web");
+    if (!real.status) throw new Error("no status");
+    real.status.left_templates = [
+      { name: "plumb-build-ubuntu-web-v5", guest_id: "9105" },
+      { name: "plumb-build-ubuntu-web-<b>x</b>", guest_id: "9106; qm destroy 100" },
+    ];
+    vi.spyOn(api, "getImage").mockResolvedValue(real);
+    show(ImageScreen, { api, name: "ubuntu-web" });
+    const section = await until(() =>
+      document.querySelector("section[aria-labelledby='left-title']"),
+    );
+    const items = [...section.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toContain("plumb-build-ubuntu-web-v5");
+    expect(items[0]).toContain("VMID 9105");
+    expect(items[0]).toContain("left by a build; remove it by hand");
+    expect(items[1]).toContain("<b>x</b>"); // text, never markup
+    expect(section.querySelector("b")).toBeNull();
+    expect(section.querySelector("code, button")).toBeNull(); // no command, no Copy
+  });
+
   it("the Versions table scrolls with the keyboard (review N3)", async () => {
     show(ImageScreen, { api: adminApi(), name: "ubuntu-web" });
     const wrap = await until(() => document.querySelector<HTMLElement>(".table-wrap"));

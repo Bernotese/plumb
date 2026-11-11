@@ -205,6 +205,31 @@ func TestDevAgentForNewTarget(t *testing.T) {
 	apply("delete web3", map[string]any{"delete": []any{map[string]any{"kind": "Target", "name": "web3"}}})
 	eventually(t, "agent of web3 stops", 5*time.Second, func() bool { return devAgentRuns() == 3 })
 
+	// T-064: a build guest gets a simulated agent; it seals, powers off,
+	// and the build makes version 1. Then its agent stops.
+	runsBefore := devAgentRuns()
+	apply("build dev-built", map[string]any{"put": []any{map[string]any{"kind": "Image", "name": "dev-built", "spec": map[string]any{
+		"type": "vm", "url": "https://images.invalid/dev.img", "sha256": strings.Repeat("a", 64),
+		"build": map[string]any{
+			"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "built in dev"}}},
+			"guest":  map[string]any{"disk": 10, "bridge": "vmbr0"},
+		},
+	}}}})
+	var img struct {
+		Status struct {
+			Versions []struct {
+				Version int
+				Status  string
+			}
+			LeftTemplates []any `json:"left_templates"`
+		}
+	}
+	if call("GET", "/api/v1/images/dev-built", nil, &img) != 200 || len(img.Status.Versions) != 1 ||
+		img.Status.Versions[0].Version != 1 || img.Status.Versions[0].Status != "ready" || len(img.Status.LeftTemplates) != 0 {
+		t.Fatalf("dev-built after the build: %+v", img.Status)
+	}
+	eventually(t, "build agent stops", 5*time.Second, func() bool { return devAgentRuns() == runsBefore })
+
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)

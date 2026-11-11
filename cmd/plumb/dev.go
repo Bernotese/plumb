@@ -119,6 +119,10 @@ type devAgents struct {
 	wg     sync.WaitGroup
 }
 
+// buildAgentKey starts the key of the agent of a build guest in
+// devAgents.agents; a Target name cannot hold '/'.
+const buildAgentKey = "build-guest/"
+
 type devAgent struct {
 	ref    string // the guest the agent stands for
 	a      *linktest.Agent
@@ -180,6 +184,18 @@ func (d *devAgents) sync(ctx context.Context) error {
 	for _, b := range bs {
 		bound[b.Name] = b.Ref
 	}
+	// Build guests have no binding: each running one gets an agent too, as
+	// the vendor snippet gives one to a real clone. It seals like the real
+	// agent and then powers its guest off (T-064, simulated seal).
+	builds, err := d.drv.ListBuilds(ctx)
+	if err != nil {
+		return err
+	}
+	for _, b := range builds {
+		if !b.Template {
+			bound[buildAgentKey+string(b.ID)] = string(b.ID)
+		}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for t, a := range d.agents {
@@ -205,6 +221,14 @@ func (d *devAgents) start(ctx context.Context, target, ref string) {
 		return boot.Token, ok
 	}
 	a := linktest.New(d.lk.Handler(), token)
+	if strings.HasPrefix(target, buildAgentKey) {
+		id := driver.GuestID(ref)
+		a.OnSeal(func() {
+			if err := d.drv.StopOutside(id); err != nil {
+				d.log.Warn("dev build guest did not power off", "guest", ref, "err", err)
+			}
+		})
+	}
 	// The simulated guest reports the address that the fake driver gave
 	// it; the demo Target reports another one (D-215).
 	if target == demoAddrTarget {
