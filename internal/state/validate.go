@@ -166,6 +166,29 @@ var compiled = sync.OnceValues(func() (*schemaSet, error) {
 	if s.guestDefaults, err = defaultsOf(target.Properties.Spec.Properties.Guest.Properties); err != nil {
 		return nil, err
 	}
+	// Defaults of the build guest of an Image (D-197).
+	var image struct {
+		Properties struct {
+			Spec struct {
+				Properties struct {
+					Build struct {
+						Properties struct {
+							Guest struct {
+								Properties map[string]json.RawMessage `json:"properties"`
+							} `json:"guest"`
+						} `json:"properties"`
+					} `json:"build"`
+				} `json:"properties"`
+			} `json:"spec"`
+		} `json:"properties"`
+	}
+	raw, _ = Schema(KindImage)
+	if err := json.Unmarshal(raw, &image); err != nil {
+		return nil, err
+	}
+	if s.buildGuestDefaults, err = defaultsOf(image.Properties.Spec.Properties.Build.Properties.Guest.Properties); err != nil {
+		return nil, err
+	}
 	return s, nil
 })
 
@@ -174,6 +197,8 @@ type schemaSet struct {
 	resources     map[string]*jsonschema.Schema
 	guest         *jsonschema.Schema
 	guestDefaults map[string]any
+	// buildGuestDefaults: defaults of spec.build.guest of an Image.
+	buildGuestDefaults map[string]any
 }
 
 func mustSchemas() *schemaSet {
@@ -274,7 +299,17 @@ func deepCopy(v any) any {
 // --- parsed documents ---
 
 type imageSpec struct {
-	Type string `json:"type"`
+	Type   string      `json:"type"`
+	URL    string      `json:"url"`
+	SHA256 string      `json:"sha256"`
+	Build  *imageBuild `json:"build"`
+}
+
+// imageBuild is spec.build of an Image (D-197).
+type imageBuild struct {
+	Blocks  []blockUse     `json:"blocks"`
+	Upgrade *bool          `json:"upgrade"` // nil: the default, true
+	Guest   map[string]any `json:"guest"`
 }
 
 type blockUse struct {
@@ -439,19 +474,6 @@ func validate(docs []Doc, lim Limits, stored bool) (*Set, error) {
 			}
 			s.blocks[d.Name] = b
 		}
-		// The schema has the contract of image builds (T-058, D-197), but
-		// no code builds yet: a built Image would be used as a stock image.
-		// T-059 replaces this with the real save checks.
-		if d.Kind == KindImage {
-			var img struct {
-				Build json.RawMessage `json:"build"`
-			}
-			if _ = decode(canon.Spec, &img); img.Build != nil {
-				errs = append(errs, &Error{Kind: d.Kind, Name: d.Name, Path: "/spec/build",
-					Msg: "image builds are not available yet (T-059, T-062)"})
-				continue
-			}
-		}
 		delete(s.invalid, key)
 		s.docs = append(s.docs, canon)
 		switch d.Kind {
@@ -507,6 +529,29 @@ func validate(docs []Doc, lim Limits, stored bool) (*Set, error) {
 			}
 			if errors.Is(err, ErrTotalBudget) {
 				break // one error, not one per remaining Target
+			}
+		}
+	}
+	// The build of each built Image renders like a Target, on the same
+	// budget, so a change of a shared Block is checked for it too (n3).
+	for _, name := range sortedKeys(s.images) {
+		u, ok := s.imageUnit(name)
+		if !ok {
+			continue
+		}
+		if err := total.exhausted(); err != nil {
+			errs = append(errs, &Error{Kind: KindImage, Name: name, Msg: err.Error(), Err: err})
+			break
+		}
+		if _, err := s.renderUnit(u, total); err != nil {
+			var es Errors
+			if errors.As(err, &es) {
+				errs = append(errs, es...)
+			} else {
+				errs = append(errs, &Error{Kind: KindImage, Name: name, Msg: err.Error()})
+			}
+			if errors.Is(err, ErrTotalBudget) {
+				break
 			}
 		}
 	}
@@ -632,6 +677,14 @@ func walkStrings(v any, path string, fn func(path, s string)) {
 	}
 }
 
+// checkUnit checks a Target or the build of an Image before render.
+func (s *Set) checkUnit(u *unit) Errors {
+	if u.kind == KindImage {
+		return s.checkUses(u)
+	}
+	return s.checkTarget(u.name)
+}
+
 // checkTarget checks the references of a Target: its image, its Blocks,
 // the ids of the Block uses and the parameters.
 func (s *Set) checkTarget(name string) Errors {
@@ -644,6 +697,14 @@ func (s *Set) checkTarget(name string) Errors {
 		errs = append(errs, errf("/spec/image", "Image %q %s", t.Image, s.missing(KindImage, t.Image)))
 	} else if img.Type != t.Type {
 		errs = append(errs, errf("/spec/image", "Image %q is for %s, the Target is %s", t.Image, img.Type, t.Type))
+	} else if img.Build != nil {
+		// A disk cannot shrink: the template has the disk of the build
+		// guest (D-202, host A4).
+		want, _ := intOf(img.Build.Guest["disk"])
+		if have, ok := intOf(t.Guest["disk"]); ok && have < want {
+			errs = append(errs, errf("/spec/guest/disk",
+				"disk %d GiB is smaller than the disk of Image %q (%d GiB); a disk cannot shrink (D-202)", have, t.Image, want))
+		}
 	}
 	// guest and overrides never hold a reference, at any depth (D-088).
 	if at := findRef(t.Guest, "/spec/guest"); at != "" {
@@ -656,18 +717,37 @@ func (s *Set) checkTarget(name string) Errors {
 			}
 		}
 	}
+	u, _ := s.targetUnit(name)
+	return append(errs, s.checkUses(u)...)
+}
+
+// checkUses checks the Block uses of a unit: ids, Blocks, parameters and
+// secret references. The Blocks of an Image take no secret at all (D-202).
+func (s *Set) checkUses(u *unit) Errors {
+	errf := func(path, format string, args ...any) *Error {
+		return &Error{Kind: u.kind, Name: u.name, Path: path, Msg: fmt.Sprintf(format, args...)}
+	}
+	var errs Errors
 	ids := map[string]int{}
-	for i, use := range t.Blocks {
-		path := ptr("/spec/blocks", i)
+	for i, use := range u.blocks {
+		path := ptr(u.blocksPath, i)
 		if first, dup := ids[use.id()]; dup {
 			errs = append(errs, errf(path+"/id",
-				"Block use id %q is already used by /spec/blocks/%d; give each use of a Block its own id (D-048)", use.id(), first))
+				"Block use id %q is already used by %s/%d; give each use of a Block its own id (D-048)", use.id(), u.blocksPath, first))
 		} else {
 			ids[use.id()] = i
 		}
 		b, ok := s.blocks[use.Use]
 		if !ok {
 			errs = append(errs, errf(path+"/use", "Block %q %s", use.Use, s.missing(KindBlock, use.Use)))
+			continue
+		}
+		if u.kind == KindImage && len(b.secrets) > 0 {
+			// Also a secret parameter without a value: the Block is made
+			// for secrets, and a later Target-only change must not reach
+			// a template (D-202, n3).
+			errs = append(errs, errf(path+"/use", "Block %q has the secret parameter %q; the Blocks of an Image cannot use secrets (D-202)",
+				use.Use, sortedKeys(b.secrets)[0]))
 			continue
 		}
 		var unknown []string
@@ -703,10 +783,24 @@ func (s *Set) checkTarget(name string) Errors {
 		}
 		params := withDefaults(use.Params, b.defaults)
 		if err := b.params.Validate(params); err != nil {
-			errs = append(errs, schemaErrors(KindTarget, name, path+"/params", err)...)
+			errs = append(errs, schemaErrors(u.kind, u.name, path+"/params", err)...)
 		}
 	}
 	return errs
+}
+
+// intOf reads a whole number from a decoded document value.
+func intOf(v any) (int, bool) {
+	switch n := v.(type) {
+	case json.Number:
+		i, err := n.Int64()
+		return int(i), err == nil
+	case float64:
+		return int(n), n == float64(int(n))
+	case int:
+		return n, true
+	}
+	return 0, false
 }
 
 // missing explains why a referenced document is not usable.

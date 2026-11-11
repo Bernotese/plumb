@@ -32,6 +32,9 @@ const (
 	OriginRollback   = "rollback"
 	OriginImport     = "import"
 	OriginIgnoreRule = "ignore_rule"
+	// Image builds (migration image_version, D-199): a manual or scheduled
+	// build with no document change. Used from T-062.
+	OriginBuild = "build"
 )
 
 // DocKey names a document.
