@@ -265,6 +265,25 @@
       </div>
     {/if}
 
+    {#if st.left_templates?.length}
+      <section class="card" aria-labelledby="left-title">
+        <h2 id="left-title">Left templates</h2>
+        <p>
+          A build converted these guests to templates but did not finish. No version uses them, and
+          Plumb never uses or removes them. Remove each one by hand in Proxmox.
+        </p>
+        <ul class="plain imports">
+          {#each st.left_templates as l (l.guest_id)}
+            <li>
+              <span class="mono wrap">{l.name}</span>
+              <span class="muted">(VMID <span class="mono">{l.guest_id}</span>)</span>
+              <p class="warn">left by a build; remove it by hand</p>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
     <section class="card" aria-labelledby="imports-title">
       <h2 id="imports-title">Unused import files</h2>
       {#if st.unused_imports.length === 0}
