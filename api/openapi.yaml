@@ -2335,8 +2335,10 @@ components:
         unused_imports:
           type: array
           description: |
-            Downloaded base images in the image storage that no version or base template of this
-            Image needs. Plumb never deletes them (D-209); a person runs `command` on the host.
+            Downloaded base images in the image storage that no checksum needs: not the checksum of
+            the document and not the base of a running build. Safe to remove: no version needs it,
+            because a version template is a full copy; a rollback to that checksum downloads it
+            again (D-209). Plumb never deletes them; a person runs `command` on the host.
           items: { $ref: "#/components/schemas/UnusedImport" }
         disk:
           $ref: "#/components/schemas/DiskUse"
