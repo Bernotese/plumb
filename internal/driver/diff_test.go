@@ -9,7 +9,7 @@ import (
 )
 
 func spec() GuestSpec {
-	return GuestSpec{Name: "web1", Kind: wire.KindVM, Image: "tpl-1", Cores: 2, MemoryMB: 2048, DiskGB: 20,
+	return GuestSpec{Name: "web1", Kind: wire.KindVM, ImageName: "debian", Image: "tpl-1", Cores: 2, MemoryMB: 2048, DiskGB: 20,
 		Bridge: "vmbr0", IP: "dhcp", User: "plumb", SSHKeys: []string{"ssh-ed25519 AAAA a@b"}}
 }
 
@@ -38,7 +38,7 @@ func TestDiffGuest(t *testing.T) {
 	// Every create-only attribute is refused by name.
 	for attr, mutate := range map[string]func(*GuestSpec){
 		AttrKind:    func(s *GuestSpec) { s.Kind = wire.KindLXC },
-		AttrImage:   func(s *GuestSpec) { s.Image = "tpl-2" },
+		AttrImage:   func(s *GuestSpec) { s.ImageName = "ubuntu" },
 		AttrDisk:    func(s *GuestSpec) { s.DiskGB = 40 },
 		AttrIP:      func(s *GuestSpec) { s.IP = "10.0.0.5/24" },
 		AttrGateway: func(s *GuestSpec) { s.Gateway = "10.0.0.1" },
@@ -55,6 +55,18 @@ func TestDiffGuest(t *testing.T) {
 	}
 	if len(CreateOnly) != 7 {
 		t.Errorf("CreateOnly = %v; a change of this list needs a decision line", CreateOnly)
+	}
+	// The driver ref is no setting (D-189): a re-made template or an
+	// empty observed ref is no change and no drift.
+	ref := spec()
+	ref.Image = "tpl-2"
+	noRef := spec()
+	noRef.Image = ""
+	if c, err := DiffGuest(ref, GuestState{Spec: noRef}); err != nil || len(c) != 0 {
+		t.Errorf("new image ref: %v, %v", c, err)
+	}
+	if c := DriftGuest(ref, GuestState{Spec: noRef}); len(c) != 0 {
+		t.Errorf("new image ref drift: %v", c)
 	}
 	// Empty and nil key lists are the same.
 	a, b := spec(), spec()

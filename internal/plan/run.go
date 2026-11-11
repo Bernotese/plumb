@@ -279,7 +279,7 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	newAgent := false
 	if guestChange != nil {
 		s.set(ctx, wire.GuestConfigID, wire.StatusRunning, nil, "")
-		changes, err := e.guestStep(ctx, tp, r, guestChange.Risk)
+		changes, err := e.guestStep(ctx, run, tp, r, guestChange.Risk)
 		switch {
 		case errors.Is(err, errRefused):
 			s.set(ctx, wire.GuestConfigID, wire.StatusRefused, changes, err.Error())
@@ -370,7 +370,7 @@ func (e *Engine) waitOnline(ctx context.Context, target string) error {
 }
 
 // guestStep does the driver part of a target. It returns the changes it made.
-func (e *Engine) guestStep(ctx context.Context, tp TargetPlan, r *state.Rendered, approved wire.Risk) ([]wire.Change, error) {
+func (e *Engine) guestStep(ctx context.Context, run store.Run, tp TargetPlan, r *state.Rendered, approved wire.Risk) ([]wire.Change, error) {
 	switch tp.Guest {
 	case "delete":
 		b, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target)
@@ -383,11 +383,11 @@ func (e *Engine) guestStep(ctx context.Context, tp TargetPlan, r *state.Rendered
 		return nil, e.st.DeleteBinding(ctx, state.KindTarget, tp.Target)
 
 	case "create":
-		if err := e.fetchImage(ctx, r.Image); err != nil {
+		spec, err := e.guestSpec(tp.Target, r)
+		if err != nil {
 			return nil, err
 		}
-		spec, err := e.guestSpec(ctx, tp.Target, r)
-		if err != nil {
+		if spec.Image, err = e.fetchImage(ctx, run.RevisionID, r.Image); err != nil {
 			return nil, err
 		}
 		token, _, err := e.cfg.Agents.NewEnrollToken(ctx, tp.Target)
@@ -410,7 +410,7 @@ func (e *Engine) guestStep(ctx context.Context, tp TargetPlan, r *state.Rendered
 			return nil, err
 		}
 		id := driver.GuestID(b.Ref)
-		desired, err := e.guestSpec(ctx, tp.Target, r)
+		desired, err := e.guestSpec(tp.Target, r)
 		if err != nil {
 			return nil, err
 		}
@@ -455,20 +455,14 @@ func (e *Engine) guestStep(ctx context.Context, tp TargetPlan, r *state.Rendered
 	return nil, fmt.Errorf("plan: unknown guest action %q", tp.Guest)
 }
 
-// fetchImage makes sure the image of a new guest exists in the driver.
-func (e *Engine) fetchImage(ctx context.Context, name string) error {
-	if _, err := e.st.GetBinding(ctx, state.KindImage, name); err == nil {
-		return nil
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	head, err := e.st.Head(ctx)
+// fetchImage asks the driver for the image of a new guest and returns
+// its ref. It reads the Image document of the Run's revision and keeps no
+// binding: the driver finds the template again or imports it again, so a
+// deleted, changed or destroyed template is never stale (D-188).
+func (e *Engine) fetchImage(ctx context.Context, revision int64, name string) (driver.ImageRef, error) {
+	row, err := e.st.RevisionDoc(ctx, revision, state.KindImage, name)
 	if err != nil {
-		return err
-	}
-	row, err := e.st.RevisionDoc(ctx, head.ID, state.KindImage, name)
-	if err != nil {
-		return err
+		return "", fmt.Errorf("image %s: %w", name, err)
 	}
 	var doc struct {
 		Spec struct {
@@ -478,13 +472,14 @@ func (e *Engine) fetchImage(ctx context.Context, name string) error {
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal(row.Body, &doc); err != nil {
-		return err
+		return "", err
 	}
 	ref, err := e.cfg.Driver.FetchImage(ctx, driver.ImageSpec{Name: name, Kind: wire.Kind(doc.Spec.Type), URL: doc.Spec.URL, SHA256: doc.Spec.SHA256})
 	if err != nil {
-		return err
+		return "", err
 	}
-	return e.st.PutBinding(ctx, store.Binding{Kind: state.KindImage, Name: name, Ref: string(ref)})
+	e.log.Info("image ready", "image", name, "ref", ref)
+	return ref, nil
 }
 
 // Recover closes what a controller crash left open. Call it once at

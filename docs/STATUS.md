@@ -12,7 +12,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | Card | Owner | State |
 |---|---|---|
 | T-015 slice acceptance, real-host part | pl-codex-qa wrote, pl-backend runs | **Debian 13 with a static address: passed on the real host** (82 s). Ubuntu 26.04: the stock image takes no static address (upstream, D-192); the user accepts slice 1 with Ubuntu on DHCP. pl-backend runs the Ubuntu part with DHCP. Test: PR #90 + branch pl-backend/T-015-real-host |
-| T-055 no Image binding (found by T-015) | pl-frontend | PR #92: QA passed (6 mutations caught, tests merged into the branch), review: go after one fix (S1, a name-only match must never be deleted). Host checks later by pl-backend |
+| T-055 no Image binding (found by T-015) | pl-frontend (code), pl-backend (host) | **code on main** (PR #92, 2026-11-11; D-188, D-189; migration 0006). Open: the host checks of the card, by pl-backend after the T-015 run (the controller on the host needs the new build first) |
 | T-056 pending guest config (found by T-015) | pl-architect re-plans, then tbd | user decision D-193: restart for a cores/memory change is a setting per VM; when it says no, the value waits and Plumb shows it. pl-architect updates the card (name + default of the setting). The parts without the restart can start |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 

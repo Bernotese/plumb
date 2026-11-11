@@ -59,7 +59,7 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
-		desired, err := e.guestSpec(ctx, b.Name, r)
+		desired, err := e.guestSpec(b.Name, r)
 		if err != nil {
 			errs = append(errs, err)
 			continue

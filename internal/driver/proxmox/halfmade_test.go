@@ -61,7 +61,7 @@ func TestFetchImageStopsWhenCleanupFails(t *testing.T) {
 	f := newFakePVE(t)
 	d := f.driver(t)
 	ctx := context.Background()
-	f.addVM(9005, fakePool, map[string]string{"name": templateName(image)}, false)
+	f.addVM(9005, fakePool, map[string]string{"name": templateName(image), "description": imageDescription(image)}, false)
 	f.failNext["DELETE /nodes/pve/qemu/9005"] = "storage is busy"
 	_, err := d.FetchImage(ctx, image)
 	if err == nil || !strings.Contains(err.Error(), "the half-made VM 9005 is left") {
@@ -78,7 +78,7 @@ func TestFetchImageLockedVMIsBusy(t *testing.T) {
 	f := newFakePVE(t)
 	d := f.driver(t)
 	f.addVM(9005, fakePool, map[string]string{"name": templateName(image)}, false)
-	f.lockReads[9005] = 100
+	f.lockReads[9005] = 1 << 30 // a lock that stays: busy after ImageLockWait
 	_, err := d.FetchImage(context.Background(), image)
 	if err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Fatalf("err = %v", err)

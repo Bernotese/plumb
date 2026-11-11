@@ -302,3 +302,26 @@ func TestMigrateIssueIgnore(t *testing.T) {
 		t.Errorf("human_only: %+v", got.HumanOnly)
 	}
 }
+
+// Migration 0006 (T-055, D-188) removes the Image bindings and keeps the
+// Target bindings.
+func TestMigrateNoImageBinding(t *testing.T) {
+	ctx := context.Background()
+	const ts = "'2026-11-11T00:00:00.000000000Z'"
+	path := openAt(t, migrationNumber(t, "_no_image_binding.sql")-1,
+		`INSERT INTO binding (kind, name, ref, digest, updated_at) VALUES ('Image', 'debian', '9000', '', `+ts+`)`,
+		`INSERT INTO binding (kind, name, ref, digest, updated_at) VALUES ('Image', 'ubuntu', '9001', '', `+ts+`)`,
+		`INSERT INTO binding (kind, name, ref, digest, updated_at) VALUES ('Target', 'web1', '9002', 'abc', `+ts+`)`,
+	)
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if b, err := s.Bindings(ctx, "Image"); err != nil || len(b) != 0 {
+		t.Errorf("Image bindings after migration: %+v %v", b, err)
+	}
+	if b, err := s.GetBinding(ctx, "Target", "web1"); err != nil || b.Ref != "9002" || b.Digest != "abc" {
+		t.Errorf("Target binding after migration: %+v %v", b, err)
+	}
+}

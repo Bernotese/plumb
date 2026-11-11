@@ -24,7 +24,7 @@ func setup(t *testing.T) (*Driver, driver.GuestID, driver.GuestSpec) {
 	if again, _ := d.FetchImage(ctx, driver.ImageSpec{Name: "ubuntu", URL: "https://x/i.img", SHA256: sum}); again != ref {
 		t.Errorf("FetchImage is not idempotent: %s vs %s", again, ref)
 	}
-	spec := driver.GuestSpec{Name: "web1", Kind: wire.KindVM, Image: ref, Cores: 2, MemoryMB: 2048, DiskGB: 20, Bridge: "vmbr0", IP: "dhcp", User: "plumb"}
+	spec := driver.GuestSpec{Name: "web1", Kind: wire.KindVM, ImageName: "ubuntu", Image: ref, Cores: 2, MemoryMB: 2048, DiskGB: 20, Bridge: "vmbr0", IP: "dhcp", User: "plumb"}
 	id, err := d.Create(ctx, spec, driver.Bootstrap{Token: "tok-1"})
 	if err != nil {
 		t.Fatal(err)
