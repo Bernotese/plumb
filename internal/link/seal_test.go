@@ -108,3 +108,76 @@ func TestSealResultItems(t *testing.T) {
 		t.Errorf("drift with a seal step: %d, want 400", code)
 	}
 }
+
+// Review S1 of #134: the merged link rules of #133 and #134 together.
+func TestSealLinkRulesCombined(t *testing.T) {
+	f := newFixture(t)
+	// #133: the build mark comes from the link prefix only.
+	enroll := func(target string) (string, bool) {
+		code, resp, body := f.enroll(f.token(target))
+		if code != 200 {
+			t.Fatalf("enroll %s: %d %s", target, code, body)
+		}
+		return resp.Credential, resp.Build
+	}
+	web, webBuild := enroll("web1")
+	build, buildBuild := enroll("build:debian")
+	if webBuild || !buildBuild {
+		t.Fatalf("build mark: web1=%v build:debian=%v", webBuild, buildBuild)
+	}
+	// #133: no watch to a build link; #134: seal only to a non-empty build
+	// link with a SealBody.
+	if _, err := f.link.Send("build:debian", wire.CommandWatch, wire.WatchBody{}); err == nil {
+		t.Error("watch to a build link was queued")
+	}
+	if _, err := f.link.Send("web1", wire.CommandWatch, wire.WatchBody{}); err != nil {
+		t.Errorf("watch to web1: %v", err)
+	}
+	f.pollCmd(web)
+	for _, c := range []struct {
+		target string
+		body   any
+	}{{"web1", wire.SealBody{}}, {"build:", wire.SealBody{}}, {"build:debian", wire.ObserveBody{}}} {
+		if _, err := f.link.Send(c.target, wire.CommandSeal, c.body); err == nil {
+			t.Errorf("seal to %q with %T was queued", c.target, c.body)
+		}
+	}
+	step := func(s string) wire.Item { return wire.Item{Resource: wire.SealItemID(s), Status: wire.StatusApplied} }
+	post := func(cred string, rep wire.Report) int {
+		code, _ := f.do("POST", wire.PathReport, cred, rep)
+		return code
+	}
+	// #134: seal items only in the result of an outstanding seal command,
+	// also for a build agent; #133: only from a build agent.
+	aid, _ := f.link.Send("build:debian", wire.CommandApply, wire.ApplyBody{})
+	f.pollCmd(build)
+	if code := post(build, wire.Report{Type: wire.ReportResult, CommandID: aid, Items: []wire.Item{step(wire.SealStepGuard)}}); code != 400 {
+		t.Errorf("seal item in the apply result of a build agent: %d", code)
+	}
+	if code := post(build, wire.Report{Type: wire.ReportDrift, Items: []wire.Item{step(wire.SealStepGuard)}}); code != 400 {
+		t.Errorf("seal item in drift of a build agent: %d", code)
+	}
+	wid, _ := f.link.Send("web1", wire.CommandApply, wire.ApplyBody{})
+	f.pollCmd(web)
+	if code := post(web, wire.Report{Type: wire.ReportResult, CommandID: wid, Items: []wire.Item{step(wire.SealStepGuard)}}); code != 400 {
+		t.Errorf("seal item from a Target agent: %d", code)
+	}
+	sid, err := f.link.Send("build:debian", wire.CommandSeal, wire.SealBody{PlanID: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.pollCmd(build)
+	if code := post(build, wire.Report{Type: wire.ReportProgress, CommandID: sid, Items: []wire.Item{step(wire.SealStepGuard)}}); code != 400 {
+		t.Errorf("seal progress: %d", code)
+	}
+	var items []wire.Item
+	for _, s := range wire.SealSteps {
+		items = append(items, step(s))
+	}
+	if code := post(build, wire.Report{Type: wire.ReportResult, CommandID: sid, Items: items}); code != 204 {
+		t.Fatalf("seal result of the build agent: %d", code)
+	}
+	if got := f.last(); got.CommandID != sid || len(got.Items) != len(wire.SealSteps) {
+		t.Fatalf("delivered %+v", got)
+	}
+}
