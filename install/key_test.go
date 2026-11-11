@@ -152,6 +152,20 @@ func TestKeyInitWaitsForRecoveryKeyAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestKeyInitEOFStillRestartsService(t *testing.T) {
+	h := newHost(t)
+	code, output, errors := h.runTTY(t, "y\n\x04", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("install stopped at EOF after key init: %d\n%s\n%s", code, output, errors)
+	}
+	if index(h.calls(), "pct exec 105 -- systemctl restart plumb.service") < 0 {
+		t.Errorf("plumb.service did not restart after EOF at key acknowledgement: %v", h.calls())
+	}
+	if strings.Contains(output, "then press Enter ") {
+		t.Errorf("recovery key prompt has a trailing space: %s", output)
+	}
+}
+
 func TestKeyInitFailureStopsBeforeStart(t *testing.T) {
 	h := newHost(t)
 	code, _, errOut := h.run(append(asRoot, "FAKE_KEYINIT_FAIL=1"), "--yes", "--plumb-binary", h.plumb)

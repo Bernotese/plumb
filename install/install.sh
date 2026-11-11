@@ -1009,8 +1009,8 @@ key_init() {
 		die "plumb key init failed; plumb.service was not started. Run install.sh again on a terminal."
 	if [[ $DRY_RUN != 1 ]]; then
 		lxc_has_key "$LXC_ID" || die "plumb key init wrote no $KEY_FILE; plumb.service was not started"
-		if [[ $YES != 1 ]]; then
-			read -r -p "Write the recovery key down, then press Enter" _
+		if [[ $YES != 1 && -t 0 ]]; then
+			read -r -p "Write the recovery key down, then press Enter" _ || true
 		fi
 	fi
 	say ""
