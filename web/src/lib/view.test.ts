@@ -135,6 +135,11 @@ describe("humanOnlyReasons (D-099)", () => {
   it("is empty for a normal plan", () => {
     expect(humanOnlyReasons({ ...base, targets: [] })).toEqual([]);
   });
+  it("names an image recipe change (D-201)", () => {
+    expect(humanOnlyReasons({ ...base, human_only: ["image-recipe"], targets: [] })).toEqual([
+      "It makes, changes or deletes the recipe of a built image.",
+    ]);
+  });
   it("names the secrets and the target", () => {
     const plan = {
       ...base,

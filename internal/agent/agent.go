@@ -46,7 +46,8 @@ type Options struct {
 	Addrs func() (list []string, truncated bool, err error)
 	// AddrsEvery is the period of the address report when nothing changed;
 	// default 15 min. AddrsGap is the least time between two address
-	// reports; default 30 s, the store limit of the controller (D-212).
+	// reports and two reads; default 35 s, a margin over the store limit
+	// of 30 s of the controller (D-212), so network jitter gives no 429.
 	AddrsEvery, AddrsGap time.Duration
 }
 
@@ -83,6 +84,7 @@ type Agent struct {
 	addrKnown bool      // addrLast is set
 	addrAt    time.Time // when the controller took addrLast
 	addrTry   time.Time // last address report, sent or not
+	addrRead  time.Time // last read at a poll round
 	addrErr   bool      // the last read failed (log once)
 }
 
@@ -126,7 +128,7 @@ func New(opt Options) (*Agent, error) {
 		opt.AddrsEvery = 15 * time.Minute
 	}
 	if opt.AddrsGap <= 0 {
-		opt.AddrsGap = 30 * time.Second
+		opt.AddrsGap = 35 * time.Second
 	}
 	c, err := newClient(cfg, time.Duration(opt.PollWait)*time.Second)
 	if err != nil {
@@ -373,34 +375,52 @@ func (a *Agent) addrsTaken(list []string, truncated bool, now time.Time) {
 
 // sendAddrs sends an addrs report at a poll round when the list differs
 // from the one the controller took last, or when that is AddrsEvery old;
-// never twice within AddrsGap (D-213). The controller may drop a list over
-// its own limit; the periodic send heals that. A refused report (400) is
-// not sent again until the list changes or AddrsEvery passed. Other errors
-// go to the caller, like every failed call.
+// never twice within AddrsGap, and it reads the list at most once per
+// AddrsGap (D-213). When the list cannot be read any more after the
+// controller took one, it says "unknown" once, so no stale list stays
+// (review N1). A busy controller (429, 503) is no connection error: the
+// list goes again after AddrsGap, and the poll does not wait (review S2).
+// A refused report (400) is not sent again until the list changes or
+// AddrsEvery passed. Other errors go to the caller, like every failed call.
 func (a *Agent) sendAddrs(ctx context.Context, now time.Time) error {
-	if !a.addrTry.IsZero() && now.Sub(a.addrTry) < a.opt.AddrsGap {
+	gap := a.opt.AddrsGap
+	if !a.addrTry.IsZero() && now.Sub(a.addrTry) < gap ||
+		a.addrKnown && now.Sub(a.addrAt) < gap || // the Hello carried a list a moment ago
+		!a.addrRead.IsZero() && now.Sub(a.addrRead) < gap {
 		return nil
 	}
-	if a.addrKnown && now.Sub(a.addrAt) < a.opt.AddrsGap {
-		return nil // the Hello carried a list a moment ago
-	}
+	a.addrRead = now
 	cur, ok := a.readAddrs()
-	if !ok {
+	var rep wire.Report
+	switch {
+	case !ok && !a.addrKnown:
 		return nil
-	}
-	if a.addrKnown && cur.equal(a.addrLast) && now.Sub(a.addrAt) < a.opt.AddrsEvery {
+	case !ok:
+		rep = wire.Report{Type: wire.ReportAddrs, AddrsUnknown: true}
+	case a.addrKnown && cur.equal(a.addrLast) && now.Sub(a.addrAt) < a.opt.AddrsEvery:
 		return nil
+	default:
+		rep = wire.Report{Type: wire.ReportAddrs, Addrs: cur.List, AddrsTruncated: cur.Truncated}
 	}
 	a.addrTry = now
-	err := a.send(ctx, wire.Report{Type: wire.ReportAddrs, Addrs: cur.List, AddrsTruncated: cur.Truncated})
-	if err != nil && permanent(err) {
+	err := a.send(ctx, rep)
+	var busy *busyError
+	switch {
+	case err == nil:
+	case errors.As(err, &busy):
+		a.log.Info("address report not taken: controller busy; sent again later", "status", busy.Status)
+		return nil
+	case permanent(err):
 		a.log.Warn("address report refused; not sent again until the list changes", "err", err)
-		err = nil
+	default:
+		return err
 	}
-	if err == nil {
+	if ok {
 		a.addrsTaken(cur.List, cur.Truncated, now)
+	} else {
+		a.addrKnown = false
 	}
-	return err
+	return nil
 }
 
 // osName reads ID and VERSION_ID from os-release, for example "ubuntu 26.04".

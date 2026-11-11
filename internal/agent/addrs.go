@@ -31,11 +31,12 @@ const (
 // "tun" covers tap and Tailscale too.
 var dropKinds = map[string]bool{
 	"veth": true, "tun": true, "wireguard": true, "vxlan": true, "geneve": true, "dummy": true,
+	"gre": true, "gretap": true, "ipip": true, "sit": true, "ip6gre": true, "ip6gretap": true, "ip6tnl": true,
 }
 
-// dropName matches plain bridges of Docker, CNI, flannel and libvirt. The
-// guest's own bridges (br0) and bonds stay (D-213).
-var dropName = regexp.MustCompile(`^(docker0|br-[0-9a-f]{12}|cni.*|flannel.*|virbr.*)$`)
+// dropName matches plain bridges of Docker, Podman, LXD, Incus, CNI,
+// flannel and libvirt. The guest's own bridges (br0) and bonds stay (D-213).
+var dropName = regexp.MustCompile(`^(docker0|podman0|lxdbr0|incusbr0|br-[0-9a-f]{12}|cni.*|flannel.*|virbr.*)$`)
 
 // nlLink is one interface of a link dump.
 type nlLink struct {
@@ -119,13 +120,19 @@ func selectAddrs(links []nlLink, addrs []nlAddr) ([]string, bool) {
 
 var errNetlink = errors.New("netlink: malformed message")
 
-// parseLinks reads the RTM_NEWLINK messages of a link dump.
-func parseLinks(b []byte) ([]nlLink, error) {
+// parseLinks reads the RTM_NEWLINK messages of a link dump. Bad data is
+// an error, never a panic: syscall.ParseNetlinkRouteAttr panics on an
+// unaligned last attribute (review S1), and a panic would stop the agent.
+func parseLinks(b []byte) (out []nlLink, err error) {
+	defer func() {
+		if recover() != nil {
+			out, err = nil, errNetlink
+		}
+	}()
 	msgs, err := syscall.ParseNetlinkMessage(b)
 	if err != nil {
 		return nil, fmt.Errorf("netlink link dump: %w", err)
 	}
-	var out []nlLink
 	for i := range msgs {
 		m := &msgs[i]
 		if m.Header.Type != syscall.RTM_NEWLINK {
@@ -177,13 +184,18 @@ func linkKind(b []byte) string {
 	return ""
 }
 
-// parseAddrs reads the RTM_NEWADDR messages of an address dump.
-func parseAddrs(b []byte) ([]nlAddr, error) {
+// parseAddrs reads the RTM_NEWADDR messages of an address dump. Bad data
+// is an error, never a panic (see parseLinks).
+func parseAddrs(b []byte) (out []nlAddr, err error) {
+	defer func() {
+		if recover() != nil {
+			out, err = nil, errNetlink
+		}
+	}()
 	msgs, err := syscall.ParseNetlinkMessage(b)
 	if err != nil {
 		return nil, fmt.Errorf("netlink address dump: %w", err)
 	}
-	var out []nlAddr
 	for i := range msgs {
 		m := &msgs[i]
 		if m.Header.Type != syscall.RTM_NEWADDR {

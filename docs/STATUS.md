@@ -11,8 +11,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-039 image builds (slice 2 part B, first) | child cards T-058 … T-066 | **plan approved by the user** (D-218; D-197 … D-210; migration 0009). Running: T-058 contract (pl-architect). Then T-059 state, T-060 agent seal, T-061 driver, T-062 engine, T-063 schedule, T-064 web, T-065 QA, T-066 real host |
-| T-067 the agent reports its addresses; Issue when a guest does not use its configured address | child cards T-068 … T-072 | **plan approved by the user** (D-218; D-212 … D-217; migration 0008). Running: T-068 contract (pl-backend). Then T-069 agent, T-070 controller, T-071 web, T-072 QA + host check |
+| T-039 image builds (slice 2 part B, first) | child cards T-058 … T-066 | plan approved (D-218). **Contract on main** (T-058, PR #115). Running: T-059 state + migration 0009 (pl-architect), T-064 web on the mock (pl-frontend). Queued for pl-backend: T-060 agent seal, T-061 driver. Then T-062 engine, T-063 schedule, T-065 QA, T-066 real host |
+| T-067 the agent reports its addresses; Issue when a guest does not use its configured address | child cards T-068 … T-072 | plan approved (D-218). **Contract on main** (T-068, PR #114). T-069 agent: PR #116, approved after two small fixes (running). T-070 controller: PR #118, in review and QA audit (migration 0008). T-071 web: PR #117, in review. Then the real-host check |
 | T-038 LXC targets (slice 2 part B, second) | tbd | design only; after T-039 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
