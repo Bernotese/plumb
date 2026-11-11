@@ -27,12 +27,14 @@ A Plan that creates a guest always works when its Image document is valid. It do
 - **`image` is compared by the Image name.** `GuestSpec` gets `ImageName` (the name of the Image document). It is the create-only attribute `image`. `GuestSpec.Image` (the driver ref) is only the clone source for `Create`; `Diff` and `DriftGuest` ignore it and `Observe` leaves it empty.
 - The Proxmox driver writes `plumb-image: <Image name>` into the guest description and reads it back into `ImageName`. The fake does the same.
 - A change of the checksum or URL of an Image makes a new template at the next create. Guests that exist show no change and no drift (D-014).
+- **Adoption by name (review N1).** On every create the driver reuses a template that is in the pool, in the VMID range, and has the name `plumb-img-<name>-<sha[:12]>`; it removes a VM with that name that is no template (half-made). The trust boundary is the one of D-077: only root and the token can put a VM into the pool. New: the driver reuses a template only when its description holds `sha256=<the full checksum of the Image>`. If the name matches and the checksum does not, `FetchImage` fails with a text that names the VMID; it removes nothing.
+- **Parallel creates (review S1).** `FetchImage` now runs for every Target of a Plan, and targets run in parallel. A VM with the template name that has a `lock` is not an error at once: `FetchImage` waits for the lock to go (poll 1 s, at most 2 min, a `Config` field so that tests can shorten it). After that time it fails with the "busy" text of today. The image lock of the driver is not held during the clone: clones of one template must run in parallel.
 - Plumb never removes a template or an import file. That stays (D-077), until the retention of T-039 (D-098).
 - The Plan shows `image: <name>` in the create change of `guest:config`. It does not say if a download is needed: only the Run knows, because the template can go between plan and apply. A fetch needs no approval of its own: the approved Image document pins the checksum.
 
 ### Steps
 1. `internal/driver/driver.go`, `diff.go`: add `GuestSpec.ImageName`; `createOnlyValue(AttrImage)` returns it. Update the comments of `Image` and `ImageRef`.
-2. `internal/driver/proxmox/driver.go`: `configure` writes the marker with `spec.ImageName`; `specOf` reads it into `ImageName`. `Create` still checks the template with `own()` before the clone. `checkSpec` refuses an empty `ImageName` or one with a line break.
+2. `internal/driver/proxmox/driver.go`: `configure` writes the marker with `spec.ImageName`; `specOf` reads it into `ImageName`. `Create` still checks the template with `own()` before the clone. `checkSpec` refuses an empty `ImageName` or one with a line break. `FetchImage`: the bounded wait for a `lock`, and the full-checksum check of the template description.
 3. `internal/driver/fake/fake.go`: store and report `ImageName`; add a test helper that removes an image (the "destroyed outside" case). `Create` still fails for an unknown ref.
 4. `internal/plan/propose.go`: `guestSpec` sets `ImageName = r.Image` and reads no binding. Remove the `unfetched:` placeholder. `createChanges` lists `image`.
 5. `internal/plan/run.go`: `fetchImage` returns the ref and always calls the driver; case `create` sets `spec.Image`. Read the Image document from the revision of the Run, not from the head. Log one line (`image ready`, name, ref) at info level.
@@ -46,19 +48,28 @@ A Plan that creates a guest always works when its Image document is valid. It do
   - The image is removed in the fake after the first guest. A second Target with the same Image → `FetchImage` is called again, the Run succeeds. The first Target: no drift report, an unrelated Plan (cores) works.
   - The Image checksum changes → a new guest gets the new ref; the old guest has no create-only error and no drift.
   - A Target whose `spec.image` changes to another Image → still refused as create-only, and the text names both Image names.
+  - Two Targets with the same Image in one Plan, the image exists already → both guest steps succeed, the fake has one image, `FetchImage` was called twice.
   - The migration removes Image rows and keeps Target rows.
 - `internal/driver/proxmox` with the fake PVE (`pvefake_test.go`):
   - Template deleted in the fake → `FetchImage` makes a new template and sends no `download-url` (the import file is there).
   - Template and import file deleted → one `download-url` with the checksum.
   - Template moved out of the pool → a new template in the pool; the foreign VM gets no call.
+  - The template has a `lock` for the first reads → `FetchImage` waits and returns the same template; no second template, no delete. A lock that stays → the "busy" error after the bound.
+  - Two `FetchImage` + `Create` in parallel for one Image → one template, two guests.
+  - A template with the right name and another `sha256=` in the description → error with the VMID, no delete, no clone.
   - `Create` then `Observe` round trip of `ImageName`; a description without the marker gives an empty `ImageName`.
-- Real host (the T-015 acceptance run, same branch rules): run 3 again with the stable Image names. The template of the earlier run is destroyed as root by the test cleanup; the next Plan must succeed and must not download again.
+- Real host (the T-015 acceptance run, same branch rules):
+  1. **Before the new build goes onto the controller (review S2):** guests of the old build hold a VMID in their description. With the new build every Plan on them gives a create-only error and destructive drift on `image`. So first check that Plumb has no Target and that the pool has no guest (`qm list`, the pool member list). Delete every guest that is left through a Plan of the old build. The T-015 tests make their guests again.
+  2. Host check for S1: start a full clone of a template and read `qm config <template>` while the clone runs. Write into the log if the template gets a `lock` (from my reading of `qemu-server` only the new VM gets `lock: clone`; **not proven**). The bounded wait stays in both cases.
+  3. Run 3 again with the stable Image names. The template of the earlier run is destroyed as root by the test cleanup; the next Plan must succeed and must not download again.
+  4. One Plan with two Targets and the same Image → both guests come up, one template.
 
 ## Acceptance criteria
 - [ ] The run-3 sequence of the T-015 log passes on the fake PVE and on the real host.
 - [ ] No code reads or writes a binding of kind `Image`.
 - [ ] A re-made or changed template never causes drift or a create-only error on a guest that exists.
 - [ ] A changed `spec.image` of a Target with a guest is still refused.
+- [ ] Two Targets with the same Image in one Plan succeed; no "busy" failure while a clone runs.
 - [ ] Tests: `make lint test build` passes; `make test-pve` passes on the test host.
 
 ## Out of scope
