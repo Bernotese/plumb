@@ -53,6 +53,17 @@ func TestDocumentSchemas(t *testing.T) {
 		{"image without checksum", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"https://example.org/x.img"}}`, false},
 		{"image over http", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"http://example.org/x.img","sha256":"` + sha + `"}}`, false},
 		{"image with short checksum", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"abc"}}`, false},
+		{"built image", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"retention":{"keep":3},"schedule":{"every":"week","weekday":"sun","at":"03:00"}}}`, true},
+		{"built image, monthly", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"month","day":28,"at":"23:59"}}}`, true},
+		{"retention without build", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","retention":{"keep":3}}}`, false},
+		{"schedule without build", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","schedule":{"every":"day","at":"03:00"}}}`, false},
+		{"build for lxc", KindImage, `{"kind":"Image","name":"web","spec":{"type":"lxc","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}}}}`, false},
+		{"build without guest", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[]}}}`, false},
+		{"keep above 20", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"retention":{"keep":21}}}`, false},
+		{"weekly without weekday", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"week","at":"03:00"}}}`, false},
+		{"daily with weekday", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"day","weekday":"sun","at":"03:00"}}}`, false},
+		{"monthly day 29", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"month","day":29,"at":"03:00"}}}`, false},
+		{"bad time", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"day","at":"24:00"}}}`, false},
 
 		// The Block of docs/ARCHITECTURE.md §3.
 		{"block", KindBlock, `{"kind":"Block","name":"deploy-user","spec":{
@@ -170,5 +181,16 @@ func TestCanonical(t *testing.T) {
 		if _, err := Canonical(Doc{Kind: KindBlock, Name: "x", Spec: []byte(bad)}); err == nil {
 			t.Errorf("spec %q: want an error", bad)
 		}
+	}
+}
+
+// Until T-059 and T-062, a built Image is valid by the schema but refused
+// by Validate, so it cannot be used as a stock image by mistake.
+func TestValidateRefusesBuildUntilImplemented(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	doc := Doc{Kind: KindImage, Name: "web", Spec: json.RawMessage(`{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"guest":{"disk":10,"bridge":"vmbr0"}}}`)}
+	_, err := Validate([]Doc{doc})
+	if err == nil || !strings.Contains(err.Error(), "not available yet") {
+		t.Fatalf("Validate = %v, want the not-available error", err)
 	}
 }

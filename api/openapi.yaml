@@ -205,6 +205,84 @@ paths:
                         type: vm
                         url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
                         sha256: 9a8b7c6d5e4f30211203f4e5d6c7b8a99a8b7c6d5e4f30211203f4e5d6c7b8a9
+                  - revision: 7
+                    document:
+                      kind: Image
+                      name: ubuntu-web
+                      spec:
+                        title: Ubuntu 26.04 with Nginx
+                        type: vm
+                        url: https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img
+                        sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                        build:
+                          blocks: [{ use: nginx }]
+                          upgrade: true
+                          guest: { cores: 1, memory: 1024, disk: 10, bridge: vmbr0, ip: dhcp }
+                        retention: { keep: 3 }
+                        schedule: { every: week, weekday: sun, at: "03:00" }
+                    status:
+                      versions:
+                        - version: 3
+                          status: ready
+                          trigger: schedule
+                          run_id: 19
+                          revision: 7
+                          recipe_sha256: 5e0c1d2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d
+                          base_sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                          disk_gb: 10
+                          started_at: "2026-11-08T03:00:00Z"
+                          finished_at: "2026-11-08T03:06:12Z"
+                          removed_at: null
+                          targets: [web3]
+                        - version: 2
+                          status: failed
+                          trigger: manual
+                          run_id: 17
+                          revision: 7
+                          recipe_sha256: 5e0c1d2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d
+                          base_sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                          disk_gb: 10
+                          started_at: "2026-11-07T10:00:00Z"
+                          finished_at: "2026-11-07T10:20:02Z"
+                          removed_at: null
+                          targets: []
+                        - version: 1
+                          status: ready
+                          trigger: change
+                          run_id: 15
+                          revision: 6
+                          recipe_sha256: 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
+                          base_sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                          disk_gb: 10
+                          started_at: "2026-11-06T09:00:00Z"
+                          finished_at: "2026-11-06T09:05:40Z"
+                          removed_at: null
+                          targets: [web1, web2]
+                      building: null
+                      last_build:
+                        version: 3
+                        status: ready
+                        trigger: schedule
+                        run_id: 19
+                        revision: 7
+                        recipe_sha256: 5e0c1d2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d
+                        base_sha256: 3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+                        disk_gb: 10
+                        started_at: "2026-11-08T03:00:00Z"
+                        finished_at: "2026-11-08T03:06:12Z"
+                        removed_at: null
+                        targets: [web3]
+                      next_build_at: "2026-11-15T03:00:00Z"
+                      unused_imports:
+                        - volume: "plumb-images:import/plumb-ubuntu-web-0b1c2d3e4f5a.qcow2"
+                          size_bytes: 612368384
+                          command: "pvesm free plumb-images:import/plumb-ubuntu-web-0b1c2d3e4f5a.qcow2"
+                      disk:
+                        storage: local-lvm
+                        total_bytes: 45559136256
+                        used_bytes: 9663676416
+                        reserved_bytes: 0
+                        limit_percent: 85
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -234,6 +312,85 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /images/{name}/build:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [images]
+      operationId: buildImage
+      summary: Propose a build of an image
+      x-plumb-planned: T-062
+      description: |
+        Creates a Plan of origin `build` (trigger `manual`) that builds a new version of a built
+        Image from the recipe of the head revision (D-199). The Plan changes no document, and its
+        approval commits no revision (`Plan.revision` stays `null`). It is stale when the recipe at
+        the head differs at approval; a head change that leaves the recipe alone does not make it
+        stale. A human session or an `apply` token approves it (D-201). A second build of the same
+        Image is refused at approval with 409 `build-running`. An Image without `build` (a stock
+        Image) returns 422.
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+            example: { reason: Fresh packages before the new web servers. }
+      responses:
+        "201":
+          description: The Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 21
+                origin: build
+                issue_id: null
+                status: pending
+                risk: reversible
+                reason: Fresh packages before the new web servers.
+                author: "user:admin"
+                created_at: "2026-11-12T08:00:00Z"
+                base_revision: 7
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                targets: []
+                images:
+                  - image: ubuntu-web
+                    build:
+                      version: 4
+                      trigger: manual
+                      upgrade: true
+                      recipe_sha256: 5e0c1d2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d
+                      resources:
+                        - resource: "package:nginx"
+                          action: create
+                          risk: reversible
+                          changes: []
+                          unverified: true
+                        - resource: "service:nginx"
+                          action: create
+                          risk: reversible
+                          changes: []
+                          unverified: true
+                    removes:
+                      - { kind: version, name: plumb-img-ubuntu-web-v1, version: 1 }
+                    disk:
+                      storage: local-lvm
+                      total_bytes: 45559136256
+                      used_bytes: 9663676416
+                      reserved_bytes: 0
+                      limit_percent: 85
+                warnings: []
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
 
   /blocks:
     get:
@@ -774,6 +931,9 @@ paths:
         (`reversible` or `disruptive`). Only a human session approves a `destructive` Plan or a
         Plan with a non-empty `human_only` (403 `human-required`, D-099). A stale Plan returns
         409; a Plan is also stale when a secret that it uses has another version (D-089).
+        A Plan of origin `build` commits no revision; it is stale when the recipe of its Image at
+        the head differs from `images[].build.recipe_sha256`, and it returns 409 `build-running`
+        while a build of the same Image runs (D-199, planned: T-062).
       security:
         - session: []
         - token: [apply]
@@ -1932,7 +2092,7 @@ components:
       description: |
         The object is in a state that does not allow the action: a stale Plan, a moved head
         revision, or an issue that is not open. Slice 2 codes: `secret-in-use`,
-        `secret-conflict`, `nothing-to-do`.
+        `secret-conflict`, `nothing-to-do`. Image builds (T-062): `build-running`.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -2124,6 +2284,112 @@ components:
           $ref: "#/components/schemas/Revision"
           description: The revision that last changed this document.
         document: { $ref: "#/components/schemas/Image" }
+        status:
+          $ref: "#/components/schemas/ImageStatus"
+          description: |
+            Builds and versions of a built Image (D-198). Missing for a stock Image, and missing
+            until T-062 serves it.
+    ImageStatus:
+      type: object
+      additionalProperties: false
+      required: [versions, building, last_build, next_build_at, unused_imports]
+      properties:
+        versions:
+          type: array
+          description: Every version, newest first, also `failed` and `removed` ones.
+          items: { $ref: "#/components/schemas/ImageVersion" }
+        building:
+          type: [integer, "null"]
+          minimum: 1
+          description: The version that a Run builds now, else `null`. One build per Image at a time.
+        last_build:
+          oneOf:
+            - $ref: "#/components/schemas/ImageVersion"
+            - type: "null"
+          description: The newest finished build (`ready` or `failed`), else `null`.
+        next_build_at:
+          $ref: "#/components/schemas/NullableTime"
+          description: The next slot of `schedule` (UTC), `null` without a schedule (D-210).
+        unused_imports:
+          type: array
+          description: |
+            Downloaded base images in the image storage that no version or base template of this
+            Image needs. Plumb never deletes them (D-209); a person runs `command` on the host.
+          items: { $ref: "#/components/schemas/UnusedImport" }
+        disk:
+          $ref: "#/components/schemas/DiskUse"
+          description: Use of the disk storage, when the driver could read it.
+    ImageVersion:
+      type: object
+      additionalProperties: false
+      description: One build of an Image (table `image_version`, D-198).
+      required:
+        - version
+        - status
+        - trigger
+        - run_id
+        - revision
+        - recipe_sha256
+        - base_sha256
+        - disk_gb
+        - started_at
+        - finished_at
+        - removed_at
+        - targets
+      properties:
+        version: { type: integer, minimum: 1, description: "Counts up per Image name, never used again." }
+        status:
+          type: string
+          enum: [building, ready, failed, removed]
+        trigger: { $ref: "#/components/schemas/BuildTrigger" }
+        run_id: { $ref: "#/components/schemas/Id" }
+        revision:
+          $ref: "#/components/schemas/Revision"
+          description: The head revision that the Run rendered the recipe from.
+        recipe_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        base_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        disk_gb: { type: integer, minimum: 1 }
+        started_at: { $ref: "#/components/schemas/Time" }
+        finished_at: { $ref: "#/components/schemas/NullableTime" }
+        removed_at: { $ref: "#/components/schemas/NullableTime" }
+        targets:
+          type: array
+          description: Targets that were created from this version (D-200).
+          items: { $ref: "#/components/schemas/Name" }
+    BuildTrigger:
+      type: string
+      enum: [change, manual, schedule]
+      description: |
+        `change`: a Plan made or changed the recipe. `manual`: `POST /images/{name}/build`.
+        `schedule`: the clock of `schedule`, planned and approved by `system` (D-199, D-201).
+    UnusedImport:
+      type: object
+      additionalProperties: false
+      required: [volume, size_bytes, command]
+      properties:
+        volume: { type: string, examples: ["plumb-images:import/plumb-ubuntu-web-3f1c0a9e5d6b.qcow2"] }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        command:
+          type: string
+          description: The exact command for a person on the Proxmox host.
+          examples: ["pvesm free plumb-images:import/plumb-ubuntu-web-3f1c0a9e5d6b.qcow2"]
+    DiskUse:
+      type: object
+      additionalProperties: false
+      description: |
+        Real use of the disk storage of guests (D-203). A build does not start when
+        `used_bytes + reserved_bytes + build disk` is more than `limit_percent` of `total_bytes`.
+      required: [storage, total_bytes, used_bytes, reserved_bytes, limit_percent]
+      properties:
+        storage: { type: string }
+        total_bytes: { type: integer, format: int64, minimum: 0 }
+        used_bytes: { type: integer, format: int64, minimum: 0 }
+        reserved_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Disks of the builds that run now.
+        limit_percent: { type: integer, minimum: 1, maximum: 100 }
     BlockView:
       type: object
       additionalProperties: false
@@ -2181,6 +2447,13 @@ components:
         guest_id:
           type: [string, "null"]
           description: Proxmox VMID.
+        image_version:
+          type: [integer, "null"]
+          minimum: 1
+          description: |
+            The version of a built Image that the guest was cloned from (D-200), read from the guest
+            description. `null` for a stock Image or when unknown. Information only: a new version
+            changes no Target. Missing until T-062 serves it.
         ips:
           type: array
           items: { type: string }
@@ -2349,8 +2622,10 @@ components:
         id: { $ref: "#/components/schemas/Id" }
         origin:
           type: string
-          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule]
-          description: What made the Plan.
+          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build]
+          description: |
+            What made the Plan. `build`: a manual or scheduled image build with no document
+            change (D-199, planned: T-062).
         issue_id:
           $ref: "#/components/schemas/NullableId"
           description: The issue, for `revert`, `accept` and `ignore_rule`.
@@ -2375,7 +2650,7 @@ components:
         approved_at: { $ref: "#/components/schemas/NullableTime" }
         revision:
           type: [integer, "null"]
-          description: The committed revision, after approval.
+          description: The committed revision, after approval. Always `null` for origin `build`.
         run_id: { $ref: "#/components/schemas/NullableId" }
         targets:
           type: array
@@ -2392,10 +2667,63 @@ components:
             Reasons why only a human session can approve this Plan (D-099). Missing or empty for
             a normal Plan. `secret-binding`: a target and resource gets a secret that it did not
             get in the base revision. `rule-change`: the Plan puts, changes or deletes a Rule.
+            `image-recipe`: the Plan makes or deletes a built Image, or changes its recipe,
+            `schedule` or `retention`, also through a changed Block (D-201, planned: T-062).
             The server computes it from the content of the proposal, for every origin.
           items:
             type: string
-            enum: [secret-binding, rule-change]
+            enum: [secret-binding, rule-change, image-recipe]
+        images:
+          type: array
+          description: |
+            Image builds and template removals of this Plan (D-199, D-209). Missing means none.
+          items: { $ref: "#/components/schemas/ImagePlan" }
+    ImagePlan:
+      type: object
+      additionalProperties: false
+      required: [image, removes]
+      properties:
+        image: { $ref: "#/components/schemas/Name" }
+        build:
+          $ref: "#/components/schemas/ImageBuildPlan"
+          description: Missing when the Plan only removes templates (lower `keep`, Image delete).
+        removes:
+          type: array
+          description: |
+            Templates that the retention step removes when the Run succeeds (D-209). A removal
+            runs only after the new version is `ready`.
+          items: { $ref: "#/components/schemas/ImageRemoval" }
+        disk: { $ref: "#/components/schemas/DiskUse" }
+    ImageBuildPlan:
+      type: object
+      additionalProperties: false
+      required: [version, trigger, upgrade, recipe_sha256, resources]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: The next free number when the Plan was made. The Run can get a higher one.
+        trigger: { $ref: "#/components/schemas/BuildTrigger" }
+        upgrade: { type: boolean }
+        recipe_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: The recipe that `resources` show. Approval needs the same recipe at the head.
+        resources:
+          type: array
+          description: The resources of the build guest. All are `create` and `unverified`.
+          items: { $ref: "#/components/schemas/ResourcePlan" }
+    ImageRemoval:
+      type: object
+      additionalProperties: false
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum: [version, base]
+          description: "`version`: a built version. `base`: a stock template with another checksum."
+        name: { type: string, examples: ["plumb-img-ubuntu-web-v1"] }
+        version: { type: [integer, "null"], minimum: 1 }
     PlannedSecret:
       type: object
       additionalProperties: false
@@ -2496,6 +2824,25 @@ components:
         targets:
           type: array
           items: { $ref: "#/components/schemas/TargetRun" }
+        images:
+          type: array
+          description: Image builds of this Run (D-199). Missing means none.
+          items: { $ref: "#/components/schemas/ImageRun" }
+    ImageRun:
+      type: object
+      additionalProperties: false
+      description: |
+        One build lane. Steps in this order: `image:base`, `guest:config`, the resources of the
+        recipe, `image:seal`, `image:template`, `image:retention` (D-199).
+      required: [image, version, trigger, status, steps]
+      properties:
+        image: { $ref: "#/components/schemas/Name" }
+        version: { type: integer, minimum: 1 }
+        trigger: { $ref: "#/components/schemas/BuildTrigger" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/RunStep" }
     TargetRun:
       type: object
       additionalProperties: false
@@ -2833,11 +3180,14 @@ components:
             - token.revoked
             - secret.updated
             - secret.deleted
+            - image.version
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string
-          pattern: "^(plan|run|issue|target|revision|token|secret):.+$"
-          description: "`<kind>:<id or name>`, for example `plan:12` or `target:web1`."
+          pattern: "^(plan|run|issue|target|revision|token|secret|image):.+$"
+          description: |
+            `<kind>:<id or name>`, for example `plan:12` or `target:web1`. `image.version` (subject
+            `image:<name>`, planned: T-062): a version of the Image changed its status.
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }
         data:

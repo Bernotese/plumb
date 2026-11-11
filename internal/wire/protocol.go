@@ -32,6 +32,11 @@ type EnrollRequest struct {
 type EnrollResponse struct {
 	AgentID    string `json:"agent_id"`
 	Credential string `json:"credential"`
+	// Build is true only for the agent of an image build guest: its token
+	// was made by Driver.CreateBuild (D-203). The agent stores the mark in
+	// the same atomic write as the credential, and runs CommandSeal only
+	// with it (D-207). A normal enrollment clears it.
+	Build bool `json:"build,omitempty"`
 }
 
 // CommandType names what the controller asks the agent to do.
@@ -41,10 +46,18 @@ const (
 	CommandObserve CommandType = "observe" // observe and diff, change nothing
 	CommandApply   CommandType = "apply"   // converge the resources
 	CommandWatch   CommandType = "watch"   // replace the desired list and watch it for drift
+	// CommandSeal makes an image build guest clean for a template (D-205).
+	// Only for a link name with the prefix BuildLinkPrefix, and only an
+	// agent with the build mark that never got a watch runs it (D-207).
+	CommandSeal CommandType = "seal"
 )
 
+// BuildLinkPrefix starts the link name of an image build guest:
+// "build:<image name>" (D-203). A Target name cannot hold ':'.
+const BuildLinkPrefix = "build:"
+
 // Command is the answer to a poll. Body depends on Type:
-// ObserveBody, ApplyBody or WatchBody.
+// ObserveBody, ApplyBody, WatchBody or SealBody.
 type Command struct {
 	ID   string          `json:"id"`
 	Type CommandType     `json:"type"`
@@ -80,6 +93,45 @@ type Planned struct {
 type WatchBody struct {
 	Resources []Resource `json:"resources"`
 }
+
+// SealBody starts seal. It holds no path, command or user name: what seal
+// does is fixed in the agent (D-205).
+type SealBody struct {
+	PlanID int64 `json:"plan_id"`
+	// Upgraded: the build guest ran the package upgrade (D-204), so seal
+	// checks that nothing is left to upgrade.
+	Upgraded bool `json:"upgraded"`
+}
+
+// The result of seal has one Item per step, in this order, with the
+// resource id "seal:<step>" (SealItemID). Status is applied, skipped (the
+// step does not apply to this guest, for example no dracut) or failed;
+// a failed step ends seal, and the later steps are skipped. An agent that
+// may not seal answers one Item SealItemID(SealStepGuard) with
+// StatusRefused and changes nothing (D-207). After the controller took the
+// result, the agent removes its own files, runs sync and powers the guest
+// off; that part has no Item (D-207, review B1).
+const (
+	SealStepGuard     = "guard"      // build mark set and no watch ever seen
+	SealStepInitramfs = "initramfs"  // D-192: dracut without network modules; skipped without dracut
+	SealStepUpgrade   = "upgrade"    // nothing left to upgrade; skipped when not Upgraded
+	SealStepLogStop   = "log-stop"   // stop rsyslog, journalctl --relinquish-var
+	SealStepCloudInit = "cloud-init" // remove cloud-init.disabled, cloud-init clean
+	SealStepHostKeys  = "host-keys"  // remove /etc/ssh/ssh_host_* (D-185)
+	SealStepBuildUser = "build-user" // userdel -r -f plumb-build, its sudoers file
+	SealStepSeed      = "seed"       // systemd random seed, credential.secret
+	SealStepLogs      = "logs"       // journal, /var/log, caches, /tmp, history; no symlink follow
+	SealStepTrim      = "trim"       // fstrim
+)
+
+// SealSteps is the fixed order of the seal steps.
+var SealSteps = []string{
+	SealStepGuard, SealStepInitramfs, SealStepUpgrade, SealStepLogStop, SealStepCloudInit,
+	SealStepHostKeys, SealStepBuildUser, SealStepSeed, SealStepLogs, SealStepTrim,
+}
+
+// SealItemID is the Item resource id of a seal step.
+func SealItemID(step string) string { return "seal:" + step }
 
 // BodyResources returns the resources of an observe, apply or watch body
 // (value or pointer), or nil.

@@ -439,6 +439,19 @@ func validate(docs []Doc, lim Limits, stored bool) (*Set, error) {
 			}
 			s.blocks[d.Name] = b
 		}
+		// The schema has the contract of image builds (T-058, D-197), but
+		// no code builds yet: a built Image would be used as a stock image.
+		// T-059 replaces this with the real save checks.
+		if d.Kind == KindImage {
+			var img struct {
+				Build json.RawMessage `json:"build"`
+			}
+			if _ = decode(canon.Spec, &img); img.Build != nil {
+				errs = append(errs, &Error{Kind: d.Kind, Name: d.Name, Path: "/spec/build",
+					Msg: "image builds are not available yet (T-059, T-062)"})
+				continue
+			}
+		}
 		delete(s.invalid, key)
 		s.docs = append(s.docs, canon)
 		switch d.Kind {

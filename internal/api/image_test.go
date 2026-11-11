@@ -102,7 +102,7 @@ func TestImageDeleteAndCreateAgain(t *testing.T) {
 	e.noImageBinding()
 	e.runPlan(adm, map[string]any{"reason": "remove", "delete": []map[string]string{
 		{"kind": "Target", "name": "web1"}, {"kind": "Image", "name": "ubuntu"}}})
-	e.drv.RemoveImage(e.ubuntuRef("0")) // the test cleanup of T-015: qm destroy as root
+	e.drv.DestroyTemplate(e.ubuntuRef("0")) // the test cleanup of T-015: qm destroy as root
 	e.agent("web2")
 	before := e.drv.Calls(fake.OpFetchImage)
 	e.runPlan(adm, map[string]any{"reason": "again", "put": []state.Doc{imageDoc("ubuntu", "0"), targetWith("web2", "ubuntu", 2)}})
@@ -119,7 +119,7 @@ func TestImageDestroyedOutside(t *testing.T) {
 	e := newEnv(t, true)
 	adm := e.admin()
 	e.seed(adm, "web1")
-	e.drv.RemoveImage(e.ubuntuRef("0"))
+	e.drv.DestroyTemplate(e.ubuntuRef("0"))
 	e.agent("web2")
 	before := e.drv.Calls(fake.OpFetchImage)
 	e.runPlan(adm, map[string]any{"reason": "second", "put": []state.Doc{targetWith("web2", "ubuntu", 2)}})
