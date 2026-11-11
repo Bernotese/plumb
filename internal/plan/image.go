@@ -462,15 +462,6 @@ func (e *Engine) staleBuildPlans(ctx context.Context, set *state.Set) {
 	}
 }
 
-// runImage is one image lane of a Run. Part B of T-062 builds here; until
-// then a lane fails at its first step and changes nothing.
-func (e *Engine) runImage(ctx context.Context, p store.Plan, run store.Run, set *state.Set, ip ImagePlan) bool {
-	s := &stepper{e: e, run: run, target: imageSlot(ip.Image), seq: map[string]int64{}, final: map[string]bool{}, ok: true}
-	s.add(ctx, "image:base")
-	s.set(ctx, "image:base", wire.StatusFailed, nil, textBuildsOff)
-	return false
-}
-
 // UnusedImport is a downloaded base image that no template of the Image
 // needs (D-209). Command is set only for a volume name that Plumb made, in
 // the strict form of the T-064 review; else it is "".

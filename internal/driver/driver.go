@@ -171,6 +171,17 @@ type Driver interface {
 	RemoveImage(ctx context.Context, obj ImageObject) error
 	// DiskSpace reads the use of the disk storage of guests.
 	DiskSpace(ctx context.Context) (DiskSpace, error)
+	// ListBuilds lists the build guests in the pool and the VMID range:
+	// guests with the build marker and the exact build name, no template
+	// (D-203). Recover and every new build of an Image remove them.
+	ListBuilds(ctx context.Context) ([]BuildGuest, error)
+	// RemoveBuild stops and deletes the build guest of image v<version>
+	// after the full guard of T-073: in the range, in the pool, the exact
+	// name plumb-build-<image>-v<version>, the build marker of that
+	// version in its config, no template, no lock. It never converts. A
+	// guest that is gone is ErrNotFound; a guest that fails the guard is
+	// left, with an error that names it.
+	RemoveBuild(ctx context.Context, id GuestID, image string, version int) error
 }
 
 // --- Image builds (T-039, D-203, D-208, D-209) ---
@@ -202,6 +213,13 @@ type BuiltImage struct {
 	// checksum and Run id. With the name it is the proof of ownership for
 	// FindImage and RemoveImage (D-188, D-209).
 	Digest string
+}
+
+// BuildGuest is a build guest that ListBuilds found.
+type BuildGuest struct {
+	ID      GuestID
+	Image   string
+	Version int
 }
 
 // ImageObjectKind says what an ImageObject is.
