@@ -11,8 +11,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-039 image builds (slice 2 part B, first) | pl-architect plans | plan draft on branch pl-architect/T-039-plan (D-197 … D-210 proposed). **All 24 host facts are in** (PR #108, log `docs/tasks/T-039.log.md`: the Ubuntu static address fix works at the first boot; full clones only; the token cannot delete import files). Next: final plan, review, the user's approval |
-| T-073 a failed guest create leaves the cloned VM (found on the host, T-039 fact A4) | pl-frontend | running |
+| T-039 image builds (slice 2 part B, first) | pl-architect planned | plan PR #110 reviewed (1 blocker + 6 should, all taken; D-197 … D-210 proposed; child cards T-058 … T-066; T-074 disk space check at creates; migration 0009; host log in the PR). **Waits for the user's approval**: 7 questions |
+| T-073 a failed guest create leaves the cloned VM (found on the host, T-039 fact A4) | pl-backend (host check) | **code on main** (PR #111, 2026-11-11): the name of a fresh clone came from Proxmox's delayed pool list, so the cleanup skipped it; now from the guest config; a too small disk is refused before the clone. QA: 5 mutants killed. Open: host check (also the T-057 revoke on the real host) |
 | T-067 the agent reports its addresses; Issue when a guest does not use its configured address | pl-architect planned | plan reviewed (PR #106; S1 … S4 taken; D-212 … D-217 proposed; child cards T-068 … T-072; migration 0008). **Waits for the user's approval**: 4 questions |
 | T-038 LXC targets (slice 2 part B, second) | tbd | design only; after T-039 |
 
@@ -75,5 +75,5 @@ Order with the test host: real-host part of T-015 on the running install → `--
 
 ## Open for the user
 - T-067 plan approval, 4 questions (recommendation in brackets): time before the Issue opens and closes (2 min each); IPv6 (global and ULA, no temporary addresses); Docker, tunnel, VPN addresses (not reported; bridges, bonds, VLANs are); which address Plumb shows (`ips` = configured as today, the guest's list next to it, marked).
-- Coming: the plan of T-039 (image builds).
+- T-039 plan approval, 7 questions (recommendations in the T-039 card, section of the user questions).
 - Known limit (D-192): a stock Ubuntu 26.04 image takes a static address only from the second boot; use DHCP until the image builds (T-039).
