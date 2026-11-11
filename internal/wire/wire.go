@@ -7,6 +7,7 @@ package wire
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -214,6 +215,26 @@ const AttrRestart = "restart"
 // GuestConfigID is the id of the resource that holds the Proxmox settings
 // of a target. The driver handles it, not the agent.
 const GuestConfigID = "guest:config"
+
+// agentTypes are the resource types that an agent manages and may report.
+// It must equal the type table of internal/resource (a test there checks
+// it). The type "guest" belongs to the controller.
+var agentTypes = map[string]bool{
+	"directory": true, "file": true, "package": true, "service": true, "symlink": true, "user": true,
+}
+
+// AgentType reports whether an agent may report a resource of this type.
+func AgentType(typ string) bool { return agentTypes[typ] }
+
+// AgentTypes returns the agent resource types, sorted.
+func AgentTypes() []string {
+	out := make([]string, 0, len(agentTypes))
+	for t := range agentTypes {
+		out = append(out, t)
+	}
+	slices.Sort(out)
+	return out
+}
 
 // ID builds a resource id from a type and a key.
 func ID(typ, key string) string { return typ + ":" + key }
