@@ -77,14 +77,10 @@
     addressIssue = null;
     if (!t || t.status.open_issues === 0) return;
     let stale = false;
-    api.listIssues().then(
+    api.listIssues({ target: t.document.name, status: "open" }).then(
       (list) => {
         if (stale) return;
-        addressIssue =
-          list.find(
-            (i) =>
-              i.target === t.document.name && i.resource === GUEST_ADDRESS && i.status === "open",
-          ) ?? null;
+        addressIssue = list.find((i) => i.resource === GUEST_ADDRESS) ?? null;
       },
       // The line is extra information; the page works without it.
       () => {},
@@ -282,7 +278,7 @@
       <dt>Configured</dt>
       <dd class="mono">{configured}</dd>
       <dt>Reported <span class="mark">by the guest</span></dt>
-      <dd title={REPORTED_TITLE}>
+      <dd aria-describedby="addr-help">
         {#if reported}
           <span class="mono">{reportedText(reported)}</span>
           <span class="muted"> · at {formatTime(existing.status.reported_at)}</span>
@@ -291,6 +287,7 @@
         {/if}
       </dd>
     </dl>
+    <p class="hint" id="addr-help">{REPORTED_TITLE}</p>
   </section>
 {/if}
 {#if existing?.status.ignored_drift?.length}

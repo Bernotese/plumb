@@ -1166,9 +1166,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       if (!r) throw new ApiError(example("getRun", 404));
       return structuredClone(r);
     },
-    async listIssues() {
+    async listIssues(filter) {
       auth();
-      return structuredClone([...issues.values()].sort((a, b) => b.id - a.id));
+      const list = [...issues.values()].filter(
+        (i) =>
+          (!filter?.target || i.target === filter.target) &&
+          (!filter?.status || i.status === filter.status),
+      );
+      return structuredClone(list.sort((a, b) => b.id - a.id));
     },
     async getIssue(id) {
       auth();

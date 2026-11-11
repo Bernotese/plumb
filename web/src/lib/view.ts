@@ -267,7 +267,7 @@ export const REPORTED_TITLE =
 
 /** The hint on a guest:address Issue (D-192). */
 export const ADDRESS_HINT =
-  "Restart the guest once. A stock Ubuntu 26.04 image takes a static address only from the second boot.";
+  "If the image is a stock Ubuntu 26.04, restart the guest once: it takes a static address only from the second boot (D-192). Else check the network setup in the guest.";
 
 type Status = TargetView["status"];
 

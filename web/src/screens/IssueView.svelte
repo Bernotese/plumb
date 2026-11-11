@@ -106,8 +106,8 @@
       <p id="address-text">{addressIssueText(issue)}</p>
       <p>
         <span class="mono">{issue.resource}</span> on <span class="mono">{issue.target}</span>.
-        Found by {source} at {formatTime(issue.opened_at)}. The address list is reported by the
-        guest.
+        Plumb found it at {formatTime(issue.opened_at)} in the address list that the agent in the guest
+        reports.
       </p>
       <p class="hint-box" id="address-hint">{ADDRESS_HINT}</p>
       <p>

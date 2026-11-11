@@ -3,7 +3,7 @@
 // mismatch line, the Issue on guest:address (only ignore, D-215).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockApi } from "../lib/mock/mock";
-import { ADDRESS_HINT, REPORTED_MARK } from "../lib/view";
+import { ADDRESS_HINT, REPORTED_MARK, REPORTED_TITLE } from "../lib/view";
 import IssueView from "./IssueView.svelte";
 import TargetForm from "./TargetForm.svelte";
 import Targets from "./Targets.svelte";
@@ -21,7 +21,7 @@ describe("target list", () => {
     expect(db1).toContain(`192.168.1.107 ${REPORTED_MARK}`);
     // A DHCP Target shows its address for the first time.
     const web1 = r.find((x) => x.startsWith("web1"));
-    expect(web1).toContain(`DHCP192.168.1.41, fd00::41 ${REPORTED_MARK}`);
+    expect(web1).toContain(`Configured: DHCP192.168.1.41, fd00::41 ${REPORTED_MARK}`);
   });
 
   it("shows no reported list when Plumb has none", async () => {
@@ -88,7 +88,7 @@ describe("Issue on guest:address", () => {
     expect(text(el("#address-text"))).toBe(
       "The guest does not use the configured address 192.168.1.20. It reports: 192.168.1.107.",
     );
-    expect(text()).toContain("Found by the agent in the guest");
+    expect(text()).toContain("in the address list that the agent in the guest reports");
     expect(text(el("#address-hint"))).toBe(ADDRESS_HINT);
     expect(button(/^Revert/)).toBeUndefined();
     expect(button(/^Accept/)).toBeUndefined();
@@ -111,5 +111,22 @@ describe("Issue on guest:address", () => {
     await expect(adminApi().resolveIssue(10, "revert")).rejects.toMatchObject({
       problem: { status: 409 },
     });
+  });
+});
+
+describe("review T-071", () => {
+  it("S1: the Target page asks only for the open Issues of its Target", async () => {
+    const api = adminApi();
+    const spy = vi.spyOn(api, "listIssues");
+    show(TargetForm, { api, name: "db1" });
+    await until(() => document.querySelector("#addr-mismatch"));
+    expect(spy).toHaveBeenCalledWith({ target: "db1", status: "open" });
+  });
+
+  it("N1: the help text is visible and describes the reported list", async () => {
+    show(TargetForm, { api: adminApi(), name: "db1" });
+    const help = await until(() => document.querySelector("#addr-help"));
+    expect(text(help)).toBe(REPORTED_TITLE);
+    expect(document.querySelector('[aria-describedby="addr-help"]')).not.toBeNull();
   });
 });
