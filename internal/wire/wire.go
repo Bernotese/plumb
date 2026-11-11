@@ -215,6 +215,11 @@ const AttrRestart = "restart"
 // of a target. The driver handles it, not the agent.
 const GuestConfigID = "guest:config"
 
+// GuestAddressID is the id of the resource of the address check (D-215): a
+// Target with a static ip whose agent does not report that address. The
+// controller makes it from the reported list; no agent reports it.
+const GuestAddressID = "guest:address"
+
 // ID builds a resource id from a type and a key.
 func ID(typ, key string) string { return typ + ":" + key }
 
