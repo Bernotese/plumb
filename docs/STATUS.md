@@ -6,21 +6,22 @@ Product: **Plumb** – self-hosted infrastructure controller for a Proxmox homel
 ## Phase
 First slice: one VM, from an image, configured by the agent, drift as an issue. Secret store is not part of the slice.
 Controller, API and UI are on `main`. Try it: `make build && bin/plumb serve --dev --dev-demo` (simulated agents, no Proxmox).
-The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI of `main` and are green (Debian 13, Ubuntu 26.04). The whole agent track of slice 1 is on `main` (#5, #8, #13, #21, #27). **Slice 1 is accepted without Proxmox** (T-015, PR #67: HTTP API + real agent). The agent side is proven as root in real Debian 13 and Ubuntu 26.04 guests in CI (resources, the whole agent loop, secret masking in real tool output). Open: everything on the real host. Backlog: T-044 (order between Block uses, then `nginx-site`). **The Proxmox test host `pve-dev` is ready** (address: `~/.config/plump/testhost.env`, not in the repo; rules: AGENTS.md). pl-lead updated it on 2026-11-11 with the user's go: pve-manager 9.2.26, qemu-server 9.2.15, libpve-storage-perl 9.1.15, rebooted, no failed unit. Before the update the installer dry run refused the old packages and changed nothing (T-013 log). **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
+The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI of `main` and are green (Debian 13, Ubuntu 26.04). The whole agent track of slice 1 is on `main` (#5, #8, #13, #21, #27). **Slice 1 is accepted without Proxmox** (T-015, PR #67: HTTP API + real agent). The agent side is proven as root in real Debian 13 and Ubuntu 26.04 guests in CI (resources, the whole agent loop, secret masking in real tool output). Open: everything on the real host. **The Proxmox test host `pve-dev` is ready** (address: `~/.config/plump/testhost.env`, not in the repo; rules: AGENTS.md). pl-lead updated it on 2026-11-11 with the user's go: pve-manager 9.2.26, qemu-server 9.2.15, libpve-storage-perl 9.1.15, rebooted, no failed unit. Before the update the installer dry run refused the old packages and changed nothing (T-013 log). **Slice 2 part A is complete on `main`** (ARCHITECTURE §12, D-085 … D-158): secret store and secret parameters, token management, revision history with rollback, ignore actions, export/import, their UI, e2e tests, and the acceptance with leak hunt (zero hits). Part B (image builds, LXC) is designed and waits for the test host.
 
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
 | T-015 slice acceptance, real-host part | pl-codex-qa | **test host ready** (the part without Proxmox is merged, PR #67) |
-| T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. **Real-host part (22 items) running** on the test host. Next card after it: wire `plumb serve` to the driver (`serve` on main stops with "the Proxmox driver is not in this build yet") |
+| T-012 Proxmox VM driver | pl-backend | draft PR #20. **Real host: 20 of 22 items pass** (2026-11-11); 1 driver bug found and fixed (stale `template` flag). Item 19 (cloud-init change gives new SSH host keys) decided by pl-architect: D-185 (cloud-init inputs are create-only; `ssh_deletekeys: false`). Open: D-185 in code, recorded answers, `make test-pve`, review |
+| T-053 wire `plumb serve` to the Proxmox driver | tbd (proposal: pl-backend) | card + plan merged (PR #86, reviewed; D-182 … D-184). Needs T-012 on main |
 | T-013 minimal installer | pl-backend | draft PR #26. **The installer works on the real host** (run 3, 2026-11-11): roles, ACLs, token, storages, LXC, key volume, `plumb key init`; a half-installed host is repaired. Two defects found by real runs and fixed (token ACL order; umask at `pct create`), plus S1. Passed: rights exact, LXC shape, file modes, no secret in state or journal. Open: negative token checks (running); repair run, UI + first login, agent unit need a `plumb serve` with the Proxmox driver (T-012). Before merge: S2 … S4 of pl-architect, `--remove` test |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
-| T-044 order between Block uses (`after`), `restarts`, `nginx-site` | see child cards | plan approved (D-176). **On main**: contract (T-046, #78), web (T-049, #81 + #82), agent (T-048, #83), state + plan (T-047, #80). Running: T-050 Block `nginx-site` (pl-codex-fix). Then T-051 QA with the guest test (pl-codex-qa) |
 | T-052 installer: key volume + `plumb key init`, static LXC address | pl-backend | done on the T-013 branch, approved by pl-reviewer (PR #26, 9556b32) |
 
 Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `PLUMB_PVE_*` → real-host part of T-015.
 
-## Done (all 2026-11-10)
+## Done (2026-11-10 and 2026-11-11)
+- **T-044 (2026-11-11): order between Block uses.** A Block names the resources it waits for (`spec.after`) and the services it restarts (`spec.restarts`); the starter Block `nginx-site` is back. Plan approved by the user (D-176), decisions D-167 … D-175, D-181. PRs: #77 plan, #78 contract (T-046), #80 state + plan (T-047), #83 agent (T-048), #81 + #82 web (T-049), #84 Block (T-050), #85 QA (T-051). Proof: slice test (fails without `after`) and a guest test in CI on Debian 13 and Ubuntu 26.04 (`nginx` + two sites, first Run, both orders). Accepted limit: a site file that Nginx cannot read can stop Nginx at the restart; no agent version gate yet (D-169).
 - Team setup, auto mode, GitHub remote, model split.
 - T-001, T-002, T-016, T-019: architecture, review, decisions D-001 … D-041, slice cards.
 - T-003: Go scaffold, contracts, migration 0001, Makefile, CI (PR #3).
@@ -66,4 +67,4 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Nothing now. (D-180, 2026-11-11: on the test host an agent runs the real installer; the user does not need to.)
+- Nothing now.

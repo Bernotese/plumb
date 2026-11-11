@@ -286,11 +286,11 @@ describe("mock order: after and restarts (T-049)", () => {
     expect(restartOn(r)).toEqual([avail("a")]);
   });
 
-  it("refuses an after id that is not on the target", async () => {
+  it("checks a missing restart service before a missing after id", async () => {
     const blocks = await seeded();
     expect(err(() => render({ ...base, blocks: [site("a")] }, new Map()))).toContain("422");
     expect(err(() => render({ ...base, blocks: [site("a")] }, blocks))).toBe(
-      '422 Block "nginx-site" (use "site-a") comes after package:nginx, but package:nginx is not on this target; add the Block that provides it',
+      '422 Block "nginx-site" (use "site-a") restarts service:nginx, but service:nginx is not on this target; add the Block that provides it',
     );
   });
 
