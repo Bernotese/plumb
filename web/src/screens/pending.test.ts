@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // Screen tests of T-056 on the mock: "restart needed" in the list and on
 // the Target page, allow_restart, re-enrollment, the Plan tags, the Run
-// count and the D-192 note.
+// count and the D-192, D-220, D-223 note.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockApi } from "../lib/mock/mock";
 import type { Run } from "../lib/types";
@@ -96,14 +96,14 @@ describe("target page", () => {
     await planOpened();
   });
 
-  it("warns at the address field for a static address on Ubuntu 26.04 (D-192)", async () => {
+  it("warns at the address field for a static address on Ubuntu 26.04 (D-192, D-220, D-223)", async () => {
     show(TargetForm, { api: adminApi() });
     await until(() => document.querySelector("#guest-ip"));
     type("#t-image", "ubuntu-26.04");
     expect(document.querySelector("#guest-ip-note")).toBeNull();
     type("#guest-ip", "192.168.1.50/24");
     expect(text(el("#guest-ip-note"))).toBe(
-      "Ubuntu 26.04 takes a static address only from its second boot (D-192). Use DHCP.",
+      "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an image built by Plumb (D-223).",
     );
     expect(el("#guest-ip").getAttribute("aria-describedby")).toContain("guest-ip-note");
     type("#t-image", "debian-13");
