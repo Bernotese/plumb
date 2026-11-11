@@ -110,7 +110,7 @@ Target create: newest ready version of its Image (found by name + build digest, 
   ```
 - **Checks when a document is saved** (`state.Validate`): Blocks of an Image exist and render; a `{secret: …}` value or a `writeOnly` parameter is an error; `Target.guest.disk` ≥ `build.guest.disk` of its Image (`HOST A4`); `retention` and `schedule` need `build`.
 - **Recipe.** `state.RenderImage` gives the flat resource list of an Image. The recipe is `{type, url, sha256, upgrade, guest.disk, resources}`; its SHA-256 says if two revisions build the same thing.
-- **Image version (migration 0008).** Table `image_version(image, version, status building|ready|failed|removed, trigger change|manual|schedule, run_id, revision_id, recipe, base_sha256, digest, disk_gb, started_at, finished_at, removed_at)`, key `(image, version)`. Numbers count up per Image name and are never used again, also after an Image delete. Table `image_schedule(image, last_slot)`. `plan.origin` gets `build`; the Plan JSON gets `images[]`.
+- **Image version (migration 0009; number from `pl-lead`, T-067 has 0008).** Table `image_version(image, version, status building|ready|failed|removed, trigger change|manual|schedule, run_id, revision_id, recipe, base_sha256, digest, disk_gb, started_at, finished_at, removed_at)`, key `(image, version)`. Numbers count up per Image name and are never used again, also after an Image delete. Table `image_schedule(image, last_slot)`. `plan.origin` gets `build`; the Plan JSON gets `images[]`.
 - **No binding (D-188).** The row is the record of a build. It holds no VMID. The template is `plumb-img-<name>-v<N>`; its description holds `plumb-image: <name>`, `version=<N>` and `build=<digest>` (SHA-256 over image name, version, recipe, base checksum and Run id). The driver finds a version by name plus the full digest line, in the pool and the VMID range. A row whose template is gone becomes `removed` when a create or the retention sees it.
 - **A Target and its version.** A create takes the newest `ready` version whose template exists. The driver writes `plumb-image-version: <N>` next to `plumb-image: <name>` (D-189) and `Observe` reads it; it is information only and no part of `Diff`. A new version changes no Target.
 - **API** (`api/openapi.yaml`, new operations with `x-plumb-planned`): `ImageView.status` = `{versions[], building, last_build, next_build_at}`; `POST /images/{name}/build` → Plan (tier `plan`); `Plan.images[]` = `{image, build: {version, trigger, upgrade, resources[]}, removes[]}`; `Plan.human_only` gets `image-recipe`; `Run.images[]` with steps; `TargetStatus.image_version`. Events with the subject `image:<name>`.
@@ -173,7 +173,7 @@ Target create: newest ready version of its Image (found by name + build digest, 
 | Card | Content | Owner (proposal) | After |
 |---|---|---|---|
 | T-058 | Contract: Image schema, OpenAPI, `wire` seal, driver interface with fake stubs, mock examples | pl-architect | – |
-| T-059 | State and store: save checks, `RenderImage`, recipe, migration 0008 | pl-backend | T-058 |
+| T-059 | State and store: save checks, `RenderImage`, recipe, migration 0009 | pl-backend | T-058 |
 | T-060 | Agent `seal`, guards, build mode at enrollment, guest tests | pl-backend (second lane) | T-058 |
 | T-061 | Driver: `CreateBuild`, `MakeImage`, `FindImage`, `ListImages`, `RemoveImage`, version marker, recordings from the host | pl-backend | T-058 |
 | T-062 | Engine: build lane, `Plan.images`, `image-recipe`, Target from a version, retention step, crash cleanup, API | pl-backend | T-059, T-061 |
