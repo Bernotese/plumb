@@ -91,3 +91,43 @@ func TestCloseWithoutCleanupReturnsAtOnce(t *testing.T) {
 		t.Fatalf("Close: %v, log %q", time.Since(start), logs.String())
 	}
 }
+
+// Re-review S1 of #144: serve calls Stop, then waits for its goroutines,
+// then Close. One of them (the dev seed) waits for a Run (Engine.Wait),
+// and a cancelled build's clean-up ends only at the grace. So the grace
+// clock must start in Stop, not in Close.
+func TestStopStartsTheGraceClock(t *testing.T) {
+	var logs syncBuffer
+	grace, stopGrace := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	e := &Engine{cfg: Config{ShutdownGrace: 200 * time.Millisecond}, log: slog.New(slog.NewTextHandler(&logs, nil)),
+		ctx: ctx, cancel: cancel, grace: grace, stopGrace: stopGrace, active: map[int64]bool{9: true}}
+	e.runs.Add(1)
+	go func() { // a build whose clean-up waits for a slow Proxmox task
+		defer e.runs.Done()
+		<-e.ctx.Done()
+		c, stop := e.cleanupContext(e.ctx, "clean-up of a failed build", "run", 9, "image", "web")
+		defer stop()
+		<-c.Done()
+	}()
+	seed := make(chan struct{})
+	go func() { // the dev seed
+		e.Wait()
+		close(seed)
+	}()
+
+	start := time.Now()
+	e.Stop()
+	select { // serve waits for its goroutines before Close
+	case <-seed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the seed still waits for the Run: the grace did not start at Stop")
+	}
+	e.Close()
+	if took := time.Since(start); took < 150*time.Millisecond || took > 5*time.Second {
+		t.Fatalf("shutdown took %v, want about the grace of 200ms", took)
+	}
+	if out := logs.String(); !strings.Contains(out, "runs=[9]") || !strings.Contains(out, "clean-up of a failed build cut off") {
+		t.Fatalf("log:\n%s", out)
+	}
+}

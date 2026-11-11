@@ -189,8 +189,10 @@ type Engine struct {
 	runs   sync.WaitGroup
 	// grace ends ShutdownGrace after Close: the clean-up contexts of
 	// cleanupContext end with it.
-	grace     context.Context
-	stopGrace context.CancelFunc
+	grace      context.Context
+	stopGrace  context.CancelFunc
+	stopOnce   sync.Once
+	graceTimer *time.Timer // set once by Stop
 
 	mu      sync.Mutex
 	results map[string]chan wire.Report // command id → reports; only waiters create them
@@ -289,48 +291,45 @@ func New(cfg Config) (*Engine, error) {
 		addrs: map[string]*addrWatch{}, pinned: map[imageKey]int{}, removing: map[imageKey]bool{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
 }
 
-// Stop cancels all Runs and does not wait (Close waits). A shutdown calls
-// it before it waits for other goroutines: one of them may wait for a Run
-// (the dev seed), and a Run may wait for an agent that is gone, so only the
-// cancel ends it (CI race job of #144).
-func (e *Engine) Stop() { e.cancel() }
+// Stop cancels all Runs and does not wait (Close waits). It also starts
+// the clock of ShutdownGrace: a shutdown calls Stop before it waits for
+// other goroutines, and one of them may wait for a Run (the dev seed), so
+// the clean-up of that Run must end without Close (CI race job of #144,
+// and its re-review S1). A second call does nothing.
+func (e *Engine) Stop() {
+	e.stopOnce.Do(func() {
+		e.cancel()
+		if e.stopGrace == nil { // an Engine built by a test without New
+			return
+		}
+		e.graceTimer = time.AfterFunc(e.cfg.ShutdownGrace, func() {
+			e.mu.Lock()
+			var runs []int64
+			for id := range e.active {
+				runs = append(runs, id)
+			}
+			e.mu.Unlock()
+			slices.Sort(runs)
+			e.log.Warn("shutdown: clean-up cut off; Recover finishes it at the next start", "grace", e.cfg.ShutdownGrace, "runs", runs)
+			e.stopGrace()
+		})
+	})
+}
 
 // DefaultShutdownGrace is the default of Config.ShutdownGrace.
 const DefaultShutdownGrace = 2 * time.Minute
 
-// Close cancels all Runs and waits for them. Their clean-up (a failed
-// build, retention) may go on for ShutdownGrace; then it is cut off, and
-// the Runs that were still active are named in the log. Recover finishes
-// them at the next start.
+// Close cancels all Runs (Stop, when nobody called it yet) and waits for
+// them. Their clean-up (a failed build, retention) may go on until
+// ShutdownGrace after the first Stop; then it is cut off, and the Runs
+// that were still active are named in the log. Recover finishes them at
+// the next start.
 func (e *Engine) Close() {
-	e.cancel()
-	done := make(chan struct{})
-	go func() {
-		e.runs.Wait()
-		close(done)
-	}()
-	t := time.NewTimer(e.cfg.ShutdownGrace)
-	defer t.Stop()
-	stopGrace := e.stopGrace
-	if stopGrace == nil { // an Engine built by a test without New
-		stopGrace = func() {}
+	e.Stop()
+	e.runs.Wait()
+	if e.graceTimer != nil && e.graceTimer.Stop() {
+		e.stopGrace() // all Runs ended in time: nothing was cut off
 	}
-	select {
-	case <-done:
-		stopGrace()
-		return
-	case <-t.C:
-	}
-	e.mu.Lock()
-	var runs []int64
-	for id := range e.active {
-		runs = append(runs, id)
-	}
-	e.mu.Unlock()
-	slices.Sort(runs)
-	e.log.Warn("shutdown: clean-up cut off; Recover finishes it at the next start", "grace", e.cfg.ShutdownGrace, "runs", runs)
-	stopGrace()
-	<-done
 }
 
 // cleanupContext is the context of a clean-up that must outlive the
