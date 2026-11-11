@@ -89,8 +89,9 @@ describe("target page", () => {
     show(TargetForm, { api: adminApi(), name: "db1" });
     await until(() => document.querySelector("#reenroll-title"));
     expect(text()).toContain(
-      "'Plumb may restart this VM' stays on after it, until you switch it off.",
+      "The Run restarts the VM (or starts it when it is stopped). 'Plumb may restart this VM' stays on after it, until you switch it off.",
     );
+    expect(el("#reenroll-reason").getAttribute("maxlength")).toBe("2000");
     button("Plan the re-enrollment")?.click();
     await planOpened();
   });
@@ -111,6 +112,19 @@ describe("target page", () => {
 });
 
 describe("plan and run", () => {
+  it("does not flag a change of a stopped VM (mock follows D-194)", async () => {
+    const api = adminApi();
+    const t = await api.getTarget("backup1");
+    expect(t.status.power).toBe("stopped");
+    const spec = { ...t.document.spec, guest: { ...t.document.spec.guest, memory: 4096 } };
+    const p = await api.createPlan({
+      reason: "more",
+      put: [{ kind: "Target", name: "backup1", spec }],
+    });
+    const g = p.targets[0]?.resources.find((r) => r.resource === "guest:config");
+    expect(g?.changes).toEqual([{ attr: "memory", from: 2048, to: 4096, risk: "disruptive" }]);
+  });
+
   it("tags a memory change that waits", async () => {
     const api = adminApi();
     const t = await api.getTarget("web1");

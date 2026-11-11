@@ -214,6 +214,8 @@ export function planTarget(
   old: TargetDoc["spec"] | undefined,
   next: TargetDoc["spec"],
   blocks: Map<string, BlockDoc>,
+  /** The power state of the guest: only a running VM waits or restarts (D-194). */
+  power: string = "running",
 ): ResourcePlan[] {
   const out: ResourcePlan[] = [];
   const g = next.guest as Record<string, unknown>;
@@ -243,9 +245,11 @@ export function planTarget(
       changes.push({ attr, from: og[attr], to: g[attr], risk: "disruptive" });
     }
     // T-056 (D-194), for a running VM: off, cores and memory wait; on, the
-    // Plan has the restart. The setting itself is a Plan-only line.
+    // Plan has the restart. A stopped VM takes them at its next start. The
+    // setting itself is a Plan-only line.
     const allow = next.allow_restart === true;
-    const cold = changes.filter((c) => c.attr === "cores" || c.attr === "memory");
+    const cold =
+      power === "running" ? changes.filter((c) => c.attr === "cores" || c.attr === "memory") : [];
     if (!allow) for (const c of cold) Object.assign(c, { waits_for_restart: true });
     else if (cold.length) changes.push({ attr: "restart", risk: "disruptive" });
     if ((old.allow_restart === true) !== allow) {
@@ -947,7 +951,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           );
         }
         const old = targets.get(t.name)?.document.spec;
-        let resources = planTarget(old, t.spec, blocks);
+        let resources = planTarget(old, t.spec, blocks, targets.get(t.name)?.status.power);
         const used = plannedSecrets(t.spec);
         const before = bindings(old);
         const fresh = [...bindings(t.spec)].filter((b) => !before.has(b));
@@ -1374,6 +1378,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
             targets.get(c.name)?.document.spec,
             (c.after as TargetDoc).spec,
             blocks,
+            targets.get(c.name)?.status.power,
           ),
         }));
       const warnings = changes

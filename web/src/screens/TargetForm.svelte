@@ -419,16 +419,19 @@
     </p>
     {#if storedAllow}
       <p>
-        The Run restarts the VM. '{ALLOW_RESTART_LABEL}' stays on after it, until you switch it off.
+        The Run restarts the VM (or starts it when it is stopped). '{ALLOW_RESTART_LABEL}' stays on
+        after it, until you switch it off.
       </p>
     {:else if existing.status.power === "running"}
-      <p class="warn" id="reenroll-refused">{REENROLL_REFUSED}</p>
+      <p class="warn" id="reenroll-refused">
+        {REENROLL_REFUSED} (The VM ran when this page was loaded; the server checks again.)
+      </p>
     {:else}
       <p>The VM is stopped: the Run starts it with the new token.</p>
     {/if}
     <div class="field">
       <label for="reenroll-reason">Reason (optional)</label>
-      <textarea id="reenroll-reason" bind:value={reenrollReason}></textarea>
+      <textarea id="reenroll-reason" bind:value={reenrollReason} maxlength="2000"></textarea>
     </div>
     <ProblemBox error={reenrollError} />
     <button class="btn" type="submit" disabled={reenrollBusy}>Plan the re-enrollment</button>
