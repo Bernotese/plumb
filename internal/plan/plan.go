@@ -125,6 +125,8 @@ type Agents interface {
 	Send(target string, typ wire.CommandType, body any) (string, error)
 	Online(target string) bool
 	NewEnrollToken(ctx context.Context, target string) (string, time.Time, error)
+	// Revoke removes the agent and the enrollment token of a target.
+	Revoke(ctx context.Context, target string) error
 }
 
 // Config configures an Engine.
@@ -258,6 +260,9 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		}
 		return nil // a report without a waiter (it timed out) is dropped
 	case wire.ReportDrift:
+		if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
+			return err // no Target: no Issue, no event (D-211)
+		}
 		if e.cfg.OnDrift != nil {
 			return e.cfg.OnDrift(ctx, d.Target, d.Report)
 		}
@@ -273,9 +278,23 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		if busy {
 			return nil
 		}
+		if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
+			return err // no guest: no watch list, so no secret value (D-211)
+		}
 		return e.sendWatch(ctx, d.Target)
 	}
 	return nil
+}
+
+// bound reports whether a target has a guest binding. Agent reports of a
+// target without one are dropped (D-211).
+func (e *Engine) bound(ctx context.Context, target string) (bool, error) {
+	_, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if errors.Is(err, store.ErrNotFound) {
+		e.log.Warn("agent report for a target without a guest dropped", "target", target)
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (e *Engine) dropChan(id string) {
