@@ -113,7 +113,14 @@ func TestRecipeHash(t *testing.T) {
 		"sha256":  {builtImage(t, func(s map[string]any) { s["sha256"] = strings.Repeat("1", 64) }), motdBlock("hi")},
 		"upgrade": {builtImage(t, func(s map[string]any) { build(s)["upgrade"] = false }), motdBlock("hi")},
 		"disk":    {builtImage(t, func(s map[string]any) { guest(s)["disk"] = 12 }), motdBlock("hi")},
-		"block":   {builtImage(t, nil), motdBlock("hello")},
+		"cores":   {builtImage(t, func(s map[string]any) { guest(s)["cores"] = 4 }), motdBlock("hi")},
+		"memory":  {builtImage(t, func(s map[string]any) { guest(s)["memory"] = 4096 }), motdBlock("hi")},
+		"bridge":  {builtImage(t, func(s map[string]any) { guest(s)["bridge"] = "vmbr1" }), motdBlock("hi")},
+		"ip": {builtImage(t, func(s map[string]any) {
+			guest(s)["ip"] = "192.168.1.50/24"
+			guest(s)["gateway"] = "192.168.1.1"
+		}), motdBlock("hi")},
+		"block": {builtImage(t, nil), motdBlock("hello")},
 		"params": {builtImage(t, func(s map[string]any) {
 			build(s)["blocks"] = []any{map[string]any{"use": "motd", "params": map[string]any{"who": "me"}}}
 		}), motdBlock("{{ .who }}")},
@@ -129,16 +136,18 @@ func TestRecipeHash(t *testing.T) {
 			t.Errorf("a change of %s keeps the recipe hash", name)
 		}
 	}
-	// The other settings of the build guest do not change the template.
+	// Defaults written out, retention and schedule do not change what a
+	// build makes.
 	same := recipeHash(t, builtImage(t, func(s map[string]any) {
-		guest(s)["cores"] = 4
-		guest(s)["memory"] = 4096
-		build(s)["upgrade"] = true // the default, written out
+		guest(s)["cores"] = 1
+		guest(s)["memory"] = 1024
+		guest(s)["ip"] = "dhcp"
+		build(s)["upgrade"] = true
 		s["retention"] = map[string]any{"keep": 5}
 		s["schedule"] = map[string]any{"every": "day", "at": "01:00"}
 	}), motdBlock("hi"))
 	if same != base {
-		t.Error("cores, memory, an explicit default upgrade, retention or schedule change the recipe hash")
+		t.Error("written-out defaults, retention or schedule change the recipe hash")
 	}
 }
 
@@ -219,6 +228,24 @@ func TestAgentPathsRefused(t *testing.T) {
 		}), buildBlock(t, "bad", res)})
 		errAt(t, err, KindImage, "/spec/build/blocks", "path of the Plumb agent")
 		_ = name
+	}
+	// Through a symlink of the same list, and the agent's service (review
+	// S1, N1 of T-059).
+	for name, res := range map[string][]map[string]any{
+		"parent link": {
+			{"symlink": map[string]any{"path": "/opt/x", "target": "/var/lib"}},
+			{"file": map[string]any{"path": "/opt/x/plumb-agent/credential", "content": "x"}},
+		},
+		"service": {{"service": map[string]any{"name": "plumb-agent", "state": "stopped"}}},
+		"alias":   {{"file": map[string]any{"path": "/var/run/systemd/system/plumb-agent.service.d/x.conf", "content": "x"}}},
+	} {
+		target := Doc{Kind: KindTarget, Name: "web1", Spec: json.RawMessage(`{"type":"vm","image":"ubuntu","guest":{"cores":1,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"bad"}]}`)}
+		_, err := Validate([]Doc{{Kind: KindImage, Name: "ubuntu", Spec: json.RawMessage(secImage)}, buildBlock(t, "bad", res...), target})
+		want := "path of the Plumb agent"
+		if name == "service" {
+			want = "is the Plumb agent"
+		}
+		errAt(t, err, KindTarget, "/spec/blocks", want)
 	}
 	// A stored revision from before the rule still loads (D-207).
 	target := Doc{Kind: KindTarget, Name: "web1", Spec: json.RawMessage(`{"type":"vm","image":"ubuntu","guest":{"cores":1,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"bad"}]}`)}

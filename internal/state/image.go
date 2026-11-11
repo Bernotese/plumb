@@ -12,19 +12,24 @@ import (
 // ErrNotBuilt: the Image has no build part; it is a stock image (D-197).
 var ErrNotBuilt = errors.New("state: the Image has no build; it is a stock image")
 
-// Recipe is what a build of an Image makes (T-039 Plan §1). Two revisions
-// with the same Recipe hash build the same template, so a build Plan is
-// stale only when the hash at the head differs (D-199). The settings of
-// the build guest other than the disk (cores, memory, bridge, ip) are not
-// in it: they do not change what is inside the template.
+// Recipe is what a build of an Image makes and how (T-039 Plan §1). A
+// build Plan is stale when the hash at the head differs (D-199), and the
+// Run uses the head values, so every value that the Run uses is in it:
+// also all of build.guest (cores, memory, bridge, ip, gateway: review S2
+// of T-059). The agent version is not in it: a build installs the agent
+// of the controller (D-199).
 type Recipe struct {
 	Type      wire.Kind       `json:"type"`
 	URL       string          `json:"url"`
 	SHA256    string          `json:"sha256"`
 	Upgrade   bool            `json:"upgrade"`
 	DiskGB    int             `json:"disk"`
+	Guest     map[string]any  `json:"guest"` // build.guest with its defaults
 	Resources []wire.Resource `json:"resources"`
 }
+
+// buildGuestKeys are the settings of build.guest (image.json).
+var buildGuestKeys = []string{"cores", "memory", "disk", "bridge", "ip", "gateway"}
 
 // Hash is the hex SHA-256 of the canonical JSON of the recipe. The
 // attribute maps are written with sorted keys, so the hash is stable.
@@ -92,9 +97,21 @@ func (s *Set) RenderImage(name string) (*RenderedImage, error) {
 			SHA256:    img.SHA256,
 			Upgrade:   img.Build.Upgrade == nil || *img.Build.Upgrade,
 			DiskGB:    disk,
+			Guest:     buildGuest(r.Guest.Attrs),
 			Resources: r.Resources,
 		},
 	}
 	out.RecipeSHA256 = out.Recipe.Hash()
 	return out, nil
+}
+
+// buildGuest keeps the build.guest settings of the rendered guest:config.
+func buildGuest(attrs map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, k := range buildGuestKeys {
+		if v, ok := attrs[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
 }

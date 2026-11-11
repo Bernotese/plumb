@@ -306,15 +306,17 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 		out.Resources[first[i]].After = append([]string(nil), after...)
 	}
 
-	// No resource may write, link or remove the agent's own paths
-	// (D-207). A stored revision from before this rule still loads; the
+	// No resource may write, link or remove the agent's own paths, or
+	// manage its service (D-207). A stored revision from before this rule still loads; the
 	// agent refuses the resource (T-060).
 	if !s.stored {
-		for _, r := range out.Resources {
-			if attr, p := wire.AgentPathOf(r); attr != "" {
-				return nil, errf(u.blocksPath, "resource %s from %s: %s %q is a path of the Plumb agent; a Block cannot change the agent's files (D-207)",
-					r.ID, where[r.ID], attr, p)
+		if c := wire.AgentConflicts(out.Resources); len(c) > 0 {
+			if c[0].Attr == "name" {
+				return nil, errf(u.blocksPath, "resource %s from %s: the service %q is the Plumb agent; a Block cannot stop, mask or change it (D-207)",
+					c[0].ID, where[c[0].ID], c[0].Value)
 			}
+			return nil, errf(u.blocksPath, "resource %s from %s: %s resolves to %q, a path of the Plumb agent; a Block cannot change the agent's files (D-207)",
+				c[0].ID, where[c[0].ID], c[0].Attr, c[0].Value)
 		}
 	}
 	// An Image build holds no secret (D-202). The use check refuses every
