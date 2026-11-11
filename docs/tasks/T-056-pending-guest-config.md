@@ -195,3 +195,7 @@ Web PR (after step 1 is on main):
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+
+## User answers (pl-lead, 2026-11-11, D-196)
+- The [N] parts are confirmed as proposed: `allow_restart` (yes/no, label "Plumb may restart this VM"), default no, re-enrollment of a running VM refused with no.
+- Web part, extra item: a short hint at the address field of the Target form about the Ubuntu 26.04 limit (D-192): a stock Ubuntu 26.04 image takes a static address only from the second boot; use DHCP.
