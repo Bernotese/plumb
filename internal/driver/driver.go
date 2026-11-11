@@ -48,6 +48,11 @@ type GuestSpec struct {
 	Gateway  string   // AttrGateway; create-only
 	User     string   // AttrUser: bootstrap user; create-only
 	SSHKeys  []string // AttrSSHKeys of the bootstrap user; create-only
+	// ImageVersion is the version of a built Image that Create cloned, 0
+	// for a stock Image (D-200). Create writes it into the guest
+	// description as "plumb-image-version: <N>", and Observe reads it. It
+	// is information only: Diff and DriftGuest ignore it.
+	ImageVersion int
 }
 
 // Attribute names of guest:config changes.
@@ -138,9 +143,106 @@ type Driver interface {
 	Update(ctx context.Context, id GuestID, changes []wire.Change, boot *Bootstrap) error
 	// Power runs a power action.
 	Power(ctx context.Context, id GuestID, action PowerAction) error
-	// Delete stops and removes the guest and its disks.
+	// Delete stops and removes the guest and its disks. It never removes
+	// a template (D-077); only RemoveImage does.
 	Delete(ctx context.Context, id GuestID) error
+
+	// CreateBuild makes the build guest of one image version as a full
+	// clone of spec.Base, gives it the enrollment token (marked build by
+	// the engine) and starts it (D-203).
+	CreateBuild(ctx context.Context, spec BuildSpec, boot Bootstrap) (GuestID, error)
+	// MakeImage turns a sealed, stopped build guest into the template of
+	// img (D-208). Guard: the build marker of img and power stopped. One
+	// config write with the digest clears the cloud-init values and the
+	// serial, sets ciupgrade=0, the name and the description; then the
+	// conversion. It never converts a guest that fails the guard.
+	MakeImage(ctx context.Context, id GuestID, img BuiltImage) (ImageRef, error)
+	// FindImage finds the template of a version by name plus the full
+	// digest line, in the pool and the VMID range (D-198). ErrNotFound
+	// when it is gone.
+	FindImage(ctx context.Context, image string, version int, digest string) (ImageRef, error)
+	// ListImages lists the templates and import files of an Image.
+	ListImages(ctx context.Context, image string) ([]ImageObject, error)
+	// RemoveImage deletes one template after the guard of D-209: range,
+	// pool, template, no lock, exact name, a description that names the
+	// Image with the full digest or checksum, and no linked clone in the
+	// pool. It refuses an import file: Plumb never deletes one (D-209).
+	RemoveImage(ctx context.Context, obj ImageObject) error
+	// DiskSpace reads the use of the disk storage of guests.
+	DiskSpace(ctx context.Context) (DiskSpace, error)
 }
+
+// --- Image builds (T-039, D-203, D-208, D-209) ---
+
+// BuildSpec is the temporary guest of one image build (D-203). The driver
+// names it "plumb-build-<Image>-v<Version>", marks its description with
+// "plumb-build: <Image> v<Version>", sets onboot=0 and the bootstrap user
+// "plumb-build" without a key. The clone is always full (D-208).
+type BuildSpec struct {
+	Image    string   // Image document name
+	Version  int      // the new version number (image_version)
+	Base     ImageRef // the stock template of the base image, from FetchImage
+	Upgrade  bool     // ciupgrade=1: cloud-init upgrades all packages at the first boot (D-204)
+	Cores    int
+	MemoryMB int
+	DiskGB   int // the template gets this size
+	Bridge   string
+	IP       string // "dhcp" or CIDR
+	Gateway  string
+}
+
+// BuiltImage names the template that MakeImage makes from a sealed build
+// guest: "plumb-img-<Image>-v<Version>", with the description lines
+// "plumb-image: <Image>", "version=<Version>" and "build=<Digest>" (D-198).
+type BuiltImage struct {
+	Image   string
+	Version int
+	// Digest is the hex SHA-256 over image name, version, recipe, base
+	// checksum and Run id. With the name it is the proof of ownership for
+	// FindImage and RemoveImage (D-188, D-209).
+	Digest string
+}
+
+// ImageObjectKind says what an ImageObject is.
+type ImageObjectKind string
+
+const (
+	ImageVersionTemplate ImageObjectKind = "version" // a built version, plumb-img-<name>-v<N>
+	ImageBaseTemplate    ImageObjectKind = "base"    // a stock template, plumb-img-<name>-<sha12>
+	ImageImportFile      ImageObjectKind = "import"  // a downloaded base image in the image storage
+)
+
+// ImageObject is one hypervisor object of an Image, as ListImages sees it.
+type ImageObject struct {
+	Kind ImageObjectKind
+	Ref  ImageRef // template VMID; empty for an import file
+	Name string   // template name, or the volume id of an import file
+	// Version is set for ImageVersionTemplate, else 0.
+	Version int
+	// Digest is the build digest of a version, or the SHA-256 of the base
+	// image for a base template or an import file ("" when unknown).
+	Digest    string
+	SizeBytes int64
+	// LinkedClones is the number of pool guests that are linked clones
+	// of this template (review S3). RemoveImage refuses a template with one.
+	LinkedClones int
+}
+
+// DiskSpace is the real use of the disk storage of guests (D-203). The
+// engine refuses a build when it would fill more than the limit.
+type DiskSpace struct {
+	Storage    string
+	TotalBytes int64
+	UsedBytes  int64 // real use (thin pool: data), not the sum of virtual sizes
+	// MetaKnown: the token can read the thin-pool metadata use; then the
+	// same limit holds for it (T-061 finds out on the host).
+	MetaKnown      bool
+	MetaTotalBytes int64
+	MetaUsedBytes  int64
+}
+
+// ErrNotImplemented is returned by the image build methods until T-061.
+var ErrNotImplemented = errors.New("driver: image builds are not implemented yet (T-061)")
 
 // ErrNotFound is returned when a guest or an image does not exist.
 var ErrNotFound = errors.New("driver: not found")
