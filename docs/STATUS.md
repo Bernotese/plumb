@@ -11,7 +11,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-039 image builds (slice 2 part B, first) | pl-architect plans | design only; the test host is ready and the card lists the facts from the host (D-185, D-188, D-192). Next: the plan, its review, the user's approval (the card changes the agent: `seal`) |
+| T-057 revoke the agent when its Target is deleted (security, MEDIUM) | pl-frontend | running. The credential of a deleted Target stays valid today; with a re-made Target of the same name it can receive the new desired state incl. secret values before the approval |
+| T-039 image builds (slice 2 part B, first) | pl-architect plans | plan draft on branch pl-architect/T-039-plan (D-197 … D-210 proposed); pl-backend answers 24 host questions; then review and the user's approval (the card changes the agent: `seal`) |
 | T-038 LXC targets (slice 2 part B, second) | tbd | design only; after T-039 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
