@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,6 +189,30 @@ func TestPVESettings(t *testing.T) {
 	}
 }
 
+// Check every environment-to-driver field, including settings not used by Check.
+func TestPVESettingsMapping(t *testing.T) {
+	h := newFakeHost(t)
+	setPVE(t, h.srv.URL, h.ca)
+	cc, pc, err := pveSettings(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]string{
+		"PLUMB_PVE_URL": cc.URL, "PLUMB_PVE_TOKEN_ID": cc.TokenID, secretVar: cc.Secret, "PLUMB_PVE_CA": cc.CAFile,
+		"PLUMB_PVE_NODE": pc.Node, "PLUMB_PVE_POOL": pc.Pool, "PLUMB_PVE_DISK": pc.DiskStorage,
+		"PLUMB_PVE_IMAGES": pc.ImageStorage, "PLUMB_PVE_SNIPPETS": pc.SnippetStorage, "PLUMB_PVE_SNIPPET": pc.Snippet,
+		"PLUMB_PVE_BRIDGE": pc.Bridge, "PLUMB_PVE_SEARCHDOMAIN": pc.SearchDomain,
+		"PLUMB_PVE_NAMESERVER": strings.Join(pc.Nameservers, ","),
+	} {
+		if got != os.Getenv(name) {
+			t.Errorf("%s was not mapped", name)
+		}
+	}
+	if pc.VMIDMin != 9000 || pc.VMIDMax != 9099 {
+		t.Error("VMID range was not mapped")
+	}
+}
+
 func errorsAs(err error, ce **errConfig) bool {
 	e, ok := err.(*errConfig)
 	if ok {
@@ -237,7 +262,8 @@ func TestServeWithProxmox(t *testing.T) {
 	h := newFakeHost(t)
 	setPVE(t, h.srv.URL, h.ca)
 	data := t.TempDir()
-	code, out, errOut, cancel := startServe(t, "--data", data, "--key-file", keyFile(t),
+	masterKey := keyFile(t)
+	code, out, errOut, cancel := startServe(t, "--data", data, "--key-file", masterKey,
 		"--listen", "127.0.0.1:0", "--agent-listen", "127.0.0.1:0", "--hosts", "127.0.0.1")
 	if !strings.Contains(out.String(), "Plumb listens on https://") {
 		t.Fatalf("no start:\nout %s\nerr %s", out, errOut)
@@ -247,10 +273,13 @@ func TestServeWithProxmox(t *testing.T) {
 		t.Errorf("exit %d: %s", c, errOut)
 	}
 	logs := errOut.String()
-	for _, want := range []string{"Proxmox host checked", "node=pve", "version=9.2.26", "pool=plumb", "vmid_range=9000-9099"} {
+	for _, want := range []string{"Proxmox host checked", "url=" + h.srv.URL, "node=pve", "version=9.2.26", "pool=plumb", "vmid_range=9000-9099"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("start line without %q:\n%s", want, logs)
 		}
+	}
+	if strings.Count(logs, "Proxmox host checked") != 1 || strings.Count(out.String(), "Password:") != 1 {
+		t.Errorf("expected one host line and one admin password: %s %s", out, logs)
 	}
 	if strings.Contains(out.String()+logs, canary) {
 		t.Error("the secret is in the output")
@@ -260,6 +289,14 @@ func TestServeWithProxmox(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(data, "link", "ca.crt")); err != nil {
 		t.Errorf("no Plumb CA: %v", err)
+	}
+	// A restart keeps the admin account and does not print another password.
+	setPVE(t, h.srv.URL, h.ca)
+	code, out, errOut, cancel = startServe(t, "--data", data, "--key-file", masterKey,
+		"--listen", "127.0.0.1:0", "--agent-listen", "127.0.0.1:0", "--hosts", "127.0.0.1")
+	cancel()
+	if c := <-code; c != 0 || strings.Contains(out.String(), "Password:") {
+		t.Errorf("restart exit %d: %s %s", c, out, errOut)
 	}
 }
 
@@ -378,6 +415,23 @@ func TestStartErrorExitCodes(t *testing.T) {
 		`storage local has the content "import,iso"; it must have exactly "import" (D-081)`, "the token has no SDN.Use right on bridge vmbr0"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
+// Preserve the certificate cause and the actionable error text.
+func TestStartErrorCertificateTime(t *testing.T) {
+	cc := proxmox.ClientConfig{URL: "https://127.0.0.1:8006", Secret: canary}
+	for _, start := range []time.Time{time.Now().Add(-2 * time.Hour), time.Now().Add(time.Hour)} {
+		cert := &x509.Certificate{NotBefore: start, NotAfter: start.Add(time.Hour)}
+		err := startError(&url.Error{Op: "Get", URL: cc.URL, Err: x509.CertificateInvalidError{
+			Cert: cert, Reason: x509.Expired}}, cc)
+		var ce *errConfig
+		for _, want := range []string{cc.URL, "is not valid at this time", cert.NotBefore.UTC().Format("2006-01-02 15:04 MST"),
+			cert.NotAfter.UTC().Format("2006-01-02 15:04 MST"), "check the clock of the LXC and the certificate of the node"} {
+			if !errors.As(err, &ce) || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), canary) {
+				t.Errorf("want config error containing %q without secret: %v", want, err)
+			}
 		}
 	}
 }

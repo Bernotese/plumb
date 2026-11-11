@@ -199,3 +199,39 @@ func TestCheckPermissionsUnreadable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Every storage role must fail closed for missing, inactive or wrong content.
+func TestCheckEachStorageFailure(t *testing.T) {
+	for _, id := range []string{"local-lvm", "local", "plumb-snippets"} {
+		for _, fault := range []string{"missing", "inactive", "disabled", "content"} {
+			t.Run(id+"/"+fault, func(t *testing.T) {
+				f := newFakePVE(t)
+				for i, s := range f.storages {
+					if s["storage"] != id {
+						continue
+					}
+					switch fault {
+					case "missing":
+						f.storages = append(f.storages[:i], f.storages[i+1:]...)
+					case "inactive":
+						s["active"] = 0
+					case "disabled":
+						s["enabled"] = 0
+					case "content":
+						s["content"] = "iso"
+					}
+					break
+				}
+				_, err := checkDriver(t, f).Check(context.Background())
+				p := problems(t, err)
+				kind := ProblemStorageMissing
+				if fault == "content" {
+					kind = ProblemStorageContent
+				}
+				if len(p) != 1 || p[0].Kind != kind || p[0].ID != id {
+					t.Errorf("problems = %+v, want %s for %s", p, kind, id)
+				}
+			})
+		}
+	}
+}
