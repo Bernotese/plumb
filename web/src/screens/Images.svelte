@@ -44,7 +44,13 @@
 {:else if images && images.length === 0}
   <p class="muted">No images yet.</p>
 {:else if images}
-  <div class="table-wrap card flush">
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div
+    class="table-wrap card flush"
+    tabindex="0"
+    role="region"
+    aria-label="Images, scrolls sideways"
+  >
     <table>
       <caption class="sr-only">Images</caption>
       <thead>

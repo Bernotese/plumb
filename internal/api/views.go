@@ -125,6 +125,8 @@ type planView struct {
 	HumanOnly    []string         `json:"human_only"`
 	Targets      []targetPlanView `json:"targets"`
 	Warnings     []string         `json:"warnings"`
+	// Images: builds and removals (D-199); missing means none.
+	Images []imagePlanView `json:"images,omitempty"`
 }
 
 func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
@@ -140,9 +142,17 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 	}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {
 		v.RunID, v.Revision = &run.ID, &run.RevisionID
+		if p.Origin == plan.OriginBuild {
+			v.Revision = nil // a build commits no revision (D-199)
+		}
 	} else if err != store.ErrNotFound {
 		return v, err
 	}
+	images, err := imagePlanViews(p.Images)
+	if err != nil {
+		return v, err
+	}
+	v.Images = images
 	var targets []plan.TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return v, err
@@ -169,7 +179,10 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		}
 		v.Targets = append(v.Targets, tv)
 	}
-	if p.Status == store.PlanStale {
+	switch {
+	case p.Status == store.PlanStale && p.Origin == plan.OriginBuild:
+		v.Warnings = append(v.Warnings, "The recipe of the Image changed. Build again.")
+	case p.Status == store.PlanStale:
 		v.Warnings = append(v.Warnings, "The head revision moved or a secret changed. Propose again.")
 	}
 	return v, nil
@@ -204,6 +217,8 @@ type runView struct {
 	// of the VM (D-195).
 	WaitsForRestart int             `json:"waits_for_restart"`
 	Targets         []targetRunView `json:"targets"`
+	// Images are the build lanes (D-199); missing means none.
+	Images []imageRunView `json:"images,omitempty"`
 }
 
 func (s *Server) runView(ctx context.Context, run store.Run) (runView, error) {
@@ -214,12 +229,24 @@ func (s *Server) runView(ctx context.Context, run store.Run) (runView, error) {
 		return v, err
 	}
 	index := map[string]int{}
+	lanes := map[string]*targetRunView{} // image lanes, by Image name
+	var laneOrder []string
 	for _, st := range steps {
-		i, ok := index[st.Target]
-		if !ok {
-			i = len(v.Targets)
-			index[st.Target] = i
-			v.Targets = append(v.Targets, targetRunView{Target: st.Target, Status: "succeeded", Steps: []stepView{}})
+		var tr *targetRunView
+		if name, isImage := imageLane(st.Target); isImage {
+			if tr = lanes[name]; tr == nil {
+				tr = &targetRunView{Target: st.Target, Status: "succeeded", Steps: []stepView{}}
+				lanes[name] = tr
+				laneOrder = append(laneOrder, name)
+			}
+		} else {
+			i, ok := index[st.Target]
+			if !ok {
+				i = len(v.Targets)
+				index[st.Target] = i
+				v.Targets = append(v.Targets, targetRunView{Target: st.Target, Status: "succeeded", Steps: []stepView{}})
+			}
+			tr = &v.Targets[i]
 		}
 		var ch []wire.Change
 		if err := json.Unmarshal(st.Changes, &ch); err != nil {
@@ -230,7 +257,6 @@ func (s *Server) runView(ctx context.Context, run store.Run) (runView, error) {
 		if a := wire.ActionOf(ch); a != wire.ActionNone {
 			sv.Action = &a
 		}
-		tr := &v.Targets[i]
 		tr.Steps = append(tr.Steps, sv)
 		switch st.Status {
 		case "failed", "refused", "skipped":
@@ -240,6 +266,9 @@ func (s *Server) runView(ctx context.Context, run store.Run) (runView, error) {
 				tr.Status = "running"
 			}
 		}
+	}
+	if v.Images, err = s.imageRunViews(ctx, run, lanes, laneOrder); err != nil {
+		return v, err
 	}
 	return v, nil
 }

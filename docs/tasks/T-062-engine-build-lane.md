@@ -1,6 +1,6 @@
 # T-062 – Image builds: engine build lane, retention, API
 
-- **Owner:** pl-backend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa (T-065)
+- **Owner:** pl-architect   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa (T-065)
 - **Size:** L   · **Depends on:** T-059, T-061 (T-060 for the end-to-end slice)   · **Parent:** T-039
 
 ## Goal
@@ -27,7 +27,12 @@ An approved Plan builds a new image version, Targets are made from it, and old v
 - The clock and `system` approval (T-063). A Run that builds and then creates Targets.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+Two PRs (pl-lead agreed). **Part A** `pl-architect/T-062-engine` (Plan side, builds off by `plan.Config.ImageBuilds`):
+- Migration `0010_plan_images` (`plan.images`); `store.ApproveBuildPlan` (no revision, Run pinned to the checked head), `PendingPlans`; `MarkStalePlans` skips origin `build`.
+- Engine: `Plan.images` (build on a new or changed recipe, trigger change; removals preview: ready versions beyond keep, base templates of another checksum, all on delete); `image-recipe` by content; propose refusals (no ready version; same Plan builds it); `ProposeBuild` (manual/schedule); approval of a build Plan by recipe hash (head change without recipe change keeps it; recipe change marks it stale after every commit); one build per Image (`build-running`, also a `building` row).
+- API: `POST /images/{name}/build`, `ImageView.status` (versions, building, last build, unused imports with the strict `pvesm free` form, disk), `Plan.images`, `Run.images`, `TargetStatus.image_version`; contract test `TestContractImages`.
+- Unused import files (QA of #128): safe to remove when no checksum needs it (document, running build); a ready version does not need it, because a version template is a full copy (D-209 text).
+- An image lane fails at `image:base` in part A. Open for part B: the lane, build token + link guard, seal handshake (T-060), revoke + T-073 guard, disk gate of T-074, retention, Recover, Target from the newest version, version Targets list, `image.version` events, flag on.
 
 ## Note from the T-064 review (pl-lead, 2026-11-11)
 - The list of unused import files feeds a command line that the user runs as root (`pvesm free …`, with a Copy button in the web). The API must list only volume names that Plumb itself made, checked by a strict pattern (`plumb-<name>-<sha256[:12]>.qcow2`, D-077), and give the command in exactly this form, with no quotes: `pvesm free <storage>:import/plumb-<name>-<12 hex>.qcow2` (the strict name holds no shell character). The web offers Copy only for a line that matches `^pvesm free [A-Za-z][A-Za-z0-9._-]*:import/plumb-[a-z0-9][a-z0-9.-]*-[0-9a-f]{12}\.qcow2$` (PR #123, `safeFreeCommand`), so any other form loses the Copy button. A name that does not match is listed without a command. Test with a file name that holds shell characters.
@@ -35,3 +40,12 @@ branch · commit · tests · notes
 ## Note from the T-061 review (pl-lead, 2026-11-11)
 - `DiskSpace` fails closed for the data space, but when the thin-pool metadata cannot be read (403 or an ambiguous pool) it gives `MetaKnown=false`. Decision of pl-lead: no new token right now (D-081). The build Plan then shows a clear line "thin-pool metadata use is unknown" so the person who approves sees it; a scheduled build (planned by `system`) records the same line in its Run. After the host check (is the metadata readable with today's rights?) pl-lead decides if more is needed.
 - N1: a conversion that times out in the driver but ends on the host can leave a template with the build name: the retention step and the unused list must show it (it is never adopted).
+
+**Part B** `pl-architect/T-062b-build-lane` (Run side; stacked on part A):
+- Lane `internal/plan/build.go`: version row (digest D-198) → `image:base` → `guest:config` (`CreateBuild` under the T-074 gate, held until the lane ends; token of link `build:<image>`) → enroll (20 min) → apply (no risk limit, no secret resolver) → `image:seal` (result, revoke, no stop, wait for `stopped` in the 5 min seal timeout, B1) → `image:template` (`MakeImage`, version `ready`, event `image.version`) → `image:retention`.
+- Every failure: revoke, `RemoveBuild` (T-073 guard + marker), version `failed`, rest of the steps failed "nothing was converted" (S4). A new build and `Recover` first remove build guests; `Recover` fails `building` versions of other processes.
+- Driver: `ListBuilds`, `RemoveBuild` (interface, fake, Proxmox with fake-PVE test).
+- Link: `seal` only to `build:` links, no `watch` to them, `seal:` items only in results of a build link, `EnrollResponse.Build` for a `build:` token (no migration: only the lane makes such a token). `linktest` simulates seal (refused without the first-enrollment mark or after a watch, failing step, no power-off).
+- Retention (n2, D-209): after `ready`, never this version, never fewer than `keep`; ready rows without a template become `removed`; failed rests (T-061 N1) and base templates of another checksum go; Image delete removes all; a guard refusal is named in the step, not hidden.
+- Target create clones the newest ready version that exists (`FindImage`), `GuestSpec.ImageVersion`; Image status lists the Targets per version.
+- The flag of part A is gone: builds are on. The real agent answers `seal` only after T-060; until then a real build fails at `image:seal` and leaves nothing.

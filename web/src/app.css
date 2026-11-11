@@ -190,7 +190,16 @@ h2 {
   justify-content: space-between;
 }
 
+/* A wide table scrolls inside its own box, never the page. position:
+   relative makes the box the containing block of the absolute .sr-only
+   caption and labels, so they cannot widen the page (390 px check).
+   div.table-wrap.card beats the screen rules ".flush { overflow: hidden }",
+   which would cut the table off. */
 .table-wrap {
+  position: relative;
+  overflow-x: auto;
+}
+div.table-wrap.card {
   overflow-x: auto;
 }
 

@@ -245,7 +245,9 @@
   }
   nav {
     display: flex;
-    gap: var(--space-4);
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+    min-width: 0;
   }
   nav a {
     color: var(--color-text-muted);
@@ -261,6 +263,7 @@
   .tools {
     margin-left: auto;
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-3);
     align-items: center;
   }
@@ -288,6 +291,9 @@
     main {
       padding-left: var(--space-4);
       padding-right: var(--space-4);
+    }
+    nav {
+      column-gap: var(--space-3);
     }
   }
 </style>

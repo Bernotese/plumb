@@ -53,7 +53,13 @@
 {:else if targets && targets.length === 0}
   <p class="muted">No targets yet. Create the first one.</p>
 {:else if targets}
-  <div class="table-wrap card flush">
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div
+    class="table-wrap card flush"
+    tabindex="0"
+    role="region"
+    aria-label="Targets and their status, scrolls sideways"
+  >
     <table>
       <caption class="sr-only">Targets and their status</caption>
       <thead>

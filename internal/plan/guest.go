@@ -114,7 +114,10 @@ type Live struct {
 	Power    string // running | stopped | unknown
 	IPs      []string
 	GuestID  string // "" when there is no guest
-	Busy     bool   // a Run works on the target
+	// ImageVersion is the built version the guest was cloned from, 0 for
+	// a stock Image or unknown (D-200).
+	ImageVersion int
+	Busy         bool // a Run works on the target
 	// Waiting are the values that wait for a stop and start (D-195).
 	Waiting []store.Waiting
 	// Reported is the address list of the agent, only while it is online
@@ -156,7 +159,7 @@ func (e *Engine) Live(ctx context.Context, target string) (Live, error) {
 	}
 	l.GuestID, l.Waiting = b.Ref, b.Waiting
 	if st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); err == nil {
-		l.Power, l.IPs = string(st.Power), st.IPs
+		l.Power, l.IPs, l.ImageVersion = string(st.Power), st.IPs, st.Spec.ImageVersion
 	}
 	return l, nil
 }

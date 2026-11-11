@@ -299,10 +299,14 @@ func deepCopy(v any) any {
 // --- parsed documents ---
 
 type imageSpec struct {
-	Type   string      `json:"type"`
-	URL    string      `json:"url"`
-	SHA256 string      `json:"sha256"`
-	Build  *imageBuild `json:"build"`
+	Type      string      `json:"type"`
+	URL       string      `json:"url"`
+	SHA256    string      `json:"sha256"`
+	Build     *imageBuild `json:"build"`
+	Retention *struct {
+		Keep int `json:"keep"`
+	} `json:"retention"`
+	Schedule json.RawMessage `json:"schedule"`
 }
 
 // imageBuild is spec.build of an Image (D-197).

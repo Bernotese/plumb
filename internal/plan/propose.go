@@ -88,12 +88,6 @@ func apply(base *state.Set, p Proposal) (*state.Set, error) {
 	if err != nil {
 		return nil, &ProposalError{Msg: "the documents are not valid:\n" + err.Error(), Err: err}
 	}
-	// The save checks of image builds are in state (T-059), but no Run
-	// builds yet: a built Image would be used as a stock image. T-062
-	// removes this.
-	if built := set.BuiltImages(); len(built) > 0 {
-		return nil, &ProposalError{Msg: fmt.Sprintf("Image %q has spec.build: image builds are not available yet (T-062)", built[0])}
-	}
 	return set, nil
 }
 
@@ -195,9 +189,24 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		in.Proposal.Notes = append(in.Proposal.Notes, note)
 	}
 	markIgnored(next.Rules(), plans)
+	// The image part: builds of new or changed recipes and removals
+	// (D-199, D-209), and the Targets that cannot be made yet (D-200).
+	images, imageNotes, err := e.planImages(ctx, base, next, "", "")
+	if err != nil {
+		return store.Plan{}, err
+	}
+	if err := e.checkImageTargets(ctx, next, plans, images); err != nil {
+		return store.Plan{}, err
+	}
+	in.Proposal.Notes = append(in.Proposal.Notes, imageNotes...)
 	humanOnly, err := humanOnlyReasons(base, in.Proposal)
 	if err != nil {
 		return store.Plan{}, err
+	}
+	if recipe, err := imagesHumanOnly(base, next); err != nil {
+		return store.Plan{}, err
+	} else if recipe {
+		humanOnly = append(humanOnly, HumanOnlyImageRecipe)
 	}
 	if slices.Contains(binding, true) {
 		humanOnly = append(humanOnly, HumanOnlySecretBinding)
@@ -231,11 +240,19 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 			risk = r
 		}
 	}
+	// A build makes a new template and changes no guest (D-201).
+	if len(images) > 0 && wire.RiskReversible.Exceeds(risk) {
+		risk = wire.RiskReversible
+	}
 	proposal, _ := json.Marshal(in.Proposal)
 	changes, _ := json.Marshal(plans)
+	imagesJSON := []byte("[]")
+	if len(images) > 0 {
+		imagesJSON, _ = json.Marshal(images)
+	}
 	p, err := e.st.CreatePlan(ctx, store.Plan{
 		BaseRevision: baseRev, Origin: in.Origin, IssueID: in.IssueID, RollbackTo: in.RollbackTo, HumanOnly: humanOnly, Proposal: proposal,
-		Changes: changes, Risk: string(risk), Reason: in.Reason, Author: in.Author,
+		Changes: changes, Images: imagesJSON, Risk: string(risk), Reason: in.Reason, Author: in.Author,
 	})
 	if err != nil {
 		return store.Plan{}, err

@@ -58,7 +58,13 @@
     No {filter === "all" ? "" : filter} issues. Every managed resource matches its desired state.
   </p>
 {:else}
-  <div class="table-wrap card flush">
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div
+    class="table-wrap card flush"
+    tabindex="0"
+    role="region"
+    aria-label="Drift issues, scrolls sideways"
+  >
     <table>
       <caption class="sr-only">Drift issues</caption>
       <thead>
