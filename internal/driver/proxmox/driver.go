@@ -847,6 +847,11 @@ func (d *Driver) views(ctx context.Context, id int) (running, next map[string]st
 		if next, err = d.readConfig(ctx, id, false); err != nil {
 			return nil, nil, err
 		}
+		if running["digest"] == "" || next["digest"] == "" {
+			// Two missing digests are not one state; without a digest a
+			// later write cannot be checked either (D-078).
+			return nil, nil, fmt.Errorf("proxmox: VMID %d: the config answer has no digest", id)
+		}
 		if running["digest"] == next["digest"] {
 			return running, next, nil
 		}
