@@ -393,7 +393,11 @@ func (l *Link) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	l.mu.Unlock()
 	l.emit(r.Context(), "target.status", agent.Target, "agent:"+agent.Target,
 		map[string]any{"agent": "enrolled", "agent_id": agent.ID, "hostname": agent.Hostname, "version": agent.Version})
-	writeJSON(w, http.StatusOK, wire.EnrollResponse{AgentID: agent.ID, Credential: agent.ID + "." + cred})
+	// The build mark (D-207): only the token of a build link "build:<image>"
+	// gets it, and only the build lane makes such a token (a Target name
+	// cannot hold ':').
+	writeJSON(w, http.StatusOK, wire.EnrollResponse{AgentID: agent.ID, Credential: agent.ID + "." + cred,
+		Build: strings.HasPrefix(agent.Target, wire.BuildLinkPrefix)})
 }
 
 func printable(s string) bool {
@@ -485,8 +489,20 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 // wire.ObserveBody, wire.ApplyBody or wire.WatchBody. The agent gets it at
 // its next poll.
 func (l *Link) Send(target string, typ wire.CommandType, body any) (string, error) {
+	build := strings.HasPrefix(target, wire.BuildLinkPrefix)
 	switch typ {
-	case wire.CommandObserve, wire.CommandApply, wire.CommandWatch:
+	case wire.CommandObserve, wire.CommandApply:
+	case wire.CommandWatch:
+		// A build guest is no Target: it never watches (D-203), so its
+		// agent may seal (D-207).
+		if build {
+			return "", fmt.Errorf("link: no watch for the build guest %q", target)
+		}
+	case wire.CommandSeal:
+		// The controller guard of seal (D-207): only a build link.
+		if !build {
+			return "", fmt.Errorf("link: seal is only for a build guest, not for %q", target)
+		}
 	default:
 		return "", fmt.Errorf("link: unknown command type %q", typ)
 	}

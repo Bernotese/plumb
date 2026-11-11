@@ -42,6 +42,44 @@ type Agent struct {
 	failing   map[string]string // resource id → apply error
 	commands  []wire.CommandType
 	addrs     []string // the address list of the Hello; nil: none (an old agent)
+
+	// seal (D-205, D-207), simulated like the real agent (T-060).
+	build     bool   // the build mark of the enrollment
+	watched   bool   // a watch arrived once; never taken back
+	off       bool   // the guest powered off after seal: Run ends
+	onSeal    func() // see OnSeal
+	sealFail  string // a step that fails; "" for none
+	sealStuck bool   // the guest does not power off after seal
+}
+
+// OnSeal sets a hook that runs after a seal result was taken, where the
+// real agent powers the guest off: a test stops the fake guest there.
+func (a *Agent) OnSeal(fn func()) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onSeal = fn
+}
+
+// FailSeal makes the seal step fail ("" clears); the later steps are
+// skipped and the guest does not power off.
+func (a *Agent) FailSeal(step string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sealFail = step
+}
+
+// SealStuck makes the guest stay on after a good seal (no power off).
+func (a *Agent) SealStuck(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sealStuck = on
+}
+
+// Off reports whether the agent powered its guest off after seal.
+func (a *Agent) Off() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.off
 }
 
 // SetAddrs sets the address list that the next Hello holds. nil means no
@@ -164,8 +202,11 @@ func (a *Agent) Run(ctx context.Context) {
 	backoff := 20 * time.Millisecond
 	for ctx.Err() == nil {
 		a.mu.Lock()
-		cred := a.cred
+		cred, off := a.cred, a.off
 		a.mu.Unlock()
+		if off {
+			return // the guest is off
+		}
 		if cred == "" {
 			// Like the real agent (T-018): back off while enrollment fails,
 			// so the enroll rate limit of link is not hit.
@@ -234,6 +275,9 @@ func (a *Agent) enroll(ctx context.Context) bool {
 		return false
 	}
 	a.mu.Lock()
+	// The build mark counts only at a first enrollment from an empty
+	// state; a later one clears it (T-058 review S1, T-060).
+	a.build = resp.Build && a.enrolls == 0 && !a.watched
 	a.cred = resp.Credential
 	a.enrolls++
 	a.mu.Unlock()
@@ -290,10 +334,13 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 		return
 	}
 	switch cmd.Type {
+	case wire.CommandSeal:
+		a.seal(ctx, cmd)
 	case wire.CommandWatch:
 		// Like the real agent: store the list and report what differs now
 		// (open drift is reported again after a watch, T-018).
 		a.mu.Lock()
+		a.watched = true
 		a.watch = body.Resources
 		var drift []wire.Item
 		for _, it := range a.observeAll(body.Resources) {
@@ -455,4 +502,48 @@ func (a *Agent) OnCommand(f func(wire.CommandType)) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.onCommand = f
+}
+
+// seal answers like the real agent (D-205, D-207): refused without the
+// build mark or after a watch; else one Item per step, then the files go
+// and the guest powers off (OnSeal).
+func (a *Agent) seal(ctx context.Context, cmd wire.Command) {
+	var body wire.SealBody
+	if err := json.Unmarshal(cmd.Body, &body); err != nil {
+		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Error: "bad seal body"})
+		return
+	}
+	a.mu.Lock()
+	allowed, fail, stuck, hook := a.build && !a.watched, a.sealFail, a.sealStuck, a.onSeal
+	a.mu.Unlock()
+	if !allowed {
+		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID,
+			Items: []wire.Item{{Resource: wire.SealItemID(wire.SealStepGuard), Status: wire.StatusRefused, Output: "not a build guest"}}})
+		return
+	}
+	var items []wire.Item
+	failed := false
+	for _, step := range wire.SealSteps {
+		it := wire.Item{Resource: wire.SealItemID(step), Status: wire.StatusApplied}
+		switch {
+		case failed:
+			it.Status, it.Output = wire.StatusSkipped, "an earlier step failed"
+		case step == fail:
+			it.Status, it.Output, failed = wire.StatusFailed, "simulated failure", true
+		case step == wire.SealStepInitramfs:
+			it.Status, it.Output = wire.StatusSkipped, "no dracut"
+		case step == wire.SealStepUpgrade && !body.Upgraded:
+			it.Status = wire.StatusSkipped
+		}
+		items = append(items, it)
+	}
+	if err := a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: items}); err != nil || failed || stuck {
+		return
+	}
+	a.mu.Lock()
+	a.cred, a.off = "", true // the credential is removed; the guest goes off
+	a.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
