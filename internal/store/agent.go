@@ -40,6 +40,22 @@ func (s *Store) PutEnrollToken(ctx context.Context, target, hash string, expires
 	})
 }
 
+// RevokeAgent removes the enrolled agent and the enrollment token of a
+// target in one transaction, so the old credential and an unused token
+// stop working (Target delete, D-211). A target with neither is no error.
+func (s *Store) RevokeAgent(ctx context.Context, target string) error {
+	if target == "" {
+		return errors.New("store: revoke needs a target")
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM agent WHERE target = ?`, target); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM enroll_token WHERE target = ?`, target)
+		return err
+	})
+}
+
 // ErrInvalidToken is returned for a token that is unknown, used or
 // expired. The three cases are one error on purpose.
 var ErrInvalidToken = errors.New("store: invalid enrollment token")
