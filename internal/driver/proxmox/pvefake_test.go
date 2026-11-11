@@ -58,6 +58,18 @@ type fakePVE struct {
 	// lockReads: the config of a VM shows "lock: create" for this many
 	// more reads, and a DELETE fails meanwhile (a stopped create task).
 	lockReads map[int]int
+
+	// Start-up check (T-053): the version, statuses that /version answers
+	// first (503, 595 …), the storages of the node, a status for the node
+	// storage list, a missing pool, and the token's rights (nil: the call
+	// fails).
+	version       string
+	versionStatus []int
+	storages      []map[string]any
+	storageStatus int
+	noPool        bool
+	perms         map[string]map[string]int
+	authFails     int // requests refused with 401
 }
 
 type fakeVM struct {
@@ -84,7 +96,14 @@ func newFakePVE(t *testing.T) *fakePVE {
 	t.Helper()
 	f := &fakePVE{t: t, auth: "PVEAPIToken=" + fakeToken + "=" + fakeSecret, node: fakeNode,
 		vms: map[int]*fakeVM{}, files: map[string]bool{}, tasks: map[string]*fakeTask{},
-		failNext: map[string]string{}, lockReads: map[int]int{}, taskPolls: 2, params: map[string]url.Values{},
+		failNext: map[string]string{}, lockReads: map[int]int{}, taskPolls: 2,
+		version: "9.2.26",
+		storages: []map[string]any{
+			{"storage": "local-lvm", "content": "images,rootdir", "enabled": 1, "active": 1, "type": "lvmthin"},
+			{"storage": "local", "content": "import", "enabled": 1, "active": 1, "type": "dir"},
+			{"storage": "plumb-snippets", "content": "snippets", "enabled": 1, "active": 1, "type": "dir"},
+		},
+		perms: map[string]map[string]int{"/sdn/zones/localnetwork/vmbr0": {"SDN.Use": 1}, "/pool/plumb": {"VM.Allocate": 1}}, params: map[string]url.Values{},
 		echoParam: map[string]string{}, notJSON: map[string]bool{}, nullAnswer: map[string]bool{}}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -108,7 +127,7 @@ func (f *fakePVE) client(t *testing.T) *Client {
 
 func (f *fakePVE) driver(t *testing.T) *Driver {
 	t.Helper()
-	d, err := New(Config{Client: f.client(t), Node: fakeNode, Pool: fakePool, Nameservers: []string{"192.0.2.53"}, SearchDomain: "plumb.test", DiskStorage: "local-lvm", ImageStorage: "local",
+	d, err := New(Config{Client: f.client(t), Node: fakeNode, Pool: fakePool, Nameservers: []string{"192.0.2.53"}, SearchDomain: "plumb.test", Bridge: "vmbr0", DiskStorage: "local-lvm", ImageStorage: "local",
 		SnippetStorage: "plumb-snippets", Snippet: "plumb-vendor.yaml", VMIDMin: 9000, VMIDMax: 9099, ShutdownTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +219,9 @@ var (
 
 func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != f.auth {
+		f.mu.Lock()
+		f.authFails++
+		f.mu.Unlock()
 		fail(w, 401, "authentication failure", nil)
 		return
 	}
@@ -232,6 +254,32 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case r.Method == "GET" && path == "/version":
+		if len(f.versionStatus) > 0 {
+			st := f.versionStatus[0]
+			f.versionStatus = f.versionStatus[1:]
+			fail(w, st, "proxy: no connection", nil)
+			return
+		}
+		reply(w, 200, map[string]any{"version": f.version, "release": "9.2", "repoid": "41a0e2e0"})
+	case r.Method == "GET" && path == "/nodes/"+fakeNode+"/storage" || (r.Method == "GET" && strings.HasPrefix(path, "/nodes/") && strings.HasSuffix(path, "/storage")):
+		if f.storageStatus != 0 || path != "/nodes/"+fakeNode+"/storage" {
+			st := f.storageStatus
+			if st == 0 {
+				st = 595
+			}
+			fail(w, st, "no such node", nil)
+			return
+		}
+		reply(w, 200, f.storages)
+	case r.Method == "GET" && path == "/access/permissions":
+		if f.perms == nil {
+			fail(w, 403, "Permission check failed", nil)
+			return
+		}
+		reply(w, 200, f.perms)
+	case r.Method == "GET" && path == "/pools" && f.noPool:
+		reply(w, 200, []any{})
 	case r.Method == "GET" && path == "/pools":
 		if r.Form.Get("poolid") == "" {
 			fail(w, 400, "parameter verification failed", map[string]string{"poolid": "missing"})

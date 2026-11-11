@@ -73,7 +73,7 @@ func newReplay(t *testing.T, dir string) (*replayServer, *Driver) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := New(Config{Client: c, Node: "pve", Pool: "plumb", Nameservers: []string{"192.0.2.53"}, SearchDomain: "plumb.test", DiskStorage: "local-lvm", ImageStorage: "plumb-images",
+	d, err := New(Config{Client: c, Node: "pve", Pool: "plumb", Nameservers: []string{"192.0.2.53"}, SearchDomain: "plumb.test", Bridge: "vmbr0", DiskStorage: "local-lvm", ImageStorage: "plumb-images",
 		SnippetStorage: "plumb-snippets", Snippet: "plumb-vendor.yaml", VMIDMin: 9000, VMIDMax: 9099})
 	if err != nil {
 		t.Fatal(err)

@@ -43,7 +43,8 @@ func hostDriver(t *testing.T) *Driver {
 	d, err := New(Config{Client: c, Node: env("PLUMB_PVE_NODE"), Pool: env("PLUMB_PVE_POOL"),
 		DiskStorage: env("PLUMB_PVE_DISK"), ImageStorage: env("PLUMB_PVE_IMAGES"),
 		SnippetStorage: env("PLUMB_PVE_SNIPPETS"), Snippet: env("PLUMB_PVE_SNIPPET"), VMIDMin: lo, VMIDMax: hi,
-		Nameservers: strings.Split(env("PLUMB_PVE_NAMESERVER"), ","), SearchDomain: env("PLUMB_PVE_SEARCHDOMAIN")})
+		Nameservers: strings.Split(env("PLUMB_PVE_NAMESERVER"), ","), SearchDomain: env("PLUMB_PVE_SEARCHDOMAIN"),
+		Bridge: env("PLUMB_PVE_BRIDGE")})
 	if err != nil {
 		t.Fatal(err)
 	}
