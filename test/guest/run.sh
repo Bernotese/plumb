@@ -67,6 +67,8 @@ for distro in \
   run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
   # guest.test installs cron and refreshes the apt lists needed by agent.test.
   run_test /tests/agent.test -test.v -test.timeout=5m -test.run '^TestGuest'
+  # T-060: seal changes the whole container, so it runs last.
+  run_test /tests/agent.test -test.v -test.timeout=5m -test.run '^TestSeal(AptOutput)?InGuest$'
   docker rm -f "$name" >/dev/null
 done
 cleanup
