@@ -272,9 +272,9 @@
       {:else}
         <p>
           These downloads of an old base image are not needed any more. Safe to remove: no version
-          needs it, because a version template is a full copy. Plumb does not delete them:
-          its API token has no right to delete files on the image storage, and that right would also
-          let it change the storage itself. To free the space, run the command on the Proxmox host.
+          needs it, because a version template is a full copy. Plumb does not delete them: its API
+          token has no right to delete files on the image storage, and that right would also let it
+          change the storage itself. To free the space, run the command on the Proxmox host.
         </p>
         <ul class="plain imports">
           {#each st.unused_imports as f (f.volume)}
