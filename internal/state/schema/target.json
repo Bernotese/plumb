@@ -112,6 +112,11 @@
             }
           }
         },
+        "allow_restart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Plumb may restart this VM (D-194). false: no Run stops or restarts the VM while it runs; a change of cores or memory waits until you stop and start the VM, and a re-enrollment of a running VM is refused. true: a Run may restart the VM (clean shutdown, hard power-off after 2 minutes, then start); the Plan shows the restart before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. No effect on an LXC Target yet."
+        },
         "blocks": {
           "type": "array",
           "default": [],

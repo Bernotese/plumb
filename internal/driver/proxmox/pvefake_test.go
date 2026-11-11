@@ -71,6 +71,9 @@ type fakePVE struct {
 	perms         map[string]map[string]int
 	authFails     int    // requests refused with 401
 	dropPath      string // a request to this path loses its connection
+	// skewDigest: this many reads of the config without current=1 answer
+	// with another digest (a write between the two reads of Observe).
+	skewDigest int
 }
 
 type fakeVM struct {
@@ -78,6 +81,38 @@ type fakeVM struct {
 	template bool
 	running  bool
 	pool     string
+	// pending holds values that a POST config on a running VM could not
+	// apply live (T-015 run 1: memory is not in the default hotplug
+	// list). A start applies them.
+	pending map[string]string
+}
+
+// coldKeys are the keys that the fake keeps pending on a running VM.
+// net0 (the bridge) applies live.
+var coldKeys = map[string]bool{"cores": true, "memory": true, "smbios1": true}
+
+// next returns the config after the next stop and start.
+func (vm *fakeVM) next() map[string]string {
+	out := make(map[string]string, len(vm.cfg))
+	for k, v := range vm.cfg {
+		out[k] = v
+	}
+	for k, v := range vm.pending {
+		out[k] = v
+	}
+	return out
+}
+
+// vmDigest covers the running and the pending values, like Proxmox.
+func vmDigest(vm *fakeVM) string {
+	all := make(map[string]string, len(vm.cfg)+len(vm.pending))
+	for k, v := range vm.cfg {
+		all[k] = v
+	}
+	for k, v := range vm.pending {
+		all["pending:"+k] = v
+	}
+	return digest(all)
 }
 
 type fakeTask struct {
@@ -446,23 +481,41 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			f.lockReads[id]--
 			out["lock"] = "create"
 		}
-		for k, v := range vm.cfg {
+		view := vm.cfg
+		if r.Form.Get("current") != "1" {
+			view = vm.next()
+		}
+		for k, v := range view {
 			if n, err := strconv.Atoi(v); err == nil && (k == "cores" || k == "onboot" || k == "template") {
 				out[k] = n
 			} else {
 				out[k] = v
 			}
 		}
-		out["digest"] = digest(vm.cfg)
+		out["digest"] = vmDigest(vm)
+		if r.Form.Get("current") != "1" && f.skewDigest > 0 {
+			f.skewDigest--
+			out["digest"] = "0000000000000000000000000000000000000000"
+		}
 		reply(w, 200, out)
 	case r.Method == "POST" && sub == "/config":
-		if d := r.Form.Get("digest"); d != "" && d != digest(vm.cfg) {
+		if d := r.Form.Get("digest"); d != "" && d != vmDigest(vm) {
 			fail(w, 500, "detected modified configuration - file changed by other user? Try again.", nil)
 			return
 		}
 		for k, v := range r.Form {
-			if k != "digest" {
+			if k == "digest" {
+				continue
+			}
+			switch {
+			case vm.running && coldKeys[k] && vm.cfg[k] != v[0]:
+				if vm.pending == nil {
+					vm.pending = map[string]string{}
+				}
+				vm.pending[k] = v[0] // waits for the next stop and start
+			default:
 				vm.cfg[k] = v[0]
+				delete(vm.pending, k) // a write of the running value removes the pending one
 			}
 		}
 		reply(w, 200, f.task(key))
@@ -516,6 +569,10 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 				f.tasks[upid].exit = "you can't start a vm if it's a template"
 			} else if f.tasks[upid].exit == "OK" {
 				vm.running = true
+				for k, v := range vm.pending { // a start applies the pending values
+					vm.cfg[k] = v
+				}
+				vm.pending = nil
 			}
 		case "/status/shutdown", "/status/stop":
 			if f.tasks[upid].exit == "OK" {

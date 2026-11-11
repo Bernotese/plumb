@@ -112,6 +112,18 @@ type Change struct {
 	// Ignored is set only by the controller, in a Plan: a Rule ignores this
 	// drift (D-092). The Plan still applies it. An agent never sets it.
 	Ignored bool `json:"ignored,omitempty"`
+	// The three fields below are for display only; no risk rule reads
+	// them (D-190, D-195). Only guest:config changes set them.
+	//
+	// Pending: From is set in the hypervisor but not active; the guest
+	// still runs with To (or with AlsoPending's partner, see there).
+	Pending bool `json:"pending,omitempty"`
+	// AlsoPending: From is the running value, and this other value is set
+	// and waits for the next stop and start.
+	AlsoPending any `json:"also_pending,omitempty"`
+	// WaitsForRestart: To is (or will be) set in the hypervisor and becomes
+	// active at the next stop and start of the guest.
+	WaitsForRestart bool `json:"waits_for_restart,omitempty"`
 }
 
 // Redact enforces the sensitive rule on changes that come from outside the

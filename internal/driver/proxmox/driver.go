@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -687,8 +688,19 @@ func (d *Driver) isTemplate(ctx context.Context, id int) (bool, error) {
 }
 
 func (d *Driver) config(ctx context.Context, id int) (map[string]string, error) {
+	return d.readConfig(ctx, id, true)
+}
+
+// readConfig reads one view of the config: current=1 gives the values
+// that the running guest uses; without it Proxmox gives the values after
+// the next stop and start, the pending ones applied (T-015 run 1).
+func (d *Driver) readConfig(ctx context.Context, id int, current bool) (map[string]string, error) {
+	var q url.Values
+	if current {
+		q = url.Values{"current": {"1"}}
+	}
 	var raw map[string]any
-	if err := d.c.Get(ctx, vmPath(d, id)+"/config", url.Values{"current": {"1"}}, &raw); err != nil {
+	if err := d.c.Get(ctx, vmPath(d, id)+"/config", q, &raw); err != nil {
 		return nil, notFound(err)
 	}
 	out := make(map[string]string, len(raw))
@@ -786,7 +798,7 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 	if err != nil {
 		return driver.GuestState{}, err
 	}
-	cfg, err := d.config(ctx, id)
+	cfg, next, err := d.views(ctx, id)
 	if err != nil {
 		return driver.GuestState{}, err
 	}
@@ -801,6 +813,10 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 		name = m.Name
 	}
 	st := driver.GuestState{Spec: specOf(name, cfg), Digest: cfg["digest"], Power: driver.PowerStopped}
+	if p := specOf(name, next); !reflect.DeepEqual(p, st.Spec) {
+		st.Pending = &p
+	}
+	st.TokenPending = parseProps(cfg["smbios1"])["serial"] != parseProps(next["smbios1"])["serial"]
 	if status.Status == "running" {
 		st.Power = driver.PowerRunning
 	}
@@ -808,6 +824,28 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 		st.IPs = []string{strings.SplitN(ip, "/", 2)[0]}
 	}
 	return st, nil
+}
+
+// viewTries is how often views reads both views before it gives up.
+const viewTries = 3
+
+// views reads the running config and the config after the next stop and
+// start (D-190). Both answers must have the same digest, so they are one
+// state of the config file; a write between the two reads makes the
+// driver read again.
+func (d *Driver) views(ctx context.Context, id int) (running, next map[string]string, err error) {
+	for range viewTries {
+		if running, err = d.readConfig(ctx, id, true); err != nil {
+			return nil, nil, err
+		}
+		if next, err = d.readConfig(ctx, id, false); err != nil {
+			return nil, nil, err
+		}
+		if running["digest"] == next["digest"] {
+			return running, next, nil
+		}
+	}
+	return nil, nil, fmt.Errorf("proxmox: VMID %d: the running config and the pending config have different digests in %d reads; the config changes now, try again later", id, viewTries)
 }
 
 // Diff is the shared rule of all drivers (D-063). Proxmox can hot-plug

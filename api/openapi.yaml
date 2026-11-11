@@ -2121,15 +2121,19 @@ components:
       type: object
       additionalProperties: false
       description: Live status. It is not part of the desired state.
-      required: [phase, agent, power, open_issues]
+      required: [phase, agent, power, open_issues, waiting]
       properties:
         phase:
           type: string
-          enum: [pending, provisioning, enrolling, ready, applying, drifted, error]
+          enum: [pending, provisioning, enrolling, ready, applying, drifted, restart_needed, error]
           description: |
             `pending`: no guest yet. `provisioning`: the driver creates it. `enrolling`: waiting
             for the agent. `ready`: matches the head revision. `applying`: a Run is active.
-            `drifted`: open issues. `error`: the last Run failed.
+            `drifted`: open issues. `restart_needed`: no open issue, but `waiting` is not empty
+            (D-195). `error`: the last Run failed. The order of precedence is `provisioning`,
+            `pending`, `applying`, `enrolling`, `error`, `drifted`, `restart_needed`, `ready`.
+            The phase is one word for a list; `waiting` is the truth and can be non-empty in
+            every phase. An LXC Target cannot have `restart_needed` yet (T-038).
         agent:
           type: string
           enum: [none, online, offline]
@@ -2153,6 +2157,28 @@ components:
             Drift that a rule dropped at intake and that is still there (D-092). Missing means
             none. It makes an ignore visible.
           items: { $ref: "#/components/schemas/IgnoredDrift" }
+        waiting:
+          type: array
+          description: |
+            Values of `cores` and `memory` that are set in Proxmox and wait for the next stop and
+            start of the VM (D-195): the VM still runs with `from`. Always present; empty when
+            nothing waits. A reboot inside the guest does not end it. It ends when the VM is
+            stopped and started (outside Plumb, or by a Run when `allow_restart` is on), or when
+            the desired value goes back to `from`. Always empty for an LXC Target yet.
+          items: { $ref: "#/components/schemas/WaitingValue" }
+    WaitingValue:
+      type: object
+      additionalProperties: false
+      required: [attr, from, to, since]
+      properties:
+        attr: { type: string, enum: [cores, memory] }
+        from: { type: integer, description: The value that the VM uses now. }
+        to: { type: integer, description: The desired value; set in Proxmox, not active yet. }
+        since:
+          $ref: "#/components/schemas/Time"
+          description: |
+            When Plumb first saw this value wait. For a value from before the upgrade to
+            migration 0007 it is "since at least".
     IgnoredDrift:
       type: object
       additionalProperties: false
@@ -2217,6 +2243,23 @@ components:
             to: { description: The desired value. Missing when it must not be there. }
             risk: { $ref: "#/components/schemas/Risk" }
             ignored: { $ref: "#/components/schemas/IgnoredFlag" }
+            pending:
+              type: boolean
+              description: |
+                Only on `guest:config` (D-190): `from` is set in Proxmox but not active. The VM
+                uses `to`; `from` becomes active at the next stop and start of the VM. Missing
+                means `false`. For display only.
+            also_pending:
+              description: |
+                Only on `guest:config` (D-190): `from` is the running value, and this other value
+                is set in Proxmox and waits for the next stop and start. For display only.
+            waits_for_restart:
+              type: boolean
+              description: |
+                Only on `guest:config` (D-194, D-195): `to` is or will be set in Proxmox and
+                becomes active at the next stop and start of the VM. A Run step with this change
+                is `applied`, but the value is not active yet. Missing means `false`. For display
+                only.
           additionalProperties: false
         - type: object
           required: [attr, sensitive, risk]
@@ -2397,7 +2440,7 @@ components:
       type: object
       additionalProperties: false
       description: A Run starts at approval. Who approved is on the Plan.
-      required: [id, plan_id, revision, status, started_at, finished_at, targets]
+      required: [id, plan_id, revision, status, started_at, finished_at, waits_for_restart, targets]
       properties:
         id: { $ref: "#/components/schemas/Id" }
         plan_id: { $ref: "#/components/schemas/Id" }
@@ -2405,6 +2448,13 @@ components:
         status: { $ref: "#/components/schemas/RunStatus" }
         started_at: { $ref: "#/components/schemas/Time" }
         finished_at: { $ref: "#/components/schemas/NullableTime" }
+        waits_for_restart:
+          type: integer
+          minimum: 0
+          description: |
+            The number of changes that the steps of this Run recorded with `waits_for_restart`
+            (D-195): written, but not active until the next stop and start of the VM. A Run can
+            be `succeeded` with a number above 0. Set when the Run ends; 0 while it runs.
         targets:
           type: array
           items: { $ref: "#/components/schemas/TargetRun" }

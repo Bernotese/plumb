@@ -93,10 +93,25 @@ const (
 
 // GuestState is what Observe reads.
 type GuestState struct {
-	Spec   GuestSpec // the managed settings as they are now
-	Digest string    // changes whenever the guest config changes
-	Power  Power
-	IPs    []string // addresses that the hypervisor reports
+	Spec GuestSpec // the managed settings as the running guest uses them
+	// Pending is the view after the next stop and start of the guest: a
+	// value that is set in the hypervisor but not active yet (D-190). It
+	// is nil when both views are equal.
+	Pending *GuestSpec
+	// TokenPending says that a new enrollment token is set but not active:
+	// the guest has not had a cold start since it was written.
+	TokenPending bool
+	Digest       string // changes whenever the guest config changes; covers both views
+	Power        Power
+	IPs          []string // addresses that the hypervisor reports
+}
+
+// Next returns the settings after the next stop and start.
+func (s GuestState) Next() GuestSpec {
+	if s.Pending != nil {
+		return *s.Pending
+	}
+	return s.Spec
 }
 
 // Driver manages guests and images on one hypervisor.
