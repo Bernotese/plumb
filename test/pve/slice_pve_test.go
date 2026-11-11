@@ -188,8 +188,13 @@ func memoryDrift(t *testing.T, i object) {
 		t.Fatalf("guest:config Issue has %d changes, want 1 (memory)", len(changes))
 	}
 	ch := changes[0].(map[string]any)
-	if ch["attr"] != "memory" || ch["from"] != float64(1536) || ch["to"] != float64(1024) {
-		t.Fatalf("guest:config Issue change is %v %v→%v, want memory 1536→1024", ch["attr"], ch["from"], ch["to"])
+	// Print from/to only for memory: other attributes (bridge, ip) can hold
+	// private values such as an address.
+	if ch["attr"] != "memory" {
+		t.Fatalf("guest:config Issue change is attribute %q, want memory", ch["attr"])
+	}
+	if ch["from"] != float64(1536) || ch["to"] != float64(1024) {
+		t.Fatalf("guest:config Issue change is memory %v→%v, want 1536→1024", ch["from"], ch["to"])
 	}
 }
 
