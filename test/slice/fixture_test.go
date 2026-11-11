@@ -26,11 +26,36 @@ import (
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
-type runner struct{ restarts atomic.Int32 }
+type runner struct {
+	restarts  atomic.Int32
+	installed atomic.Bool
+	root      string
+}
 
-func (r *runner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *runner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == "apt-get" && args[len(args)-1] == "nginx" {
+		// Leave the site parents absent long enough to expose a missing after edge.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
+		for _, dir := range []string{"sites-available", "sites-enabled"} {
+			if err := os.MkdirAll(filepath.Join(r.root, "etc/nginx", dir), 0755); err != nil {
+				return nil, err
+			}
+		}
+		if err := os.Symlink("/etc/nginx/sites-available/default", filepath.Join(r.root, "etc/nginx/sites-enabled/default")); err != nil {
+			return nil, err
+		}
+		r.installed.Store(true)
+		return nil, nil
+	}
 	switch name + " " + strings.Join(args, " ") {
 	case "dpkg-query -W -f=${db:Status-Abbrev}|${Version}\n -- nginx":
+		if !r.installed.Load() {
+			return []byte("un |\n"), nil
+		}
 		return []byte("ii |1.0\n"), nil
 	case "systemctl show --property=LoadState,ActiveState,UnitFileState -- nginx.service":
 		return []byte("LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"), nil
@@ -47,6 +72,11 @@ func (r *runner) Run(_ context.Context, name string, args ...string) ([]byte, er
 // Only controller wiring, token provisioning, and fake guest bootstrap bypass HTTP.
 // Accounts and the package/service are preinstalled; file and key apply are real.
 func fixture(t *testing.T) (*httptest.Server, string, *runner, string) {
+	return fixtureNginx(t, true)
+}
+
+// A cold guest gets nginx directories only from the fake package install.
+func fixtureNginx(t *testing.T, preinstalled bool) (*httptest.Server, string, *runner, string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir, root := t.TempDir(), t.TempDir()
@@ -82,11 +112,13 @@ func fixture(t *testing.T) (*httptest.Server, string, *runner, string) {
 	write(t, root, "etc/passwd", fmt.Sprintf("root:x:%d:%d:root:/root:/bin/bash\ndeploy:x:%d:%d::/home/deploy:/bin/bash\n", os.Getuid(), os.Getgid(), max(os.Getuid(), 1), os.Getgid()))
 	write(t, root, "etc/group", fmt.Sprintf("root:x:%d:\n", os.Getgid()))
 	must(t, os.MkdirAll(filepath.Join(root, "home/deploy"), 0755))
-	must(t, os.MkdirAll(filepath.Join(root, "etc/nginx/sites-available"), 0755))
-	// The nginx package ships sites-enabled with a link to the default site.
-	must(t, os.MkdirAll(filepath.Join(root, "etc/nginx/sites-enabled"), 0755))
-	must(t, os.Symlink("/etc/nginx/sites-available/default", filepath.Join(root, "etc/nginx/sites-enabled/default")))
-	r := &runner{}
+	if preinstalled {
+		must(t, os.MkdirAll(filepath.Join(root, "etc/nginx/sites-available"), 0755))
+		must(t, os.MkdirAll(filepath.Join(root, "etc/nginx/sites-enabled"), 0755))
+		must(t, os.Symlink("/etc/nginx/sites-available/default", filepath.Join(root, "etc/nginx/sites-enabled/default")))
+	}
+	r := &runner{root: root}
+	r.installed.Store(preinstalled)
 	done := make(chan error, 1)
 	go func() {
 		// The fake driver's public bootstrap accessor supplies the one-time guest token.
