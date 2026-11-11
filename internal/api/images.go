@@ -134,6 +134,11 @@ func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus,
 	} else {
 		s.log.Warn("image status: build rests", "image", d.Name, "err", err)
 	}
+	if next, err := s.cfg.Plans.NextBuildAt(ctx, d.Name); err == nil {
+		st.NextBuildAt = utc(next)
+	} else {
+		s.log.Warn("image status: next build", "image", d.Name, "err", err)
+	}
 	if u := s.cfg.Plans.DiskUse(ctx); u != nil {
 		st.Disk = &diskUseView{Storage: u.Storage, TotalBytes: u.TotalBytes, UsedBytes: u.UsedBytes, ReservedBytes: u.ReservedBytes, LimitPercent: u.LimitPercent}
 	}

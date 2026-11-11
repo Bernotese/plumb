@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -122,7 +123,7 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, err.Error())
 		return false
 	}
-	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", info.SHA256[:12]))
+	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", info.SHA256[:12])+planNotes(p))
 
 	// 2. The build guest, under the disk gate (D-203, T-074): its disk
 	// counts until the lane ends.
@@ -264,6 +265,23 @@ func (l *lane) fail(ctx context.Context, run store.Run) {
 		e.imageVersionEvent(ctx, l.image, l.version, store.ImageFailed, run.ID)
 	}
 	l.s.failRest(ctx, "the build failed; nothing was converted"+left)
+}
+
+// planNotes returns the disk notes of a Plan for the Run: a scheduled
+// build has no person who read the Plan, so the Run records them (T-061
+// review: "thin-pool metadata use is unknown").
+func planNotes(p store.Plan) string {
+	var prop Proposal
+	if json.Unmarshal(p.Proposal, &prop) != nil {
+		return ""
+	}
+	out := ""
+	for _, n := range prop.Notes {
+		if strings.Contains(n, "thin-pool metadata") || strings.Contains(n, "would not start now") {
+			out += "\n" + n
+		}
+	}
+	return out
 }
 
 // buildTrigger is the trigger of an Image in a Plan.
