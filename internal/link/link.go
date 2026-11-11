@@ -845,7 +845,7 @@ func validateReport(rep wire.Report) error {
 		// agent would open or close their Issues (T-070 review B1). A seal
 		// step ("seal:<step>") only in a result; checkItemKinds then needs
 		// a seal command for it.
-		if !wire.AgentType(typ) && !(typ == sealItemType && rep.Type == wire.ReportResult) {
+		if !wire.AgentType(typ) && !(typ == wire.SealItemType && rep.Type == wire.ReportResult) {
 			return fmt.Errorf("item %d: resource type %q is not an agent resource", i, typ)
 		}
 		if !agentStatuses[it.Status] {
@@ -866,9 +866,6 @@ func validateReport(rep wire.Report) error {
 	return nil
 }
 
-// sealItemType is the type part of a seal result item (wire.SealItemID).
-const sealItemType = "seal"
-
 // sealItemStatuses are the states of a seal step (wire.SealSteps).
 var sealItemStatuses = map[wire.Status]bool{
 	wire.StatusApplied: true, wire.StatusSkipped: true, wire.StatusFailed: true, wire.StatusRefused: true,
@@ -881,7 +878,7 @@ var sealItemStatuses = map[wire.Status]bool{
 func checkItemKinds(rep wire.Report, cmd wire.CommandType) error {
 	if cmd != wire.CommandSeal {
 		for i, it := range rep.Items {
-			if typ, _, _ := wire.SplitID(it.Resource); typ == sealItemType {
+			if typ, _, _ := wire.SplitID(it.Resource); typ == wire.SealItemType {
 				return fmt.Errorf("item %d: a seal step answers only a seal command", i)
 			}
 		}
