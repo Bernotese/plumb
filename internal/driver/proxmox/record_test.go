@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -45,6 +46,14 @@ func newRecorder(next http.RoundTripper, dir, baseURL, node string) *recorder {
 		}
 		s = sshKey.ReplaceAllString(s, "$1${2}AAAAtestkey")
 		s = mac.ReplaceAllString(s, "BC:24:11:00:00:01")
+		// IPv6: only candidates that parse as an address (not a MAC, a
+		// time or a UPID), review N2.
+		s = ipv6Candidate.ReplaceAllStringFunc(s, func(c string) string {
+			if a, err := netip.ParseAddr(c); err == nil && a.Is6() {
+				return "2001:db8::10"
+			}
+			return c
+		})
 		return ipv4.ReplaceAllString(s, "192.0.2.10")
 	}
 	return &recorder{next: next, dir: dir, scrub: scrub}

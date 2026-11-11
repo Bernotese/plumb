@@ -465,12 +465,17 @@ func TestUpdateWritesNoCloudInitInput(t *testing.T) {
 }
 
 func TestCheckUpdateParams(t *testing.T) {
-	const old = "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1"
+	old := map[string]string{"net0": "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1", "smbios1": "uuid=u-1,serial=x,base64=1"}
 	for name, tc := range map[string]struct {
 		params url.Values
 		ok     bool
 	}{
-		"cores, memory, smbios1": {url.Values{"digest": {"d"}, "cores": {"2"}, "memory": {"2048"}, "smbios1": {"uuid=u"}}, true},
+		"cores, memory, smbios1": {url.Values{"digest": {"d"}, "cores": {"2"}, "memory": {"2048"}, "smbios1": {"uuid=u-1,serial=y,base64=1"}}, true},
+		"smbios1 new uuid":       {url.Values{"smbios1": {"uuid=u-2,serial=y,base64=1"}}, false},
+		"smbios1 without uuid":   {url.Values{"smbios1": {"serial=y,base64=1"}}, false},
+		"net0 firewall off":      {url.Values{"net0": {"virtio=BC:24:11:AA:BB:CC,bridge=vmbr1,firewall=0"}}, false},
+		"net0 with a VLAN tag":   {url.Values{"net0": {"virtio=BC:24:11:AA:BB:CC,bridge=vmbr1,firewall=1,tag=5"}}, false},
+		"net0 another model":     {url.Values{"net0": {"e1000=BC:24:11:AA:BB:CC,bridge=vmbr1,firewall=1"}}, false},
 		"bridge, same MAC":       {url.Values{"net0": {"virtio=bc:24:11:aa:bb:cc,bridge=vmbr1,firewall=1"}}, true},
 		"searchdomain":           {url.Values{"searchdomain": {"x"}}, false},
 		"sshkeys":                {url.Values{"sshkeys": {"x"}}, false},
@@ -485,7 +490,7 @@ func TestCheckUpdateParams(t *testing.T) {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
-	if err := checkUpdateParams("virtio,bridge=vmbr0", url.Values{"net0": {"virtio,bridge=vmbr1"}}); err == nil {
+	if err := checkUpdateParams(map[string]string{"net0": "virtio,bridge=vmbr0"}, url.Values{"net0": {"virtio,bridge=vmbr1"}}); err == nil {
 		t.Error("a net0 without a MAC was changed")
 	}
 }

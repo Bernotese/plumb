@@ -106,7 +106,11 @@ func TestHostGuestStep(t *testing.T) {
 		}
 	case "cifield":
 		id := stepVMID(t)
-		n, _ := strconv.Atoi(string(id))
+		// Like every change: first check that the guest is ours (review N3).
+		n, _, err := d.own(ctx, string(id))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, n)+"/config", url.Values{"searchdomain": {"plumb.test"}}); err != nil {
 			t.Fatal(err)
 		}

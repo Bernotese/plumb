@@ -757,7 +757,7 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 	if len(params) == 1 {
 		return nil
 	}
-	if err := checkUpdateParams(cfg["net0"], params); err != nil {
+	if err := checkUpdateParams(cfg, params); err != nil {
 		return err
 	}
 	token := ""
@@ -776,20 +776,44 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 var updateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "smbios1": true}
 
 // checkUpdateParams is the last guard before Update writes: only
-// updateKeys, and a new net0 keeps the MAC of the old one.
-func checkUpdateParams(oldNet0 string, params url.Values) error {
+// updateKeys; a new net0 keeps the MAC and every other property except
+// the bridge; a new smbios1 keeps the uuid (review N1).
+func checkUpdateParams(cfg map[string]string, params url.Values) error {
 	for k := range params {
 		if !updateKeys[k] {
 			return fmt.Errorf("proxmox: Update must not write %q (cloud-init inputs are create-only, D-185)", k)
 		}
 	}
 	if net0, ok := params["net0"]; ok {
-		mac := macOf(oldNet0)
-		if mac == "" || len(net0) != 1 || macOf(net0[0]) != mac {
-			return errors.New("proxmox: a net0 change must keep the MAC address (a new MAC is a new cloud-init instance, D-185)")
+		mac := macOf(cfg["net0"])
+		if mac == "" || len(net0) != 1 || macOf(net0[0]) != mac || !sameExcept(cfg["net0"], net0[0], "bridge") {
+			return errors.New("proxmox: a net0 change must keep the MAC address and every property but the bridge (a new MAC is a new cloud-init instance, D-185)")
+		}
+	}
+	if sm, ok := params["smbios1"]; ok {
+		uuid := parseProps(cfg["smbios1"])["uuid"]
+		if uuid == "" || len(sm) != 1 || parseProps(sm[0])["uuid"] != uuid {
+			return errors.New("proxmox: an smbios1 change must keep the uuid")
 		}
 	}
 	return nil
+}
+
+// sameExcept reports whether two property lists are equal except for one
+// key (values compared without case, for the MAC).
+func sameExcept(a, b, key string) bool {
+	pa, pb := parseProps(a), parseProps(b)
+	delete(pa, key)
+	delete(pb, key)
+	if len(pa) != len(pb) {
+		return false
+	}
+	for k, v := range pa {
+		if w, ok := pb[k]; !ok || !strings.EqualFold(v, w) {
+			return false
+		}
+	}
+	return true
 }
 
 // macOf returns the MAC of a net0 value ("virtio=BC:24:…,bridge=…"), or "".
