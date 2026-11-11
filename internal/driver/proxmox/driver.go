@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
@@ -47,6 +48,27 @@ type Config struct {
 type Driver struct {
 	cfg Config
 	c   *Client
+
+	// imageLocks serialize FetchImage per template name (review S2): two
+	// Targets with the same Image run in parallel, and one must not take
+	// the other's VM for a half-made rest. One controller per host (D-001).
+	imageMu    sync.Mutex
+	imageLocks map[string]*sync.Mutex
+}
+
+// imageLock returns the lock of one template name.
+func (d *Driver) imageLock(name string) *sync.Mutex {
+	d.imageMu.Lock()
+	defer d.imageMu.Unlock()
+	if d.imageLocks == nil {
+		d.imageLocks = map[string]*sync.Mutex{}
+	}
+	l := d.imageLocks[name]
+	if l == nil {
+		l = &sync.Mutex{}
+		d.imageLocks[name] = l
+	}
+	return l
 }
 
 var _ driver.Driver = (*Driver)(nil)
@@ -237,30 +259,41 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		return "", errors.New("proxmox: an image needs an https URL and a SHA-256")
 	}
 	name := templateName(spec)
+	lock := d.imageLock(name)
+	lock.Lock()
+	defer lock.Unlock()
 	ms, err := d.members(ctx)
 	if err != nil {
 		return "", err
 	}
 	// The template flag comes from the guest config, not from the list
-	// (see member): a fresh template must never look half-made.
+	// (see member): a fresh template must never look half-made. A VM with
+	// a lock is busy (a create, clone or conversion runs): it is never
+	// half-made either (review S2).
 	var halfMade []int
 	for _, m := range ms {
 		if m.Name != name || m.VMID < d.cfg.VMIDMin || m.VMID > d.cfg.VMIDMax {
 			continue
 		}
-		t, err := d.isTemplate(ctx, m.VMID)
+		cfg, err := d.config(ctx, m.VMID)
 		if err != nil {
 			return "", err
 		}
-		if t {
+		if l := cfg["lock"]; l != "" {
+			return "", fmt.Errorf("proxmox: image VM %d is busy (lock %s); try again later", m.VMID, l)
+		}
+		if cfg["template"] == "1" {
 			return driver.ImageRef(strconv.Itoa(m.VMID)), nil
 		}
 		halfMade = append(halfMade, m.VMID)
 	}
 	// A VM with the template's name that is no template is the rest of a
 	// failed earlier try: remove it before the next try (review T-012 #6).
+	// If that fails, stop: a second VM with the same name must not follow.
 	for _, id := range halfMade {
-		d.removeHalfMade(ctx, id, name)
+		if err := d.removeHalfMade(ctx, id, name); err != nil {
+			return "", halfMadeLeft(nil, id, err)
+		}
 	}
 
 	file := importFile(spec)
@@ -298,12 +331,10 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		"serial0": {"socket"}, "vga": {"serial0"},
 		"description": {"Plumb image " + spec.Name + "\nsha256=" + spec.SHA256},
 	}); err != nil {
-		d.removeHalfMade(ctx, id, name)
-		return "", fmt.Errorf("proxmox: create template VM: %w", err)
+		return "", halfMadeLeft(fmt.Errorf("proxmox: create template VM: %w", err), id, d.removeHalfMade(ctx, id, name))
 	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/template", nil); err != nil {
-		d.removeHalfMade(ctx, id, name)
-		return "", fmt.Errorf("proxmox: convert to template: %w", err)
+		return "", halfMadeLeft(fmt.Errorf("proxmox: convert to template: %w", err), id, d.removeHalfMade(ctx, id, name))
 	}
 	return driver.ImageRef(strconv.Itoa(id)), nil
 }
@@ -385,34 +416,82 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	}); err != nil {
 		// A clone that failed or was stopped after Proxmox made the VM
 		// leaves a half-made guest (review N2).
-		d.removeHalfMade(ctx, id, spec.Name)
-		return "", fmt.Errorf("proxmox: clone: %w", err)
+		return "", halfMadeLeft(fmt.Errorf("proxmox: clone: %w", err), id, d.removeHalfMade(ctx, id, spec.Name))
 	}
 	gid := driver.GuestID(strconv.Itoa(id))
 	if err := d.configure(ctx, id, tpl, spec, boot.Token); err != nil {
-		d.removeHalfMade(ctx, id, spec.Name)
-		return "", scrub(err, boot.Token)
+		return "", scrub(halfMadeLeft(err, id, d.removeHalfMade(ctx, id, spec.Name)), boot.Token)
 	}
 	return gid, nil
 }
 
 // removeHalfMade deletes a guest that a failed Create or FetchImage left
-// behind. It is best effort, with its own deadline. Like every change, it
-// first checks that the VMID is ours: in the range, in the pool, with the
-// name this call gave it and no template. A failed create can mean that
-// someone else took the id after nextID; that guest is never touched
-// (review N1).
-func (d *Driver) removeHalfMade(ctx context.Context, id int, name string) {
+// behind, with its own deadline. Like every change, it first checks that
+// the VMID is ours: in the range, in the pool, with the name this call gave
+// it and no template. A failed create can mean that someone else took the
+// id after nextID; that guest is never touched (review N1), and that is no
+// error. It waits until Proxmox drops the lock of a stopped create or clone
+// (a DELETE during the lock fails), checks the task results and proves that
+// the guest is gone (review S1). A non-nil error means the guest is left.
+func (d *Driver) removeHalfMade(ctx context.Context, id int, name string) error {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
 	_, m, err := d.own(cleanup, strconv.Itoa(id))
-	if err != nil || m.Name != name || m.Template == 1 {
-		return
+	switch {
+	case errors.Is(err, driver.ErrNotFound), errors.Is(err, ErrForeignGuest):
+		return nil // nothing of ours to remove
+	case err != nil:
+		return err
+	case m.Name != name || m.Template == 1:
+		return nil // not the guest this call made
 	}
-	if st, err := d.status(cleanup, id); err == nil && st == "running" {
-		_ = d.c.Task(cleanup, d.cfg.Node, "POST", vmPath(d, id)+"/status/stop", nil)
+	if err := d.waitUnlocked(cleanup, id); err != nil {
+		return err
 	}
-	_ = d.c.Task(cleanup, d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}})
+	if st, err := d.status(cleanup, id); err != nil {
+		return err
+	} else if st == "running" {
+		if err := d.c.Task(cleanup, d.cfg.Node, "POST", vmPath(d, id)+"/status/stop", nil); err != nil {
+			return fmt.Errorf("stop: %w", err)
+		}
+	}
+	if err := d.c.Task(cleanup, d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}}); err != nil {
+		return fmt.Errorf("delete: %w", err)
+	}
+	if _, _, err := d.own(cleanup, strconv.Itoa(id)); !errors.Is(err, driver.ErrNotFound) {
+		if err == nil {
+			return errors.New("the guest is still there after the delete")
+		}
+		return err
+	}
+	return nil
+}
+
+// waitUnlocked waits until the guest config has no lock.
+func (d *Driver) waitUnlocked(ctx context.Context, id int) error {
+	for {
+		cfg, err := d.config(ctx, id)
+		if err != nil {
+			return err
+		}
+		if cfg["lock"] == "" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("still locked (%s): %w", cfg["lock"], ctx.Err())
+		case <-time.After(d.c.poll):
+		}
+	}
+}
+
+// halfMadeLeft adds a failed cleanup to the error of Create or FetchImage,
+// so the Run and the Issue name the VMID that is left (review S1).
+func halfMadeLeft(err error, id int, cleanupErr error) error {
+	if cleanupErr == nil {
+		return err
+	}
+	return errors.Join(err, fmt.Errorf("proxmox: the half-made VM %d is left: %w; remove it with qm destroy %d", id, cleanupErr, id))
 }
 
 // The driver is the last step before the host: values that go into a

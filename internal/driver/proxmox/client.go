@@ -341,25 +341,47 @@ func scrub(err error, secrets ...string) error {
 		}
 		return s
 	}
-	var ae *APIError
-	if errors.As(err, &ae) {
-		c := *ae
-		c.Message = clean(ae.Message)
+	// A joined error (a failure plus a failed cleanup) is cleaned part by
+	// part; errors.As below would keep only its first typed part.
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		parts := j.Unwrap()
+		out := make([]error, 0, len(parts))
+		for _, e := range parts {
+			out = append(out, scrub(e, secrets...))
+		}
+		return errors.Join(out...)
+	}
+	switch e := err.(type) {
+	case *APIError:
+		c := *e
+		c.Message = clean(e.Message)
 		c.Errors = map[string]string{}
-		for k, v := range ae.Errors {
+		for k, v := range e.Errors {
 			c.Errors[k] = clean(v)
 		}
 		return &c
-	}
-	var te *TaskError
-	if errors.As(err, &te) {
-		c := *te
-		c.ExitStatus = clean(te.ExitStatus)
+	case *TaskError:
+		c := *e
+		c.ExitStatus = clean(e.ExitStatus)
 		c.Log = nil
-		for _, l := range te.Log {
+		for _, l := range e.Log {
 			c.Log = append(c.Log, clean(l))
 		}
 		return &c
 	}
+	// A wrapped error keeps its whole (cleaned) text and still unwraps to
+	// the cleaned inner error, so errors.As works and no context is lost.
+	if inner := errors.Unwrap(err); inner != nil {
+		return &scrubbed{msg: clean(err.Error()), inner: scrub(inner, secrets...)}
+	}
 	return errors.New(clean(err.Error()))
 }
+
+// scrubbed is a wrapped error after scrub.
+type scrubbed struct {
+	msg   string
+	inner error
+}
+
+func (e *scrubbed) Error() string { return e.msg }
+func (e *scrubbed) Unwrap() error { return e.inner }

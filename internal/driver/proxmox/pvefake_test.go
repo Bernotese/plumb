@@ -55,6 +55,9 @@ type fakePVE struct {
 	// staleTemplate: /pools reports every guest with template 0, like the
 	// cluster resource cache of Proxmox right after a conversion.
 	staleTemplate bool
+	// lockReads: the config of a VM shows "lock: create" for this many
+	// more reads, and a DELETE fails meanwhile (a stopped create task).
+	lockReads map[int]int
 }
 
 type fakeVM struct {
@@ -81,7 +84,7 @@ func newFakePVE(t *testing.T) *fakePVE {
 	t.Helper()
 	f := &fakePVE{t: t, auth: "PVEAPIToken=" + fakeToken + "=" + fakeSecret, node: fakeNode,
 		vms: map[int]*fakeVM{}, files: map[string]bool{}, tasks: map[string]*fakeTask{},
-		failNext: map[string]string{}, taskPolls: 2, params: map[string]url.Values{},
+		failNext: map[string]string{}, lockReads: map[int]int{}, taskPolls: 2, params: map[string]url.Values{},
 		echoParam: map[string]string{}, notJSON: map[string]bool{}, nullAnswer: map[string]bool{}}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -379,6 +382,10 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 	switch {
 	case r.Method == "GET" && sub == "/config":
 		out := map[string]any{}
+		if f.lockReads[id] > 0 {
+			f.lockReads[id]--
+			out["lock"] = "create"
+		}
 		for k, v := range vm.cfg {
 			if n, err := strconv.Atoi(v); err == nil && (k == "cores" || k == "onboot" || k == "template") {
 				out[k] = n
@@ -460,6 +467,10 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 		}
 		reply(w, 200, upid)
 	case r.Method == "DELETE" && sub == "":
+		if f.lockReads[id] > 0 {
+			fail(w, 500, fmt.Sprintf("VM %d is locked (create)", id), nil)
+			return
+		}
 		if vm.running {
 			fail(w, 500, fmt.Sprintf("VM %d is running - destroy failed", id), nil)
 			return
