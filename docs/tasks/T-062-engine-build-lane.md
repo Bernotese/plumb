@@ -31,3 +31,7 @@ branch · commit · tests · notes
 
 ## Note from the T-064 review (pl-lead, 2026-11-11)
 - The list of unused import files feeds a command line that the user runs as root (`pvesm free …`, with a Copy button in the web). The API must list only volume names that Plumb itself made, checked by a strict pattern (`plumb-<name>-<sha256[:12]>.qcow2`, D-077), and give the command in exactly this form, with no quotes: `pvesm free <storage>:import/plumb-<name>-<12 hex>.qcow2` (the strict name holds no shell character). The web offers Copy only for a line that matches `^pvesm free [A-Za-z][A-Za-z0-9._-]*:import/plumb-[a-z0-9][a-z0-9.-]*-[0-9a-f]{12}\.qcow2$` (PR #123, `safeFreeCommand`), so any other form loses the Copy button. A name that does not match is listed without a command. Test with a file name that holds shell characters.
+
+## Note from the T-061 review (pl-lead, 2026-11-11)
+- `DiskSpace` fails closed for the data space, but when the thin-pool metadata cannot be read (403 or an ambiguous pool) it gives `MetaKnown=false`. Decision of pl-lead: no new token right now (D-081). The build Plan then shows a clear line "thin-pool metadata use is unknown" so the person who approves sees it; a scheduled build (planned by `system`) records the same line in its Run. After the host check (is the metadata readable with today's rights?) pl-lead decides if more is needed.
+- N1: a conversion that times out in the driver but ends on the host can leave a template with the build name: the retention step and the unused list must show it (it is never adopted).
