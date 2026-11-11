@@ -138,6 +138,10 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// testDevDriver lets a test tune the fake driver of --dev (for example a
+// latency, so a Run is still running at a stop). Nil outside tests.
+var testDevDriver func(*fake.Driver)
+
 func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Logger) error {
 	if f.data == "" && !f.dev {
 		f.data = defaultData
@@ -168,6 +172,9 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	switch f.driver {
 	case "fake":
 		drv = fake.New()
+		if testDevDriver != nil {
+			testDevDriver(drv.(*fake.Driver))
+		}
 	default:
 		// Before anything touches the data directory (D-183).
 		d, err := proxmoxDriver(ctx, os.Getenv, log)
@@ -241,9 +248,13 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	defer eng.Close()
 	// Every goroutine below uses the store. runServer returns only after
 	// they all ended, before the engine and the store close (the defers run
-	// in reverse order: cancel, wait, eng.Close, st.Close).
+	// in reverse order: dev agents, cancel, eng.Stop, wait, eng.Close with
+	// its clean-up grace, st.Close).
 	var bg sync.WaitGroup
 	defer bg.Wait()
+	// The Runs are cancelled before the wait: the dev seed waits for a Run,
+	// and a Run whose agent is gone ends only by its cancel.
+	defer eng.Stop()
 	ctx, cancelBG := context.WithCancel(ctx)
 	defer cancelBG()
 	goBG := func(fn func()) {

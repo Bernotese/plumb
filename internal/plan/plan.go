@@ -289,6 +289,12 @@ func New(cfg Config) (*Engine, error) {
 		addrs: map[string]*addrWatch{}, pinned: map[imageKey]int{}, removing: map[imageKey]bool{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
 }
 
+// Stop cancels all Runs and does not wait (Close waits). A shutdown calls
+// it before it waits for other goroutines: one of them may wait for a Run
+// (the dev seed), and a Run may wait for an agent that is gone, so only the
+// cancel ends it (CI race job of #144).
+func (e *Engine) Stop() { e.cancel() }
+
 // DefaultShutdownGrace is the default of Config.ShutdownGrace.
 const DefaultShutdownGrace = 2 * time.Minute
 
