@@ -11,8 +11,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-039 image builds (slice 2 part B, first) | pl-architect planned | plan PR #110 reviewed (1 blocker + 6 should, all taken; D-197 … D-210 proposed; child cards T-058 … T-066; T-074 disk space check at creates; migration 0009; host log in the PR). **Waits for the user's approval**: 7 questions |
-| T-067 the agent reports its addresses; Issue when a guest does not use its configured address | pl-architect planned | plan reviewed (PR #106; S1 … S4 taken; D-212 … D-217 proposed; child cards T-068 … T-072; migration 0008). **Waits for the user's approval**: 4 questions |
+| T-039 image builds (slice 2 part B, first) | child cards T-058 … T-066 | **plan approved by the user** (D-218; D-197 … D-210; migration 0009). Running: T-058 contract (pl-architect). Then T-059 state, T-060 agent seal, T-061 driver, T-062 engine, T-063 schedule, T-064 web, T-065 QA, T-066 real host |
+| T-067 the agent reports its addresses; Issue when a guest does not use its configured address | child cards T-068 … T-072 | **plan approved by the user** (D-218; D-212 … D-217; migration 0008). Running: T-068 contract (pl-backend). Then T-069 agent, T-070 controller, T-071 web, T-072 QA + host check |
 | T-038 LXC targets (slice 2 part B, second) | tbd | design only; after T-039 |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
@@ -74,6 +74,6 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- T-067 plan approval, 4 questions (recommendation in brackets): time before the Issue opens and closes (2 min each); IPv6 (global and ULA, no temporary addresses); Docker, tunnel, VPN addresses (not reported; bridges, bonds, VLANs are); which address Plumb shows (`ips` = configured as today, the guest's list next to it, marked).
-- T-039 plan approval, 7 questions (recommendations in the T-039 card, section of the user questions).
+- Nothing now.
 - Known limit (D-192): a stock Ubuntu 26.04 image takes a static address only from the second boot; use DHCP until the image builds (T-039).
+- Note 2026-11-11: the dev VM and the test host crashed and came back; pl-lead checked: repo, worktrees and host are clean (no half-made VM, controller active).
