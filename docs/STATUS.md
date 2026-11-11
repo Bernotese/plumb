@@ -67,4 +67,4 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Decide: should a new VM skip the package upgrade at first boot (`ciupgrade=0`)? Asked by pl-lead on 2026-11-11.
+- Nothing now.
