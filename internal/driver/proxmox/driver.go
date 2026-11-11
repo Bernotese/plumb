@@ -658,6 +658,9 @@ func checkSpec(s driver.GuestSpec) error {
 	if s.User != "" && !reUser.MatchString(s.User) {
 		return fmt.Errorf("proxmox: bad user %q", s.User)
 	}
+	if s.ImageVersion < 0 {
+		return fmt.Errorf("proxmox: bad image version %d", s.ImageVersion)
+	}
 	if s.Cores < 1 || s.MemoryMB < 16 || s.DiskGB < 1 {
 		return errors.New("proxmox: cores, memory and disk must be positive")
 	}
@@ -669,6 +672,12 @@ func checkSpec(s driver.GuestSpec) error {
 }
 
 func (d *Driver) configure(ctx context.Context, id int, spec driver.GuestSpec, token string) error {
+	return d.configureWith(ctx, id, spec, token, nil)
+}
+
+// configureWith is configure with a last change of the parameters (the
+// build guest of CreateBuild has its own description, onboot and ciupgrade).
+func (d *Driver) configureWith(ctx context.Context, id int, spec driver.GuestSpec, token string, tweak func(url.Values)) error {
 	cfg, err := d.config(ctx, id)
 	if err != nil {
 		return err
@@ -692,6 +701,14 @@ func (d *Driver) configure(ctx context.Context, id int, spec driver.GuestSpec, t
 	}
 	if len(spec.SSHKeys) > 0 {
 		params.Set("sshkeys", sshKeysParam(spec.SSHKeys))
+	}
+	if spec.ImageVersion > 0 {
+		// Information only (D-200): Observe reads it, Diff ignores it.
+		params.Set("description", fmt.Sprintf("%s%s\n%s%d\nManaged by Plumb. Do not change it here.",
+			imageMarker, spec.ImageName, versionMarker, spec.ImageVersion))
+	}
+	if tweak != nil {
+		tweak(params)
 	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params); err != nil {
 		return fmt.Errorf("proxmox: configure: %w", err)
@@ -840,6 +857,9 @@ func specOf(name string, cfg map[string]string) driver.GuestSpec {
 	for _, line := range strings.Split(cfg["description"], "\n") {
 		if name, ok := strings.CutPrefix(strings.TrimSpace(line), imageMarker); ok {
 			s.ImageName = name
+		}
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), versionMarker); ok {
+			s.ImageVersion, _ = strconv.Atoi(v)
 		}
 	}
 	return s
@@ -1128,35 +1148,3 @@ func (d *Driver) Delete(ctx context.Context, gid driver.GuestID) error {
 }
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
-
-// --- Image builds: stubs until T-061 (contract T-058) ---
-
-// CreateBuild is not implemented yet (T-061).
-func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot driver.Bootstrap) (driver.GuestID, error) {
-	return "", driver.ErrNotImplemented
-}
-
-// MakeImage is not implemented yet (T-061).
-func (d *Driver) MakeImage(ctx context.Context, id driver.GuestID, img driver.BuiltImage) (driver.ImageRef, error) {
-	return "", driver.ErrNotImplemented
-}
-
-// FindImage is not implemented yet (T-061).
-func (d *Driver) FindImage(ctx context.Context, image string, version int, digest string) (driver.ImageRef, error) {
-	return "", driver.ErrNotImplemented
-}
-
-// ListImages is not implemented yet (T-061).
-func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageObject, error) {
-	return nil, driver.ErrNotImplemented
-}
-
-// RemoveImage is not implemented yet (T-061).
-func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error {
-	return driver.ErrNotImplemented
-}
-
-// DiskSpace is not implemented yet (T-061).
-func (d *Driver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
-	return driver.DiskSpace{}, driver.ErrNotImplemented
-}
