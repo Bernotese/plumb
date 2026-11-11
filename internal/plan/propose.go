@@ -325,7 +325,7 @@ func (e *Engine) planRendered(ctx context.Context, r *state.Rendered, target str
 			return tp, &ProposalError{Target: target, Msg: "the guest does not exist yet; there is nothing to re-enroll"}
 		}
 		tp.Guest = "create"
-		spec, err := e.guestSpec(ctx, target, r)
+		spec, err := e.guestSpec(target, r)
 		if err != nil {
 			return tp, err
 		}
@@ -354,7 +354,7 @@ func (e *Engine) planRendered(ctx context.Context, r *state.Rendered, target str
 	}
 
 	// An existing guest: the driver level first.
-	desired, err := e.guestSpec(ctx, target, r)
+	desired, err := e.guestSpec(target, r)
 	if err != nil {
 		return tp, err
 	}
@@ -437,7 +437,7 @@ func createChanges(s driver.GuestSpec) []wire.Change {
 	for _, kv := range []struct {
 		attr string
 		v    any
-	}{{driver.AttrCores, s.Cores}, {driver.AttrMemory, s.MemoryMB}, {driver.AttrDisk, s.DiskGB}, {driver.AttrBridge, s.Bridge},
+	}{{driver.AttrImage, s.ImageName}, {driver.AttrCores, s.Cores}, {driver.AttrMemory, s.MemoryMB}, {driver.AttrDisk, s.DiskGB}, {driver.AttrBridge, s.Bridge},
 		{driver.AttrIP, s.IP}, {driver.AttrGateway, s.Gateway}, {driver.AttrUser, s.User}, {driver.AttrSSHKeys, s.SSHKeys}} {
 		if reflect.ValueOf(kv.v).IsZero() {
 			continue
@@ -460,7 +460,7 @@ func createOnlyField(s driver.GuestSpec, attr string) any {
 	case driver.AttrSSHKeys:
 		return s.SSHKeys
 	case driver.AttrImage:
-		return s.Image
+		return s.ImageName
 	case driver.AttrKind:
 		return s.Kind
 	}
@@ -468,7 +468,7 @@ func createOnlyField(s driver.GuestSpec, attr string) any {
 }
 
 // guestSpec turns the rendered guest:config into a driver spec.
-func (e *Engine) guestSpec(ctx context.Context, target string, r *state.Rendered) (driver.GuestSpec, error) {
+func (e *Engine) guestSpec(target string, r *state.Rendered) (driver.GuestSpec, error) {
 	a := r.Guest.Attrs
 	spec := driver.GuestSpec{Name: target, Kind: r.Kind}
 	var err error
@@ -491,16 +491,9 @@ func (e *Engine) guestSpec(ctx context.Context, target string, r *state.Rendered
 			spec.SSHKeys = append(spec.SSHKeys, s)
 		}
 	}
-	// The image ref is known once the image is fetched. Before that, a
-	// placeholder that no driver uses makes a changed image a create-only
-	// difference.
-	if b, err := e.st.GetBinding(ctx, state.KindImage, r.Image); err == nil {
-		spec.Image = driver.ImageRef(b.Ref)
-	} else if errors.Is(err, store.ErrNotFound) {
-		spec.Image = driver.ImageRef("unfetched:" + r.Image)
-	} else {
-		return spec, err
-	}
+	// The create-only attribute image is the Image name (D-189). The ref
+	// (spec.Image) is set only by the create step, from FetchImage (D-188).
+	spec.ImageName = r.Image
 	return spec, nil
 }
 

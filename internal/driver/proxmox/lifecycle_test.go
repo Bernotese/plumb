@@ -34,7 +34,7 @@ func runLifecycle(t *testing.T, d *Driver, img driver.ImageSpec, bridge string) 
 			t.Errorf("cleanup of template %s: %v (remove it by hand)", ref, err)
 		}
 	})
-	spec := driver.GuestSpec{Name: "plumb-host-test", Kind: wire.KindVM, Image: ref, Cores: 1, MemoryMB: 1024, DiskGB: 8,
+	spec := driver.GuestSpec{Name: "plumb-host-test", Kind: wire.KindVM, ImageName: img.Name, Image: ref, Cores: 1, MemoryMB: 1024, DiskGB: 8,
 		Bridge: bridge, IP: "dhcp", User: "plumb"}
 	id, err := d.Create(ctx, spec, driver.Bootstrap{Token: "host-test-token-1"})
 	if err != nil {

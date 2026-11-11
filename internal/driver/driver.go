@@ -16,7 +16,9 @@ import (
 type GuestID string
 
 // ImageRef identifies an imported image inside the driver
-// (for Proxmox: the VMID of the template).
+// (for Proxmox: the VMID of the template). It is only the clone source of
+// Create: a template can be made again with a new ref (D-188), so no
+// guest setting depends on it (D-189).
 type ImageRef string
 
 // ImageSpec is an Image document as the driver needs it.
@@ -30,17 +32,22 @@ type ImageSpec struct {
 // GuestSpec holds the managed settings of a guest (resource guest:config).
 // The attribute names below are also the Attr values of the changes.
 type GuestSpec struct {
-	Name     string    // target name; create-only
-	Kind     wire.Kind // create-only
-	Image    ImageRef  // create-only
-	Cores    int       // AttrCores
-	MemoryMB int       // AttrMemory
-	DiskGB   int       // AttrDisk; create-only in the first slice
-	Bridge   string    // AttrBridge
-	IP       string    // AttrIP: "dhcp" or CIDR; create-only
-	Gateway  string    // AttrGateway; create-only
-	User     string    // AttrUser: bootstrap user; create-only
-	SSHKeys  []string  // AttrSSHKeys of the bootstrap user; create-only
+	Name string    // target name; create-only
+	Kind wire.Kind // create-only
+	// ImageName is the name of the Image document: the create-only
+	// attribute "image" (D-189). Observe reports it.
+	ImageName string
+	// Image is the clone source for Create only. Diff and DriftGuest
+	// ignore it, and Observe leaves it empty (D-189).
+	Image    ImageRef
+	Cores    int      // AttrCores
+	MemoryMB int      // AttrMemory
+	DiskGB   int      // AttrDisk; create-only in the first slice
+	Bridge   string   // AttrBridge
+	IP       string   // AttrIP: "dhcp" or CIDR; create-only
+	Gateway  string   // AttrGateway; create-only
+	User     string   // AttrUser: bootstrap user; create-only
+	SSHKeys  []string // AttrSSHKeys of the bootstrap user; create-only
 }
 
 // Attribute names of guest:config changes.
@@ -96,7 +103,9 @@ type GuestState struct {
 // All methods except Diff wait until the hypervisor finished the task.
 type Driver interface {
 	// FetchImage downloads the image, verifies the checksum and makes it
-	// usable for Create. It is idempotent for the same spec.
+	// usable for Create. It is idempotent for the same spec, and it makes
+	// the image again when it is gone. The engine calls it before every
+	// Create and keeps no copy of the ref (D-188).
 	FetchImage(ctx context.Context, spec ImageSpec) (ImageRef, error)
 	// Create makes a new guest from the image in spec, gives it the
 	// enrollment token and starts it.
