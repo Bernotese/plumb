@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -101,6 +102,14 @@ func TestSealInGuest(t *testing.T) {
 	// The build guest as cloud-init leaves it.
 	sh(t, "ssh-keygen", "-A")
 	sh(t, "useradd", "-m", "-s", "/bin/bash", buildUser)
+	// T-066 F1: the build guest's hostname, as cloud-init sets it.
+	write(t, "/etc/hostname", "plumb-build-test-v1\n")
+	hosts := sh(t, "cat", "/etc/hosts")
+	write(t, "/etc/hosts", hosts+"127.0.1.1 plumb-build-test-v1.lan plumb-build-test-v1\n")
+	write(t, "/var/lib/systemd/random-seed", "seed")
+	if m, _ := filepath.Glob("/etc/passwd-"); len(m) == 0 {
+		t.Fatal("useradd made no /etc/passwd- backup; the F3 check would prove nothing")
+	}
 	write(t, buildSudoers, "plumb-build ALL=(ALL) NOPASSWD:ALL\n")
 	sleeper := exec.Command("runuser", "-u", buildUser, "--", "sleep", "600")
 	if err := sleeper.Start(); err != nil {
@@ -201,6 +210,24 @@ func TestSealInGuest(t *testing.T) {
 			t.Errorf("agent file %s left", p)
 		}
 	}
+	// T-066 F1, F2, F3.
+	if got := sh(t, "cat", "/etc/hostname"); got != "localhost\n" {
+		t.Errorf("/etc/hostname = %q", got)
+	}
+	if got := sh(t, "cat", "/etc/hosts"); strings.Contains(got, "plumb-build") {
+		t.Errorf("/etc/hosts still names the build guest:\n%s", got)
+	}
+	for _, b := range accountBackups {
+		if _, err := os.Lstat(b); err == nil {
+			t.Errorf("%s left", b)
+		}
+	}
+	if !slices.Contains(r.list(), "systemctl stop systemd-random-seed.service") {
+		t.Errorf("the random seed service was not stopped: %q", r.list())
+	}
+	if out, _ := exec.Command("systemctl", "is-active", "systemd-random-seed.service").Output(); strings.TrimSpace(string(out)) == "active" {
+		t.Error("systemd-random-seed.service still active: it would save a seed at the power-off")
+	}
 	if got := sh(t, "cat", canary); got != "must stay" {
 		t.Errorf("%s changed through a link under /var/log: %q", canary, got)
 	}
@@ -224,6 +251,23 @@ func TestSealInGuest(t *testing.T) {
 	calls := r.list()
 	if calls[len(calls)-1] != "systemctl poweroff" {
 		t.Errorf("last call %q", calls[len(calls)-1])
+	}
+
+	// T-066 F1: the first boot of a clone. cloud-init (a new instance after
+	// clean) sets the clone's own hostname over the neutral one. NoCloud
+	// stands in for the Proxmox drive; the init stage runs set_hostname
+	// and update_hostname.
+	write(t, "/etc/cloud/cloud.cfg.d/99-plumb-seal-test.cfg", "datasource_list: [NoCloud, None]\n")
+	write(t, "/var/lib/cloud/seed/nocloud/meta-data", "instance-id: clone-1\nlocal-hostname: clone-1\n")
+	write(t, "/var/lib/cloud/seed/nocloud/user-data", "#cloud-config\n{}\n")
+	if out, err := exec.Command("cloud-init", "init", "--local").CombinedOutput(); err != nil {
+		t.Logf("cloud-init init --local: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("cloud-init", "init").CombinedOutput(); err != nil {
+		t.Fatalf("cloud-init init: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(sh(t, "cat", "/etc/hostname")); got != "clone-1" {
+		t.Errorf("first boot: cloud-init did not set the clone's hostname: /etc/hostname = %q", got)
 	}
 }
 
