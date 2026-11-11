@@ -12,6 +12,8 @@ package proxmox
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -37,9 +39,11 @@ func hostDriver(t *testing.T) *Driver {
 		}
 		c.http.Transport = newRecorder(c.http.Transport, dir, env("PLUMB_PVE_URL"), env("PLUMB_PVE_NODE"))
 	}
+	lo, hi := vmidRange(t)
 	d, err := New(Config{Client: c, Node: env("PLUMB_PVE_NODE"), Pool: env("PLUMB_PVE_POOL"),
 		DiskStorage: env("PLUMB_PVE_DISK"), ImageStorage: env("PLUMB_PVE_IMAGES"),
-		SnippetStorage: env("PLUMB_PVE_SNIPPETS"), Snippet: env("PLUMB_PVE_SNIPPET"), VMIDMin: 9000, VMIDMax: 9099})
+		SnippetStorage: env("PLUMB_PVE_SNIPPETS"), Snippet: env("PLUMB_PVE_SNIPPET"), VMIDMin: lo, VMIDMax: hi,
+		Nameservers: strings.Split(env("PLUMB_PVE_NAMESERVER"), ","), SearchDomain: env("PLUMB_PVE_SEARCHDOMAIN")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,4 +53,20 @@ func hostDriver(t *testing.T) *Driver {
 // TestHostLifecycle: import, create, observe, update, re-enroll, delete.
 func TestHostLifecycle(t *testing.T) {
 	runLifecycle(t, hostDriver(t), hostImage(), os.Getenv("PLUMB_PVE_BRIDGE"))
+}
+
+// vmidRange is PLUMB_PVE_VMID_RANGE (installer: plumb.env), default 9000-9099.
+func vmidRange(t *testing.T) (int, int) {
+	t.Helper()
+	v := os.Getenv("PLUMB_PVE_VMID_RANGE")
+	if v == "" {
+		return 9000, 9099
+	}
+	a, b, ok := strings.Cut(v, "-")
+	lo, err1 := strconv.Atoi(a)
+	hi, err2 := strconv.Atoi(b)
+	if !ok || err1 != nil || err2 != nil || lo < 100 || hi < lo {
+		t.Fatalf("bad PLUMB_PVE_VMID_RANGE %q", v)
+	}
+	return lo, hi
 }

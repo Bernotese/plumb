@@ -105,7 +105,7 @@ func (f *fakePVE) client(t *testing.T) *Client {
 
 func (f *fakePVE) driver(t *testing.T) *Driver {
 	t.Helper()
-	d, err := New(Config{Client: f.client(t), Node: fakeNode, Pool: fakePool, DiskStorage: "local-lvm", ImageStorage: "local",
+	d, err := New(Config{Client: f.client(t), Node: fakeNode, Pool: fakePool, Nameservers: []string{"192.0.2.53"}, SearchDomain: "plumb.test", DiskStorage: "local-lvm", ImageStorage: "local",
 		SnippetStorage: "plumb-snippets", Snippet: "plumb-vendor.yaml", VMIDMin: 9000, VMIDMax: 9099, ShutdownTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)

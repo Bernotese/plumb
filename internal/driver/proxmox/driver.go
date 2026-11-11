@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"slices"
@@ -33,6 +34,13 @@ type Config struct {
 	VMIDMin, VMIDMax int
 	// ShutdownTimeout is the clean shutdown time before a hard stop. Default 120 s.
 	ShutdownTimeout time.Duration
+	// Nameservers (1 to 3 IP addresses) and SearchDomain (one DNS name) go
+	// to every new VM (D-187, PLUMB_PVE_NAMESERVER and _SEARCHDOMAIN).
+	// Without them Proxmox copies the DNS settings of the host into the
+	// cloud-init network data, and a DNS change on the host gives every
+	// guest a new cloud-init instance. Create-only (D-185).
+	Nameservers  []string
+	SearchDomain string
 }
 
 // Driver is the Proxmox VE driver.
@@ -44,6 +52,24 @@ type Driver struct {
 var _ driver.Driver = (*Driver)(nil)
 
 // New returns the driver.
+// checkDNS checks the DNS settings of new VMs (D-187).
+func checkDNS(servers []string, domain string) error {
+	if len(servers) < 1 || len(servers) > 3 {
+		return fmt.Errorf("proxmox: 1 to 3 name servers are required (PLUMB_PVE_NAMESERVER), not %d", len(servers))
+	}
+	for _, s := range servers {
+		if ip := net.ParseIP(s); ip == nil || strings.ContainsAny(s, ", =") {
+			return fmt.Errorf("proxmox: name server %q is no IP address", s)
+		}
+	}
+	if !dnsNameRE.MatchString(domain) || len(domain) > 253 {
+		return fmt.Errorf("proxmox: search domain %q is no DNS name (PLUMB_PVE_SEARCHDOMAIN)", domain)
+	}
+	return nil
+}
+
+var dnsNameRE = regexp.MustCompile(`^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
+
 func New(cfg Config) (*Driver, error) {
 	switch {
 	case cfg.Client == nil:
@@ -53,6 +79,9 @@ func New(cfg Config) (*Driver, error) {
 		return nil, errors.New("proxmox: node, pool, storages and snippet are required")
 	case cfg.VMIDMin < 100 || cfg.VMIDMax < cfg.VMIDMin:
 		return nil, errors.New("proxmox: a VMID range of at least 100 is required")
+	}
+	if err := checkDNS(cfg.Nameservers, cfg.SearchDomain); err != nil {
+		return nil, err
 	}
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 120 * time.Second
@@ -435,6 +464,9 @@ func (d *Driver) configure(ctx context.Context, id, tpl int, spec driver.GuestSp
 		// No package upgrade at first boot outside a Plan (D-186); Proxmox
 		// sets package_upgrade: true without it. Create-only (D-185).
 		"ciupgrade": {"0"},
+		// DNS from the controller settings, never from the host (D-187).
+		"nameserver":   {strings.Join(d.cfg.Nameservers, " ")},
+		"searchdomain": {d.cfg.SearchDomain},
 	}
 	if len(spec.SSHKeys) > 0 {
 		params.Set("sshkeys", sshKeysParam(spec.SSHKeys))

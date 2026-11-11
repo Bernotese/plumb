@@ -504,3 +504,47 @@ func TestCreateSetsNoUpgrade(t *testing.T) {
 		t.Errorf("ciupgrade = %q, want 0", got)
 	}
 }
+
+// D-187: Create sets nameserver and searchdomain from the controller
+// settings, so Proxmox never copies the host DNS into the guest.
+func TestCreateSetsDNS(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	d.cfg.Nameservers = []string{"192.0.2.53", "2001:db8::53"}
+	ctx := context.Background()
+	ref, _ := d.FetchImage(ctx, image)
+	if _, err := d.Create(ctx, guest(ref), driver.Bootstrap{Token: "tok-1"}); err != nil {
+		t.Fatal(err)
+	}
+	p := f.lastParams("POST /nodes/pve/qemu/9001/config")
+	if p.Get("nameserver") != "192.0.2.53 2001:db8::53" || p.Get("searchdomain") != "plumb.test" {
+		t.Errorf("dns params: nameserver %q searchdomain %q", p.Get("nameserver"), p.Get("searchdomain"))
+	}
+}
+
+func TestNewChecksDNS(t *testing.T) {
+	f := newFakePVE(t)
+	base := Config{Client: f.client(t), Node: "pve", Pool: "plumb", DiskStorage: "d", ImageStorage: "i",
+		SnippetStorage: "s", Snippet: "v.yaml", VMIDMin: 9000, VMIDMax: 9099}
+	for name, tc := range map[string]struct {
+		servers []string
+		domain  string
+		ok      bool
+	}{
+		"one v4":          {[]string{"192.0.2.53"}, "plumb.test", true},
+		"three, v6":       {[]string{"192.0.2.53", "192.0.2.54", "2001:db8::1"}, "lan", true},
+		"none":            {nil, "plumb.test", false},
+		"four":            {[]string{"192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"}, "plumb.test", false},
+		"name not IP":     {[]string{"dns.example"}, "plumb.test", false},
+		"no domain":       {[]string{"192.0.2.53"}, "", false},
+		"domain w/ space": {[]string{"192.0.2.53"}, "a b", false},
+		"domain w/ comma": {[]string{"192.0.2.53"}, "a,b", false},
+		"domain w/ =":     {[]string{"192.0.2.53"}, "a=b", false},
+	} {
+		cfg := base
+		cfg.Nameservers, cfg.SearchDomain = tc.servers, tc.domain
+		if _, err := New(cfg); (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
