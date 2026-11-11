@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"sync"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
 )
@@ -20,6 +22,28 @@ const DefaultDiskLimitPercent = 85
 
 // GiB is 2^30 bytes: guest and build disks are whole GiB.
 const GiB = int64(1) << 30
+
+// diskReadTimeout bounds the DiskSpace read: the gate holds its mutex
+// while it reads, so a hung read must not block every create (review N1).
+var diskReadTimeout = 30 * time.Second
+
+// DiskBytes is gib GiB in bytes. A value whose bytes do not fit in an
+// int64 gives math.MaxInt64, which the gate always refuses (review S1:
+// an overflow must never wrap to a small or negative size).
+func DiskBytes(gib int) int64 {
+	if gib < 0 || int64(gib) > math.MaxInt64/GiB {
+		return math.MaxInt64
+	}
+	return int64(gib) * GiB
+}
+
+// addBytes adds two sizes and stops at math.MaxInt64 (review S1).
+func addBytes(a, b int64) int64 {
+	if a < 0 || b < 0 || a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
+}
 
 // ErrDiskFull marks a refusal of the disk gate. Its text names the
 // storage, the numbers and the limit; Plans and Run steps show it as is.
@@ -85,14 +109,22 @@ func (g *DiskGate) Check(ctx context.Context, bytes int64, what string) error {
 }
 
 func (g *DiskGate) check(ctx context.Context, bytes int64, what string) error {
-	ds, err := g.drv.DiskSpace(ctx)
+	rctx, cancel := context.WithTimeout(ctx, diskReadTimeout)
+	defer cancel()
+	ds, err := g.drv.DiskSpace(rctx)
 	if err != nil {
-		return fmt.Errorf("plan: cannot read the use of the disk storage, so %s is not allowed: %w", what, err)
+		return fmt.Errorf("cannot read the use of the disk storage, so %s is not allowed: %w", what, err)
 	}
-	need := ds.UsedBytes + g.reserved + bytes
-	if driver.OverLimit(need, ds.TotalBytes, g.limit) {
+	// The sum is exact in big.Int: no input can wrap it below the limit
+	// (review S1). A negative size is never room.
+	if bytes < 0 || ds.UsedBytes < 0 {
+		return fmt.Errorf("%w: %s: bad size for %s", ErrDiskFull, ds.Storage, what)
+	}
+	need := new(big.Int).Add(big.NewInt(ds.UsedBytes), big.NewInt(g.reserved))
+	need.Add(need, big.NewInt(bytes))
+	if overLimitBig(need, ds.TotalBytes, g.limit) {
 		return fmt.Errorf("%w: %s would be %s %% full with %s: %s used, %s held by running creates and builds, %s in total, limit %d %%",
-			ErrDiskFull, ds.Storage, percentUp(need, ds.TotalBytes), what, gibText(ds.UsedBytes), gibText(g.reserved), gibText(ds.TotalBytes), g.limit)
+			ErrDiskFull, ds.Storage, percentUpBig(need, ds.TotalBytes), what, gibText(ds.UsedBytes), gibText(g.reserved), gibText(ds.TotalBytes), g.limit)
 	}
 	// Unknown metadata use is no refusal (T-062 card); known and over is.
 	if ds.MetaKnown && driver.OverLimit(ds.MetaUsedBytes, ds.MetaTotalBytes, g.limit) {
@@ -100,6 +132,25 @@ func (g *DiskGate) check(ctx context.Context, bytes int64, what string) error {
 			ErrDiskFull, ds.Storage, percentUp(ds.MetaUsedBytes, ds.MetaTotalBytes), mibText(ds.MetaUsedBytes), mibText(ds.MetaTotalBytes), g.limit, what)
 	}
 	return nil
+}
+
+// overLimitBig is driver.OverLimit for a need that may not fit in an int64.
+func overLimitBig(need *big.Int, total int64, limitPercent int) bool {
+	if total <= 0 {
+		return true
+	}
+	n := new(big.Int).Mul(need, big.NewInt(100))
+	l := new(big.Int).Mul(big.NewInt(int64(limitPercent)), big.NewInt(total))
+	return n.Cmp(l) > 0
+}
+
+// percentUpBig is percentUp for a big need.
+func percentUpBig(need *big.Int, total int64) string {
+	if total <= 0 {
+		return "100+"
+	}
+	f, _ := new(big.Float).SetInt(need).Float64()
+	return fmt.Sprintf("%.1f", math.Ceil(f*1000/float64(total))/10)
 }
 
 // percentUp shows a share with one decimal, rounded up: a refused value
