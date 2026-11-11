@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/api"
@@ -238,6 +239,20 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		return err
 	}
 	defer eng.Close()
+	// Every goroutine below uses the store. runServer returns only after
+	// they all ended, before the engine and the store close (the defers run
+	// in reverse order: cancel, wait, eng.Close, st.Close).
+	var bg sync.WaitGroup
+	defer bg.Wait()
+	ctx, cancelBG := context.WithCancel(ctx)
+	defer cancelBG()
+	goBG := func(fn func()) {
+		bg.Add(1)
+		go func() {
+			defer bg.Done()
+			fn()
+		}()
+	}
 	secrets.SetUsage(eng.SecretUsage) // used_by and secret-in-use (D-108)
 	iss = issue.New(st, events, eng)
 	// Close what a crash left open. This must run before the agent
@@ -269,10 +284,10 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	}
 	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Secrets: secrets, Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
 
-	errc := make(chan error, 2)
-	go func() { errc <- lk.Serve(ctx, f.agentListen) }()
-	go eng.PollGuests(ctx, time.Minute)
-	go eng.RunSchedules(ctx, time.Minute) // scheduled image builds (T-063)
+	errc := make(chan error, 2) // one send each: agent listener, API listener
+	goBG(func() { errc <- lk.Serve(ctx, f.agentListen) })
+	goBG(func() { eng.PollGuests(ctx, time.Minute) })
+	goBG(func() { eng.RunSchedules(ctx, time.Minute) }) // scheduled image builds (T-063)
 
 	ln, err := net.Listen("tcp", f.listen)
 	if err != nil {
@@ -310,12 +325,14 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	if devToken != "" {
 		fmt.Fprintf(stdout, "dev login: %s://%s/dev/login?token=%s&next=/\n", scheme, ln.Addr(), devToken)
 	}
-	go func() {
+	// Shutdown waits for the open requests (up to 5 s); Serve returns as
+	// soon as it starts, so the wait is on this goroutine.
+	goBG(func() {
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		httpSrv.Shutdown(shut)
-	}()
+	})
 	if f.dev {
 		// The simulated agents stop before runServer returns and the store
 		// closes (review T-024 m1).
@@ -324,18 +341,19 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		agentsDone := make(chan struct{})
 		go func() { agents.run(actx, events); close(agentsDone) }()
 		defer func() { stop(); <-agentsDone }()
-		go func() {
+		goBG(func() {
 			if err := seedDev(actx, st, eng, lk, agents, f.devDemo, log); err != nil && actx.Err() == nil {
 				log.Error("dev seed", "err", err)
 			}
-		}()
+		})
 	}
-	go func() {
-		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- err
+	goBG(func() {
+		err := httpSrv.Serve(ln)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
 		}
-		errc <- nil
-	}()
+		errc <- err
+	})
 	select {
 	case err := <-errc:
 		return err

@@ -188,7 +188,11 @@ func (l *Link) ServeListener(ctx context.Context, ln net.Listener) error {
 		ErrorLog:          slog.NewLogLogger(l.log.Handler(), slog.LevelWarn),
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
+	// Serve returns as soon as Shutdown starts; ServeListener returns only
+	// after Shutdown waited for the open requests (they use the store).
+	shutDone := make(chan struct{})
 	go func() {
+		defer close(shutDone)
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -196,6 +200,7 @@ func (l *Link) ServeListener(ctx context.Context, ln net.Listener) error {
 	}()
 	err := srv.Serve(tls.NewListener(ln, l.TLSConfig()))
 	if errors.Is(err, http.ErrServerClosed) {
+		<-shutDone
 		return nil
 	}
 	return err
