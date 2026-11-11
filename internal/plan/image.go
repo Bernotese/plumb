@@ -30,6 +30,9 @@ type ImagePlan struct {
 	Build   *ImageBuildPlan `json:"build,omitempty"`
 	Removes []ImageRemoval  `json:"removes"`
 	Disk    *DiskUse        `json:"disk,omitempty"`
+	// DiskNotes are the disk notes of this build (also Plan warnings). A
+	// scheduled build's Run records them (T-061 review). Not in the API.
+	DiskNotes []string `json:"disk_notes,omitempty"`
 }
 
 // ImageBuildPlan is a planned build.
@@ -169,7 +172,7 @@ func (e *Engine) planImages(ctx context.Context, base, next *state.Set, force, f
 			}
 			ip.Build = bp
 			disk, dnotes := e.diskUse(ctx, name, r.Recipe.DiskGB)
-			ip.Disk = disk
+			ip.Disk, ip.DiskNotes = disk, dnotes
 			notes = append(notes, dnotes...)
 		}
 		rm, rnotes := e.planRemovals(ctx, name, versions, n.info, isBuilt, ip.Build != nil)

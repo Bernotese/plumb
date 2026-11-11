@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
@@ -156,5 +157,31 @@ func TestScheduleSkipAndChange(t *testing.T) {
 	e.tick()
 	if n := len(e.schedulePlans()); n != 0 {
 		t.Fatalf("a changed schedule built at once: %d plans", n)
+	}
+}
+
+// Review S1 of #138: a scheduled Plan whose system approval fails is stale
+// at once; no token or person can approve it later.
+func TestFailedSystemApprovalIsStale(t *testing.T) {
+	c := &clock{}
+	c.set("2026-11-11 10:00")
+	e := newEnv(t, false, withBuilds, c.opt())
+	e.buildAgents(nil)
+	adm := e.admin()
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "image", "put": scheduledImage(`{"every":"day","at":"03:00"}`)})
+	e.tick()
+	// A build of the Image starts between the Plan and its approval.
+	e.drv.Hook(fake.OpDiskSpace, func() { e.addVersion("web", store.ImageBuilding) })
+	c.set("2026-11-12 03:01")
+	if err := e.eng.CheckSchedules(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	ps := e.schedulePlans()
+	if len(ps) != 1 || ps[0].Status != store.PlanStale {
+		t.Fatalf("scheduled plans: %+v", ps)
+	}
+	tok := e.token(TierApply, "disruptive")
+	if code, body := tok.do("POST", "/api/v1/plans/"+itoa(ps[0].ID)+"/approve", nil); code != 409 {
+		t.Fatalf("token approves the failed scheduled plan: %d %s", code, body)
 	}
 }

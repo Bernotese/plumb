@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -123,7 +122,7 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, err.Error())
 		return false
 	}
-	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", info.SHA256[:12])+planNotes(p))
+	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", info.SHA256[:12])+planNotes(p, l.image))
 
 	// 2. The build guest, under the disk gate (D-203, T-074): its disk
 	// counts until the lane ends.
@@ -267,18 +266,17 @@ func (l *lane) fail(ctx context.Context, run store.Run) {
 	l.s.failRest(ctx, "the build failed; nothing was converted"+left)
 }
 
-// planNotes returns the disk notes of a Plan for the Run: a scheduled
-// build has no person who read the Plan, so the Run records them (T-061
-// review: "thin-pool metadata use is unknown").
-func planNotes(p store.Plan) string {
-	var prop Proposal
-	if json.Unmarshal(p.Proposal, &prop) != nil {
-		return ""
-	}
+// planNotes returns the disk notes of one Image of a Plan for the Run: a
+// scheduled build has no person who read the Plan, so the Run records them
+// (T-061 review: "thin-pool metadata use is unknown").
+func planNotes(p store.Plan, image string) string {
+	images, _ := imagePlans(p)
 	out := ""
-	for _, n := range prop.Notes {
-		if strings.Contains(n, "thin-pool metadata") || strings.Contains(n, "would not start now") {
-			out += "\n" + n
+	for _, ip := range images {
+		if ip.Image == image {
+			for _, n := range ip.DiskNotes {
+				out += "\n" + n
+			}
 		}
 	}
 	return out

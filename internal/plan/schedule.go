@@ -235,6 +235,9 @@ func (e *Engine) scheduledBuild(ctx context.Context, image string, slot time.Tim
 	e.mu.Unlock()
 	if _, err := e.Approve(ctx, p.ID, PrincipalSystem, SystemCheck); err != nil {
 		e.scheduledDone(p.ID)
+		// No pending scheduled Plan may wait for a later approval by a
+		// token or a person (review S1 of #138): it is stale at once.
+		e.markStale(context.WithoutCancel(ctx), p.ID)
 		return err
 	}
 	return nil
@@ -258,12 +261,12 @@ func (e *Engine) scheduledDone(planID int64) {
 // ErrNotSystemPlan is returned when the system rule refuses a Plan.
 var ErrNotSystemPlan = errors.New("plan: system approves only a scheduled build with no document change and no human-only reason")
 
-// SystemCheck is the approval rule of system (D-201): origin build, every
-// image part a build with trigger schedule, no document change, no Target,
-// no human-only reason. The engine uses it; no API route can (the API
+// SystemCheck is the approval rule of system (D-201): author system,
+// origin build, every image part a build with trigger schedule, no
+// document change, no Target, no human-only reason. The engine uses it; no API route can (the API
 // gives no principal the name system).
 func SystemCheck(p store.Plan) error {
-	if p.Origin != OriginBuild || len(p.HumanOnly) > 0 {
+	if p.Author != PrincipalSystem || p.Origin != OriginBuild || len(p.HumanOnly) > 0 {
 		return ErrNotSystemPlan
 	}
 	var prop Proposal

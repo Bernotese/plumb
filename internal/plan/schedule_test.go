@@ -65,20 +65,21 @@ func TestSystemCheck(t *testing.T) {
 		raw, _ := json.Marshal([]ImagePlan{{Image: "web", Build: &ImageBuildPlan{Version: 1, Trigger: trigger}}})
 		return raw
 	}
-	ok := store.Plan{Origin: OriginBuild, Proposal: json.RawMessage(`{}`), Changes: json.RawMessage(`[]`), Images: images(store.TriggerSchedule)}
+	ok := store.Plan{Author: PrincipalSystem, Origin: OriginBuild, Proposal: json.RawMessage(`{}`), Changes: json.RawMessage(`[]`), Images: images(store.TriggerSchedule)}
 	if err := SystemCheck(ok); err != nil {
 		t.Fatalf("scheduled build refused: %v", err)
 	}
 	bad := map[string]func(*store.Plan){
-		"proposal origin": func(p *store.Plan) { p.Origin = OriginProposal },
-		"manual trigger":  func(p *store.Plan) { p.Images = images(store.TriggerManual) },
-		"change trigger":  func(p *store.Plan) { p.Images = images(store.TriggerChange) },
-		"human only":      func(p *store.Plan) { p.HumanOnly = []string{HumanOnlyImageRecipe} },
-		"document change": func(p *store.Plan) { p.Proposal = json.RawMessage(`{"put":[{"kind":"Block","name":"a","spec":{}}]}`) },
-		"delete":          func(p *store.Plan) { p.Proposal = json.RawMessage(`{"delete":[{"kind":"Image","name":"web"}]}`) },
-		"target":          func(p *store.Plan) { p.Changes = json.RawMessage(`[{"target":"web1","resources":[]}]`) },
-		"removals only":   func(p *store.Plan) { p.Images = json.RawMessage(`[{"image":"web","removes":[]}]`) },
-		"no image":        func(p *store.Plan) { p.Images = json.RawMessage(`[]`) },
+		"proposal origin":   func(p *store.Plan) { p.Origin = OriginProposal },
+		"author not system": func(p *store.Plan) { p.Author = "user:admin" },
+		"manual trigger":    func(p *store.Plan) { p.Images = images(store.TriggerManual) },
+		"change trigger":    func(p *store.Plan) { p.Images = images(store.TriggerChange) },
+		"human only":        func(p *store.Plan) { p.HumanOnly = []string{HumanOnlyImageRecipe} },
+		"document change":   func(p *store.Plan) { p.Proposal = json.RawMessage(`{"put":[{"kind":"Block","name":"a","spec":{}}]}`) },
+		"delete":            func(p *store.Plan) { p.Proposal = json.RawMessage(`{"delete":[{"kind":"Image","name":"web"}]}`) },
+		"target":            func(p *store.Plan) { p.Changes = json.RawMessage(`[{"target":"web1","resources":[]}]`) },
+		"removals only":     func(p *store.Plan) { p.Images = json.RawMessage(`[{"image":"web","removes":[]}]`) },
+		"no image":          func(p *store.Plan) { p.Images = json.RawMessage(`[]`) },
 	}
 	for name, mut := range bad {
 		p := ok
