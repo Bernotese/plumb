@@ -12,7 +12,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | Card | Owner | State |
 |---|---|---|
 | T-015 slice acceptance, real-host part | pl-codex-qa | **test host ready** (the part without Proxmox is merged, PR #67) |
-| T-012 Proxmox VM driver | pl-backend | draft PR #20: offline part statically approved. **Real-host part (22 items) running** on the test host. Next card after it: wire `plumb serve` to the driver (`serve` on main stops with "the Proxmox driver is not in this build yet") |
+| T-012 Proxmox VM driver | pl-backend | draft PR #20. **Real host: 20 of 22 items pass** (2026-11-11); 1 driver bug found and fixed (stale `template` flag). Item 19 (cloud-init change gives new SSH host keys) decided by pl-architect: D-185 (cloud-init inputs are create-only; `ssh_deletekeys: false`). Open: D-185 in code, recorded answers, `make test-pve`, review |
+| T-053 wire `plumb serve` to the Proxmox driver | tbd (proposal: pl-backend) | card + plan merged (PR #86, reviewed; D-182 … D-184). Needs T-012 on main |
 | T-013 minimal installer | pl-backend | draft PR #26. **The installer works on the real host** (run 3, 2026-11-11): roles, ACLs, token, storages, LXC, key volume, `plumb key init`; a half-installed host is repaired. Two defects found by real runs and fixed (token ACL order; umask at `pct create`), plus S1. Passed: rights exact, LXC shape, file modes, no secret in state or journal. Open: negative token checks (running); repair run, UI + first login, agent unit need a `plumb serve` with the Proxmox driver (T-012). Before merge: S2 … S4 of pl-architect, `--remove` test |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 | T-052 installer: key volume + `plumb key init`, static LXC address | pl-backend | done on the T-013 branch, approved by pl-reviewer (PR #26, 9556b32) |
@@ -66,4 +67,4 @@ Order with the test host: T-013 (dry-run first) → T-012 → wire `serve` to `P
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Nothing now. (D-180, 2026-11-11: on the test host an agent runs the real installer; the user does not need to.)
+- Decide: should a new VM skip the package upgrade at first boot (`ciupgrade=0`)? Asked by pl-lead on 2026-11-11.
