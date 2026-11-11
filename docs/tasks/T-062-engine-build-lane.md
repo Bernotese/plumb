@@ -31,6 +31,7 @@ Two PRs (pl-lead agreed). **Part A** `pl-architect/T-062-engine` (Plan side, bui
 - Migration `0010_plan_images` (`plan.images`); `store.ApproveBuildPlan` (no revision, Run pinned to the checked head), `PendingPlans`; `MarkStalePlans` skips origin `build`.
 - Engine: `Plan.images` (build on a new or changed recipe, trigger change; removals preview: ready versions beyond keep, base templates of another checksum, all on delete); `image-recipe` by content; propose refusals (no ready version; same Plan builds it); `ProposeBuild` (manual/schedule); approval of a build Plan by recipe hash (head change without recipe change keeps it; recipe change marks it stale after every commit); one build per Image (`build-running`, also a `building` row).
 - API: `POST /images/{name}/build`, `ImageView.status` (versions, building, last build, unused imports with the strict `pvesm free` form, disk), `Plan.images`, `Run.images`, `TargetStatus.image_version`; contract test `TestContractImages`.
+- Unused import files (QA of #128): safe to remove when no checksum needs it (document, running build); a ready version does not need it, because a version template is a full copy (D-209 text).
 - An image lane fails at `image:base` in part A. Open for part B: the lane, build token + link guard, seal handshake (T-060), revoke + T-073 guard, disk gate of T-074, retention, Recover, Target from the newest version, version Targets list, `image.version` events, flag on.
 
 ## Note from the T-064 review (pl-lead, 2026-11-11)
