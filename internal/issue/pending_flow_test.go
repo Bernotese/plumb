@@ -171,6 +171,36 @@ func TestPendingOutsideRevert(t *testing.T) {
 	}
 }
 
+// Review B1: when Proxmox keeps the pending value after a write of the
+// running value, the revert step fails and stores no digest, so the poll
+// still sees the pending drift.
+func TestRevertKeepsPendingFails(t *testing.T) {
+	e, id := pendingEnv(t, false)
+	e.drv.SetKeepPending(true)
+	e.drv.TamperPending(id, func(s *driver.GuestSpec) { s.MemoryMB = 256 })
+	e.check()
+	iss := e.openIssue("web1", wire.GuestConfigID)
+	p, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := e.approve(p.ID)
+	if s := e.guestStep(run); run.Status != "failed" || !strings.Contains(s.Output, "Proxmox kept the pending value of memory (256; the VM uses 1024)") {
+		t.Fatalf("revert: %s %q", run.Status, s.Output)
+	}
+	if got, _ := e.st.GetIssue(e.ctx, iss.ID); got.Status != store.IssueOpen {
+		t.Errorf("issue after the failed revert: %s", got.Status)
+	}
+	st, _ := e.drv.Observe(e.ctx, id)
+	if b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); b.Digest == st.Digest {
+		t.Error("the failed step stored the digest")
+	}
+	e.check()
+	if again, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID); err != nil || !strings.Contains(string(again.Changes), `"pending":true`) {
+		t.Errorf("pending drift hidden: %+v %v", again, err)
+	}
+}
+
 // A Plan that only changes allow_restart: one read change, no driver
 // write, a reversible token can approve it (D-194).
 func TestAllowRestartOnlyPlan(t *testing.T) {
@@ -582,5 +612,25 @@ func TestFirstRoundAfterMigration(t *testing.T) {
 	e.check()
 	if iss, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID); err != nil || !strings.Contains(string(iss.Changes), `"pending":true`) {
 		t.Errorf("round 1: %+v %v", iss, err)
+	}
+}
+
+// Review S2: a pending create-only input refuses a Plan of the Target with
+// a text that says what to do in Proxmox.
+func TestPendingCreateOnlyText(t *testing.T) {
+	e, id := pendingEnv(t, false)
+	e.drv.TamperPending(id, func(s *driver.GuestSpec) { s.IP = "10.0.0.9/24" })
+	put := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"motd","params":{"text":"other"}}]}`)
+	_, err := e.eng.Propose(e.ctx, plan.Input{Proposal: plan.Proposal{Put: []state.Doc{put}}, Author: "user:admin"})
+	if !errors.Is(err, plan.ErrCreateOnly) {
+		t.Fatalf("propose: %v", err)
+	}
+	for _, part := range []string{`"ip" has a pending value in Proxmox (10.0.0.9/24, not active; the VM uses dhcp)`, "qm set " + string(id) + " --revert <key>", "Then plan again"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("text lacks %q: %v", part, err)
+		}
+	}
+	if strings.Contains(err.Error(), "create a new target") {
+		t.Errorf("the old text: %v", err)
 	}
 }

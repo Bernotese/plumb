@@ -66,6 +66,9 @@ type Driver struct {
 	// bridgeStuck: a running guest does not take a bridge change live (a
 	// failed hot-unplug).
 	bridgeStuck bool
+	// keepPending: a write of the running value on a running guest keeps
+	// the pending value (a Proxmox that needs revert=<key>, review B1).
+	keepPending bool
 	// restartFault fails a restart half way: "stop" (the guest still
 	// runs) or "start" (the guest is stopped). One shot.
 	restartFault    string
@@ -109,6 +112,13 @@ func (d *Driver) SetBridgeStuck(on bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.bridgeStuck = on
+}
+
+// SetKeepPending makes a write of the running value keep the pending one.
+func (d *Driver) SetKeepPending(on bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.keepPending = on
 }
 
 // FailRestart makes the next restart fail half way: at "stop" the guest
@@ -468,21 +478,31 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 			var err error
 			switch c.Attr {
 			case driver.AttrCores:
-				next.Cores, err = driver.IntValue(c.To)
+				var v int
+				v, err = driver.IntValue(c.To)
+				if !(running && d.keepPending && v == run.Cores) {
+					next.Cores = v
+				}
 				if !running || d.hotplug {
-					run.Cores = next.Cores
+					run.Cores = v
 				}
 			case driver.AttrMemory:
-				next.MemoryMB, err = driver.IntValue(c.To)
+				var v int
+				v, err = driver.IntValue(c.To)
+				if !(running && d.keepPending && v == run.MemoryMB) {
+					next.MemoryMB = v
+				}
 				if !running || d.hotplug {
-					run.MemoryMB = next.MemoryMB
+					run.MemoryMB = v
 				}
 			case driver.AttrBridge:
 				s, ok := c.To.(string)
 				if !ok || s == "" {
 					err = fmt.Errorf("fake: bridge %v is not a name", c.To)
 				}
-				next.Bridge = s
+				if !(running && d.keepPending && s == run.Bridge) {
+					next.Bridge = s
+				}
 				if !running || !d.bridgeStuck {
 					run.Bridge = s
 				}

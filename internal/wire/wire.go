@@ -112,8 +112,9 @@ type Change struct {
 	// Ignored is set only by the controller, in a Plan: a Rule ignores this
 	// drift (D-092). The Plan still applies it. An agent never sets it.
 	Ignored bool `json:"ignored,omitempty"`
-	// The three fields below are for display only; no risk rule reads
-	// them (D-190, D-195). Only guest:config changes set them.
+	// The three fields below are set only on guest:config changes (D-190,
+	// D-195). No risk rule reads them; the restart rule of the controller
+	// reads Pending (a removal of a pending value needs no restart).
 	//
 	// Pending: From is set in the hypervisor but not active; the guest
 	// still runs with To (or with AlsoPending's partner, see there).

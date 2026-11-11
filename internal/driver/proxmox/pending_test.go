@@ -113,26 +113,65 @@ func TestUpdateWaitsThenRestart(t *testing.T) {
 	}
 }
 
-// TestObserveDigestSkew: the two reads must show one state of the config.
+// TestObserveDigestSkew: the two reads must show one state of the
+// config. Views with different digests by design are one state when a
+// third read of the running view has the first digest; a write between
+// the reads makes the driver read again.
 func TestObserveDigestSkew(t *testing.T) {
 	f, d, id, _ := newRunningGuest(t)
 	ctx := context.Background()
+	plain, err := d.Observe(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.mu.Lock()
-	f.skewDigest = viewTries - 1
+	f.skewDigest = 1
 	f.mu.Unlock()
 	before := f.countExact("GET /nodes/pve/qemu/9001/config")
-	if _, err := d.Observe(ctx, id); err != nil {
-		t.Fatalf("a skew below the tries: %v", err)
+	st, err := d.Observe(ctx, id)
+	if err != nil {
+		t.Fatalf("different digests by design: %v", err)
 	}
-	// own reads once; views reads twice per try.
-	if n := f.countExact("GET /nodes/pve/qemu/9001/config") - before; n != 1+2*viewTries {
-		t.Errorf("config reads = %d, want %d", n, 1+2*viewTries)
+	// own reads once; then current, config and current again.
+	if n := f.countExact("GET /nodes/pve/qemu/9001/config") - before; n != 4 {
+		t.Errorf("config reads = %d, want 4", n)
+	}
+	if st.Digest == plain.Digest || !strings.HasPrefix(st.Digest, plain.Digest+"+") {
+		t.Errorf("digest of the pair: %q (plain %q)", st.Digest, plain.Digest)
+	}
+
+	f.mu.Lock()
+	f.writeDuringRead = viewTries - 1
+	f.mu.Unlock()
+	if _, err := d.Observe(ctx, id); err != nil {
+		t.Errorf("writes in fewer reads than the tries: %v", err)
 	}
 	f.mu.Lock()
-	f.skewDigest = viewTries
+	f.writeDuringRead = viewTries
 	f.mu.Unlock()
-	if _, err := d.Observe(ctx, id); err == nil || !strings.Contains(err.Error(), "different digests") {
-		t.Errorf("a lasting skew: %v", err)
+	if _, err := d.Observe(ctx, id); err == nil || !strings.Contains(err.Error(), "changed during each") {
+		t.Errorf("a write during every read: %v", err)
+	}
+}
+
+// TestUpdateKeepsPending: when a write of the running value does not
+// remove the pending entry (host check 2 open), Observe still shows it,
+// so the engine can see that the revert did not work (review B1).
+func TestUpdateKeepsPending(t *testing.T) {
+	f, d, id, spec := newRunningGuest(t)
+	ctx := context.Background()
+	f.mu.Lock()
+	f.keepPending = true
+	f.vms[9001].pending = map[string]string{"memory": "256"}
+	f.mu.Unlock()
+	st, _ := d.Observe(ctx, id)
+	changes, _ := d.Diff(spec, st)
+	if err := d.Update(ctx, id, changes, nil); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = d.Observe(ctx, id)
+	if st.Pending == nil || st.Pending.MemoryMB != 256 || st.Spec.MemoryMB != spec.MemoryMB {
+		t.Errorf("after the write: spec %d, pending %+v", st.Spec.MemoryMB, st.Pending)
 	}
 }
 

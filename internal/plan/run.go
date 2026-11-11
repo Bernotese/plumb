@@ -175,10 +175,11 @@ func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *
 	// The waiting list of every Target of the Run, succeeded or failed,
 	// before the Issue hook (D-195, write point b).
 	e.recordWaiting(fin, set, targets)
-	if err := e.st.FinishRun(fin, run.ID, status, e.waitsOfRun(fin, run.ID)); err != nil {
+	waits := e.waitsOfRun(fin, run.ID)
+	if err := e.st.FinishRun(fin, run.ID, status, waits); err != nil {
 		e.log.Error("finish run", "run", run.ID, "err", err)
 	}
-	e.emit(fin, "run.finished", subject, "system", map[string]any{"plan": p.ID, "status": status, "waits_for_restart": e.waitsOfRun(fin, run.ID)})
+	e.emit(fin, "run.finished", subject, "system", map[string]any{"plan": p.ID, "status": status, "waits_for_restart": waits})
 	if e.cfg.OnPlanDone != nil {
 		e.cfg.OnPlanDone(fin, p.ID, status == "succeeded")
 	}
@@ -365,7 +366,10 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 var errRefused = errors.New("refused: the guest changed since the Plan; its changes are above the approved risk")
 
 // hellos returns how many hellos the target's agent sent since the
-// controller started.
+// controller started. It counts every hello, not only one of a new boot:
+// a link reconnect between the count and the restart ends the wait
+// early (review N1). The resource steps still need the agent online, and
+// the agent observes again before it applies (D-075).
 func (e *Engine) hellos(target string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()

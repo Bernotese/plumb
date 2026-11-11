@@ -30,7 +30,27 @@ const (
 	textRestartNotPlanned = "the guest runs now, and the change needs a restart that the Plan does not show; plan again"
 	textBridgeStuck       = "Proxmox did not apply the bridge change live; check the VM in Proxmox"
 	textWaitsOutput       = "%s: set in Proxmox, waits for a stop and start of the VM"
+	textKeptPending       = "Proxmox kept the pending value of %s (%v; the VM uses %v): it becomes active at the next stop and start of the VM. " +
+		"Remove the pending value in Proxmox (Revert in the Hardware view of the VM), then plan again"
 )
+
+// textPendingCreateOnly: a create-only input (a cloud-init value) has a
+// pending value from outside. Plumb does not revert it (D-185 A), and no
+// Plan of the Target can run while it waits (review S2).
+const textPendingCreateOnly = "%q has a pending value in Proxmox (%v, not active; the VM uses %v). " +
+	"Plumb does not change this setting after the guest is created, so it cannot plan this Target while the value waits. " +
+	"Remove the pending value in Proxmox: use Revert on it in the VM's Hardware or Cloud-Init view, or run `qm set %s --revert <key>` on the host " +
+	"(`qm pending %[4]s` lists the keys). Then plan again"
+
+// pendingChange returns the pending drift of attr, or nil.
+func pendingChange(desired driver.GuestSpec, observed driver.GuestState, attr string) *wire.Change {
+	for _, c := range driver.DriftGuest(desired, observed) {
+		if c.Attr == attr && c.Pending {
+			return &c
+		}
+	}
+	return nil
+}
 
 // userText is an error whose text is a sentence for the user, as the
 // card words it (it may start with a capital and end with a period).
@@ -114,8 +134,9 @@ func coldValue(st driver.GuestState, attr string) (run, next int) {
 }
 
 // checkWritten looks at the guest after Update (D-194): each written
-// value of cores or memory is active (no flag) or set and waiting (flag);
-// anything else fails. A bridge that still waits fails.
+// value of cores or memory is active in both views (no flag), or set and
+// waiting (flag); anything else fails. A bridge must be active in both
+// views. A pending value that the write did not remove fails the step.
 func checkWritten(recorded []wire.Change, desired driver.GuestSpec, after driver.GuestState) ([]wire.Change, error) {
 	out := append([]wire.Change(nil), recorded...)
 	for i, c := range out {
@@ -124,10 +145,17 @@ func checkWritten(recorded []wire.Change, desired driver.GuestSpec, after driver
 			if after.Spec.Bridge != desired.Bridge {
 				return out, userText(textBridgeStuck)
 			}
+			if after.Next().Bridge != desired.Bridge {
+				return out, userText(fmt.Sprintf(textKeptPending, c.Attr, after.Next().Bridge, after.Spec.Bridge))
+			}
 		case driver.IsColdStart(c.Attr):
 			want, _ := driver.IntValue(c.To)
 			run, next := coldValue(after, c.Attr)
 			switch {
+			case run == want && next != want:
+				// The running value is right, but another value still waits:
+				// "resolved" would hide it until the next cold start (review B1).
+				return out, userText(fmt.Sprintf(textKeptPending, c.Attr, next, run))
 			case run == want:
 				out[i].WaitsForRestart = false
 			case next == want:

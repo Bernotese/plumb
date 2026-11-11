@@ -368,6 +368,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	gchanges, err := e.cfg.Driver.Diff(desired, observed)
 	var co *driver.CreateOnlyError
 	if errors.As(err, &co) {
+		if c := pendingChange(desired, observed, co.Attr); c != nil {
+			return tp, &ProposalError{Target: target, Err: ErrCreateOnly, Msg: fmt.Sprintf(textPendingCreateOnly, co.Attr, c.From, c.To, bind.Ref)}
+		}
 		return tp, &ProposalError{Target: target, Err: ErrCreateOnly, Msg: fmt.Sprintf(
 			"%q can only be set when the guest is created (the guest has %v, the proposal wants %v); create a new target instead",
 			co.Attr, createOnlyField(observed.Spec, co.Attr), createOnlyField(desired, co.Attr))}

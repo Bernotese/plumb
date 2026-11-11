@@ -71,9 +71,16 @@ type fakePVE struct {
 	perms         map[string]map[string]int
 	authFails     int    // requests refused with 401
 	dropPath      string // a request to this path loses its connection
-	// skewDigest: this many reads of the config without current=1 answer
-	// with another digest (a write between the two reads of Observe).
+	// skewDigest: reads of the config without current=1 answer with
+	// another digest, as if Proxmox gave the views different digests by
+	// design.
 	skewDigest int
+	// writeDuringRead: this many reads of the config without current=1
+	// change the config first (a write between the reads of Observe).
+	writeDuringRead int
+	// keepPending: a write of the running value on a running VM keeps
+	// the pending entry (review B1: host check 2 is open).
+	keepPending bool
 }
 
 type fakeVM struct {
@@ -481,6 +488,10 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			f.lockReads[id]--
 			out["lock"] = "create"
 		}
+		if r.Form.Get("current") != "1" && f.writeDuringRead > 0 {
+			f.writeDuringRead-- // someone writes between the two reads
+			vm.cfg["tags"] = uuid()
+		}
 		view := vm.cfg
 		if r.Form.Get("current") != "1" {
 			view = vm.next()
@@ -513,6 +524,8 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 					vm.pending = map[string]string{}
 				}
 				vm.pending[k] = v[0] // waits for the next stop and start
+			case vm.running && coldKeys[k] && f.keepPending:
+				// the running value again: a no-op that keeps the pending entry
 			default:
 				vm.cfg[k] = v[0]
 				delete(vm.pending, k) // a write of the running value removes the pending one
