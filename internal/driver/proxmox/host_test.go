@@ -71,3 +71,10 @@ func vmidRange(t *testing.T) (int, int) {
 	}
 	return lo, hi
 }
+
+// TestHostImageBuild: build guest, MakeImage, FindImage, ListImages, a
+// Target of the version, a linked clone that blocks RemoveImage, RemoveImage
+// (T-061). It logs the host facts of the card ("host fact:" lines).
+func TestHostImageBuild(t *testing.T) {
+	runImageBuild(t, hostDriver(t), hostImage(), os.Getenv("PLUMB_PVE_BRIDGE"))
+}

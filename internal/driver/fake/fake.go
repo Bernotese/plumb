@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,7 +34,30 @@ const (
 	OpUpdate     Op = "Update"
 	OpPower      Op = "Power"
 	OpDelete     Op = "Delete"
+
+	OpCreateBuild Op = "CreateBuild"
+	OpMakeImage   Op = "MakeImage"
+	OpFindImage   Op = "FindImage"
+	OpListImages  Op = "ListImages"
+	OpRemoveImage Op = "RemoveImage"
+	OpDiskSpace   Op = "DiskSpace"
 )
+
+// template is one template of the fake: a base template (FetchImage) or a
+// built version (MakeImage).
+type template struct {
+	kind    driver.ImageObjectKind
+	image   string
+	version int
+	digest  string // build digest of a version, checksum of a base template
+	size    int64
+	linked  int // linked clones that a person made (review S3)
+}
+
+// importFile is a downloaded base image. Plumb never deletes one (D-209).
+type importFile struct {
+	image, sum string
+}
 
 type guest struct {
 	// spec is what the running guest uses; next is what it uses after the
@@ -47,6 +71,8 @@ type guest struct {
 	ip             string
 	frozen         string // a digest that a cold start kept (ColdRestart)
 	boots          int    // cold starts, Create included
+	// build is set on the build guest of an image version (D-203).
+	build *driver.BuiltImage
 }
 
 // Driver is the fake driver. The zero value is not usable; call New.
@@ -73,7 +99,19 @@ type Driver struct {
 	// runs) or "start" (the guest is stopped). One shot.
 	restartFault    string
 	restartFaultErr error
+
+	// Image builds (T-061).
+	tpls    map[driver.ImageRef]*template
+	imports []importFile
+	// diskTotal and diskBase are the size of the disk storage and the use
+	// of everything that is not a guest or template of the fake. Every
+	// guest and template uses its whole disk (a full clone, D-208).
+	diskTotal, diskBase int64
+	metaKnown           bool
 }
+
+// GiB is 2^30 bytes.
+const GiB = int64(1) << 30
 
 var _ driver.Driver = (*Driver)(nil)
 
@@ -81,13 +119,15 @@ var _ driver.Driver = (*Driver)(nil)
 // Proxmox VMIDs.
 func New() *Driver {
 	return &Driver{
-		guests:   map[driver.GuestID]*guest{},
-		images:   map[string]driver.ImageRef{},
-		nextID:   100,
-		nextTpl:  9000,
-		failures: map[Op][]error{},
-		calls:    map[Op]int{},
-		hooks:    map[Op][]func(){},
+		guests:    map[driver.GuestID]*guest{},
+		images:    map[string]driver.ImageRef{},
+		nextID:    100,
+		nextTpl:   9000,
+		failures:  map[Op][]error{},
+		calls:     map[Op]int{},
+		hooks:     map[Op][]func(){},
+		tpls:      map[driver.ImageRef]*template{},
+		diskTotal: 1024 * GiB,
 	}
 }
 
@@ -356,6 +396,11 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
 		d.nextTpl++
 		d.images[key] = ref
+		d.tpls[ref] = &template{kind: driver.ImageBaseTemplate, image: spec.Name, digest: spec.SHA256, size: 3 * GiB}
+		f := importFile{image: spec.Name, sum: spec.SHA256}
+		if !slices.Contains(d.imports, f) {
+			d.imports = append(d.imports, f)
+		}
 		return ref, nil
 	})
 }
@@ -372,6 +417,7 @@ func (d *Driver) DestroyTemplate(ref driver.ImageRef) {
 			delete(d.images, k)
 		}
 	}
+	delete(d.tpls, ref)
 }
 
 // Images returns the number of images.
@@ -382,12 +428,8 @@ func (d *Driver) Images() int {
 }
 
 func (d *Driver) hasImage(ref driver.ImageRef) bool {
-	for _, r := range d.images {
-		if r == ref {
-			return true
-		}
-	}
-	return false
+	_, ok := d.tpls[ref]
+	return ok
 }
 
 // Create makes and starts a guest with the token.
@@ -574,34 +616,205 @@ func (d *Driver) Delete(ctx context.Context, id driver.GuestID) error {
 	})
 }
 
-// --- Image builds: stubs until T-061 (contract T-058) ---
+// --- Image builds (T-061, D-203, D-208, D-209) ---
 
-// CreateBuild is not implemented yet (T-061).
+// CreateBuild makes the build guest of one version from a base template:
+// name plumb-build-<image>-v<N>, user plumb-build without a key, running.
 func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot driver.Bootstrap) (driver.GuestID, error) {
-	return "", driver.ErrNotImplemented
+	return task(ctx, d, OpCreateBuild, func() (driver.GuestID, error) {
+		if spec.Image == "" || spec.Version < 1 || boot.Token == "" {
+			return "", errors.New("fake: a build needs an image, a version and a token")
+		}
+		tpl, ok := d.tpls[spec.Base]
+		if !ok || tpl.kind != driver.ImageBaseTemplate {
+			return "", fmt.Errorf("fake: base image %s: %w", spec.Base, driver.ErrNotFound)
+		}
+		if spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
+			return "", errors.New("fake: incomplete build spec")
+		}
+		name := fmt.Sprintf("plumb-build-%s-v%d", spec.Image, spec.Version)
+		for _, g := range d.guests {
+			if g.spec.Name == name {
+				return "", fmt.Errorf("fake: guest name %q is taken", name)
+			}
+		}
+		id := driver.GuestID(strconv.Itoa(d.nextID))
+		d.nextID++
+		gs := driver.GuestSpec{Name: name, Kind: wire.KindVM, ImageName: spec.Image, Cores: spec.Cores, MemoryMB: spec.MemoryMB,
+			DiskGB: spec.DiskGB, Bridge: spec.Bridge, IP: spec.IP, Gateway: spec.Gateway, User: "plumb-build"}
+		ip := strings.SplitN(spec.IP, "/", 2)[0]
+		if spec.IP == "" || spec.IP == "dhcp" {
+			ip = fmt.Sprintf("10.98.%d.%d", d.nextID/250, d.nextID%250+2)
+		}
+		d.guests[id] = &guest{spec: gs, next: gs, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
+			build: &driver.BuiltImage{Image: spec.Image, Version: spec.Version}}
+		return id, nil
+	})
 }
 
-// MakeImage is not implemented yet (T-061).
+// MakeImage turns a stopped build guest of img into a version template.
+// The guest is gone after it, like in Proxmox, and the ref is new.
 func (d *Driver) MakeImage(ctx context.Context, id driver.GuestID, img driver.BuiltImage) (driver.ImageRef, error) {
-	return "", driver.ErrNotImplemented
+	return task(ctx, d, OpMakeImage, func() (driver.ImageRef, error) {
+		if !sha256Hex.MatchString(img.Digest) {
+			return "", errors.New("fake: a built image needs the full build digest")
+		}
+		g, ok := d.guests[id]
+		if !ok {
+			return "", driver.ErrNotFound
+		}
+		if g.build == nil || g.build.Image != img.Image || g.build.Version != img.Version {
+			return "", fmt.Errorf("fake: guest %s is not the build guest of %s v%d", id, img.Image, img.Version)
+		}
+		if g.power != driver.PowerStopped {
+			return "", fmt.Errorf("fake: build guest %s is not stopped", id)
+		}
+		delete(d.guests, id)
+		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
+		d.nextTpl++
+		d.tpls[ref] = &template{kind: driver.ImageVersionTemplate, image: img.Image, version: img.Version,
+			digest: img.Digest, size: int64(g.spec.DiskGB) * GiB}
+		return ref, nil
+	})
 }
 
-// FindImage is not implemented yet (T-061).
+// FindImage finds a version template by image, version and digest.
 func (d *Driver) FindImage(ctx context.Context, image string, version int, digest string) (driver.ImageRef, error) {
-	return "", driver.ErrNotImplemented
+	return task(ctx, d, OpFindImage, func() (driver.ImageRef, error) {
+		for ref, t := range d.tpls {
+			if t.kind == driver.ImageVersionTemplate && t.image == image && t.version == version && t.digest == digest {
+				return ref, nil
+			}
+		}
+		return "", fmt.Errorf("fake: %s v%d: %w", image, version, driver.ErrNotFound)
+	})
 }
 
-// ListImages is not implemented yet (T-061).
+func (d *Driver) object(ref driver.ImageRef, t *template) driver.ImageObject {
+	o := driver.ImageObject{Kind: t.kind, Image: t.image, Ref: ref, Version: t.version, Digest: t.digest,
+		SizeBytes: t.size, LinkedClones: t.linked}
+	if t.kind == driver.ImageVersionTemplate {
+		o.Name = fmt.Sprintf("plumb-img-%s-v%d", t.image, t.version)
+	} else {
+		o.Name = fmt.Sprintf("plumb-img-%s-%s", t.image, t.digest[:12])
+	}
+	return o
+}
+
+// ListImages lists the templates and import files of an Image: base
+// templates, then versions (oldest first), then import files.
 func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageObject, error) {
-	return nil, driver.ErrNotImplemented
+	return task(ctx, d, OpListImages, func() ([]driver.ImageObject, error) {
+		var out []driver.ImageObject
+		for ref, t := range d.tpls {
+			if t.image == image {
+				out = append(out, d.object(ref, t))
+			}
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].Kind != out[j].Kind {
+				return out[i].Kind == driver.ImageBaseTemplate
+			}
+			if out[i].Version != out[j].Version {
+				return out[i].Version < out[j].Version
+			}
+			return out[i].Name < out[j].Name
+		})
+		for _, f := range d.imports {
+			if f.image == image {
+				out = append(out, driver.ImageObject{Kind: driver.ImageImportFile, Image: image,
+					Name: fmt.Sprintf("plumb-images:import/plumb-%s-%s.qcow2", image, f.sum[:12]), Digest: f.sum, SizeBytes: GiB / 2})
+			}
+		}
+		return out, nil
+	})
 }
 
-// RemoveImage is not implemented yet (T-061).
+// RemoveImage removes a template after the same guard as Proxmox: it
+// exists, it is the object of the Image with its digest, and no linked
+// clone. It refuses an import file.
 func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error {
-	return driver.ErrNotImplemented
+	return d.do(ctx, OpRemoveImage, func() error {
+		if obj.Kind == driver.ImageImportFile {
+			return fmt.Errorf("fake: %s is an import file; Plumb never deletes one (D-209)", obj.Name)
+		}
+		t, ok := d.tpls[obj.Ref]
+		if !ok {
+			return fmt.Errorf("fake: template %s: %w", obj.Ref, driver.ErrNotFound)
+		}
+		if want := d.object(obj.Ref, t); obj.Kind != t.kind || obj.Image != t.image || obj.Digest != t.digest ||
+			obj.Version != t.version || obj.Name != want.Name {
+			return fmt.Errorf("fake: template %s is not %s of image %s with that digest; not removed", obj.Ref, obj.Name, obj.Image)
+		}
+		if t.linked > 0 {
+			return fmt.Errorf("fake: template %s has %d linked clones; not removed", obj.Name, t.linked)
+		}
+		delete(d.tpls, obj.Ref)
+		for k, r := range d.images {
+			if r == obj.Ref {
+				delete(d.images, k)
+			}
+		}
+		return nil
+	})
 }
 
-// DiskSpace is not implemented yet (T-061).
+// DiskSpace returns the use of the disk storage: the base use, every
+// guest disk and every template.
 func (d *Driver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
-	return driver.DiskSpace{}, driver.ErrNotImplemented
+	return task(ctx, d, OpDiskSpace, func() (driver.DiskSpace, error) {
+		used := d.diskBase
+		for _, g := range d.guests {
+			used += int64(g.spec.DiskGB) * GiB
+		}
+		for _, t := range d.tpls {
+			used += t.size
+		}
+		ds := driver.DiskSpace{Storage: "local-lvm", TotalBytes: d.diskTotal, UsedBytes: used}
+		if d.metaKnown {
+			ds.MetaKnown, ds.MetaTotalBytes, ds.MetaUsedBytes = true, d.diskTotal/100, used/100
+		}
+		return ds, nil
+	})
+}
+
+// --- test helpers of image builds ---
+
+// SetDiskSpace sets the size of the disk storage, the use of everything
+// that is not a fake guest or template, and whether the metadata use of
+// the thin pool is known (1 % of the data, a model).
+func (d *Driver) SetDiskSpace(total, base int64, metaKnown bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.diskTotal, d.diskBase, d.metaKnown = total, base, metaKnown
+}
+
+// LinkClone makes a person's linked clone of a template (review S3):
+// RemoveImage refuses the template until UnlinkClone.
+func (d *Driver) LinkClone(ref driver.ImageRef) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if t, ok := d.tpls[ref]; ok {
+		t.linked++
+	}
+}
+
+// UnlinkClone removes one linked clone of a template.
+func (d *Driver) UnlinkClone(ref driver.ImageRef) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if t, ok := d.tpls[ref]; ok && t.linked > 0 {
+		t.linked--
+	}
+}
+
+// BuildOf returns the version whose build guest id is, if any.
+func (d *Driver) BuildOf(id driver.GuestID) (driver.BuiltImage, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g, ok := d.guests[id]
+	if !ok || g.build == nil {
+		return driver.BuiltImage{}, false
+	}
+	return *g.build, true
 }

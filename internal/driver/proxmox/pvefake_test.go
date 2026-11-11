@@ -85,6 +85,30 @@ type fakePVE struct {
 	// keepPending: a write of the running value on a running VM keeps
 	// the pending entry (review B1: host check 2 is open).
 	keepPending bool
+
+	// Image builds (T-061). diskTotal and diskUsed are the status of the
+	// disk storage; thinPools is the answer of /disks/lvmthin (nil: 403,
+	// the token has no Sys.Audit). linkInConfig: the disk line of a
+	// linked clone shows "base-…/vm-…" (lvmthin); parentInContent: the
+	// volume list of the disk storage gives the parent. Both are open
+	// host checks. writeOnStatus: this many status reads change the
+	// config first (someone writes between the guard and the write).
+	// failTemplate: the next conversion fails.
+	diskType        string
+	diskTotal       int64
+	diskUsed        int64
+	thinPools       []map[string]any
+	linkInConfig    bool
+	parentInContent bool
+	writeOnStatus   int
+	failTemplate    bool
+	// lateConvert: the next conversion fails on our side but ends on the
+	// host (review N1 of PR #125). "lock": the VM shows "lock: template"
+	// for two config reads, then it is a template. "afterWrite": it is a
+	// template right after the next config write.
+	lateConvert   string
+	lateID        int
+	contentStatus int // a status for the volume list of the disk storage
 }
 
 type fakeVM struct {
@@ -96,6 +120,8 @@ type fakeVM struct {
 	// apply live (T-015 run 1: memory is not in the default hotplug
 	// list). A start applies them.
 	pending map[string]string
+	// parent is the base volume of a linked clone ("base-9001-disk-0").
+	parent string
 }
 
 // coldKeys are the keys that the fake keeps pending on a running VM.
@@ -144,7 +170,7 @@ func newFakePVE(t *testing.T) *fakePVE {
 	f := &fakePVE{t: t, auth: "PVEAPIToken=" + fakeToken + "=" + fakeSecret, node: fakeNode,
 		vms: map[int]*fakeVM{}, files: map[string]bool{}, tasks: map[string]*fakeTask{},
 		failNext: map[string]string{}, lockReads: map[int]int{}, taskPolls: 2,
-		version: "9.2.26",
+		version: "9.2.26", diskType: "lvmthin", diskTotal: 42 << 30, diskUsed: 1 << 30, linkInConfig: true, parentInContent: true,
 		storages: []map[string]any{
 			{"storage": "local-lvm", "content": "images,rootdir", "enabled": 1, "active": 1, "type": "lvmthin"},
 			{"storage": "local", "content": "import", "enabled": 1, "active": 1, "type": "dir"},
@@ -263,7 +289,7 @@ func (f *fakePVE) task(key string) string {
 
 var (
 	reQemu    = regexp.MustCompile(`^/nodes/([^/]+)/qemu/(\d+)(/.*)?$`)
-	reStorage = regexp.MustCompile(`^/nodes/([^/]+)/storage/([^/]+)/(content|download-url)$`)
+	reStorage = regexp.MustCompile(`^/nodes/([^/]+)/storage/([^/]+)/(content|download-url|status)$`)
 	reTask    = regexp.MustCompile(`^/nodes/([^/]+)/tasks/([^/]+)(?:/(status|log))?$`)
 )
 
@@ -378,6 +404,12 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(w, 200, []any{map[string]any{"poolid": r.Form.Get("poolid"), "members": members}})
 
+	case r.Method == "GET" && path == "/nodes/"+fakeNode+"/disks/lvmthin":
+		if f.thinPools == nil {
+			fail(w, 403, "Permission check failed (/nodes/"+fakeNode+", Sys.Audit)", nil)
+			return
+		}
+		reply(w, 200, f.thinPools)
 	case r.Method == "GET" && path == "/cluster/nextid":
 		id, _ := strconv.Atoi(r.Form.Get("vmid"))
 		if _, taken := f.vms[id]; taken {
@@ -393,11 +425,49 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	case reStorage.MatchString(path):
 		m := reStorage.FindStringSubmatch(path)
 		storage, op := m[2], m[3]
+		if op == "status" && r.Method == "GET" {
+			if storage != "local-lvm" {
+				fail(w, 501, "not modelled", nil)
+				return
+			}
+			reply(w, 200, map[string]any{"type": f.diskType, "total": f.diskTotal, "used": f.diskUsed,
+				"avail": f.diskTotal - f.diskUsed, "active": 1, "enabled": 1, "content": "images,rootdir"})
+			return
+		}
+		if op == "content" && r.Method == "GET" && storage == "local-lvm" {
+			if f.contentStatus != 0 {
+				fail(w, f.contentStatus, "Permission check failed", nil)
+				return
+			}
+			list := []map[string]any{}
+			ids := make([]int, 0, len(f.vms))
+			for id := range f.vms {
+				ids = append(ids, id)
+			}
+			sort.Ints(ids)
+			for _, id := range ids {
+				vm := f.vms[id]
+				if vm.pool != fakePool {
+					continue // the token sees only the pool
+				}
+				vol := parseProps(vm.cfg["scsi0"])[""]
+				if !strings.HasPrefix(vol, "local-lvm:") {
+					continue
+				}
+				e := map[string]any{"volid": vol, "vmid": id, "size": int64(sizeMB(parseProps(vm.cfg["scsi0"])["size"])) << 20, "format": "raw"}
+				if vm.parent != "" && f.parentInContent {
+					e["parent"] = vm.parent
+				}
+				list = append(list, e)
+			}
+			reply(w, 200, list)
+			return
+		}
 		if op == "content" && r.Method == "GET" {
-			list := []map[string]string{}
+			list := []map[string]any{}
 			for v := range f.files {
 				if strings.HasPrefix(v, storage+":") {
-					list = append(list, map[string]string{"volid": v, "content": "import"})
+					list = append(list, map[string]any{"volid": v, "content": "import", "size": 700 << 20})
 				}
 			}
 			reply(w, 200, list)
@@ -495,6 +565,12 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 		if f.lockReads[id] > 0 {
 			f.lockReads[id]--
 			out["lock"] = "create"
+			if f.lateConvert == "lock" && f.lateID == id {
+				out["lock"] = "template"
+				if f.lockReads[id] == 0 {
+					f.convert(id, vm)
+				}
+			}
 		}
 		if r.Form.Get("current") != "1" && f.writeDuringRead > 0 {
 			f.writeDuringRead-- // someone writes between the two reads
@@ -521,8 +597,14 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			fail(w, 500, "detected modified configuration - file changed by other user? Try again.", nil)
 			return
 		}
+		for _, k := range strings.Split(r.Form.Get("delete"), ",") {
+			if k != "" {
+				delete(vm.cfg, k)
+				delete(vm.pending, k)
+			}
+		}
 		for k, v := range r.Form {
-			if k == "digest" {
+			if k == "digest" || k == "delete" {
 				continue
 			}
 			switch {
@@ -538,6 +620,9 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 				delete(vm.pending, k) // a write of the running value removes the pending one
 			}
 		}
+		if f.lateConvert == "afterWrite" && f.lateID == id {
+			f.convert(id, vm)
+		}
 		reply(w, 200, f.task(key))
 	case r.Method == "PUT" && sub == "/resize":
 		want := r.Form.Get("size")
@@ -549,8 +634,24 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 		vm.cfg["scsi0"] = replaceProp(vm.cfg["scsi0"], "size", want)
 		reply(w, 200, f.task(key))
 	case r.Method == "POST" && sub == "/template":
-		vm.template = true
-		vm.cfg["template"] = "1"
+		if f.failTemplate {
+			f.failTemplate = false
+			fail(w, 500, "convert to template failed", nil)
+			return
+		}
+		if f.lateConvert != "" {
+			f.lateID = id
+			if f.lateConvert == "lock" {
+				f.lockReads[id] = 2
+			}
+			fail(w, 500, "proxy timeout", nil)
+			return
+		}
+		if vm.running {
+			fail(w, 500, "you can't convert a running VM to a template", nil)
+			return
+		}
+		f.convert(id, vm)
 		reply(w, 200, nil) // synchronous in the schema
 	case r.Method == "POST" && sub == "/clone":
 		newid, _ := strconv.Atoi(r.Form.Get("newid"))
@@ -573,10 +674,29 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			cfg["name"] = f.cloneName
 		}
 		cfg["smbios1"] = "uuid=" + uuid() // a clone gets a new uuid
-		cfg["scsi0"] = strings.Replace(cfg["scsi0"], "vm-"+strconv.Itoa(id), "vm-"+strconv.Itoa(newid), 1)
-		f.vms[newid] = &fakeVM{cfg: cfg, pool: r.Form.Get("pool")}
+		disk := parseProps(vm.cfg["scsi0"])
+		src := disk[""]
+		srcName := src[strings.Index(src, ":")+1:]
+		own := fmt.Sprintf("vm-%d-disk-0", newid)
+		nvm := &fakeVM{cfg: cfg, pool: r.Form.Get("pool")}
+		switch {
+		case r.Form.Get("full") == "1" || !vm.template:
+			cfg["scsi0"] = strings.Replace(vm.cfg["scsi0"], src, "local-lvm:"+own, 1)
+		default: // linked clone of a template
+			nvm.parent = srcName
+			vol := "local-lvm:" + own
+			if f.linkInConfig {
+				vol = "local-lvm:" + srcName + "/" + own
+			}
+			cfg["scsi0"] = strings.Replace(vm.cfg["scsi0"], src, vol, 1)
+		}
+		f.vms[newid] = nvm
 		reply(w, 200, f.task(key))
 	case r.Method == "GET" && sub == "/status/current":
+		if f.writeOnStatus > 0 {
+			f.writeOnStatus-- // someone writes between the guard and the write
+			vm.cfg["tags"] = uuid()
+		}
 		st := "stopped"
 		if vm.running {
 			st = "running"
@@ -635,4 +755,13 @@ func (f *fakePVE) countExact(key string) int {
 		}
 	}
 	return n
+}
+
+// convert makes a VM a template. Like lvmthin (host A1): the disk becomes
+// base-<id>-disk-N; the cloud-init volume keeps its name.
+func (f *fakePVE) convert(id int, vm *fakeVM) {
+	vm.cfg["scsi0"] = strings.Replace(vm.cfg["scsi0"], fmt.Sprintf(":vm-%d-disk-", id), fmt.Sprintf(":base-%d-disk-", id), 1)
+	vm.template = true
+	vm.cfg["template"] = "1"
+	f.lateConvert, f.lateID = "", 0
 }
