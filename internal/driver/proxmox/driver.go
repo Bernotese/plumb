@@ -643,12 +643,52 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 	if len(params) == 1 {
 		return nil
 	}
+	if err := checkUpdateParams(cfg["net0"], params); err != nil {
+		return err
+	}
 	token := ""
 	if boot != nil {
 		token = boot.Token
 	}
 	return scrub(d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params), token)
 }
+
+// updateKeys are the only config keys that Update may write (D-185).
+// Proxmox makes the cloud-init instance-id from the user and network data;
+// a change of any cloud-init input (ciuser, sshkeys, ipconfigN, nameserver,
+// searchdomain, citype, ciupgrade, cicustom, name, the MAC of net0) starts a
+// new cloud-init instance at the next cold start: first boot again, and new
+// SSH host keys without ssh_deletekeys (test host, T-012 item 19).
+var updateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "smbios1": true}
+
+// checkUpdateParams is the last guard before Update writes: only
+// updateKeys, and a new net0 keeps the MAC of the old one.
+func checkUpdateParams(oldNet0 string, params url.Values) error {
+	for k := range params {
+		if !updateKeys[k] {
+			return fmt.Errorf("proxmox: Update must not write %q (cloud-init inputs are create-only, D-185)", k)
+		}
+	}
+	if net0, ok := params["net0"]; ok {
+		mac := macOf(oldNet0)
+		if mac == "" || len(net0) != 1 || macOf(net0[0]) != mac {
+			return errors.New("proxmox: a net0 change must keep the MAC address (a new MAC is a new cloud-init instance, D-185)")
+		}
+	}
+	return nil
+}
+
+// macOf returns the MAC of a net0 value ("virtio=BC:24:…,bridge=…"), or "".
+func macOf(net0 string) string {
+	for _, p := range strings.Split(net0, ",") {
+		if _, v, ok := strings.Cut(p, "="); ok && macRE.MatchString(v) {
+			return strings.ToUpper(v)
+		}
+	}
+	return ""
+}
+
+var macRE = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$`)
 
 // replaceProp sets one key of a property string and keeps the rest (for
 // net0: the model and the MAC address stay).

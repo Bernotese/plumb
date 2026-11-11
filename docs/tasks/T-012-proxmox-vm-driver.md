@@ -20,7 +20,7 @@ Plumb can import a cloud image, create a VM from it with the agent bootstrap, ch
 - [ ] `Observe`: config, config digest, power state, IP addresses. `Update`: cores, memory, bridge. `Power`. `Delete`.
 - [ ] `Diff` is pure and sets the risk: memory or cores without hotplug = `disruptive`, delete = `destructive`. It marks `ip`, bootstrap user and `disk` as create-only: a change of them is an error, not a change.
 - [ ] The driver touches only guests in its pool. It refuses any other VMID.
-- [ ] Real-host checks: a reboot after enrollment works; a later change of a cloud-init field does not create new SSH host keys and no new first-boot run.
+- [ ] Real-host checks: a reboot after enrollment works; Plumb never changes a cloud-init field (D-185); a change from outside keeps the SSH host keys (`ssh_deletekeys: false` in the vendor snippet, PR #26). Not tested: a bridge change on a real guest (the test host has one bridge; T-053/D-184 allows only `PLUMB_PVE_BRIDGE`). Test it on a host with two bridges before more than one bridge is allowed.
 - [ ] Tests: `go test ./internal/driver/proxmox/...` passes with recorded answers in `testdata/pve` (no token inside). `make test-pve` passes on the test host and leaves no guest behind.
 
 ## Out of scope

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -424,5 +425,67 @@ func TestStaleTemplateFlagInPoolList(t *testing.T) {
 	}
 	if err := d.Delete(ctx, driver.GuestID(ref)); err == nil || !strings.Contains(err.Error(), "is a template") {
 		t.Fatalf("Delete of the template: %v", err)
+	}
+}
+
+// D-185: a bridge change writes only net0 (with the old MAC) and the
+// digest; Update never writes a cloud-init input.
+func TestUpdateWritesNoCloudInitInput(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	ctx := context.Background()
+	ref, _ := d.FetchImage(ctx, image)
+	id, _ := d.Create(ctx, guest(ref), driver.Bootstrap{Token: "tok-1"})
+	f.vms[9001].cfg["net0"] = "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0"
+	st, _ := d.Observe(ctx, id)
+	want := guest(ref)
+	want.Bridge = "vmbr1"
+	changes, err := d.Diff(want, st)
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("diff: %+v %v", changes, err)
+	}
+	if err := d.Update(ctx, id, changes, nil); err != nil {
+		t.Fatal(err)
+	}
+	p := f.lastParams("POST /nodes/pve/qemu/9001/config")
+	var keys []string
+	for k := range p {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if strings.Join(keys, ",") != "digest,net0" || p.Get("net0") != "virtio=BC:24:11:AA:BB:CC,bridge=vmbr1" {
+		t.Errorf("bridge update sent %v", p)
+	}
+	// Every create-only attribute is refused before any write.
+	for _, attr := range driver.CreateOnly {
+		if err := d.Update(ctx, id, []wire.Change{{Attr: attr, To: "x"}}, nil); err == nil {
+			t.Errorf("Update accepted create-only %s", attr)
+		}
+	}
+}
+
+func TestCheckUpdateParams(t *testing.T) {
+	const old = "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1"
+	for name, tc := range map[string]struct {
+		params url.Values
+		ok     bool
+	}{
+		"cores, memory, smbios1": {url.Values{"digest": {"d"}, "cores": {"2"}, "memory": {"2048"}, "smbios1": {"uuid=u"}}, true},
+		"bridge, same MAC":       {url.Values{"net0": {"virtio=bc:24:11:aa:bb:cc,bridge=vmbr1,firewall=1"}}, true},
+		"searchdomain":           {url.Values{"searchdomain": {"x"}}, false},
+		"sshkeys":                {url.Values{"sshkeys": {"x"}}, false},
+		"ipconfig0":              {url.Values{"ipconfig0": {"ip=dhcp"}}, false},
+		"ciupgrade":              {url.Values{"ciupgrade": {"0"}}, false},
+		"cicustom":               {url.Values{"cicustom": {"vendor=x"}}, false},
+		"name":                   {url.Values{"name": {"x"}}, false},
+		"net0 without MAC":       {url.Values{"net0": {"virtio,bridge=vmbr1"}}, false},
+		"net0 with a new MAC":    {url.Values{"net0": {"virtio=BC:24:11:00:00:01,bridge=vmbr1"}}, false},
+	} {
+		if err := checkUpdateParams(old, tc.params); (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if err := checkUpdateParams("virtio,bridge=vmbr0", url.Values{"net0": {"virtio,bridge=vmbr1"}}); err == nil {
+		t.Error("a net0 without a MAC was changed")
 	}
 }
