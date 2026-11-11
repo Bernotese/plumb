@@ -71,10 +71,6 @@ type fakePVE struct {
 	perms         map[string]map[string]int
 	authFails     int    // requests refused with 401
 	dropPath      string // a request to this path loses its connection
-	// skewDigest: reads of the config without current=1 answer with
-	// another digest, as if Proxmox gave the views different digests by
-	// design.
-	skewDigest int
 	// writeDuringRead: this many reads of the config without current=1
 	// change the config first (a write between the reads of Observe).
 	writeDuringRead int
@@ -504,10 +500,6 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			}
 		}
 		out["digest"] = vmDigest(vm)
-		if r.Form.Get("current") != "1" && f.skewDigest > 0 {
-			f.skewDigest--
-			out["digest"] = "0000000000000000000000000000000000000000"
-		}
 		reply(w, 200, out)
 	case r.Method == "POST" && sub == "/config":
 		if d := r.Form.Get("digest"); d != "" && d != vmDigest(vm) {

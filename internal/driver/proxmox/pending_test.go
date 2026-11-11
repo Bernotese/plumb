@@ -113,38 +113,22 @@ func TestUpdateWaitsThenRestart(t *testing.T) {
 	}
 }
 
-// TestObserveDigestSkew: the two reads must show one state of the
-// config. Views with different digests by design are one state when a
-// third read of the running view has the first digest; a write between
-// the reads makes the driver read again.
+// TestObserveDigestSkew: both reads must show one state of the config
+// (same digest, host check 1); a write between the reads makes the
+// driver read again, up to viewTries.
 func TestObserveDigestSkew(t *testing.T) {
 	f, d, id, _ := newRunningGuest(t)
 	ctx := context.Background()
-	plain, err := d.Observe(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.mu.Lock()
-	f.skewDigest = 1
-	f.mu.Unlock()
-	before := f.countExact("GET /nodes/pve/qemu/9001/config")
-	st, err := d.Observe(ctx, id)
-	if err != nil {
-		t.Fatalf("different digests by design: %v", err)
-	}
-	// own reads once; then current, config and current again.
-	if n := f.countExact("GET /nodes/pve/qemu/9001/config") - before; n != 4 {
-		t.Errorf("config reads = %d, want 4", n)
-	}
-	if st.Digest == plain.Digest || !strings.HasPrefix(st.Digest, plain.Digest+"+") {
-		t.Errorf("digest of the pair: %q (plain %q)", st.Digest, plain.Digest)
-	}
-
 	f.mu.Lock()
 	f.writeDuringRead = viewTries - 1
 	f.mu.Unlock()
+	before := f.countExact("GET /nodes/pve/qemu/9001/config")
 	if _, err := d.Observe(ctx, id); err != nil {
 		t.Errorf("writes in fewer reads than the tries: %v", err)
+	}
+	// own reads once; views reads twice per try.
+	if n := f.countExact("GET /nodes/pve/qemu/9001/config") - before; n != 1+2*viewTries {
+		t.Errorf("config reads = %d, want %d", n, 1+2*viewTries)
 	}
 	f.mu.Lock()
 	f.writeDuringRead = viewTries

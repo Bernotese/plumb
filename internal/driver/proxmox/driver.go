@@ -804,7 +804,7 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 	if err != nil {
 		return driver.GuestState{}, err
 	}
-	cfg, next, digest, err := d.views(ctx, id)
+	cfg, next, err := d.views(ctx, id)
 	if err != nil {
 		return driver.GuestState{}, err
 	}
@@ -818,7 +818,7 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 	if name == "" {
 		name = m.Name
 	}
-	st := driver.GuestState{Spec: specOf(name, cfg), Digest: digest, Power: driver.PowerStopped}
+	st := driver.GuestState{Spec: specOf(name, cfg), Digest: cfg["digest"], Power: driver.PowerStopped}
 	if p := specOf(name, next); !reflect.DeepEqual(p, st.Spec) {
 		st.Pending = &p
 	}
@@ -836,39 +836,22 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 const viewTries = 3
 
 // views reads the running config and the config after the next stop and
-// start (D-190), as one state of the config file. It returns the digest
-// that Observe reports.
-//
-//   - Both answers have the same digest (expected; host check 1): one
-//     state, two reads.
-//   - The digests differ: either a write came between the reads, or
-//     Proxmox gives the two views different digests by design. A third
-//     read of the running view decides: the same digest as the first
-//     read means no write came between, and the pair is one state; its
-//     digest is both digests, so a change of either view moves it.
-//
-// So the answer of the host changes the recorded replay data only, not
-// this code.
-func (d *Driver) views(ctx context.Context, id int) (running, next map[string]string, digest string, err error) {
+// start (D-190). Proxmox gives both answers the same digest in every
+// state (host check 1, T-056), so equal digests mean one state of the
+// config file; a write between the two reads makes the driver read again.
+func (d *Driver) views(ctx context.Context, id int) (running, next map[string]string, err error) {
 	for range viewTries {
 		if running, err = d.readConfig(ctx, id, true); err != nil {
-			return nil, nil, "", err
+			return nil, nil, err
 		}
 		if next, err = d.readConfig(ctx, id, false); err != nil {
-			return nil, nil, "", err
+			return nil, nil, err
 		}
 		if running["digest"] == next["digest"] {
-			return running, next, running["digest"], nil
-		}
-		again, err := d.readConfig(ctx, id, true)
-		if err != nil {
-			return nil, nil, "", err
-		}
-		if again["digest"] == running["digest"] {
-			return running, next, running["digest"] + "+" + next["digest"], nil
+			return running, next, nil
 		}
 	}
-	return nil, nil, "", fmt.Errorf("proxmox: VMID %d: the config changed during each of %d reads; try again later", id, viewTries)
+	return nil, nil, fmt.Errorf("proxmox: VMID %d: the config changed during each of %d reads; try again later", id, viewTries)
 }
 
 // Diff is the shared rule of all drivers (D-063). Proxmox can hot-plug

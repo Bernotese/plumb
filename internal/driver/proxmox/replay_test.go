@@ -32,13 +32,6 @@ type replayRecording struct {
 	Body   json.RawMessage `json:"body"`
 }
 
-// T-056: 0029b.json and 0054b.json of testdata/pve/lifecycle are made by
-// hand (field "note") and block the merge until host check 1 (review S1).
-// The swap is a data change only: put the recorded answers of both views
-// in their place (the recorder keeps the query, so config and
-// config?current=1 queue apart here), whatever digests Proxmox gives
-// (see views).
-
 // replayKey is method and path. A config read also keeps current=1: the
 // running view and the view after the next cold start are two answers
 // (D-190).
