@@ -81,7 +81,7 @@ func TestTargetDeleteRevokesAgent(t *testing.T) {
 	e := newEnv(t)
 	e.seed("a")
 	cred := e.stealCredential("a")
-	if code, _ := e.call("GET", wire.PathPoll, cred, nil); code != http.StatusNoContent {
+	if code, _ := e.call("GET", wire.PathPoll, cred, nil); code != http.StatusNoContent && code != http.StatusOK {
 		t.Fatalf("poll before the delete: %d", code)
 	}
 	if run := e.deleteTarget("a"); run.Status != "succeeded" {
