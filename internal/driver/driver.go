@@ -215,8 +215,11 @@ const (
 // ImageObject is one hypervisor object of an Image, as ListImages sees it.
 type ImageObject struct {
 	Kind ImageObjectKind
-	Ref  ImageRef // template VMID; empty for an import file
-	Name string   // template name, or the volume id of an import file
+	// Image is the Image document the object belongs to. RemoveImage
+	// checks that the description names it (D-209).
+	Image string
+	Ref   ImageRef // template VMID; empty for an import file
+	Name  string   // template name, or the volume id of an import file
 	// Version is set for ImageVersionTemplate, else 0.
 	Version int
 	// Digest is the build digest of a version, or the SHA-256 of the base
