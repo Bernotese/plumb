@@ -3,7 +3,9 @@
 package install
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -278,10 +280,11 @@ func TestRepairHalfInstalledHost(t *testing.T) {
 			t.Errorf("dry run does not list %q", want)
 		}
 	}
-	// Two writes: after the storages, and after the LXC (its id). The last
-	// state_put has nothing new and writes nothing.
-	if n := strings.Count(out, "/install.state"); n != 2 {
-		t.Errorf("dry run writes the state file %d times, want 2", n)
+	// Three writes: after plumb-images, after plumb-snippets (snippet_dir,
+	// review S2) and after the LXC (its id). The last state_put has
+	// nothing new and writes nothing.
+	if n := strings.Count(out, "/install.state"); n != 3 {
+		t.Errorf("dry run writes the state file %d times, want 3", n)
 	}
 
 	code, out, errOut = h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
@@ -305,7 +308,9 @@ func TestRepairHalfInstalledHost(t *testing.T) {
 // adopted: --remove keeps it.
 func TestForeignImagesNotAdopted(t *testing.T) {
 	h := newHost(t)
-	seedHalfInstalled(t, h, "/srv/someone-elses-images")
+	other := filepath.Join(t.TempDir(), "someone-elses-images")
+	os.MkdirAll(other, 0o755)
+	seedHalfInstalled(t, h, other)
 	code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
 	if code != 0 {
 		t.Fatalf("install: %d %s %s", code, out, errOut)
@@ -401,4 +406,137 @@ func TestStaleLXCDir(t *testing.T) {
 			t.Error("pct create ran over a stale directory with files")
 		}
 	}
+}
+
+// Review S2: a run that stops before plumb-snippets is set up does not put
+// snippet_dir into the state, so --remove never deletes a snippet that
+// this script did not write.
+func TestStateNamesSnippetDirOnlyAfterSetup(t *testing.T) {
+	h := newHost(t)
+	foreign := filepath.Join(h.snippet, "snippets", "plumb-vendor.yaml")
+	os.MkdirAll(filepath.Dir(foreign), 0o755)
+	os.WriteFile(foreign, []byte("someone else's snippet\n"), 0o644)
+	if code, _, _ := h.run(append(asRoot, "FAKE_FAIL=pveum pool add"), "--yes", "--plumb-binary", h.plumb); code == 0 {
+		t.Fatal("the run did not stop")
+	}
+	st, _ := os.ReadFile(h.stateF)
+	if !strings.Contains(string(st), "snippet_dir=\n") {
+		t.Errorf("state names the snippet dir before it was set up:\n%s", st)
+	}
+	if code, out, errOut := h.runRemove(); code != 0 {
+		t.Fatalf("remove: %d %s %s", code, out, errOut)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Error("--remove deleted a snippet that install.sh did not write")
+	}
+}
+
+// Review S3: the adopt decision is printed before the question; a storage
+// with more options than install.sh sets is not adopted; an unsafe image
+// directory stops the run before any change.
+func TestImagesAdoptRules(t *testing.T) {
+	h := newHost(t)
+	seedHalfInstalled(t, h, h.images())
+	_, out, _ := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
+	adopt, ask := strings.Index(out, "so it is adopted"), strings.Index(out, "would ask: Continue?")
+	if adopt < 0 || ask < 0 || adopt > ask {
+		t.Errorf("adopt line at %d, question at %d", adopt, ask)
+	}
+
+	h = newHost(t)
+	seedHalfInstalled(t, h, h.images())
+	os.WriteFile(filepath.Join(h.state, "extra.plumb-images"), []byte(`"nodes":"pve2"`), 0o644)
+	_, out, _ = h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
+	if !strings.Contains(out, "not as install.sh makes it") {
+		t.Errorf("a storage with the option nodes was adopted:\n%s", out)
+	}
+
+	for name, env := range map[string][]string{
+		"owner":    {"FAKE_DIR_OWNER=nobody"},
+		"writable": nil,
+		"symlink":  nil,
+	} {
+		h = newHost(t)
+		seedHalfInstalled(t, h, h.images())
+		switch name {
+		case "writable":
+			os.Chmod(h.images(), 0o777)
+		case "symlink":
+			real := filepath.Join(t.TempDir(), "real")
+			os.MkdirAll(real, 0o755)
+			os.RemoveAll(h.images())
+			os.Symlink(real, h.images())
+		}
+		code, _, errOut := h.run(append(asRoot, env...), "--yes", "--plumb-binary", h.plumb)
+		if code == 0 || !strings.Contains(errOut, "Nothing was changed") {
+			t.Errorf("%s: %d %q", name, code, errOut)
+		}
+		for _, c := range h.calls() {
+			if mutating.MatchString(c) {
+				t.Errorf("%s: changed the host: %s", name, c)
+			}
+		}
+	}
+}
+
+// Review S4: --remove without a state entry keeps plumb-images and says so.
+func TestRemoveKeepsUnrecordedImages(t *testing.T) {
+	h := newHost(t)
+	seedHalfInstalled(t, h, h.images())
+	code, out, errOut := h.runRemove()
+	if code != 0 || !strings.Contains(out, "Kept storage plumb-images: the state file has no entry") {
+		t.Errorf("remove: %d %s %s", code, out, errOut)
+	}
+	if index(h.calls(), "pvesm remove plumb-images") >= 0 {
+		t.Error("removed plumb-images without a state entry")
+	}
+}
+
+// D-183: plumb serve exits 78 for a start failure that a restart cannot
+// fix; systemd must not restart it then.
+func TestUnitStopsOnExit78(t *testing.T) {
+	h := newHost(t)
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+	unit, err := os.ReadFile(filepath.Join(h.state, "push", "_etc_systemd_system_plumb.service"))
+	if err != nil || !strings.Contains(string(unit), "\nRestartPreventExitStatus=78\n") {
+		t.Errorf("unit: %v\n%s", err, unit)
+	}
+}
+
+// Review nits 1 and 2: an empty stale dir without rootfs is removed; a
+// symbolic link stops the run.
+func TestStaleLXCDirNits(t *testing.T) {
+	h := newHost(t)
+	dir := filepath.Join(filepath.Dir(h.state), "lxc", "105")
+	os.MkdirAll(dir, 0o700)
+	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Errorf("empty dir without rootfs: %d %s %s", code, out, errOut)
+	}
+	h = newHost(t)
+	dir = filepath.Join(filepath.Dir(h.state), "lxc")
+	os.MkdirAll(dir, 0o755)
+	os.Symlink(t.TempDir(), filepath.Join(dir, "105"))
+	if code, _, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code == 0 || !strings.Contains(errOut, "symbolic link") {
+		t.Errorf("symlinked dir: %d %q", code, errOut)
+	}
+}
+
+// runRemove runs install.sh --remove --yes as root, without --snippet-dir:
+// the directory comes from the state file, as for a person.
+func (h *host) runRemove(env ...string) (int, string, string) {
+	h.t.Helper()
+	cmd := exec.Command("bash", "install.sh", "--remove", "--yes")
+	cmd.Env = append(append(append([]string{}, h.env...), asRoot...), env...)
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	err := cmd.Run()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		h.t.Fatal(err)
+	}
+	return code, out.String(), errOut.String()
 }

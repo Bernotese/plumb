@@ -280,6 +280,9 @@ snippet_yaml() {
 #cloud-config
 # Plumb vendor data, written once by install.sh (D-025). No secret: each VM
 # gets its one-time enrollment token as its SMBIOS serial.
+# A new cloud-init instance (a cloud-init field changed outside Plumb, or
+# the host DNS) keeps the SSH host keys (D-185).
+ssh_deletekeys: false
 write_files:
   - path: /etc/plumb-agent/ca.pem
     owner: root:root
@@ -355,6 +358,7 @@ ensure_snippet_storage() {
 	else
 		run pvesm add dir "$SNIPPET_STORAGE" --path "$SNIPPET_DIR" --content snippets --shared 0
 	fi
+	SNIPPETS_DONE=1
 }
 
 write_snippet() {
@@ -410,30 +414,65 @@ check_storages() {
 # only, root-owned). It never changes a storage that it did not make.
 ensure_image_storage() {
 	[[ $IMAGE_STORAGE == plumb-images ]] || return 0
-	if ! storage_content plumb-images >/dev/null; then
+	if [[ $IMAGES_PLAN == make ]]; then
 		run install -d -o root -g root -m 0755 "$IMAGE_DIR"
 		run pvesm add dir plumb-images --path "$IMAGE_DIR" --content import --shared 0
 		IMAGES_MADE=1
-	elif [[ -n $(state_get image_dir) ]]; then
-		IMAGES_MADE=1 # made by an earlier run of this script
-	elif images_like_ours; then
-		# An earlier run made it and stopped before it wrote the state file
-		# (test host, T-013 step 3). It is exactly what this script makes, so
-		# it is adopted: --remove then removes the storage entry, and never
-		# a file in it (rmdir only).
-		say "Storage plumb-images ($IMAGE_DIR, content import) exists without a state entry; it is exactly what install.sh makes, so it is adopted."
+	elif [[ $IMAGES_PLAN == ours || $IMAGES_PLAN == adopt ]]; then
 		IMAGES_MADE=1
+	fi
+}
+
+# check_images decides, before any change, what happens with plumb-images
+# (IMAGES_PLAN): make it, keep ours (state entry), adopt it (an earlier run
+# made it and stopped before its state file: test host, T-013 step 3), or
+# use it as foreign (--remove keeps it). It prints the decision. A storage
+# that is used or adopted must have a safe directory (review S3).
+IMAGES_PLAN=""
+check_images() {
+	[[ $IMAGE_STORAGE == plumb-images ]] || return 0
+	if ! storage_content plumb-images >/dev/null; then
+		IMAGES_PLAN="make"
+		return 0
+	fi
+	local cfg path
+	cfg=$(query pvesh get /storage/plumb-images --output-format json 2>/dev/null) || die "cannot read storage plumb-images"
+	[[ $cfg =~ \"path\"\ *:\ *\"([^\"]*)\" ]] || die "storage plumb-images has no path. Nothing was changed."
+	path=${BASH_REMATCH[1]}
+	check_image_dir "$path"
+	if [[ -n $(state_get image_dir) ]]; then
+		IMAGES_PLAN=ours
+	elif images_like_ours "$cfg"; then
+		IMAGES_PLAN=adopt
+		say "Storage plumb-images ($IMAGE_DIR, content import) exists without a state entry; it is exactly what install.sh makes, so it is adopted (--remove removes it)."
 	else
+		IMAGES_PLAN=foreign
 		say "Storage plumb-images exists, but not as install.sh makes it; it is used and --remove keeps it."
 	fi
+}
+
+# check_image_dir refuses an image directory that someone else could
+# change: it must be a real directory (no symbolic link), owned by root,
+# not writable by group or others.
+check_image_dir() {
+	local dir=$1 st
+	[[ -d $dir && ! -L $dir ]] || die "the directory $dir of storage plumb-images is missing or a symbolic link. Nothing was changed."
+	st=$(query stat -c '%U %a' -- "$dir") || die "cannot read $dir"
+	[[ ${st%% *} == root ]] || die "$dir belongs to ${st%% *}, not root. Nothing was changed."
+	(( (8#${st##* } & 8#022) == 0 )) || die "$dir is writable by group or others (mode ${st##* }). Nothing was changed."
 }
 
 # images_like_ours reports whether plumb-images is exactly the storage that
 # ensure_image_storage makes: type dir, path IMAGE_DIR, content import, not
 # shared.
 images_like_ours() {
-	local cfg
-	cfg=$(query pvesh get /storage/plumb-images --output-format json 2>/dev/null) || return 1
+	local cfg=$1
+	# Only the keys that pvesm add dir … --content import --shared 0 gives
+	# (review S3): another option (nodes, disable, is_mountpoint …) means
+	# someone else set it up.
+	# shellcheck disable=SC2016 # perl code
+	json_rows 'my %ok = map { $_ => 1 } qw(content digest path shared storage type);
+		for (keys %$d) { exit 1 unless $ok{$_} } exit 0' <<<"$cfg" || return 1
 	[[ $cfg =~ \"type\"\ *:\ *\"dir\" ]] &&
 		[[ $cfg =~ \"path\"\ *:\ *\"([^\"]*)\" && ${BASH_REMATCH[1]} == "$IMAGE_DIR" ]] &&
 		[[ $cfg =~ \"content\"\ *:\ *\"import\" ]] &&
@@ -565,7 +604,7 @@ ensure_token() {
 			return 0
 		fi
 		confirm "Token $PVE_USER!$TOKEN_NAME exists, but no Plumb LXC holds it. Replace the token?" yes ||
-			die "stopped; nothing else was changed"
+			die "stopped; the token was not changed"
 		run pveum user token remove "$PVE_USER" "$TOKEN_NAME"
 	fi
 	local out
@@ -602,7 +641,16 @@ state_put() {
 	else
 		lxc=$(state_get lxc_id)
 	fi
-	content=$(printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s' "$lxc" "$POOL" "$SNIPPET_STORAGE" "$SNIPPET_DIR" "$images")
+	# snippet_dir is written only after ensure_snippet_storage ran: --remove
+	# deletes the snippet there, so it must never name a directory that this
+	# run did not set up (review S2, D-084).
+	local snippets
+	if [[ $SNIPPETS_DONE == 1 ]]; then
+		snippets=$SNIPPET_DIR
+	else
+		snippets=$(state_get snippet_dir)
+	fi
+	content=$(printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s' "$lxc" "$POOL" "$SNIPPET_STORAGE" "$snippets" "$images")
 	if [[ $content == "$STATE_WRITTEN" ]] || { [[ -f $STATE_FILE ]] && [[ $content == "$(cat "$STATE_FILE")" ]]; }; then
 		return 0
 	fi
@@ -693,9 +741,16 @@ ensure_lxc() {
 	# A pct create that failed can leave $LXC_DIR/<id>/rootfs (empty, mode
 	# 0700) behind, and the next pct create with the same id fails on it.
 	# Only empty directories of an id without a container are removed.
+	if [[ -L $LXC_DIR/$LXC_ID ]]; then
+		die "$LXC_DIR/$LXC_ID is a symbolic link, but container $LXC_ID does not exist; check it by hand"
+	fi
 	if [[ -d $LXC_DIR/$LXC_ID ]]; then
-		run rmdir -- "$LXC_DIR/$LXC_ID/rootfs" "$LXC_DIR/$LXC_ID" 2>/dev/null ||
-			die "$LXC_DIR/$LXC_ID exists and is not empty, but container $LXC_ID does not exist; check it by hand"
+		if [[ -d $LXC_DIR/$LXC_ID/rootfs && ! -L $LXC_DIR/$LXC_ID/rootfs ]]; then
+			run rmdir -- "$LXC_DIR/$LXC_ID/rootfs" 2>/dev/null ||
+				die "$LXC_DIR/$LXC_ID/rootfs is not empty, but container $LXC_ID does not exist; check it by hand"
+		fi
+		run rmdir -- "$LXC_DIR/$LXC_ID" 2>/dev/null ||
+			die "$LXC_DIR/$LXC_ID is not empty, but container $LXC_ID does not exist; check it by hand"
 	fi
 	# Unprivileged, no host mount, not in the Plumb pool (ARCHITECTURE §7).
 	# mp0 is a new volume on the disk storage (not a host path) with
@@ -780,6 +835,8 @@ EnvironmentFile=/etc/plumb/plumb.env
 ExecStart=/usr/local/bin/plumb serve --data /var/lib/plumb --hosts ${PLUMB_HOSTS}
 Restart=on-failure
 RestartSec=5
+# plumb serve exits 78 for a start failure that a restart cannot fix (D-183).
+RestartPreventExitStatus=78
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -906,6 +963,7 @@ do_install() {
 		say "changes, no agent reaches Plumb any more. Use a static address: --lxc-ip CIDR --lxc-gw IP (D-179)."
 	fi
 	check_storages
+	check_images
 	check_user_groups
 	check_key_preflight
 	STRAY_ACLS=$(stray_acls)
@@ -1028,6 +1086,9 @@ do_remove() {
 	fi
 	local images
 	images=$(state_get image_dir)
+	if [[ -z $images ]] && query pvesm status --storage plumb-images >/dev/null 2>&1; then
+		say "Kept storage plumb-images: the state file has no entry for it, so install.sh did not make it (or did not record it)."
+	fi
 	if [[ -n $images ]] && query pvesm status --storage plumb-images >/dev/null 2>&1; then
 		run pvesm remove plumb-images
 		[[ -d $images/import ]] && { run rmdir -- "$images/import" 2>/dev/null || true; }
@@ -1050,6 +1111,7 @@ main() {
 NODE=""
 LXC_NEW=0
 LXC_OURS=0
+SNIPPETS_DONE=0
 IMAGES_MADE=0
 STRAY_ACLS=""
 main "$@"

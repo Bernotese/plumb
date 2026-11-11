@@ -39,6 +39,9 @@ dpkg) # dpkg --print-architecture | dpkg --compare-versions A ge B
 	[[ $(printf '%s\n%s\n' "$2" "$4" | sort -V | head -n1) == "$4" ]]
 	;;
 hostname) echo pve1 ;;
+stat) # stat -c '%U %a' -- DIR: the tests run as a normal user; root unless FAKE_DIR_OWNER
+	printf '%s %s\n' "${FAKE_DIR_OWNER:-root}" "$(/usr/bin/stat -c %a -- "${!#}")"
+	;;
 ip) echo "5: vmbr0    inet 192.168.1.5/24 brd 192.168.1.255 scope global vmbr0\\       valid_lft forever preferred_lft forever" ;;
 install)
 	args=()
@@ -176,8 +179,11 @@ pvesh)
 		id=${2#/storage/}
 		if [[ -e $st/type.$id ]]; then
 			# Like Proxmox: content, path, shared and type of a dir storage.
-			printf '{"content":"%s","path":"%s","shared":0,"storage":"%s","type":"%s"}\n' \
-				"$(cat "$st/content.$id")" "$(cat "$st/path.$id")" "$id" "$(cat "$st/type.$id")"
+			# extra.ID: more options, for example "nodes":"pve2".
+			extra=""
+			[[ -e $st/extra.$id ]] && extra=",$(cat "$st/extra.$id")"
+			printf '{"content":"%s","digest":"85e2","path":"%s","shared":0,"storage":"%s","type":"%s"%s}\n' \
+				"$(cat "$st/content.$id")" "$(cat "$st/path.$id")" "$id" "$(cat "$st/type.$id")" "$extra"
 		elif [[ -e $st/content.$id ]]; then
 			printf '{"content":"%s"}\n' "$(cat "$st/content.$id")"
 		elif [[ $id == local-lvm ]]; then

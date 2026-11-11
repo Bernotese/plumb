@@ -18,7 +18,7 @@ import (
 const fakeSecret = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
 
 // fakeNames are the commands that testdata/fakepve plays.
-var fakeNames = []string{"pveversion", "dpkg-query", "dpkg", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install", "lxc-attach"}
+var fakeNames = []string{"pveversion", "dpkg-query", "dpkg", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install", "lxc-attach", "stat"}
 
 type host struct {
 	t       *testing.T
@@ -322,10 +322,15 @@ func TestSnippet(t *testing.T) {
 		WriteFiles []struct {
 			Path, Owner, Permissions, Content string
 		} `yaml:"write_files"`
-		Runcmd [][]string `yaml:"runcmd"`
+		Runcmd        [][]string `yaml:"runcmd"`
+		SSHDeleteKeys *bool      `yaml:"ssh_deletekeys"`
 	}
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
 		t.Fatalf("snippet is not YAML: %v\n%s", err, text)
+	}
+	// D-185: a new cloud-init instance keeps the SSH host keys.
+	if doc.SSHDeleteKeys == nil || *doc.SSHDeleteKeys {
+		t.Errorf("snippet without ssh_deletekeys: false")
 	}
 	files := map[string]string{}
 	for _, f := range doc.WriteFiles {
@@ -625,7 +630,12 @@ func TestReReviewMinors(t *testing.T) {
 	}
 	// n3: a plumb-images storage that existed before stays at --remove.
 	h = newHost(t)
+	// Like a real dir storage, but in another directory: not adopted.
+	other := filepath.Join(t.TempDir(), "other-images")
+	os.MkdirAll(other, 0o755)
 	os.WriteFile(filepath.Join(h.state, "storage.plumb-images"), nil, 0o644)
+	os.WriteFile(filepath.Join(h.state, "type.plumb-images"), []byte("dir\n"), 0o644)
+	os.WriteFile(filepath.Join(h.state, "path.plumb-images"), []byte(other+"\n"), 0o644)
 	os.WriteFile(filepath.Join(h.state, "content.plumb-images"), []byte("import"), 0o644)
 	root := h.installed()
 	if st, _ := os.ReadFile(h.stateF); !strings.Contains(string(st), "image_dir=\n") {
