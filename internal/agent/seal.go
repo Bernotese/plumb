@@ -46,6 +46,9 @@ var agentFiles = []string{
 	"/usr/local/bin/plumb-agent",
 }
 
+// accountBackups are the backup files of the account files (T-066 F3).
+var accountBackups = []string{"/etc/passwd-", "/etc/shadow-", "/etc/group-", "/etc/gshadow-", "/etc/subuid-", "/etc/subgid-"}
+
 // histories are shell and tool histories of root that seal removes.
 var histories = []string{".bash_history", ".lesshst", ".viminfo", ".python_history", ".wget-hsts"}
 
@@ -265,7 +268,67 @@ func (a *Agent) sealCloudInit(ctx context.Context, _ wire.SealBody) (wire.Status
 	if _, err := a.opt.Runner.Run(ctx, "cloud-init", "clean", "--logs", "--seed", "--machine-id", "--configs", "all"); err != nil {
 		return failedStep("%v", err)
 	}
-	return applied("cloud-init state, logs, seed, configs and machine-id reset")
+	// T-066 F1: the build hostname must not reach a clone. /etc/hostname
+	// gets the neutral name; cloud-init (set_hostname, a new instance)
+	// sets the clone's own name at its first boot.
+	old, err := readGuestFile(a.opt.Root, "/etc/hostname", 4096)
+	if err != nil {
+		return failedStep("%v", err)
+	}
+	old = strings.TrimSpace(old)
+	if err := rewriteGuestFile(a.opt.Root, "/etc/hostname", []byte(neutralHostname+"\n")); err != nil {
+		return failedStep("%v", err)
+	}
+	if old != "" && old != neutralHostname {
+		hosts, err := readGuestFile(a.opt.Root, "/etc/hosts", 1<<20)
+		if err != nil {
+			return failedStep("%v", err)
+		}
+		if clean := cleanHosts(hosts, old); clean != hosts {
+			if err := rewriteGuestFile(a.opt.Root, "/etc/hosts", []byte(clean)); err != nil {
+				return failedStep("%v", err)
+			}
+		}
+	}
+	return applied("cloud-init state, logs, seed, configs and machine-id reset; hostname " + neutralHostname)
+}
+
+// neutralHostname is the hostname of a template (T-066 F1).
+const neutralHostname = "localhost"
+
+// cleanHosts drops the name host (and host.<domain>) from every line of
+// an /etc/hosts text; a line without a name left is dropped. Comments and
+// other lines stay as they are.
+func cleanHosts(text, host string) string {
+	lines := strings.SplitAfter(text, "\n")
+	var b strings.Builder
+	for _, line := range lines {
+		body, comment, _ := strings.Cut(strings.TrimRight(line, "\n"), "#")
+		f := strings.Fields(body)
+		if len(f) < 2 {
+			b.WriteString(line)
+			continue
+		}
+		keep := []string{f[0]}
+		for _, n := range f[1:] {
+			if n != host && !strings.HasPrefix(n, host+".") {
+				keep = append(keep, n)
+			}
+		}
+		switch {
+		case len(keep) == len(f):
+			b.WriteString(line)
+		case len(keep) == 1:
+			// The line named only the build host: dropped.
+		default:
+			out := strings.Join(keep, "\t")
+			if comment != "" {
+				out += " #" + comment
+			}
+			b.WriteString(out + "\n")
+		}
+	}
+	return b.String()
 }
 
 // (6) D-185: every clone makes its own SSH host keys.
@@ -311,11 +374,26 @@ func (a *Agent) sealBuildUser(ctx context.Context, _ wire.SealBody) (wire.Status
 	if err := removeGuest(a.opt.Root, buildSudoers); err != nil {
 		return failedStep("%v", err)
 	}
+	// T-066 F3: the backups that shadow-utils keeps still name the user.
+	// They are only backups: removed (a link is unlinked, never followed).
+	for _, b := range accountBackups {
+		if err := removeGuest(a.opt.Root, b); err != nil {
+			return failedStep("%v", err)
+		}
+	}
 	return applied(text)
 }
 
 // (8) The random seed and the credential secret of systemd are per guest.
-func (a *Agent) sealSeed(_ context.Context, _ wire.SealBody) (wire.Status, string) {
+// T-066 F2: systemd-random-seed.service saves a new seed when it stops,
+// also at the power-off. Stopping it here makes that save now; after the
+// removal nothing writes the file again before the power-off.
+func (a *Agent) sealSeed(ctx context.Context, _ wire.SealBody) (wire.Status, string) {
+	if a.unitIn("systemd-random-seed.service") {
+		if _, err := a.opt.Runner.Run(ctx, "systemctl", "stop", "systemd-random-seed.service"); err != nil {
+			return failedStep("%v", err)
+		}
+	}
 	for _, p := range []string{"/var/lib/systemd/random-seed", "/var/lib/systemd/credential.secret"} {
 		if err := removeGuest(a.opt.Root, p); err != nil {
 			return failedStep("%v", err)

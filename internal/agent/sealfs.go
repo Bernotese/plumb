@@ -352,3 +352,70 @@ func guestRegular(root, p string) bool {
 	var st unix.Stat_t
 	return unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil && st.Mode&unix.S_IFMT == unix.S_IFREG
 }
+
+// readGuestFile reads the regular guest file p (at most max bytes). A
+// link in any component, a non-regular file or a larger file is an error;
+// a missing file reads as "".
+func readGuestFile(root, p string, max int64) (string, error) {
+	dir, name := splitGuest(p)
+	dfd, err := openGuestDir(root, dir)
+	if err != nil {
+		return "", err
+	}
+	defer unix.Close(dfd)
+	fd, err := unix.Openat(dfd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", p, err)
+	}
+	f := os.NewFile(uintptr(fd), name)
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > max {
+		return "", fmt.Errorf("%s is not a regular file of at most %d bytes", p, max)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	return string(b), err
+}
+
+// rewriteGuestFile replaces the content of the existing regular guest file
+// p in place: opened with O_NOFOLLOW (no link in any component), one hard
+// link only, then truncated and written through the fd. In place, because
+// a container bind-mounts /etc/hostname and /etc/hosts (a rename fails
+// there). A missing file is made with writeGuestFile.
+func rewriteGuestFile(root, p string, data []byte) error {
+	dir, name := splitGuest(p)
+	dfd, err := openGuestDir(root, dir)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(dfd)
+	fd, err := unix.Openat(dfd, name, unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return writeGuestFile(root, p, data)
+	}
+	if err != nil {
+		return fmt.Errorf("open %s: %w", p, err)
+	}
+	f := os.NewFile(uintptr(fd), name)
+	defer f.Close()
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return err
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 {
+		return fmt.Errorf("%s is not a regular file with one link", p)
+	}
+	if err := f.Truncate(0); err != nil {
+		return fmt.Errorf("truncate %s: %w", p, err)
+	}
+	if _, err := f.WriteAt(data, 0); err != nil {
+		return fmt.Errorf("write %s: %w", p, err)
+	}
+	return f.Sync()
+}

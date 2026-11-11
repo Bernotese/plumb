@@ -75,8 +75,13 @@ func buildGuest(t *testing.T, root string) (shadow string) {
 		"var/log/syslog": "build-host 10.0.0.9 plumb-build", "var/log/syslog.1": "old", "var/log/dpkg.log.2.gz": "old",
 		"var/log/apt/history.log": "x", "var/log/journal/0123/system.journal": "j",
 		"var/log/cloud-init-output.log": "upgrade log", "tmp/a/b": "x", "var/tmp/c": "x", "root/.bash_history": "ls",
-		"etc/shadow":                 "root:secret",
-		"etc/plumb-agent/agent.json": "{}", "etc/plumb-agent/ca.pem": "pem", "usr/local/bin/plumb-agent": "bin",
+		"etc/shadow":   "root:secret",
+		"etc/hostname": "plumb-build-web-v3\n",
+		"etc/hosts":    "127.0.0.1\tlocalhost\n127.0.1.1\tplumb-build-web-v3.lan plumb-build-web-v3\n10.0.0.5 db plumb-build-web-v3 # build\n::1 localhost ip6-localhost\n",
+		"etc/passwd-":  "plumb-build:x:1000", "etc/shadow-": "plumb-build:!", "etc/group-": "plumb-build:x:1000:",
+		"etc/gshadow-": "plumb-build:!::", "etc/subuid-": "plumb-build:100000:65536", "etc/subgid-": "plumb-build:100000:65536",
+		"usr/lib/systemd/system/systemd-random-seed.service": "",
+		"etc/plumb-agent/agent.json":                         "{}", "etc/plumb-agent/ca.pem": "pem", "usr/local/bin/plumb-agent": "bin",
 		"usr/local/sbin/plumb-agent-install": "sh", "etc/systemd/system/plumb-agent.service": "[Unit]",
 	}
 	for p, c := range files {
@@ -170,6 +175,7 @@ func TestSealBuildGuest(t *testing.T) {
 		"systemctl stop rsyslog.service", "systemctl stop syslog.socket", "journalctl --relinquish-var",
 		"cloud-init clean --logs --seed --machine-id --configs all",
 		"pkill -KILL -u plumb-build", "userdel -r -f plumb-build",
+		"systemctl stop systemd-random-seed.service",
 		"apt-get clean", "fstrim --all",
 		"sync", "systemctl poweroff",
 	}
@@ -181,6 +187,7 @@ func TestSealBuildGuest(t *testing.T) {
 	}
 	gone := []string{"etc/cloud/cloud-init.disabled", "etc/ssh/ssh_host_ed25519_key", "etc/ssh/ssh_host_ed25519_key.pub",
 		"etc/sudoers.d/90-cloud-init-users", "var/lib/systemd/random-seed", "var/lib/systemd/credential.secret",
+		"etc/passwd-", "etc/shadow-", "etc/group-", "etc/gshadow-", "etc/subuid-", "etc/subgid-",
 		"var/log/syslog.1", "var/log/dpkg.log.2.gz", "var/log/journal/0123", "var/log/hard", "tmp/a", "var/tmp/c", "root/.bash_history"}
 	for _, p := range gone {
 		if exists(root, p) {
@@ -196,6 +203,14 @@ func TestSealBuildGuest(t *testing.T) {
 		if fi, err := os.Stat(filepath.Join(root, p)); err != nil || fi.Size() != 0 {
 			t.Errorf("%s not empty: %v", p, err)
 		}
+	}
+	// T-066 F1: no build hostname in /etc/hostname or /etc/hosts.
+	if b, _ := os.ReadFile(filepath.Join(root, "etc/hostname")); string(b) != "localhost\n" {
+		t.Errorf("hostname = %q", b)
+	}
+	wantHosts := "127.0.0.1\tlocalhost\n10.0.0.5\tdb # build\n::1 localhost ip6-localhost\n"
+	if b, _ := os.ReadFile(filepath.Join(root, "etc/hosts")); string(b) != wantHosts {
+		t.Errorf("hosts =\n%q\nwant\n%q", b, wantHosts)
 	}
 	// S6: nothing was written through a link.
 	if b, _ := os.ReadFile(shadow); string(b) != "root:secret" {
@@ -517,5 +532,62 @@ func TestSealNoPowerOffWhenRemoveFails(t *testing.T) {
 		if c == "sync" || c == "systemctl poweroff" {
 			t.Fatalf("ran %q although the binary is still there", c)
 		}
+	}
+}
+
+func TestCleanHosts(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"127.0.1.1 b-v1\n", ""},
+		{"127.0.1.1 b-v1.lan b-v1\n", ""},
+		{"127.0.0.1 localhost b-v1\n", "127.0.0.1\tlocalhost\n"},
+		{"# b-v1 in a comment\n127.0.0.1 localhost\n", "# b-v1 in a comment\n127.0.0.1 localhost\n"},
+		{"10.0.0.1 b-v10 xb-v1 b-v1x\n", "10.0.0.1 b-v10 xb-v1 b-v1x\n"},
+		{"127.0.0.1 localhost", "127.0.0.1 localhost"},
+	}
+	for _, c := range cases {
+		if got := cleanHosts(c.in, "b-v1"); got != c.want {
+			t.Errorf("cleanHosts(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// T-066 F1 with a link: /etc/hosts or /etc/hostname as a symbolic link,
+// or /etc/hosts as a hard link,
+// fails the step; the target is not written, and the guest stays on.
+func TestSealHostnameLinkFails(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		hard bool
+	}{{"etc/hosts", false}, {"etc/hostname", false}, {"etc/hosts", true}} {
+		name := c.name
+		t.Run(fmt.Sprintf("%s hard=%v", name, c.hard), func(t *testing.T) {
+			r := &sealRunner{apt: aptClean}
+			ta, ctl := startBuildAgent(t, true, r)
+			canary := filepath.Join(ta.root, "canary")
+			write(t, canary, "127.0.1.1 plumb-build-web-v3 # must stay\n")
+			p := filepath.Join(ta.root, name)
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+			link := os.Symlink
+			if c.hard {
+				link = os.Link
+			}
+			if err := link(canary, p); err != nil {
+				t.Fatal(err)
+			}
+			ctl.send(t, "s1", wire.CommandSeal, wire.SealBody{PlanID: 7})
+			rep := ctl.result(t, "s1")
+			if got := statuses(rep.Items); !strings.Contains(got, "cloud-init=failed host-keys=skipped") {
+				t.Fatalf("got %s", got)
+			}
+			if b, _ := os.ReadFile(canary); string(b) != "127.0.1.1 plumb-build-web-v3 # must stay\n" {
+				t.Fatalf("written through the link: %q", b)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if slices.Contains(r.list(), "systemctl poweroff") {
+				t.Fatal("powered off after a failed step")
+			}
+		})
 	}
 }
