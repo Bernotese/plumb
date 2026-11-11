@@ -97,3 +97,33 @@ func hostSSH(t *testing.T, owned map[int]bool, n int, action string) (string, bo
 	}
 	return string(b), true
 }
+
+// sshFailureClass tries one guest login and returns only a class of the
+// failure (no output, address or key): auth, refused, timeout, hostkey, other.
+func sshFailureClass(g guest) string {
+	addr, err := netip.ParsePrefix(g.address)
+	if err != nil {
+		return "other"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ssh", "-i", os.Getenv("PLUMB_TEST_GUEST_KEY"),
+		"-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=5",
+		"-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile="+g.hosts,
+		"plumb@"+addr.Addr().String(), "true")
+	out, _ := cmd.CombinedOutput()
+	s := string(out)
+	switch {
+	case strings.Contains(s, "Permission denied"):
+		return "auth"
+	case strings.Contains(s, "Connection refused"):
+		return "refused"
+	case strings.Contains(s, "timed out") || ctx.Err() != nil:
+		return "timeout"
+	case strings.Contains(s, "Host key verification failed") || strings.Contains(s, "REMOTE HOST IDENTIFICATION"):
+		return "hostkey"
+	case strings.Contains(s, "No route to host"):
+		return "noroute"
+	}
+	return "other"
+}

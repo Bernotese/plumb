@@ -28,6 +28,10 @@ func TestRealSliceAcceptance(t *testing.T) {
 		checkImports(a.t, importsBefore, imports)
 	})
 	for i, distro := range []string{"DEBIAN13", "UBUNTU2604"} {
+		// PLUMB_TEST_DISTROS=UBUNTU2604 runs one distribution (diagnosis).
+		if only := os.Getenv("PLUMB_TEST_DISTROS"); only != "" && !strings.Contains(only, distro) {
+			continue
+		}
 		ok := t.Run(distro, func(t *testing.T) {
 			c := *a
 			c.t = t
@@ -73,7 +77,17 @@ func TestRealSliceAcceptance(t *testing.T) {
 			}
 			owned[n] = true
 			g := guest{id: n, address: address, hosts: filepath.Join(t.TempDir(), "known_hosts")}
-			wait(t, "guest SSH ready", 2*time.Minute, func() bool { _, ok := guestSSH(t, g, "true"); return ok })
+			ready := false
+			deadline := time.Now().Add(2 * time.Minute)
+			for !ready && time.Now().Before(deadline) {
+				_, ready = guestSSH(t, g, "true")
+				if !ready {
+					time.Sleep(time.Second)
+				}
+			}
+			if !ready {
+				t.Fatalf("guest SSH ready timed out (class: %s)", sshFailureClass(g))
+			}
 			wantOS := []string{"debian 13", "ubuntu 26.04"}[i]
 			if guestRead(t, g, `. /etc/os-release; printf "%s %s" "$ID" "$VERSION_ID"`) != wantOS {
 				t.Fatal("unexpected guest distribution or release")
