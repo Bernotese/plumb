@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# Fake Proxmox commands for install_test.go. One script, many names. It logs
+# every call to $FAKE_STATE/calls and keeps a tiny state in $FAKE_STATE.
+set -u
+name=$(basename "$0")
+st=$FAKE_STATE
+printf '%s %s\n' "$name" "$*" >>"$st/calls"
+# FAKE_FAIL: a call that starts with this text fails (a run that stops halfway).
+if [[ -n ${FAKE_FAIL:-} && "$name $*" == "$FAKE_FAIL"* ]]; then
+	echo "fakepve: $FAKE_FAIL failed" >&2
+	exit 1
+fi
+has() { [[ -e $st/$1 ]]; }
+list() { # list PREFIX KEY: JSON list of {KEY: name} for files PREFIX.*
+	local first=1 f
+	printf '['
+	for f in "$st/$1".*; do
+		[[ -e $f ]] || continue
+		[[ $first == 1 ]] || printf ','
+		first=0
+		printf '{"%s":"%s"}' "$2" "${f##*/"$1".}"
+	done
+	printf ']\n'
+}
+case $name in
+pveversion) echo "pve-manager/${FAKE_PVE_VERSION:-9.1.2}/0123456789abcdef (running kernel: 6.14.8-2-pve)" ;;
+dpkg-query)
+	case ${!#} in
+	qemu-server) printf '%s' "${FAKE_QEMU_SERVER:-9.2.15}" ;;
+	libpve-storage-perl) printf '%s' "${FAKE_STORAGE_PERL:-9.1.16}" ;;
+	*) exit 1 ;;
+	esac
+	;;
+dpkg) # dpkg --print-architecture | dpkg --compare-versions A ge B
+	if [[ $1 == --print-architecture ]]; then
+		echo amd64
+		exit 0
+	fi
+	[[ $(printf '%s\n%s\n' "$2" "$4" | sort -V | head -n1) == "$4" ]]
+	;;
+hostname)
+	if [[ ${1:-} == -d ]]; then echo "${FAKE_HOST_DOMAIN:-}"; else echo pve1; fi
+	;;
+stat) # stat -c '%U %a' -- DIR: the tests run as a normal user; root unless FAKE_DIR_OWNER
+	printf '%s %s\n' "${FAKE_DIR_OWNER:-root}" "$(/usr/bin/stat -c %a -- "${!#}")"
+	;;
+ip) echo "5: vmbr0    inet 192.168.1.5/24 brd 192.168.1.255 scope global vmbr0\\       valid_lft forever preferred_lft forever" ;;
+install)
+	args=()
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+		-o | -g) shift ;;
+		*) args+=("$1") ;;
+		esac
+		shift
+	done
+	exec /usr/bin/install "${args[@]}"
+	;;
+pveum)
+	case "$1 $2" in
+	"pool list") list pool poolid ;;
+	"pool add") touch "$st/pool.$3" ;;
+	"pool delete") rm -f "$st/pool.$3" ;;
+	"role list")
+		first=1
+		printf '['
+		for f in "$st"/role.*; do
+			[[ -e $f ]] || continue
+			[[ $first == 1 ]] || printf ','
+			first=0
+			# FAKE_ROLE_APPEND=1: modify appends, like a PVE that does not replace.
+			printf '{"roleid":"%s","privs":"%s"}' "${f##*/role.}" "$(tr -d '\n' <"$f")"
+		done
+		printf ']\n'
+		;;
+	"role add") echo "$5" >"$st/role.$3" ;;
+	"role modify")
+		if [[ ${FAKE_ROLE_APPEND:-0} == 1 && -e $st/role.$3 ]]; then
+			printf '%s,Sys.Modify\n' "$5" >"$st/role.$3"
+		else
+			echo "$5" >"$st/role.$3"
+		fi
+		;;
+	"role delete") rm -f "$st/role.$3" ;;
+	"user list")
+		first=1
+		printf '['
+		for f in "$st"/user.*; do
+			[[ -e $f ]] || continue
+			[[ $first == 1 ]] || printf ','
+			first=0
+			printf '{"userid":"%s","groups":"%s"}' "${f##*/user.}" "${FAKE_USER_GROUPS:-}"
+		done
+		printf ']\n'
+		;;
+	"user add") touch "$st/user.$3" ;;
+	"user delete") rm -f "$st/user.$3" ;;
+	"acl modify" | "acl delete")
+		op=$2 path=$3 ugid="" role="" type="" prop=1
+		set -- "${@:4}"
+		while [[ $# -gt 0 ]]; do
+			case $1 in
+			--users) ugid=$2 type=user ;;
+			--tokens) ugid=$2 type=token ;;
+			--roles) role=$2 ;;
+			--propagate) prop=$2 ;;
+			esac
+			shift 2
+		done
+		# Like Proxmox: an ACL needs an existing user or token.
+		if [[ $op == modify && $type == token ]] && ! has "token.${ugid#*!}"; then
+			echo "ACL update failed: no such token '${ugid#*!}' for user '${ugid%%!*}'" >&2
+			exit 255
+		fi
+		if [[ $op == modify && $type == user ]] && ! has "user.$ugid"; then
+			echo "ACL update failed: no such user '$ugid'" >&2
+			exit 255
+		fi
+		touch "$st/acl"
+		# One entry per path, ugid and role; the propagate flag is kept.
+		awk -v p="$path" -v u="$ugid" -v r="$role" -v t="$type" '!($1 == p && $2 == u && $3 == r && $4 == t)' "$st/acl" >"$st/acl.new"
+		mv "$st/acl.new" "$st/acl"
+		if [[ $op == modify ]]; then echo "$path $ugid $role $type $prop" >>"$st/acl"; fi
+		;;
+	"acl list")
+		[[ ${FAKE_ACL_FAIL:-0} == 1 ]] && exit 1
+		touch "$st/acl"
+		if [[ -n ${FAKE_EXTRA_ACL:-} && ! -e $st/extra-done ]]; then
+			echo "$FAKE_EXTRA_ACL" >>"$st/acl"
+			touch "$st/extra-done"
+		fi
+		first=1
+		printf '['
+		while read -r path ugid role type prop; do
+			[[ -n $path ]] || continue
+			[[ $first == 1 ]] || printf ','
+			first=0
+			printf '{"path":"%s","ugid":"%s","roleid":"%s","type":"%s","propagate":%s}' "$path" "$ugid" "$role" "$type" "${prop:-1}"
+		done <"$st/acl"
+		printf ']\n'
+		;;
+	"user token")
+		case $3 in
+		list) list token tokenid ;;
+		add)
+			touch "$st/token.$5"
+			printf '{"full-tokenid":"%s!%s","info":{"privsep":1},"value":"%s"}\n' "$4" "$5" "$FAKE_SECRET"
+			;;
+		remove) rm -f "$st/token.$5" ;;
+		esac
+		;;
+	*) echo "fakepve: unknown pveum $*" >&2; exit 2 ;;
+	esac
+	;;
+pvesm)
+	case $1 in
+	status) has "storage.$3" ;;
+	add)
+		id=$3
+		touch "$st/storage.$id"
+		echo "$2" >"$st/type.$id"
+		while [[ $# -gt 0 ]]; do
+			if [[ $1 == --content ]]; then echo "$2" >"$st/content.$id"; fi
+			if [[ $1 == --path ]]; then echo "$2" >"$st/path.$id"; fi
+			shift
+		done
+		;;
+	set) echo "${*:2}" >>"$st/storage-set" ;;
+	remove) rm -f "$st/storage.$2" "$st/content.$2" "$st/type.$2" "$st/path.$2" ;;
+	list) # pvesm list STORAGE --vmid ID: volumes left in $st/vol.*
+		for f in "$st"/vol.*; do
+			[[ -e $f ]] && cat "$f"
+		done
+		;;
+	free) grep -lxF "$2 rootdir" "$st"/vol.* 2>/dev/null | xargs -r rm -f ;;
+	esac
+	;;
+pvesh)
+	case "$2" in
+	/storage/*)
+		id=${2#/storage/}
+		if [[ -e $st/type.$id ]]; then
+			# Like Proxmox: content, path, shared and type of a dir storage.
+			# extra.ID: more options, for example "nodes":"pve2".
+			extra=""
+			[[ -e $st/extra.$id ]] && extra=",$(cat "$st/extra.$id")"
+			printf '{"content":"%s","digest":"85e2","path":"%s","shared":0,"storage":"%s","type":"%s"%s}\n' \
+				"$(cat "$st/content.$id")" "$(cat "$st/path.$id")" "$id" "$(cat "$st/type.$id")" "$extra"
+		elif [[ -e $st/content.$id ]]; then
+			printf '{"content":"%s"}\n' "$(cat "$st/content.$id")"
+		elif [[ $id == local-lvm ]]; then
+			echo '{"content":"images,rootdir"}'
+		elif [[ $id == local ]]; then
+			echo '{"content":"iso,vztmpl,backup,snippets"}'
+		else
+			exit 1
+		fi
+		;;
+	/cluster/nextid) echo 105 ;;
+	/pools)
+		[[ ${FAKE_POOLS_FAIL:-0} == 1 ]] && exit 1
+		echo "${FAKE_POOL_MEMBERS:-[{\"poolid\":\"plumb\",\"members\":[]}]}"
+		;;
+	*) exit 1 ;;
+	esac
+	;;
+pveam)
+	case $1 in
+	list)
+		if has tmpl; then
+			# The real list holds every architecture that was downloaded.
+			echo "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst 128.00MB"
+			echo "local:vztmpl/debian-13-standard_13.1-2_arm64.tar.zst 121.00MB"
+		fi
+		;;
+	# The real list has one entry per architecture; arm64 sorts after amd64.
+	available) printf 'system          debian-12-standard_12.7-1_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_amd64.tar.zst\nsystem          debian-13-standard_13.1-2_arm64.tar.zst\n' ;;
+	update) ;;
+	download) touch "$st/tmpl" ;;
+	esac
+	;;
+pct)
+	case $1 in
+	status)
+		has "lxc.$2" || exit 2
+		if has "stopped.$2"; then echo "status: stopped"; else echo "status: running"; fi
+		;;
+	create)
+		id=$2
+		umask >"$st/create-umask"
+		if [[ $(umask) != 0022 ]]; then
+			# Like Proxmox: tar as the mapped root cannot enter a 0700 rootfs.
+			echo "tar: /var/lib/lxc/$id/rootfs: Cannot open: Permission denied" >&2
+			exit 2
+		fi
+		shift 2
+		host="" desc="" mp=""
+		while [[ $# -gt 0 ]]; do
+			case $1 in
+			--hostname) host=$2 ;;
+			--description) desc=$2 ;;
+			--mp0) mp=$2 ;;
+			esac
+			shift
+		done
+		printf 'hostname: %s\ndescription: %s\n' "$host" "$desc" >"$st/lxc.$id"
+		touch "$st/stopped.$id" # a new container is stopped
+		if [[ -n $mp ]]; then
+			# local-lvm:1,mp=… becomes local-lvm:vm-ID-disk-1,mp=…
+			vol="${mp%%:*}:vm-$id-disk-1"
+			printf 'mp0: %s,%s\n' "$vol" "${mp#*,}" >>"$st/lxc.$id"
+			if [[ ${FAKE_KEEP_VOLUME:-0} == 1 ]]; then
+				# A PVE whose pct destroy leaves the volume behind.
+				echo "$vol rootdir" >"$st/vol.$id"
+			fi
+		fi
+		;;
+	config) cat "$st/lxc.$2" ;;
+	start) rm -f "$st/stopped.$2" ;;
+	stop) touch "$st/stopped.$2" ;;
+	destroy) rm -f "$st/lxc.$2" "$st/key.$2" "$st/stopped.$2" ;;
+	push)
+		mkdir -p "$st/push"
+		dst=${4//\//_}
+		cp "$3" "$st/push/$dst"
+		echo "${*:5}" >"$st/push/$dst.opts"
+		;;
+	pull) printf -- '-----BEGIN CERTIFICATE-----\nMIIBfakePlumbCA\n-----END CERTIFICATE-----\n' >"$4" ;;
+	exec)
+		id=$2
+		shift 3 # pct exec ID --
+		case "$*" in
+		"hostname -I") echo "fd00::50 192.168.1.50" ;;
+		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
+		"grep -q ^"*" /etc/plumb/plumb.env") grep -q "$3" "$st/push/_etc_plumb_plumb.env" ;;
+		"test -s /var/lib/plumb/key/master.key") has "key.$id" ;;
+		"mountpoint -q /var/lib/plumb/key") grep -q '^mp0: .*mp=/var/lib/plumb/key' "$st/lxc.$id" ;;
+		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;
+		*) ;;
+		esac
+		;;
+	esac
+	;;
+lxc-attach) # lxc-attach -n ID --clear-env -- runuser -u plumb -- plumb key init …
+	[[ ${FAKE_KEYINIT_FAIL:-0} == 1 ]] && exit 1
+	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key init --data /var/lib/plumb" ]]; then
+		has "key.$2" && exit 1 # a key is never replaced
+		touch "$st/key.$2"
+		echo "RECOVERY KEY (shown once; Plumb stores it nowhere):"
+		echo "    FAKERECOVERYKEY"
+	fi
+	;;
+*) echo "fakepve: unknown command $name" >&2; exit 2 ;;
+esac
