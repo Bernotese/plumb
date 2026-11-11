@@ -12,7 +12,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | Card | Owner | State |
 |---|---|---|
 | T-055 no Image binding (found by T-015) | pl-frontend (code), pl-backend (host) | **code on main** (PR #92, 2026-11-11; D-188, D-189; migration 0006). Open: the host checks of the card, by pl-backend after the T-015 run (the controller on the host needs the new build first) |
-| T-056 pending guest config, restart setting per Target (found by T-015) | pl-frontend (backend part, then web), pl-backend (host checks) | plan reviewed and on main (PR #94; D-190, D-191, D-193 … D-195). Backend part running. The parts marked [N] use the proposed name `allow_restart`, default false, re-enroll refused with false until the user confirms |
+| T-056 pending guest config, restart setting per Target (found by T-015) | pl-frontend (backend part, then web), pl-backend (host checks) | plan on main (PR #94; D-190, D-191, D-193 … D-196). **All user answers are in** (D-196: `allow_restart`, default no, re-enroll of a running VM refused with no). Backend part running; the web part also gets the Ubuntu 26.04 hint at the address field |
 | Host: `--remove` + fresh install from main (D-180), T-055 host checks, final T-015 run | pl-backend | running |
 | T-038 LXC targets, T-039 image builds | tbd | design only. **Test host ready**; starts after T-012 |
 
@@ -70,6 +70,6 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- T-056, three answers (recommendation in brackets): name of the setting (`allow_restart`, yes/no); default (no); re-enrollment of a running VM when the setting is no (refused).
+- Nothing now.
 - Optional: say "plane die Adressmeldung" if the agent should report its real addresses (Plumb then shows an Issue when a VM does not use its configured address); the card changes the agent.
 - Known limit (D-192): a stock Ubuntu 26.04 image takes a static address only from the second boot; use DHCP until the image builds (T-039).
