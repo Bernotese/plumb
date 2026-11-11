@@ -15,7 +15,7 @@ The shapes of image builds are fixed in code, so T-059, T-060, T-061 and the moc
 - [x] OpenAPI (new parts `x-plumb-planned`): `ImageView.status` {versions[], building, last_build, next_build_at}; `POST /images/{name}/build` → Plan; `Plan.origin` `build`; `Plan.images[]` {image, build {version, trigger, upgrade, resources[]}, removes[]}; `Plan.human_only` `image-recipe`; `Run.images[]`; `TargetStatus.image_version`; event subject `image:<name>`. Edits stay local to the Image parts (T-068 edits Hello/agent parts at the same time).
 - [x] `wire`: `CommandSeal = "seal"`, body `{plan_id, upgraded}` (no path, command or user name); result with one line per step; answer `refused`; the enrollment answer gets a `build` mark.
 - [x] `driver`: `CreateBuild`, `MakeImage`, `FindImage`, `ListImages`, `RemoveImage`, `DiskSpace`, types `BuildSpec`, `BuiltImage`, `ImageRef`, `GuestSpec.ImageVersion`. `fake` and `proxmox` compile with stubs that return a clear "not implemented (T-061)" error.
-- [x] Mock: an Image with three versions, a running build, a stock Image, a build Plan with `removes`, a build Run with its steps.
+- [x] Mock: an Image with three versions, a stock Image, a build Plan, a finished build Run with its steps. (A running build is not in the data; T-064 adds it with the mock behaviour.)
 - [x] Tests: `make test` and `make lint` pass; OpenAPI and schema checks pass.
 
 ## Out of scope

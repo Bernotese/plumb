@@ -35,7 +35,11 @@ type EnrollResponse struct {
 	// Build is true only for the agent of an image build guest: its token
 	// was made by Driver.CreateBuild (D-203). The agent stores the mark in
 	// the same atomic write as the credential, and runs CommandSeal only
-	// with it (D-207). A normal enrollment clears it.
+	// with it (D-207). The agent takes Build=true only at a first
+	// enrollment from an empty state (no credential, never a watch); a
+	// later enrollment with Build=true leaves the mark unset. A normal
+	// enrollment clears the build mark. No enrollment ever clears the
+	// watch mark: an agent that got a watch never seals (T-060 tests both).
 	Build bool `json:"build,omitempty"`
 }
 

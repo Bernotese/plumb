@@ -378,8 +378,7 @@ paths:
                           risk: reversible
                           changes: []
                           unverified: true
-                    removes:
-                      - { kind: version, name: plumb-img-ubuntu-web-v1, version: 1 }
+                    removes: []
                     disk:
                       storage: local-lvm
                       total_bytes: 45559136256
