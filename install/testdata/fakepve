@@ -271,6 +271,15 @@ pct)
 	push)
 		mkdir -p "$st/push"
 		dst=${4//\//_}
+		# Like pve-container 6.1: onto a running binary the push fails with
+		# "Text file busy" and still exits 0. FAKE_PUSH_FAIL=<dest> makes any
+		# push to that path (or to its temp name) fail the same way.
+		fail=${FAKE_PUSH_FAIL:-}
+		if { [[ $4 == /usr/local/bin/plumb && -e $st/running-exe ]] ||
+			{ [[ -n $fail ]] && [[ $4 == "$fail" || $4 == "${fail%/*}/.${fail##*/}.plumb-new" ]]; }; }; then
+			echo "failed to create file: $4: Text file busy" >&2
+			exit 0
+		fi
 		cp "$3" "$st/push/$dst"
 		echo "${*:5}" >"$st/push/$dst.opts"
 		;;
@@ -279,6 +288,7 @@ pct)
 		id=$2
 		shift 3 # pct exec ID --
 		if [[ -t 0 || -p /dev/stdin ]]; then IFS= read -r _ || true; fi
+		[[ -n ${FAKE_EXEC_FAIL:-} && "$*" == "$FAKE_EXEC_FAIL" ]] && exit 3
 		case "$*" in
 		"hostname -I") echo "fd00::50 192.168.1.50" ;;
 		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
@@ -286,6 +296,32 @@ pct)
 		"test -s /var/lib/plumb/key/master.key") has "key.$id" ;;
 		"mountpoint -q /var/lib/plumb/key") grep -q '^mp0: .*mp=/var/lib/plumb/key' "$st/lxc.$id" ;;
 		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;
+		"sha256sum /proc/"*"/exe")
+			[[ -e $st/running-exe ]] || exit 1
+			sha256sum <"$st/running-exe" | sed "s#-\$#${2}#"
+			;;
+		"sha256sum "*)
+			f=$st/push/${2//\//_}
+			[[ -e $f ]] || { echo "sha256sum: $2: No such file or directory" >&2; exit 1; }
+			sha256sum <"$f" | sed "s#-\$#${2}#"
+			;;
+		"mv -f "*)
+			from=$st/push/${3//\//_} to=$st/push/${4//\//_}
+			mv -f "$from" "$to" || exit 1
+			[[ -e $from.opts ]] && mv -f "$from.opts" "$to.opts"
+			echo "mv $3 $4" >>"$st/mv"
+			;;
+		"rm -f "*) rm -f "$st/push/${3//\//_}" "$st/push/${3//\//_}.opts" ;;
+		"systemctl restart plumb.service")
+			# The service now runs the binary that is in place, unless
+			# FAKE_RESTART_OLD=1 (a restart that keeps the old process).
+			if [[ ${FAKE_RESTART_OLD:-0} != 1 && -e $st/push/_usr_local_bin_plumb ]]; then
+				cp "$st/push/_usr_local_bin_plumb" "$st/running-exe"
+			fi
+			;;
+		"systemctl show -p MainPID --value plumb.service")
+			if [[ -e $st/running-exe ]]; then echo 4242; else echo 0; fi
+			;;
 		*) ;;
 		esac
 		;;

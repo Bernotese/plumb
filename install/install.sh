@@ -18,6 +18,8 @@
 #   PLUMB_INSTALL_PVE_CA=FILE     the host CA file instead of /etc/pve/pve-root-ca.pem
 #   PLUMB_INSTALL_STATE=FILE      the state file instead of /etc/plumb/install.state
 #   PLUMB_INSTALL_LXC_DIR=DIR     the lxc run directory instead of /var/lib/lxc
+#   PLUMB_INSTALL_RUNNING_TRIES=N, PLUMB_INSTALL_RUNNING_WAIT=S
+#                                 checks of the running binary after the restart (default 30 × 2 s)
 #   PLUMB_INSTALL_RESOLV=FILE     the resolver file instead of /etc/resolv.conf
 #   PLUMB_INSTALL_ASSUME_TTY=1    skip the terminal check before plumb key init
 #                                 (plumb key init itself still refuses a non-terminal)
@@ -124,6 +126,14 @@ run() {
 		printf ' %q' "$@"
 		printf '\n'
 		return 0
+	fi
+	if [[ $1 == pct ]]; then
+		# A failed pct step names itself; set -e then stops the run. Only
+		# the subcommand is printed: arguments can be long or private.
+		local rc=0
+		"$@" || rc=$?
+		[[ $rc == 0 ]] || echo "install.sh: \"pct $2\" failed (exit $rc); the run stops here" >&2
+		return $rc
 	fi
 	"$@"
 }
@@ -956,7 +966,7 @@ PLUMB_PVE_NAMESERVER=$NAMESERVER
 PLUMB_PVE_SEARCHDOMAIN=$SEARCHDOMAIN
 PLUMB_HOSTS=$ip,$LXC_HOSTNAME
 EOF
-	if ! run pct push "$LXC_ID" "$tmp" /etc/plumb/plumb.env --perms 0600 --user 0 --group 0; then
+	if ! (push_checked "$tmp" /etc/plumb/plumb.env 0600); then
 		rm -f "$tmp"
 		die "cannot write the settings into the LXC"
 	fi
@@ -1000,8 +1010,11 @@ setup_lxc() {
 	fi
 	run pct exec "$LXC_ID" -- chown plumb:plumb "$KEY_DIR" </dev/null
 	run pct exec "$LXC_ID" -- chmod 0700 "$KEY_DIR" </dev/null
-	run pct push "$LXC_ID" "$PLUMB_BINARY" /usr/local/bin/plumb --perms 0755 --user 0 --group 0
-	run pct push "$LXC_ID" "$PVE_CA" /etc/plumb/pve-root-ca.pem --perms 0644 --user 0 --group 0
+	# The binary goes to a temp name and is renamed over the old one: a
+	# rename works while plumb runs; a push onto the running file fails
+	# with "Text file busy", and pct push still exits 0 (test host, T-056).
+	push_checked "$PLUMB_BINARY" /usr/local/bin/plumb 0755
+	push_checked "$PVE_CA" /etc/plumb/pve-root-ca.pem 0644
 	if [[ -n $TOKEN_SECRET ]]; then
 		push_env "$host" "$ip"
 	else
@@ -1009,12 +1022,56 @@ setup_lxc() {
 	fi
 	new_tmp tmp
 	printf '%s\n' "$UNIT" >"$tmp"
-	run pct push "$LXC_ID" "$tmp" /etc/systemd/system/plumb.service --perms 0644 --user 0 --group 0
+	if ! (push_checked "$tmp" /etc/systemd/system/plumb.service 0644); then
+		rm -f "$tmp"
+		die "cannot write the unit into the LXC"
+	fi
 	rm -f "$tmp"
 	run pct exec "$LXC_ID" -- systemctl daemon-reload </dev/null
 	run pct exec "$LXC_ID" -- systemctl enable plumb.service </dev/null
 	key_init
 	run pct exec "$LXC_ID" -- systemctl restart plumb.service </dev/null # a repair run brings a new binary
+	check_running_binary
+}
+
+# push_checked SRC DEST MODE copies SRC to DEST in the LXC (owner root):
+# first to a temp name in the same directory, then a sha256 check inside
+# the LXC, then a rename. pct push can print an error and still exit 0
+# (test host, T-056), so only the checksum shows that the copy is there.
+# On any failure DEST stays as it was and the run stops.
+push_checked() {
+	local src=$1 dest=$2 mode=$3 tmp want have
+	tmp="${dest%/*}/.${dest##*/}.plumb-new"
+	run pct push "$LXC_ID" "$src" "$tmp" --perms "$mode" --user 0 --group 0
+	if [[ $DRY_RUN != 1 ]]; then
+		want=$(sha256sum <"$src") || die "cannot read $src"
+		want=${want%% *}
+		have=$(query pct exec "$LXC_ID" -- sha256sum "$tmp" </dev/null 2>/dev/null) || have=""
+		have=${have%% *}
+		if [[ $have != "$want" ]]; then
+			pct exec "$LXC_ID" -- rm -f "$tmp" </dev/null >/dev/null 2>&1 || true
+			die "the copy of $dest in LXC $LXC_ID is missing or wrong (pct push failed); $dest and the running service were not changed"
+		fi
+	fi
+	run pct exec "$LXC_ID" -- mv -f "$tmp" "$dest" </dev/null
+}
+
+# check_running_binary fails when plumb.service does not run the binary of
+# --plumb-binary after the restart (sha256 of /proc/<MainPID>/exe).
+check_running_binary() {
+	[[ $DRY_RUN == 1 ]] && return 0
+	local want have pid i
+	want=$(sha256sum <"$PLUMB_BINARY") || die "cannot read $PLUMB_BINARY"
+	want=${want%% *}
+	for ((i = 0; i < ${PLUMB_INSTALL_RUNNING_TRIES:-30}; i++)); do
+		pid=$(query pct exec "$LXC_ID" -- systemctl show -p MainPID --value plumb.service </dev/null 2>/dev/null) || pid=""
+		if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
+			have=$(query pct exec "$LXC_ID" -- sha256sum "/proc/$pid/exe" </dev/null 2>/dev/null) || have=""
+			[[ ${have%% *} == "$want" ]] && return 0
+		fi
+		sleep "${PLUMB_INSTALL_RUNNING_WAIT:-2}"
+	done
+	die "plumb.service in LXC $LXC_ID does not run the new binary after the restart (see: pct exec $LXC_ID -- systemctl status plumb.service)"
 }
 
 # lxc_has_key reports whether the LXC holds the master key file.
