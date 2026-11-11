@@ -19,10 +19,6 @@ import (
 // its recipe, schedule or retention (D-201).
 const HumanOnlyImageRecipe = "image-recipe"
 
-// DiskLimitPercent is the limit that a Plan shows (D-203). The check
-// itself is the disk gate of T-074, which part B of T-062 uses.
-const DiskLimitPercent = 85
-
 // ErrStockImage is wrapped when a build is asked for an Image without
 // spec.build.
 var ErrStockImage = errors.New("the Image has no build part; it is a stock image")
@@ -228,8 +224,8 @@ func (e *Engine) planRemovals(ctx context.Context, name string, versions []store
 // diskUse reads the disk storage for the Plan of a build (D-203). The
 // notes say what the person who approves must know: the use is unknown,
 // or the thin-pool metadata use is unknown (T-061 review). The check
-// before the build is the disk gate of T-074 (part B); ReservedBytes comes
-// from it then.
+// before the build is the disk gate of T-074 (part B); the limit and the
+// reserved bytes come from it.
 func (e *Engine) diskUse(ctx context.Context, image string) (*DiskUse, []string) {
 	ds, err := e.cfg.Driver.DiskSpace(ctx)
 	if errors.Is(err, driver.ErrNotImplemented) {
@@ -238,7 +234,8 @@ func (e *Engine) diskUse(ctx context.Context, image string) (*DiskUse, []string)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("Image %s: the use of the disk storage is unknown (%v); the build checks it again before it starts.", image, err)}
 	}
-	u := &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes, LimitPercent: DiskLimitPercent}
+	u := &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes,
+		ReservedBytes: e.disk.Reserved(), LimitPercent: e.disk.Limit()}
 	var notes []string
 	if !ds.MetaKnown {
 		notes = append(notes, fmt.Sprintf("Image %s: thin-pool metadata use is unknown.", image))
@@ -560,5 +557,6 @@ func (e *Engine) DiskUse(ctx context.Context) *DiskUse {
 	if err != nil {
 		return nil
 	}
-	return &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes, LimitPercent: DiskLimitPercent}
+	return &DiskUse{Storage: ds.Storage, TotalBytes: ds.TotalBytes, UsedBytes: ds.UsedBytes,
+		ReservedBytes: e.disk.Reserved(), LimitPercent: e.disk.Limit()}
 }

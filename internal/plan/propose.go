@@ -189,6 +189,9 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		return store.Plan{}, err
 	}
 
+	if note := e.diskNote(ctx, next, plans); note != "" {
+		in.Proposal.Notes = append(in.Proposal.Notes, note)
+	}
 	markIgnored(next.Rules(), plans)
 	// The image part: builds of new or changed recipes and removals
 	// (D-199, D-209), and the Targets that cannot be made yet (D-200).
@@ -623,4 +626,38 @@ func plannedRestarts(tp *TargetPlan, r *state.Rendered, left []wire.Resource) {
 			tp.Resources = append(tp.Resources, ResourceChange{Resource: res.ID, Action: wire.ActionOf(cs), Changes: cs, Risk: wire.RiskDisruptive})
 		}
 	}
+}
+
+// diskNote is the Plan warning of T-074: the disks of all creates of the
+// Plan together fail the disk gate now, or the use cannot be read. It
+// names the storage and the numbers. The Run checks again at each create.
+func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPlan) string {
+	var total int64
+	var n int
+	for _, tp := range plans {
+		if tp.Guest != "create" {
+			continue
+		}
+		r, err := renderOrNil(next, tp.Target)
+		if err != nil || r == nil {
+			continue
+		}
+		disk, err := driver.IntValue(r.Guest.Attrs[driver.AttrDisk])
+		if err != nil {
+			continue
+		}
+		total = addBytes(total, DiskBytes(disk))
+		n++
+	}
+	if n == 0 {
+		return ""
+	}
+	what := fmt.Sprintf("the %d GiB disk of the new guest", total/GiB)
+	if n > 1 {
+		what = fmt.Sprintf("the %d GiB disks of the %d new guests", total/GiB, n)
+	}
+	if err := e.disk.Check(ctx, total, what); err != nil {
+		return "The create will fail if nothing changes: " + err.Error() + "."
+	}
+	return ""
 }
