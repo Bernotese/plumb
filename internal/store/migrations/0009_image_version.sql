@@ -1,6 +1,5 @@
 -- 0009_image_version (T-059; D-198, D-199, D-210): image builds.
--- (Numbered 0008 until T-070's 0008_agent_addrs is on main; pl-lead
--- renumbers before the merge.)
+-- 0008 is T-070's agent_addrs (PR #118); it merges first.
 --
 -- * image_version: one row per build of an Image. The number counts up per
 --   Image name and is never used again: rows are never deleted, also not
