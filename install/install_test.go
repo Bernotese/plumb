@@ -66,6 +66,8 @@ func newHost(t *testing.T) *host {
 		"PLUMB_INSTALL_STATE="+h.stateF,
 		"PLUMB_INSTALL_LXC_DIR="+filepath.Join(dir, "lxc"),
 		"PLUMB_INSTALL_RESOLV="+filepath.Join(dir, "resolv.conf"),
+		"PLUMB_INSTALL_RUNNING_WAIT=0",
+		"PLUMB_INSTALL_STAY_WAIT=0",
 		// The tests have no terminal; the fake plumb key init does not check.
 		// TestKeyInitNeedsTerminal sets it back to 0.
 		"PLUMB_INSTALL_ASSUME_TTY=1",
@@ -149,8 +151,10 @@ func TestDryRunChangesNothing(t *testing.T) {
 		"+ pvesm add dir plumb-images --path " + h.images() + " --content import --shared 0",
 		"+ pveam download local debian-13-standard_13.1-2_amd64.tar.zst",
 		"+ pct create 105 local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst --hostname plumb --unprivileged 1",
-		"+ pct push 105 " + h.plumb + " /usr/local/bin/plumb --perms 0755",
-		"/etc/plumb/plumb.env --perms 0600",
+		"+ pct push 105 " + h.plumb + " /usr/local/bin/.plumb.plumb-new --perms 0755",
+		"+ pct exec 105 -- mv -f /usr/local/bin/.plumb.plumb-new /usr/local/bin/plumb",
+		"/etc/plumb/.plumb.env.plumb-new --perms 0600",
+		"+ pct exec 105 -- mv -f /etc/plumb/.plumb.env.plumb-new /etc/plumb/plumb.env",
 		"+ pct exec 105 -- systemctl restart plumb.service",
 		"--- snippet " + h.snippet + "/snippets/plumb-vendor.yaml ---",
 	} {
