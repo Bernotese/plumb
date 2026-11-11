@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // Screen and mock tests of T-064: Image list, Image page, Image form, the
 // Image part of a Plan, build lanes of a Run, the Target disk check.
+import { execFileSync } from "node:child_process";
 import { flushSync } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/api";
@@ -303,5 +304,78 @@ describe("Run and Target screens", () => {
     flushSync();
     expect(createPlan).not.toHaveBeenCalled();
     expect(el("#guest-disk").getAttribute("aria-invalid")).toBe("true");
+  });
+});
+
+describe("image acceptance gaps", () => {
+  it("preserves shell quoting when copying an import command", async () => {
+    const api = adminApi();
+    const view = await api.getImage("ubuntu-web");
+    if (!view.status) throw new Error("no status");
+    const volume = "store:import/image' ; $(printf INJECTED) `printf INJECTED` & file.qcow2";
+    // The API quotes the command; the UI must preserve it exactly.
+    const command = `pvesm free '${volume.replaceAll("'", "'\\''")}'`;
+    vi.spyOn(api, "getImage").mockResolvedValue({
+      ...view,
+      status: { ...view.status, unused_imports: [{ volume, command, size_bytes: 1024 }] },
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboard = vi
+      .spyOn(navigator, "clipboard", "get")
+      .mockReturnValue({ writeText } as unknown as Clipboard);
+    try {
+      show(ImageScreen, { api, name: "ubuntu-web" });
+      (await until(() => button(/^Copy/))).click();
+      await until(() => writeText.mock.calls.length);
+      const copied = writeText.mock.calls[0]?.[0] as string;
+      expect(copied).toBe(command);
+      expect(el(".cmd code").textContent).toBe(command);
+      // Capture shell arguments with a harmless stub. No host command runs.
+      expect(
+        execFileSync("sh", ["-c", `pvesm() { printf '%s\\n' "$#" "$1" "$2"; }; ${copied}`], {
+          encoding: "utf8",
+        }),
+      ).toBe(`2\nfree\n${volume}\n`);
+    } finally {
+      clipboard.mockRestore();
+    }
+  });
+
+  it.each(["day", "week", "month"])(
+    "saves %s schedules with safe build defaults",
+    async (every) => {
+      const api = adminApi();
+      const create = vi.spyOn(api, "createPlan");
+      show(ImageForm, { api });
+      await until(() => document.querySelector("#i-build"));
+      expect(el<HTMLInputElement>("#i-build").checked).toBe(false);
+      type("#i-name", "scheduled");
+      type("#i-url", "https://example.org/base.qcow2");
+      type("#i-sha", "a".repeat(64));
+      el<HTMLInputElement>("#i-build").click();
+      flushSync();
+      expect(el<HTMLInputElement>("#i-upgrade").checked).toBe(true);
+      expect(el<HTMLInputElement>("#i-keep").value).toBe("3");
+      type("#i-every", every);
+      type("#i-at", "04:30");
+      expect(text(el("#i-at-hint"))).toContain("(your local time)");
+      type("#i-reason", "Scheduled image.");
+      el<HTMLFormElement>("form").requestSubmit();
+      await planOpened();
+      const doc = create.mock.calls[0]?.[0].put?.[0] as ImageDoc;
+      expect(doc.spec.build?.upgrade).toBe(true);
+      expect(doc.spec.build?.guest.disk).toBeGreaterThan(0);
+      expect(doc.spec.build?.guest.bridge).toBeTruthy();
+      expect(doc.spec.retention?.keep).toBe(3);
+      expect(doc.spec.schedule).toMatchObject({ every, at: "04:30" });
+    },
+  );
+
+  it("shows the new version and resources of a build Plan", async () => {
+    show(PlanView, { api: adminApi(), id: 21 });
+    await until(() => text().includes("New version v4"));
+    expect(text()).toContain("package:nginx");
+    expect(text()).toContain("service:nginx");
+    expect(text()).toContain("All packages are upgraded");
   });
 });
