@@ -11,8 +11,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083 | **plan approved by the user (D-238, all 4 recommendations)**; D-224 … D-231, D-233 … D-237 accepted. Running: T-079 step 1 = host check H10 (pl-backend, result goes to the user before driver code), T-075 contract (pl-architect), T-076 `ctpack` (pl-frontend), T-077 installer `vztmpl` (pl-reviewer; not trivial for pl-codex-fix). Then T-078, T-080, T-081, T-079 step 2, T-082, T-083. |
-| T-084 token gets `Sys.Audit` (D-239, user decision) | pl-backend | step 1: find the narrowest ACL path on the host and report it to the user (D-240); then installer + docs + repair run on `pve-dev` |
+| T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083 | plan approved by the user (D-238). **H10 done (PR #153): the token cannot make a privileged container, a dangerous feature, a host mount or a device, at create and at config change.** T-075 contract merged (PR #154). In review with fixes open: T-076 `ctpack` (PR #156), T-077 installer (PR #157, QA #158). Running: T-080 engine (pl-frontend). Then T-078, T-081, T-079 step 2, T-082, T-083. |
+| T-084 token gets `Sys.Audit` (D-239, user decision) | pl-backend | step 1 done: only the ACL path `/` works (Proxmox checks the fixed path `/`). **Waits for the user: yes or no to `Sys.Audit` on `/` without propagation.** |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
@@ -78,5 +78,5 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Coming: the result of host check H10 (can the token make a privileged container or a host mount) and the ACL path for `Sys.Audit`. Nothing to do now.
+- `Sys.Audit` (D-239): only the path `/` works. On `/` (no propagation) it also lets the token read disk lists and SMART, the PCI list, the node's hosts file and config, cluster status and config, backup jobs, HA, metric server config, firewall options, realm sync jobs. No writes. Yes or no?
 - Known limit (D-192, D-220, D-223): a STOCK Ubuntu 26.04 image used directly can stay on DHCP until its first restart; an Ubuntu version built by Plumb does not have the limit.

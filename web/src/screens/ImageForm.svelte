@@ -23,7 +23,8 @@
   const specProps = imageProps.spec.properties;
   const guestFields: Field[] = fieldsOf(specProps.build.properties.guest as never);
   const namePattern = new RegExp(imageProps.name.pattern, "u");
-  const urlPattern = new RegExp(specProps.url.pattern, "u");
+  // The schema allows http:// for lxc (D-224); the form makes VM Images, which need https://.
+  const urlPattern = /^https:\/\//u;
   const shaPattern = new RegExp(specProps.sha256.pattern, "u");
   const atPattern = new RegExp(specProps.schedule.properties.at.pattern, "u");
   const editing = $derived(name !== undefined);
@@ -122,7 +123,7 @@
           imageName = i.document.name;
           title = s.title ?? "";
           url = s.url;
-          sha = s.sha256;
+          sha = s.sha256 ?? ""; // lxc Images pin sha512 (D-224); the form is VM-only for now
           build = s.build !== undefined;
           upgrade = s.build?.upgrade ?? true;
           uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
