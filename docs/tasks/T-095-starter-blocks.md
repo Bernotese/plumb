@@ -1,6 +1,6 @@
 # T-095 – Starter Blocks ssh-hardening, common-tools, shell, docker-compose
 
-- **Owner:** pl-backend or pl-frontend (pl-lead names it when T-093 lands)   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
+- **Owner:** pl-frontend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** M   · **Depends on:** T-093   · **Parent:** T-089 (C5)
 
 ## Goal

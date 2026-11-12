@@ -1,0 +1,149 @@
+{
+  "comment": "Block documents with the JSON Pointers of their schema errors (block.json). The Go test (blockcheck_test.go) and the web test (web/src/lib/blockCheck.test.ts) both check these, so the browser check and the server check agree (D-264).",
+  "cases": [
+    {
+      "name": "minimal",
+      "doc": { "kind": "Block", "name": "a", "spec": { "resources": [{ "file": { "path": "/etc/a" } }] } },
+      "pointers": []
+    },
+    {
+      "name": "all fields",
+      "doc": {
+        "kind": "Block",
+        "name": "web.site-1",
+        "spec": {
+          "title": "Site",
+          "description": "A site.",
+          "params": { "type": "object", "properties": { "port": { "type": "integer" } }, "required": ["port"] },
+          "resources": [{ "package": { "name": "nginx" } }, { "service": { "name": "nginx" } }],
+          "after": ["package:nginx"],
+          "restarts": ["service:nginx"]
+        }
+      },
+      "pointers": []
+    },
+    { "name": "not an object", "doc": "Block", "pointers": [""] },
+    { "name": "empty object", "doc": {}, "pointers": [""] },
+    {
+      "name": "wrong kind and name",
+      "doc": { "kind": "Target", "name": "Web_1", "spec": { "resources": [{ "file": {} }] } },
+      "pointers": ["/kind", "/name"]
+    },
+    {
+      "name": "name too long",
+      "doc": { "kind": "Block", "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "spec": { "resources": [{ "file": {} }] } },
+      "pointers": ["/name"]
+    },
+    {
+      "name": "name is a number",
+      "doc": { "kind": "Block", "name": 7, "spec": { "resources": [{ "file": {} }] } },
+      "pointers": ["/name"]
+    },
+    {
+      "name": "unknown keys",
+      "doc": { "kind": "Block", "name": "a", "extra": 1, "spec": { "resources": [{ "file": {} }], "uses": [] } },
+      "pointers": ["", "/spec"]
+    },
+    {
+      "name": "spec is a string",
+      "doc": { "kind": "Block", "name": "a", "spec": "resources" },
+      "pointers": ["/spec"]
+    },
+    {
+      "name": "no resources",
+      "doc": { "kind": "Block", "name": "a", "spec": { "title": "x" } },
+      "pointers": ["/spec"]
+    },
+    {
+      "name": "empty resources",
+      "doc": { "kind": "Block", "name": "a", "spec": { "resources": [] } },
+      "pointers": ["/spec/resources"]
+    },
+    {
+      "name": "bad resource entries",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": { "resources": [{}, { "file": {}, "package": {} }, { "file": "x" }, "file", { "file": null }] }
+      },
+      "pointers": ["/spec/resources/0", "/spec/resources/1", "/spec/resources/2/file", "/spec/resources/3", "/spec/resources/4/file"]
+    },
+    {
+      "name": "title and description too long",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": {
+          "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+          "description": 5,
+          "resources": [{ "file": {} }]
+        }
+      },
+      "pointers": ["/spec/description", "/spec/title"]
+    },
+    {
+      "name": "title of 100 code points outside the BMP",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": {
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+          "resources": [{ "file": {} }]
+        }
+      },
+      "pointers": []
+    },
+    {
+      "name": "bad params",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": { "params": { "type": "string", "required": ["x", 3] }, "resources": [{ "file": {} }] }
+      },
+      "pointers": ["/spec/params", "/spec/params/required/1", "/spec/params/type"]
+    },
+    {
+      "name": "params properties not an object",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": { "params": { "properties": [] }, "resources": [{ "file": {} }] }
+      },
+      "pointers": ["/spec/params/properties"]
+    },
+    {
+      "name": "bad after and restarts",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": {
+          "resources": [{ "file": {} }],
+          "after": ["package:nginx", "package:nginx", "Nginx"],
+          "restarts": ["package:nginx", 1]
+        }
+      },
+      "pointers": ["/spec/after", "/spec/after/2", "/spec/restarts/0", "/spec/restarts/1"]
+    },
+    {
+      "name": "too many after entries",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": {
+          "resources": [{ "file": {} }],
+          "after": ["f:1", "f:2", "f:3", "f:4", "f:5", "f:6", "f:7", "f:8", "f:9", "f:10", "f:11", "f:12", "f:13", "f:14", "f:15", "f:16", "f:17"]
+        }
+      },
+      "pointers": ["/spec/after"]
+    },
+    {
+      "name": "unique items compares deeply",
+      "doc": {
+        "kind": "Block",
+        "name": "a",
+        "spec": { "resources": [{ "file": {} }], "restarts": ["service:a", "service:b"] }
+      },
+      "pointers": []
+    }
+  ]
+}

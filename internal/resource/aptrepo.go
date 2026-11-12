@@ -219,12 +219,44 @@ func (a *aptRepo) Observe(_ context.Context) (State, error) {
 		}
 		perms = append(perms, fmt.Sprintf("%s:%s %04o", owner, grp, f.m.mode))
 	}
+	// The keyrings directory too: a user who can write it can put another
+	// key file in place of this one.
+	dir, err := a.keyringPerms()
+	if err != nil {
+		return nil, err
+	}
+	perms = append(perms, "dir "+dir)
 	st["perms"] = strings.Join(perms, ", ")
 	return st, nil
 }
 
+// keyringPerms is "owner:group mode" of the keyrings directory, or
+// "missing".
+func (a *aptRepo) keyringPerms() (string, error) {
+	dfd, name, err := openParent(a.env.Root, aptKeyringDir)
+	if isNoParent(err) {
+		return "missing", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer unix.Close(dfd)
+	st, ok, err := lstatAt(dfd, name, aptKeyringDir)
+	if err != nil || !ok {
+		return "missing", err
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return "", fmt.Errorf("%s is not a directory", aptKeyringDir)
+	}
+	owner, grp, err := ownerNames(a.env.Root, int(st.Uid), int(st.Gid))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s:%s %04o", owner, grp, st.Mode&0o7777), nil
+}
+
 // wantPerms is the observed "perms" of a repository as Plumb writes it.
-const wantPerms = "root:root 0644, root:root 0644"
+const wantPerms = "root:root 0644, root:root 0644, dir root:root 0755"
 
 // Diff: every change is reversible. Removing a repository leaves its
 // installed packages; they only get no more updates from it.
@@ -280,6 +312,15 @@ func (a *aptRepo) Apply(ctx context.Context, changes []wire.Change) error {
 		}
 	}
 	_, err := a.run(ctx, "apt-get", append(append([]string{}, aptOptions...), "update")...)
+	if err != nil && a.a.State != wire.StateAbsent {
+		// Without the sources file the next Plan shows the create again
+		// and runs "apt-get update" again (a mirror that was down, a
+		// fixed suite). The key stays: it is harmless alone.
+		if rerr := removeManaged(a.env.Root, a.sourcesPath()); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		return fmt.Errorf("%w; the sources file was removed again, so the next run tries again", err)
+	}
 	return err
 }
 
@@ -288,19 +329,22 @@ func (a *aptRepo) Watch() []string {
 	return []string{a.path(a.sourcesPath()), a.path(a.keyPath())}
 }
 
-// mkdirManaged makes the guest directory p (its parent must exist) owned
-// by root, when it does not exist. An existing directory stays as it is.
+// mkdirManaged makes the guest directory p (its parent must exist), or
+// takes the existing one, and sets owner root and mode.
 func mkdirManaged(root, p string, mode uint32) error {
 	dfd, name, err := openParent(root, p)
 	if err != nil {
 		return err
 	}
 	defer unix.Close(dfd)
-	if _, ok, err := lstatAt(dfd, name, p); err != nil || ok {
+	_, ok, err := lstatAt(dfd, name, p)
+	if err != nil {
 		return err
 	}
-	if err := unix.Mkdirat(dfd, name, mode); err != nil && !errors.Is(err, unix.EEXIST) {
-		return fmt.Errorf("mkdir %s: %w", p, err)
+	if !ok {
+		if err := unix.Mkdirat(dfd, name, mode); err != nil && !errors.Is(err, unix.EEXIST) {
+			return fmt.Errorf("mkdir %s: %w", p, err)
+		}
 	}
 	fd, _, err := openDir(dfd, name, p)
 	if err != nil {

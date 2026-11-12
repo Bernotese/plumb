@@ -132,18 +132,18 @@ type AgentConflict struct {
 	Value string // the path as resolved, or the unit name
 }
 
-// IsAgentUnit reports whether a service or unit name is one of the
-// agent's units ("plumb-agent" is the same as "plumb-agent.service"). A
-// unit of another type with the same stem counts too: plumb-agent.timer or
-// plumb-agent.path would start the agent's service by default.
+// agentUnitPrefix starts the name of every unit of the agent, also of
+// units that later versions add (plumb-agent-guard.timer, T-091).
+const agentUnitPrefix = "plumb-agent"
+
+// IsAgentUnit reports whether a service or unit name belongs to the agent
+// (D-274): every name that starts with "plumb-agent", with any suffix
+// ("plumb-agent", "plumb-agent.timer", "plumb-agent-guard.service",
+// "plumb-agent@x.service"). A prefix rule, not a list: a timer, path or
+// socket unit can start the agent's service, and a list misses the units
+// that a newer agent adds.
 func IsAgentUnit(name string) bool {
-	for _, u := range agentUnits {
-		stem := strings.TrimSuffix(u, ".service")
-		if name == stem || strings.HasPrefix(name, stem+".") && !strings.Contains(name[len(stem)+1:], ".") {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(name, agentUnitPrefix)
 }
 
 // AgentConflicts lists the resources of one target that would change the

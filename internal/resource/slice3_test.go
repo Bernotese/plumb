@@ -112,6 +112,50 @@ func TestAptRepository(t *testing.T) {
 	}
 }
 
+// Review M1 of #191: a failed apt-get update leaves no sources file, so
+// the next Plan shows the create again and the update runs again.
+func TestAptRepositoryUpdateFails(t *testing.T) {
+	g := newFakeGuest(t)
+	mkdirs(t, g.root, "etc/apt/sources.list.d")
+	src := filepath.Join(g.root, "etc/apt/sources.list.d/plumb-docker.sources")
+	r := build(t, res("apt_repository", "docker", aptAttrs(nil)), g.env())
+	g.failUpdate = true
+	err := r.Apply(context.Background(), plan(t, r))
+	if err == nil || !strings.Contains(err.Error(), "Release file") || !strings.Contains(err.Error(), "tries again") {
+		t.Fatalf("Apply with a failing update: %v", err)
+	}
+	if _, err := os.Lstat(src); !os.IsNotExist(err) {
+		t.Fatal("the sources file stayed after a failed update")
+	}
+	if got := plan(t, r); len(got) == 0 || got[0].Attr != "sources" {
+		t.Fatalf("next plan = %s, want the sources again", attrsOf(got))
+	}
+	g.failUpdate = false
+	converge(t, r)
+	if n := g.countArg("apt-get", "update"); n != 2 {
+		t.Fatalf("apt-get update calls = %d, want 2", n)
+	}
+}
+
+// Review L3 of #191: a keyrings dir that a user can write is drift.
+func TestAptRepositoryKeyringDir(t *testing.T) {
+	g := newFakeGuest(t)
+	mkdirs(t, g.root, "etc/apt/sources.list.d", "etc/apt/keyrings")
+	dir := filepath.Join(g.root, "etc/apt/keyrings")
+	r := build(t, res("apt_repository", "docker", aptAttrs(nil)), g.env())
+	converge(t, r)
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	got := converge(t, r)
+	if attrsOf(got) != "perms=reversible" || !strings.Contains(got[0].From.(string), "dir root:root 0777") {
+		t.Fatalf("dir drift = %+v", got)
+	}
+	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("dir mode = %v", fi.Mode())
+	}
+}
+
 func TestAptRepositoryRefuses(t *testing.T) {
 	g := newFakeGuest(t)
 	bad := map[string]map[string]any{
@@ -214,7 +258,7 @@ func TestUnit(t *testing.T) {
 
 func TestUnitRefuses(t *testing.T) {
 	g := newFakeGuest(t)
-	for _, name := range []string{"plumb-agent.service", "plumb-agent.timer", "plumb-agent-install.service", "app", "a/b.service", "-x.service", ".x.service", "../x.service", "x.conf"} {
+	for _, name := range []string{"plumb-agent.service", "plumb-agent.timer", "plumb-agent-install.service", "plumb-agent-guard.service", "plumb-agent-guard.timer", "app", "a/b.service", "-x.service", ".x.service", "../x.service", "x.conf"} {
 		if _, err := New(res("unit", name, map[string]any{"content": "[Unit]\n"}), g.env()); err == nil {
 			t.Errorf("unit %q accepted", name)
 		}
