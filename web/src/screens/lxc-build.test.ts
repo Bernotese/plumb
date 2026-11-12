@@ -166,6 +166,8 @@ describe("target from a built lxc Image (D-251)", () => {
       flushSync();
       type("#guest-ssh_keys-0", KEY);
       if (built) type("#t-image", "debian-ct-web");
+      // N2: a dropped key is said on the page.
+      expect(document.querySelector("#t-keys-dropped") !== null).toBe(built);
       type("#t-name", "ct-key-check");
       type("#t-reason", "Check create-time SSH keys.");
       el<HTMLFormElement>("form").requestSubmit();
