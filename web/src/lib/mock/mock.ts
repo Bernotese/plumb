@@ -888,7 +888,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     if (old && next && old.sha256 !== next.sha256)
       out.push({
         kind: "base",
-        name: `plumb-img-${name}-${old.sha256.slice(0, 12)}`,
+        name: `plumb-img-${name}-${(old.sha256 ?? "").slice(0, 12)}`,
         version: null,
       });
     return out;
@@ -1074,7 +1074,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       run_id: run.id,
       revision: run.revision,
       recipe_sha256: recipeHash(spec),
-      base_sha256: spec.sha256,
+      base_sha256: spec.sha256 ?? "",
       disk_gb: spec.build.guest.disk,
       started_at: now(),
       finished_at: null,
