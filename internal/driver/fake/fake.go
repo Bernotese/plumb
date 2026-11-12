@@ -84,6 +84,9 @@ type guest struct {
 	// option, D-231) until ClearBootstrap. Without env, the next cold
 	// start has no token.
 	env bool
+	// tplFile is the container template file that a container was made
+	// from: the plumb-template line of its description (D-250).
+	tplFile driver.ImageRef
 }
 
 func (g *guest) lxc() bool { return g.spec.Kind == wire.KindLXC }
@@ -250,18 +253,24 @@ func (d *Driver) StartOutside(id driver.GuestID) error {
 	return nil
 }
 
-// TemplateRef gives the ref of an lxc Image that FetchImage made before;
-// ErrNotFound before the first fetch. A VM Image has none.
+// TemplateRef gives the ref that FetchImage makes for an lxc Image, with
+// no fetch, like Proxmox (T-085). A VM Image has none.
 func (d *Driver) TemplateRef(spec driver.ImageSpec) (driver.ImageRef, error) {
 	if spec.Kind != wire.KindLXC {
 		return "", driver.ErrNotImplemented
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if r, ok := d.images[spec.Name+"@"+spec.SHA512]; ok {
-		return r, nil
+	if !sha512Hex.MatchString(spec.SHA512) {
+		return "", errors.New("fake: an lxc image needs a SHA-512 of 128 hex digits")
 	}
-	return "", driver.ErrNotFound
+	return templateFile(spec), nil
+}
+
+// templateFile is the volume id of the container template file of an lxc
+// Image, in the name form of the Proxmox driver (D-250). The fake hashes
+// only the pin into the name.
+func templateFile(spec driver.ImageSpec) driver.ImageRef {
+	name := strings.ReplaceAll(strings.ToLower(spec.Name), ".", "-")
+	return driver.ImageRef("plumb-images:vztmpl/plumb-ct-" + name + "-" + spec.SHA512[:12] + ".tar.gz")
 }
 
 // StopOutside stops a guest outside Plumb. Pending values stay pending.
@@ -427,10 +436,10 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 			if r, ok := d.images[key]; ok {
 				return r, nil
 			}
-			ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
-			d.nextTpl++
+			ref := templateFile(spec)
+			d.nextTpl++ // keeps the VM refs of the tests
 			d.images[key] = ref
-			d.tpls[ref] = &template{kind: driver.ImageBaseTemplate, image: spec.Name, digest: spec.SHA512, size: GiB / 4, lxc: true}
+			d.tpls[ref] = &template{kind: driver.ImageTemplateFile, image: spec.Name, digest: spec.SHA512, size: GiB / 4, lxc: true}
 			return ref, nil
 		}
 		if !sha256Hex.MatchString(spec.SHA256) {
@@ -509,11 +518,16 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		}
 		d.nextID++
 		spec.SSHKeys = append([]string(nil), spec.SSHKeys...)
+		ref := spec.Image
 		spec.Image = "" // like Proxmox: the guest keeps the Image name, not the ref (D-189)
 		next := spec
 		next.SSHKeys = append([]string(nil), spec.SSHKeys...)
-		d.guests[id] = &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
+		g := &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
 			env: spec.Kind == wire.KindLXC}
+		if g.env {
+			g.tplFile = ref
+		}
+		d.guests[id] = g
 		return id, nil
 	})
 }
@@ -785,16 +799,27 @@ func (d *Driver) FindImage(ctx context.Context, image string, version int, diges
 func (d *Driver) object(ref driver.ImageRef, t *template) driver.ImageObject {
 	o := driver.ImageObject{Kind: t.kind, Image: t.image, Ref: ref, Version: t.version, Digest: t.digest,
 		SizeBytes: t.size, LinkedClones: t.linked}
-	if t.kind == driver.ImageVersionTemplate {
+	switch t.kind {
+	case driver.ImageTemplateFile:
+		o.Name, o.LinkedClones = string(ref), 0
+		for _, g := range d.guests {
+			if g.tplFile == ref {
+				o.Containers++
+			}
+		}
+	case driver.ImageVersionTemplate:
 		o.Name = fmt.Sprintf("plumb-img-%s-v%d", t.image, t.version)
-	} else {
+	default:
 		o.Name = fmt.Sprintf("plumb-img-%s-%s", t.image, t.digest[:12])
 	}
 	return o
 }
 
-// ListImages lists the templates and import files of an Image: base
-// templates, then versions (oldest first), then import files.
+var kindRank = map[driver.ImageObjectKind]int{driver.ImageBaseTemplate: 0, driver.ImageVersionTemplate: 1, driver.ImageTemplateFile: 2}
+
+// ListImages lists the templates, container template files and import
+// files of an Image: base templates, then versions (oldest first),
+// then container template files, then import files.
 func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageObject, error) {
 	return task(ctx, d, OpListImages, func() ([]driver.ImageObject, error) {
 		var out []driver.ImageObject
@@ -804,8 +829,8 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 			}
 		}
 		sort.Slice(out, func(i, j int) bool {
-			if out[i].Kind != out[j].Kind {
-				return out[i].Kind == driver.ImageBaseTemplate
+			if ri, rj := kindRank[out[i].Kind], kindRank[out[j].Kind]; ri != rj {
+				return ri < rj
 			}
 			if out[i].Version != out[j].Version {
 				return out[i].Version < out[j].Version
@@ -829,6 +854,9 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 	return d.do(ctx, OpRemoveImage, func() error {
 		if obj.Kind == driver.ImageImportFile {
 			return fmt.Errorf("fake: %s is an import file; Plumb never deletes one (D-209)", obj.Name)
+		}
+		if obj.Kind == driver.ImageTemplateFile {
+			return fmt.Errorf("fake: %s is a container template file; Plumb never deletes one (D-233)", obj.Name)
 		}
 		t, ok := d.tpls[obj.Ref]
 		if !ok {

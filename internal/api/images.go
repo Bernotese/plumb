@@ -10,6 +10,7 @@ import (
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // POST /images/{name}/build: a Plan of origin build (D-199).
@@ -79,27 +80,52 @@ type leftTemplateView struct {
 	GuestID string `json:"guest_id"`
 }
 
-// imageStatus is the status of a built Image, or nil for a stock Image.
-// The driver parts (unused imports, disk) are left out when the driver
-// cannot read them.
+// imageStatus is the status of a built Image or of an lxc Image (T-085,
+// D-233), or nil for a stock VM Image. The driver parts (unused files,
+// disk) are left out when the driver cannot read them.
 func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus, error) {
 	var doc struct {
 		Spec struct {
+			Type   string          `json:"type"`
+			URL    string          `json:"url"`
 			SHA256 string          `json:"sha256"`
+			SHA512 string          `json:"sha512"`
 			Build  json.RawMessage `json:"build"`
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal(d.Body, &doc); err != nil {
 		return nil, err
 	}
-	if len(doc.Spec.Build) == 0 || string(doc.Spec.Build) == "null" {
+	lxc := doc.Spec.Type == string(wire.KindLXC)
+	built := len(doc.Spec.Build) != 0 && string(doc.Spec.Build) != "null"
+	if !built && !lxc {
 		return nil, nil
+	}
+	st := &imageStatus{Versions: []imageVersionView{}, UnusedImports: []unusedImportView{}}
+	unusedFiles := func() {
+		var unused []plan.UnusedImport
+		var err error
+		if lxc {
+			unused, err = s.cfg.Plans.UnusedTemplateFiles(ctx, d.Name, doc.Spec.URL, doc.Spec.SHA512)
+		} else {
+			unused, err = s.cfg.Plans.UnusedImports(ctx, d.Name, doc.Spec.SHA256)
+		}
+		if err != nil {
+			s.log.Warn("image status: unused files", "image", d.Name, "err", err)
+			return
+		}
+		for _, u := range unused {
+			st.UnusedImports = append(st.UnusedImports, unusedImportView{Volume: u.Volume, SizeBytes: u.SizeBytes, Command: u.Command})
+		}
+	}
+	if !built { // a stock lxc Image: only its unused template files
+		unusedFiles()
+		return st, nil
 	}
 	versions, err := s.st.ImageVersions(ctx, d.Name)
 	if err != nil {
 		return nil, err
 	}
-	st := &imageStatus{Versions: []imageVersionView{}, UnusedImports: []unusedImportView{}}
 	byVersion, err := s.targetsOfImage(ctx, d.Name)
 	if err != nil {
 		return nil, err
@@ -119,14 +145,7 @@ func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus,
 			st.LastBuild = &last
 		}
 	}
-	unused, err := s.cfg.Plans.UnusedImports(ctx, d.Name, doc.Spec.SHA256)
-	if err == nil {
-		for _, u := range unused {
-			st.UnusedImports = append(st.UnusedImports, unusedImportView{Volume: u.Volume, SizeBytes: u.SizeBytes, Command: u.Command})
-		}
-	} else {
-		s.log.Warn("image status: unused imports", "image", d.Name, "err", err)
-	}
+	unusedFiles()
 	if left, err := s.cfg.Plans.LeftTemplates(ctx, d.Name); err == nil {
 		for _, l := range left {
 			st.LeftTemplates = append(st.LeftTemplates, leftTemplateView{Name: l.Name, GuestID: l.GuestID})
