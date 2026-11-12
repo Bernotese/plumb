@@ -295,11 +295,27 @@ func (g *guardWriter) Write(p []byte) (int, error) {
 }
 
 // dialCheck refuses loopback, link-local (169.254.169.254 too),
-// unspecified and multicast addresses after DNS; private LAN addresses are
-// allowed (D-237).
+// unspecified and multicast addresses and the controller's own addresses
+// after DNS; other private LAN addresses are allowed (D-237).
 func dialCheck(ip net.IP) bool {
 	return !(ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast())
+		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast()) && !ownAddress(ip)
+}
+
+// ownAddress reports whether ip is an address of this host (the
+// controller): a fetch must not reach the controller over its LAN address
+// either (review N1 of #167). An unreadable list refuses nothing more.
+func ownAddress(ip net.IP) bool {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // downloadClient follows D-237: no proxy, no redirect, the dialled address
