@@ -81,7 +81,8 @@ type fakePVE struct {
 	dropPath      string // a request to this path loses its connection
 	// writeDuringRead: this many reads of the config without current=1
 	// change the config first (a write between the reads of Observe).
-	writeDuringRead int
+	writeDuringRead     int
+	ctWriteBeforeConfig bool // concurrent CT edit before the next config PUT
 	// noDigest: config answers have no digest (a proxy or a broken API).
 	noDigest bool
 	// keepPending: a write of the running value on a running VM keeps
@@ -114,6 +115,10 @@ type fakePVE struct {
 }
 
 type fakeVM struct {
+	// ct: a container (T-079); pvefake_lxc_test.go models it. pending
+	// then holds its pending values, and delete its pending deletes.
+	ct       bool
+	delete   map[string]bool
 	cfg      map[string]string
 	template bool
 	running  bool
@@ -409,11 +414,14 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 				if vm.template && !f.staleTemplate {
 					t = 1
 				}
-				name := vm.cfg["name"]
+				name, typ := vm.cfg["name"], "qemu"
+				if vm.ct {
+					name, typ = vm.cfg["hostname"], "lxc"
+				}
 				if f.staleNames {
 					name = ""
 				}
-				members = append(members, map[string]any{"vmid": id, "type": "qemu", "name": name, "template": t, "id": "qemu/" + strconv.Itoa(id)})
+				members = append(members, map[string]any{"vmid": id, "type": typ, "name": name, "template": t, "id": typ + "/" + strconv.Itoa(id)})
 			}
 		}
 		if f.allPools { // a server that ignores the filter: one entry per pool
@@ -543,11 +551,24 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		m := reQemu.FindStringSubmatch(path)
 		id, _ := strconv.Atoi(m[2])
 		vm, ok := f.vms[id]
-		if !ok {
+		if !ok || vm.ct {
 			fail(w, 500, fmt.Sprintf("Configuration file 'nodes/%s/qemu-server/%d.conf' does not exist", f.node, id), nil)
 			return
 		}
 		f.qemu(w, r, key, id, vm, m[3])
+
+	case r.Method == "POST" && path == "/nodes/"+f.node+"/lxc":
+		f.createCT(w, r, key)
+
+	case reLxc.MatchString(path):
+		m := reLxc.FindStringSubmatch(path)
+		id, _ := strconv.Atoi(m[2])
+		vm, ok := f.vms[id]
+		if !ok || !vm.ct {
+			fail(w, 500, fmt.Sprintf("Configuration file 'nodes/%s/lxc/%d.conf' does not exist", f.node, id), nil)
+			return
+		}
+		f.lxc(w, r, key, id, vm, m[3])
 
 	case reTask.MatchString(path):
 		m := reTask.FindStringSubmatch(path)

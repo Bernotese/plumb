@@ -54,6 +54,29 @@ func TestLXCTargetRules(t *testing.T) {
 		_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"user":"plumb"`)})
 		errAt(t, err, KindTarget, "/spec/guest/user", "no bootstrap user")
 	})
+	// D-249: the keys of a container live in its description (8 KiB).
+	t.Run("ssh keys too large", func(t *testing.T) {
+		key := `"ssh-rsa ` + strings.Repeat("A", 700) + ` k@example"`
+		keys := strings.TrimSuffix(strings.Repeat(key+",", 10), ",")
+		_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":[` + keys + `]`)})
+		errAt(t, err, KindTarget, "/spec/guest/ssh_keys", "at most 7168 fit")
+		if _, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":[` + key + `,` + key + `]`)}); err != nil {
+			t.Errorf("two RSA keys: %v", err)
+		}
+	})
+	// Review S1 of #162: a key must come back byte-equal from the
+	// container description.
+	t.Run("ssh key edges", func(t *testing.T) {
+		for _, k := range []string{`"ssh-ed25519 AAAAC3Nza one@example "`, `" ssh-ed25519 AAAAC3Nza"`, `"ssh-ed25519 AAAAC3Nza a\tb"`, `"ssh-ed25519 AAAAC3Nza a\u0000b"`, `"ssh-ed25519 AAAAC3Nza a\u007fb"`} {
+			_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":[` + k + `]`)})
+			if err == nil || !strings.Contains(err.Error(), "white space") && !strings.Contains(err.Error(), "pattern") {
+				t.Errorf("%s: %v", k, err)
+			}
+		}
+		if _, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":["ssh-ed25519 AAAAC3Nza Jürgen's Schlüssel ✓"]`)}); err != nil {
+			t.Errorf("non-ASCII comment: %v", err)
+		}
+	})
 	t.Run("disk below 2 GiB", func(t *testing.T) {
 		_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":1`)})
 		errAt(t, err, KindTarget, "/spec/guest/disk", "at least 2 GiB")
