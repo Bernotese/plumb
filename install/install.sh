@@ -989,6 +989,10 @@ EnvironmentFile=/etc/plumb/plumb.env
 ExecStart=/usr/local/bin/plumb serve --data /var/lib/plumb --hosts ${PLUMB_HOSTS}
 Restart=on-failure
 RestartSec=5
+# A stop waits for open requests (5 s) and for the clean-up of Runs (the
+# engine cuts it off after 2 min, plan.DefaultShutdownGrace); a SIGKILL
+# before that would leave more for Recover.
+TimeoutStopSec=180
 # plumb serve exits 78 for a start failure that a restart cannot fix (D-183).
 RestartPreventExitStatus=78
 NoNewPrivileges=yes

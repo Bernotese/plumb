@@ -275,9 +275,9 @@ export const REPORTED_MARK = "reported by the guest";
 export const REPORTED_TITLE =
   "The agent in the guest sends this list. Plumb shows it only and never connects to it.";
 
-/** The hint on a guest:address Issue (D-192). */
+/** The hint on a guest:address Issue (D-192, D-220, D-223). */
 export const ADDRESS_HINT =
-  "If the image is a stock Ubuntu 26.04, restart the guest once: it takes a static address only from the second boot (D-192). Else check the network setup in the guest.";
+  "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an Image built by Plumb (D-223). Else check the network setup in the guest.";
 
 type Status = TargetView["status"];
 
