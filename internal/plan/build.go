@@ -480,11 +480,22 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 	}
 	lines = append(lines, left...)
 	if err != nil {
+		// A template stays unless every error is a stale store row of a
+		// removed template (review of PR #150).
+		var re retentionError
+		stay := !errors.As(err, &re) || re.templatesStay
+		next := "the next retention"
+		line := err.Error()
 		if built > 0 {
-			lines = append(lines, fmt.Sprintf("%v; v%d is ready and usable; old templates stay until the next build", err, built))
-		} else {
-			lines = append(lines, fmt.Sprintf("%v; the templates stay until the next retention", err))
+			next = "the next build"
+			line += fmt.Sprintf("; v%d is ready and usable", built)
 		}
+		if stay {
+			line += "; old templates stay until " + next
+		} else {
+			line += "; " + next + " fixes the store row"
+		}
+		lines = append(lines, line)
 		s.set(ctx, StepImageRetention, wire.StatusFailed, nil, strings.Join(lines, "\n"))
 		return
 	}
@@ -501,9 +512,10 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 // removed and left are still valid then.
 func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 string, built int) (removed, left []string, err error) {
 	var hard []string
+	stay := false // a removal failed: its template is still there
 	defer func() {
 		if err == nil && len(hard) > 0 {
-			err = errors.New(strings.Join(hard, "; "))
+			err = retentionError{msg: strings.Join(hard, "; "), templatesStay: stay}
 		}
 	}()
 	versions, err := e.st.ImageVersions(ctx, image)
@@ -533,13 +545,14 @@ func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 stri
 				left = append(left, fmt.Sprintf("left %s: %v", o.Name, err))
 			} else {
 				hard = append(hard, fmt.Sprintf("could not remove %s: %v", o.Name, err))
+				stay = true
 			}
 			return
 		}
 		removed = append(removed, o.Name)
 		if version > 0 {
 			if err := e.st.RemoveImageVersion(ctx, image, version); err != nil && !errors.Is(err, store.ErrImageVersionState) {
-				hard = append(hard, fmt.Sprintf("version %d: %v", version, err))
+				hard = append(hard, fmt.Sprintf("version %d: the template is removed, the store row is not: %v", version, err))
 			}
 		}
 	}
@@ -573,6 +586,15 @@ func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 stri
 	}
 	return removed, left, nil
 }
+
+// retentionError joins the errors of retain that fail the step (D-232).
+// templatesStay says that at least one template could not be removed.
+type retentionError struct {
+	msg           string
+	templatesStay bool
+}
+
+func (e retentionError) Error() string { return e.msg }
 
 // --- Target from a version (D-200) ---
 
