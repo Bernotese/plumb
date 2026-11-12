@@ -131,6 +131,29 @@ func startBuildAgent(t *testing.T, build bool, r *sealRunner) (*testAgent, *cont
 	return ta, ctl
 }
 
+// writeUpdateFiles leaves the files of a self-update in a guest root
+// (review L1 of #190): .prev, the guard units and the timer's enable link.
+func writeUpdateFiles(t *testing.T, root string) {
+	t.Helper()
+	for _, p := range updateFiles {
+		if strings.Contains(p, ".wants/") {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(DefaultUnitDir+"/"+guardTimer, filepath.Join(root, p)); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		write(t, filepath.Join(root, p), "x")
+	}
+	for _, p := range updateFiles {
+		if !exists(root, p) {
+			t.Fatalf("%s not written", p)
+		}
+	}
+}
+
 func exists(root, p string) bool {
 	_, err := os.Lstat(filepath.Join(root, p))
 	return err == nil
@@ -151,6 +174,7 @@ func TestSealBuildGuest(t *testing.T) {
 	ta, ctl := startBuildAgent(t, true, r)
 	root := ta.root
 	shadow := filepath.Join(root, "etc/shadow")
+	writeUpdateFiles(t, root)
 	r.onSync = func() {
 		// At the sync the agent's files are gone already.
 		for _, p := range append([]string{DefaultStateDir + "/credential"}, agentFiles...) {
@@ -641,6 +665,7 @@ func TestSealContainer(t *testing.T) {
 	if err := os.Symlink("/etc/systemd/system/plumb-agent-install.service", filepath.Join(root, "etc/systemd/system/multi-user.target.wants/plumb-agent-install.service")); err != nil {
 		t.Fatal(err)
 	}
+	writeUpdateFiles(t, root)
 	powered := make(chan struct{})
 	r.onPower = func() { close(powered) }
 	ctl.send(t, "s1", wire.CommandSeal, wire.SealBody{PlanID: 7, Upgraded: true, Container: true})
@@ -681,7 +706,7 @@ func TestSealContainer(t *testing.T) {
 			t.Errorf("unit misses %q:\n%s", part, unit)
 		}
 	}
-	for _, p := range []string{"etc/ssh/ssh_host_ed25519_key", "usr/local/bin/plumb-agent", DefaultStateDir} {
+	for _, p := range append([]string{"etc/ssh/ssh_host_ed25519_key", "usr/local/bin/plumb-agent", DefaultStateDir}, updateFiles...) {
 		if exists(root, p) {
 			t.Errorf("%s still there", p)
 		}
