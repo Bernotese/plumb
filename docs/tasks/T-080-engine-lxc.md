@@ -20,4 +20,6 @@ A Plan for an LXC Target creates the container, waits for the hello, clears the 
 - The Proxmox driver, image builds.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-frontend/T-080-engine-lxc` (on T-075) · `make lint test build` → ok · tests `internal/issue/lxc_flow_test.go` (create, clear fails, no hello → re-enroll, re-enroll, live resize, delete, cancel during fetch, leak scan of DB + log), `restart_test.go` for the LXC rule.
+- Driver interface: `ImageSpec.SHA512`, `GuestState.TokenInConfig`, `ClearBootstrap(ctx, id)`. Proxmox has a stub that refuses (T-079 implements it and must set `TokenInConfig`). driver/fake models containers (env, live resize, type match).
+- `TextReenrollRefused` and the restart error still say "VM"; T-081 may want container wording.

@@ -1,0 +1,333 @@
+package issue_test
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"log/slog"
+
+	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/driver/fake"
+	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
+)
+
+// T-080: the engine part of LXC Targets (T-038 §4) against driver/fake.
+
+var (
+	ctPin   = strings.Repeat("ab", 64)
+	ctImage = `{"type":"lxc","url":"http://download.proxmox.com/images/system/debian-13-standard_13.6-1_amd64.tar.zst","sha512":"` + ctPin + `"}`
+)
+
+func ctTarget(name, text string, cores int, allowRestart bool) state.Doc {
+	return doc(state.KindTarget, name, `{"type":"lxc","image":"ct","allow_restart":`+strconv.FormatBool(allowRestart)+
+		`,"guest":{"cores":`+itoa(cores)+`,"memory":512,"disk":4,"bridge":"vmbr0"},"blocks":[{"use":"motd","params":{"text":"`+text+`"}}]}`)
+}
+
+// syncBuf is a log sink for the leak scan.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+func newCTEnv(t *testing.T) (*env, *syncBuf) {
+	logs := &syncBuf{}
+	e := newEnv(t, func(c *plan.Config) {
+		c.Logger = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	})
+	return e, logs
+}
+
+func (e *env) steps(run store.Run) []store.Step {
+	e.t.Helper()
+	steps, err := e.st.Steps(e.ctx, run.ID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return steps
+}
+
+func stepNames(steps []store.Step) string {
+	var out []string
+	for _, s := range steps {
+		out = append(out, s.Resource+"="+s.Status)
+	}
+	return strings.Join(out, " ")
+}
+
+func (e *env) guestID(target string) driver.GuestID {
+	e.t.Helper()
+	b, err := e.st.GetBinding(e.ctx, state.KindTarget, target)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return driver.GuestID(b.Ref)
+}
+
+func (e *env) observe(target string) driver.GuestState {
+	e.t.Helper()
+	st, err := e.drv.Observe(e.ctx, e.guestID(target))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return st
+}
+
+// tokens records every enrollment token that the fake hands to a guest,
+// for the leak scan.
+func (e *env) tokens(target string, into *[]string) {
+	var mu sync.Mutex
+	go func() {
+		for e.ctx.Err() == nil {
+			if b, err := e.st.GetBinding(e.ctx, state.KindTarget, target); err == nil {
+				if boot, ok := e.drv.Bootstrap(driver.GuestID(b.Ref)); ok {
+					mu.Lock()
+					if len(*into) == 0 || (*into)[len(*into)-1] != boot.Token {
+						*into = append(*into, boot.Token)
+					}
+					mu.Unlock()
+				}
+			}
+			sleep(e.ctx, 2*time.Millisecond)
+		}
+	}()
+}
+
+// noLeak scans the database files and the log for the tokens.
+func (e *env) noLeak(logs *syncBuf, tokens []string) {
+	e.t.Helper()
+	if len(tokens) == 0 {
+		e.t.Fatal("no token seen")
+	}
+	files, _ := filepath.Glob(filepath.Join(e.dir, "plumb.db*"))
+	for _, tok := range tokens {
+		if tok == "" {
+			continue
+		}
+		for _, f := range files {
+			b, _ := os.ReadFile(f)
+			if bytes.Contains(b, []byte(tok)) {
+				e.t.Errorf("token in %s", filepath.Base(f))
+			}
+		}
+		if strings.Contains(logs.String(), tok) {
+			e.t.Error("token in the log")
+		}
+	}
+}
+
+func seedCT() []state.Doc {
+	return []state.Doc{doc(state.KindImage, "ct", ctImage), doc(state.KindBlock, "motd", motd)}
+}
+
+// Create: image:fetch, guest:config, the hello, guest:bootstrap, then the
+// resources. The token leaves the config; the clear is no drift.
+func TestLXCCreate(t *testing.T) {
+	e, logs := newCTEnv(t)
+	var toks []string
+	e.tokens("c1", &toks)
+	e.agent("c1")
+	run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))}).ID)
+	steps := e.steps(run)
+	want := "image:fetch=applied guest:config=applied guest:bootstrap=applied file:/etc/motd=applied"
+	if run.Status != "succeeded" || stepNames(steps) != want {
+		t.Fatalf("run %s: %s\nwant %s", run.Status, stepNames(steps), want)
+	}
+	st := e.observe("c1")
+	if st.TokenInConfig || st.Spec.Kind != "lxc" || st.Spec.User != "" {
+		t.Errorf("after create: %+v", st)
+	}
+	b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "c1")
+	if b.Digest != st.Digest {
+		t.Error("the binding misses the digest after the clear")
+	}
+	// The clear is not drift: the guest poll opens no Issue.
+	if err := e.eng.CheckGuests(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.OpenIssue(e.ctx, "c1", "guest:config"); err == nil {
+		t.Error("the clear became a guest:config Issue")
+	}
+	// After the next cold start PID 1 has no token any more (host C4).
+	e.drv.ColdRestart(e.guestID("c1"), false)
+	if _, ok := e.drv.Bootstrap(e.guestID("c1")); ok {
+		t.Error("the token is back after a restart")
+	}
+	// A second Run has no fetch and no bootstrap step.
+	e.online("c1")
+	run = e.approve(e.propose(plan.Proposal{Put: []state.Doc{ctTarget("c1", "again", 1, false)}}).ID)
+	if run.Status != "succeeded" || stepNames(e.steps(run)) != "file:/etc/motd=applied" {
+		t.Fatalf("second run %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if e.drv.Calls(fake.OpFetchImage) != 1 || e.drv.Calls(fake.OpClearBootstrap) != 1 {
+		t.Errorf("fetch %d clear %d", e.drv.Calls(fake.OpFetchImage), e.drv.Calls(fake.OpClearBootstrap))
+	}
+	e.noLeak(logs, toks)
+}
+
+// A failed clear fails the Run with its text; the next Run of the target
+// clears the token.
+func TestLXCClearFails(t *testing.T) {
+	e, _ := newCTEnv(t)
+	e.agent("c1")
+	e.drv.Fail(fake.OpClearBootstrap, errors.New("fake: config locked"))
+	run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))}).ID)
+	steps := e.steps(run)
+	if run.Status != "failed" || stepNames(steps) != "image:fetch=applied guest:config=applied guest:bootstrap=failed file:/etc/motd=applied" {
+		t.Fatalf("run %s: %s", run.Status, stepNames(steps))
+	}
+	if out := steps[2].Output; !strings.Contains(out, "config locked") || !strings.Contains(out, "next Run") {
+		t.Errorf("output %q", out)
+	}
+	if !e.observe("c1").TokenInConfig {
+		t.Fatal("the token left without a clear")
+	}
+	run = e.approve(e.propose(plan.Proposal{Put: []state.Doc{ctTarget("c1", "again", 1, false)}}).ID)
+	if run.Status != "succeeded" || stepNames(e.steps(run)) != "guest:bootstrap=applied file:/etc/motd=applied" {
+		t.Fatalf("next run %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if e.observe("c1").TokenInConfig {
+		t.Error("the next Run did not clear the token")
+	}
+}
+
+// The controller is down at the first boot (review S4): the hello
+// timeout fails the create Run, the token stays in the config. The
+// re-enrollment Plan recovers: a new token, a cold restart, the hello,
+// the clear.
+func TestLXCNoHelloThenReenroll(t *testing.T) {
+	e, logs := newCTEnv(t)
+	var toks []string
+	e.tokens("c1", &toks)
+	run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, true))}).ID)
+	if run.Status != "failed" || stepNames(e.steps(run)) != "image:fetch=applied guest:config=applied guest:bootstrap=failed file:/etc/motd=failed" {
+		t.Fatalf("run %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if !e.observe("c1").TokenInConfig {
+		t.Fatal("token not in the config")
+	}
+	e.clock.add(16 * time.Minute) // the first token expired
+	a := e.agent("c1")
+	time.Sleep(100 * time.Millisecond)
+	if a.Enrolls() != 0 {
+		t.Fatal("enrolled with the expired token")
+	}
+	boots := e.drv.Boots(e.guestID("c1"))
+	run = e.approve(e.propose(plan.Proposal{Reenroll: []string{"c1"}}).ID)
+	if run.Status != "succeeded" || stepNames(e.steps(run)) != "guest:config=applied guest:bootstrap=applied" {
+		t.Fatalf("reenroll run %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if a.Enrolls() != 1 || e.drv.Boots(e.guestID("c1")) != boots+1 || e.observe("c1").TokenInConfig {
+		t.Errorf("enrolls %d boots %d→%d token %v", a.Enrolls(), boots, e.drv.Boots(e.guestID("c1")), e.observe("c1").TokenInConfig)
+	}
+	e.noLeak(logs, toks)
+}
+
+// Re-enrollment of an enrolled, running container: the VM path, then the
+// clear.
+func TestLXCReenroll(t *testing.T) {
+	e, _ := newCTEnv(t)
+	a := e.agent("c1")
+	run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, true))}).ID)
+	if run.Status != "succeeded" {
+		t.Fatalf("create %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	run = e.approve(e.propose(plan.Proposal{Reenroll: []string{"c1"}}).ID)
+	if run.Status != "succeeded" || stepNames(e.steps(run)) != "guest:config=applied guest:bootstrap=applied" {
+		t.Fatalf("reenroll %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if a.Enrolls() != 2 || e.observe("c1").TokenInConfig || e.drv.Calls(fake.OpClearBootstrap) != 2 {
+		t.Errorf("enrolls %d token %v clears %d", a.Enrolls(), e.observe("c1").TokenInConfig, e.drv.Calls(fake.OpClearBootstrap))
+	}
+}
+
+// cores and memory are live on a container (host C5): no restart, no
+// "restart needed", also without allow_restart.
+func TestLXCLiveResize(t *testing.T) {
+	e, _ := newCTEnv(t)
+	e.agent("c1")
+	if run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))}).ID); run.Status != "succeeded" {
+		t.Fatalf("create %s", run.Status)
+	}
+	boots := e.drv.Boots(e.guestID("c1"))
+	p := e.propose(plan.Proposal{Put: []state.Doc{ctTarget("c1", "hi", 2, false)}})
+	for _, rc := range changes(t, p)["c1"].Resources {
+		for _, c := range rc.Changes {
+			if c.WaitsForRestart || c.Attr == "restart" {
+				t.Errorf("plan change %+v", c)
+			}
+		}
+	}
+	run := e.approve(p.ID)
+	if run.Status != "succeeded" || e.drv.Boots(e.guestID("c1")) != boots || e.observe("c1").Spec.Cores != 2 || e.observe("c1").Pending != nil {
+		t.Errorf("run %s boots %d→%d state %+v", run.Status, boots, e.drv.Boots(e.guestID("c1")), e.observe("c1"))
+	}
+}
+
+// Delete: the container goes, the credential is revoked (D-211).
+func TestLXCDelete(t *testing.T) {
+	e, _ := newCTEnv(t)
+	a := e.agent("c1")
+	if run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))}).ID); run.Status != "succeeded" {
+		t.Fatalf("create %s", run.Status)
+	}
+	id := e.guestID("c1")
+	run := e.approve(e.propose(plan.Proposal{Delete: []plan.DocKey{{Kind: state.KindTarget, Name: "c1"}}}).ID)
+	if run.Status != "succeeded" || stepNames(e.steps(run)) != "guest:config=applied" {
+		t.Fatalf("delete %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if _, err := e.drv.Observe(e.ctx, id); !errors.Is(err, driver.ErrNotFound) {
+		t.Error("container still there")
+	}
+	eventually(t, "agent offline", func() bool { return !e.link.Online("c1") })
+	_ = a
+}
+
+// A stop during the fetch cancels it: nothing is made, no token is made,
+// and the steps end failed.
+func TestLXCCancelDuringFetch(t *testing.T) {
+	e, _ := newCTEnv(t)
+	e.drv.SetLatency(2 * time.Second)
+	e.drv.Hook(fake.OpFetchImage, func() { go func() { time.Sleep(50 * time.Millisecond); e.eng.Stop() }() })
+	p := e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))})
+	start := time.Now()
+	run := e.approve(p.ID)
+	if time.Since(start) > 1500*time.Millisecond {
+		t.Errorf("the stop did not cancel the fetch (%v)", time.Since(start))
+	}
+	if run.Status == "succeeded" || stepNames(e.steps(run)) != "image:fetch=failed guest:config=failed guest:bootstrap=failed file:/etc/motd=failed" {
+		t.Fatalf("run %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if e.drv.Calls(fake.OpCreate) != 0 || len(e.drv.Guests()) != 0 {
+		t.Error("a container was made")
+	}
+	if _, err := e.st.GetBinding(e.ctx, state.KindTarget, "c1"); err == nil {
+		t.Error("a binding was made")
+	}
+}
+
+// A VM target has no fetch and no bootstrap step (unchanged).
+func TestVMHasNoBootstrapStep(t *testing.T) {
+	e := newEnv(t)
+	e.seed("web1")
+	run := e.approve(e.propose(plan.Proposal{Put: []state.Doc{target("web1", "x", 10)}}).ID)
+	for _, s := range e.steps(run) {
+		if s.Resource == plan.StepGuestBootstrap || s.Resource == plan.StepImageFetch {
+			t.Errorf("VM step %s", s.Resource)
+		}
+	}
+	if e.drv.Calls(fake.OpClearBootstrap) != 0 {
+		t.Error("ClearBootstrap on a VM")
+	}
+}

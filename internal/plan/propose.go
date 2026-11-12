@@ -406,7 +406,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	}
 	// One rule for Plan and Run (D-194): the restart, or the flag that a
 	// value waits for one.
-	gchanges, _, err = restartRule(gchanges, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
+	gchanges, _, err = restartRule(desired.Kind, gchanges, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
 	if err != nil {
 		return tp, &ProposalError{Target: target, Msg: err.Error()}
 	}

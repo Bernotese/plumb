@@ -48,7 +48,7 @@ func TestRestartRule(t *testing.T) {
 		{"memory + waits + true", []wire.Change{mem}, waiting, run, true, false, []wire.Change{mem, waiting[0], restart}, true, false},
 	}
 	for _, c := range cases {
-		got, restarts, err := restartRule(c.changes, c.waiting, c.power, c.allow, c.reenroll)
+		got, restarts, err := restartRule(wire.KindVM, c.changes, c.waiting, c.power, c.allow, c.reenroll)
 		if (err != nil) != c.err {
 			t.Errorf("%s: err %v", c.name, err)
 			continue
@@ -65,9 +65,24 @@ func TestRestartRule(t *testing.T) {
 	}
 	// The input is not changed.
 	in := []wire.Change{mem}
-	restartRule(in, nil, run, false, false)
+	restartRule(wire.KindVM, in, nil, run, false, false)
 	if in[0].WaitsForRestart {
 		t.Error("restartRule changed its input")
+	}
+	// A container takes cores and memory live (host C5): no restart, no
+	// waiting flag, also with allow_restart. A re-enrollment still
+	// restarts it, and still needs allow_restart when it runs.
+	for _, allow := range []bool{false, true} {
+		got, restarts, err := restartRule(wire.KindLXC, []wire.Change{mem}, nil, run, allow, false)
+		if err != nil || restarts || !reflect.DeepEqual(got, []wire.Change{mem}) {
+			t.Errorf("lxc allow=%v: %+v restart %v %v", allow, got, restarts, err)
+		}
+	}
+	if _, restarts, err := restartRule(wire.KindLXC, nil, nil, run, true, true); err != nil || !restarts {
+		t.Errorf("lxc re-enroll: restart %v %v", restarts, err)
+	}
+	if _, _, err := restartRule(wire.KindLXC, nil, nil, run, false, true); err == nil {
+		t.Error("lxc re-enroll of a running container without allow_restart")
 	}
 	// The refusal names the two real ways.
 	for _, part := range []string{"Stop the VM in Proxmox and re-enroll again", "set allow_restart first"} {

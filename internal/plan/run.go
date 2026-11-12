@@ -292,10 +292,21 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 			guestChange = &tp.Resources[i]
 		}
 	}
+	reenroll := tp.Guest == "reenroll"
+	// A container: its template is fetched in its own step (D-236), and
+	// the enrollment token leaves its config after the hello (D-231).
+	lxc := r != nil && r.Kind == wire.KindLXC
+	fetch := lxc && guestChange != nil && tp.Guest == "create"
+	clear := lxc && (tp.Guest == "create" || reenroll || e.tokenInConfig(ctx, tp.Target))
+	if fetch {
+		s.add(ctx, StepImageFetch)
+	}
 	if guestChange != nil {
 		s.add(ctx, wire.GuestConfigID)
 	}
-	reenroll := tp.Guest == "reenroll"
+	if clear {
+		s.add(ctx, StepGuestBootstrap)
+	}
 	// Every path that keeps the target ends with the watch list of the new
 	// revision, also when the Run fails early (review T-010 n1): a hello
 	// during the Run was skipped, so the agent would watch the old list.
@@ -315,12 +326,23 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		}
 	}
 
-	// 1. Guest step.
+	// 1. Guest step; for a new container, the template first.
 	newAgent := false
 	hellos := e.hellos(tp.Target)
+	var ref driver.ImageRef
+	if fetch {
+		s.set(ctx, StepImageFetch, wire.StatusRunning, nil, "")
+		var err error
+		if ref, err = e.fetchImage(ctx, run.RevisionID, r.Image); err != nil {
+			s.set(ctx, StepImageFetch, wire.StatusFailed, nil, err.Error())
+			s.failRest(ctx, "the template fetch failed")
+			return false
+		}
+		s.set(ctx, StepImageFetch, wire.StatusApplied, nil, "template "+string(ref))
+	}
 	if guestChange != nil {
 		s.set(ctx, wire.GuestConfigID, wire.StatusRunning, nil, "")
-		res, err := e.guestStep(ctx, run, set, tp, r, *guestChange)
+		res, err := e.guestStep(ctx, run, set, tp, r, *guestChange, ref)
 		switch {
 		case errors.Is(err, errRefused):
 			s.set(ctx, wire.GuestConfigID, wire.StatusRefused, res.changes, err.Error())
@@ -353,6 +375,13 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 			return false
 		}
 		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"agent": "online", "run": run.ID})
+	}
+
+	// The agent is enrolled: the token is used and dead. Removing it from
+	// the container config is hygiene; a failure fails the Run, and the
+	// next Run of the target tries again (D-231).
+	if clear {
+		e.clearStep(ctx, s, tp.Target)
 	}
 
 	// A re-enrollment only gives the new agent its watch list. What
@@ -437,7 +466,9 @@ type guestResult struct {
 }
 
 // guestStep does the driver part of a target. It returns the changes it made.
-func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, tp TargetPlan, r *state.Rendered, planned ResourceChange) (guestResult, error) {
+//
+// ref is the template that the Run fetched already (a container), or "".
+func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, tp TargetPlan, r *state.Rendered, planned ResourceChange, ref driver.ImageRef) (guestResult, error) {
 	var res guestResult
 	switch tp.Guest {
 	case "delete":
@@ -468,6 +499,8 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 				return res, err
 			}
 			defer unpin() // the clone is done when guestStep returns
+		} else if ref != "" {
+			spec.Image = ref
 		} else if spec.Image, err = e.fetchImage(ctx, run.RevisionID, r.Image); err != nil {
 			return res, err
 		}
@@ -528,7 +561,7 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	if reenroll && running && !r.AllowRestart {
 		return res, errors.New(textReenrollRuns)
 	}
-	recorded, restart, err := restartRule(changes, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
+	recorded, restart, err := restartRule(desired.Kind, changes, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
 	if err != nil {
 		return res, err
 	}
@@ -608,6 +641,67 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	return res, e.st.PutBinding(ctx, b)
 }
 
+// Step ids of a container target (T-038 §4).
+const (
+	// StepImageFetch fetches, repacks and uploads the template of a new
+	// container (D-236, D-237).
+	StepImageFetch = "image:fetch"
+	// StepGuestBootstrap removes the used enrollment token from the
+	// container config (D-231).
+	StepGuestBootstrap = "guest:bootstrap"
+)
+
+// tokenInConfig reports whether the container of a target still has an
+// enrollment token in its config: a clear step that failed or never ran
+// (a Run that ended before the hello). An error reads as no.
+func (e *Engine) tokenInConfig(ctx context.Context, target string) bool {
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		return false
+	}
+	st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+	if err != nil {
+		e.log.Warn("observe for the bootstrap step", "target", target, "err", err)
+		return false
+	}
+	return st.TokenInConfig
+}
+
+// clearStep runs the step guest:bootstrap. The binding gets the new
+// digest, so the clear is not drift.
+func (e *Engine) clearStep(ctx context.Context, s *stepper, target string) {
+	s.set(ctx, StepGuestBootstrap, wire.StatusRunning, nil, "")
+	fail := func(err error) {
+		s.set(ctx, StepGuestBootstrap, wire.StatusFailed, nil,
+			"the used enrollment token is still in the container config: "+err.Error()+"; it is dead, and the next Run of the target removes it")
+	}
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		fail(err)
+		return
+	}
+	id := driver.GuestID(b.Ref)
+	if err := e.cfg.Driver.ClearBootstrap(ctx, id); err != nil {
+		fail(err)
+		return
+	}
+	st, err := e.cfg.Driver.Observe(ctx, id)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if st.TokenInConfig {
+		fail(errors.New("the config still shows it after the clear"))
+		return
+	}
+	b.Digest = st.Digest
+	if err := e.st.PutBinding(ctx, b); err != nil {
+		fail(err)
+		return
+	}
+	s.set(ctx, StepGuestBootstrap, wire.StatusApplied, nil, "the used enrollment token was removed from the container config")
+}
+
 func waitingNames(w []wire.Change, token bool) string {
 	var names []string
 	for _, c := range w {
@@ -633,12 +727,13 @@ func (e *Engine) fetchImage(ctx context.Context, revision int64, name string) (d
 			Type   string `json:"type"`
 			URL    string `json:"url"`
 			SHA256 string `json:"sha256"`
+			SHA512 string `json:"sha512"`
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal(row.Body, &doc); err != nil {
 		return "", err
 	}
-	ref, err := e.cfg.Driver.FetchImage(ctx, driver.ImageSpec{Name: name, Kind: wire.Kind(doc.Spec.Type), URL: doc.Spec.URL, SHA256: doc.Spec.SHA256})
+	ref, err := e.cfg.Driver.FetchImage(ctx, driver.ImageSpec{Name: name, Kind: wire.Kind(doc.Spec.Type), URL: doc.Spec.URL, SHA256: doc.Spec.SHA256, SHA512: doc.Spec.SHA512})
 	if err != nil {
 		return "", err
 	}
