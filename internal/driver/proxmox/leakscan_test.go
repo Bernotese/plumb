@@ -19,6 +19,7 @@ func TestRecordingsHoldNoSecret(t *testing.T) {
 	ipv4 := regexp.MustCompile(`\b(\d{1,3}\.){3}\d{1,3}\b`)
 	mac := regexp.MustCompile(`\b([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`)
 	key := regexp.MustCompile(`(ssh-[a-z0-9-]+|ecdsa-[a-z0-9-]+)(%20|\s|\+)([A-Za-z0-9+/=%]+)`)
+	token := regexp.MustCompile(`PLUMB_ENROLL_TOKEN(?:=|%3D|\\u003d)([A-Za-z0-9_-]+)`)
 	doc4 := netip.MustParsePrefix("192.0.2.0/24")
 	doc6 := netip.MustParsePrefix("2001:db8::/32")
 	n := 0
@@ -50,6 +51,11 @@ func TestRecordingsHoldNoSecret(t *testing.T) {
 		for _, m := range mac.FindAllString(s, -1) {
 			if m != "BC:24:11:00:00:01" {
 				t.Errorf("%s holds the MAC %s", p, m)
+			}
+		}
+		for _, m := range token.FindAllStringSubmatch(s, -1) {
+			if m[1] != "scrubbed" {
+				t.Errorf("%s holds an enrollment token (env)", p)
 			}
 		}
 		for _, k := range key.FindAllStringSubmatch(s, -1) {

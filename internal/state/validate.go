@@ -727,6 +727,20 @@ func (s *Set) checkTarget(name string) Errors {
 		if have, ok := intOf(t.Guest["disk"]); ok && have < minLXCDisk {
 			errs = append(errs, errf("/spec/guest/disk", "the root file system of an LXC Target needs at least %d GiB", minLXCDisk))
 		}
+		// Proxmox keeps no copy of a container's keys; the driver writes
+		// one description line per key, and the description holds 8 KiB
+		// (D-249).
+		if keys, ok := t.Guest["ssh_keys"].([]any); ok {
+			n := 0
+			for _, k := range keys {
+				if s, ok := k.(string); ok {
+					n += len(lxcKeyLine) + len(s) + 1
+				}
+			}
+			if n > maxLXCKeyBytes {
+				errs = append(errs, errf("/spec/guest/ssh_keys", "the SSH keys of an LXC Target take %d bytes; at most %d fit (Plumb keeps them in the container description, D-249)", n, maxLXCKeyBytes))
+			}
+		}
 	}
 	// guest and overrides never hold a reference, at any depth (D-088).
 	if at := findRef(t.Guest, "/spec/guest"); at != "" {
@@ -742,6 +756,14 @@ func (s *Set) checkTarget(name string) Errors {
 	u, _ := s.targetUnit(name)
 	return append(errs, s.checkUses(u)...)
 }
+
+// lxcKeyLine and maxLXCKeyBytes: the description lines of the SSH keys
+// of a container (proxmox driver, D-249). Proxmox allows 8192 bytes; the
+// rest holds the image marker, the version and the footer.
+const (
+	lxcKeyLine     = "plumb-ssh-key: "
+	maxLXCKeyBytes = 7168
+)
 
 // minLXCDisk is the smallest root file system of an LXC Target in GiB
 // (a fresh Ubuntu root fs uses about 0.7 GB, T-038 host E1).

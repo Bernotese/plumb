@@ -123,7 +123,7 @@ func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot dr
 	if err := d.checkBridge(gs.Bridge); err != nil {
 		return "", err
 	}
-	tpl, m, err := d.own(ctx, string(spec.Base))
+	tpl, m, err := d.ownVM(ctx, string(spec.Base))
 	if err != nil {
 		return "", fmt.Errorf("proxmox: base image %s: %w", spec.Base, err)
 	}
@@ -189,7 +189,7 @@ func (d *Driver) MakeImage(ctx context.Context, gid driver.GuestID, img driver.B
 	if img.Version < 1 || !sha256Hex.MatchString(img.Digest) {
 		return "", errors.New("proxmox: a built image needs a version and a full build digest")
 	}
-	id, m, err := d.own(ctx, string(gid))
+	id, m, err := d.ownVM(ctx, string(gid))
 	if err != nil {
 		return "", err
 	}

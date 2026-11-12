@@ -174,13 +174,30 @@ type member struct {
 	Template int    `json:"template"` // stale for a few seconds; see own
 }
 
+// Guest types of the pool members (Proxmox: qemu and lxc).
+const (
+	typeVM = "qemu"
+	typeCT = "lxc"
+)
+
 // members lists the qemu guests in the pool.
 func (d *Driver) members(ctx context.Context) ([]member, error) {
+	all, err := d.guests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(all, func(m member) bool { return m.Type != typeVM }), nil
+}
+
+// guests lists the VMs and containers in the pool. Proxmox takes the type
+// of a member from its VM list, which is current; a member without a type
+// counts as a VM, as before containers (T-079).
+func (d *Driver) guests(ctx context.Context) ([]member, error) {
 	var pools []struct {
 		PoolID  string   `json:"poolid"`
 		Members []member `json:"members"`
 	}
-	if err := d.c.Get(ctx, "/pools", url.Values{"poolid": {d.cfg.Pool}, "type": {"qemu"}}, &pools); err != nil {
+	if err := d.c.Get(ctx, "/pools", url.Values{"poolid": {d.cfg.Pool}}, &pools); err != nil {
 		return nil, err
 	}
 	var out []member
@@ -191,7 +208,11 @@ func (d *Driver) members(ctx context.Context) ([]member, error) {
 			continue
 		}
 		for _, m := range p.Members {
-			if m.Type == "qemu" || m.Type == "" {
+			switch m.Type {
+			case "":
+				m.Type = typeVM
+				out = append(out, m)
+			case typeVM, typeCT:
 				out = append(out, m)
 			}
 		}
@@ -209,7 +230,7 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 	if id < d.cfg.VMIDMin || id > d.cfg.VMIDMax {
 		return 0, member{}, fmt.Errorf("%w: VMID %d is outside %d–%d", ErrForeignGuest, id, d.cfg.VMIDMin, d.cfg.VMIDMax)
 	}
-	ms, err := d.members(ctx)
+	ms, err := d.guests(ctx)
 	if err != nil {
 		return 0, member{}, err
 	}
@@ -217,6 +238,17 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 		if m.VMID == id {
 			// Name and template come from the config, never from the
 			// list: for a fresh clone the list has no name yet (T-073).
+			if m.Type == typeCT {
+				cfg, err := d.ctConfig(ctx, id, true)
+				if err != nil {
+					return 0, member{}, err
+				}
+				m.Name, m.Template = cfg["hostname"], 0
+				if cfg["template"] == "1" {
+					m.Template = 1
+				}
+				return id, m, nil
+			}
 			cfg, err := d.config(ctx, id)
 			if err != nil {
 				return 0, member{}, err
@@ -232,6 +264,16 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 	// Not in the pool: either gone, or someone else's. The token can only
 	// see pool guests, so both look the same; it is not ours either way.
 	return 0, member{}, fmt.Errorf("VMID %d is not in pool %s: %w", id, d.cfg.Pool, driver.ErrNotFound)
+}
+
+// ownVM is own for the methods that know only VMs: a container is
+// refused before any change (T-038 §3).
+func (d *Driver) ownVM(ctx context.Context, s string) (int, member, error) {
+	id, m, err := d.own(ctx, s)
+	if err == nil && m.Type != typeVM {
+		return 0, member{}, fmt.Errorf("proxmox: VMID %d is a container, not a VM", id)
+	}
+	return id, m, err
 }
 
 // nextID returns a free VMID in the range.
@@ -494,11 +536,15 @@ func smbios(old, serial string) string {
 // guest. The driver writes no file on the host. A failure after the clone
 // removes the half-made guest.
 func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.Bootstrap) (driver.GuestID, error) {
-	if spec.Kind != wire.KindVM {
-		return "", fmt.Errorf("proxmox: only VMs in this version, not %q", spec.Kind)
-	}
 	if boot.Token == "" {
 		return "", errors.New("proxmox: a new guest needs an enrollment token")
+	}
+	switch spec.Kind {
+	case wire.KindLXC:
+		return d.createCT(ctx, spec, boot)
+	case wire.KindVM:
+	default:
+		return "", fmt.Errorf("proxmox: unknown guest type %q", spec.Kind)
 	}
 	if err := checkSpec(spec); err != nil {
 		return "", err
@@ -506,7 +552,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	if err := d.checkBridge(spec.Bridge); err != nil {
 		return "", err
 	}
-	tpl, m, err := d.own(ctx, string(spec.Image))
+	tpl, m, err := d.ownVM(ctx, string(spec.Image))
 	if err != nil {
 		return "", fmt.Errorf("proxmox: image %s: %w", spec.Image, err)
 	}
@@ -575,7 +621,7 @@ func (d *Driver) removeHalfMade(ctx context.Context, id int, name string, made b
 		return nil // nothing of ours to remove
 	case err != nil:
 		return err
-	case m.Name != name || m.Template == 1:
+	case m.Name != name || m.Template == 1 || m.Type != typeVM:
 		if made {
 			return fmt.Errorf("VMID %d has the name %q (template %d), not %q: not proven ours, not removed", id, m.Name, m.Template, name)
 		}
@@ -746,12 +792,17 @@ func (d *Driver) config(ctx context.Context, id int) (map[string]string, error) 
 // that the running guest uses; without it Proxmox gives the values after
 // the next stop and start, the pending ones applied (T-015 run 1).
 func (d *Driver) readConfig(ctx context.Context, id int, current bool) (map[string]string, error) {
+	return d.readPath(ctx, vmPath(d, id), current)
+}
+
+// readPath reads one config view of a VM or a container at path.
+func (d *Driver) readPath(ctx context.Context, path string, current bool) (map[string]string, error) {
 	var q url.Values
 	if current {
 		q = url.Values{"current": {"1"}}
 	}
 	var raw map[string]any
-	if err := d.c.Get(ctx, vmPath(d, id)+"/config", q, &raw); err != nil {
+	if err := d.c.Get(ctx, path+"/config", q, &raw); err != nil {
 		return nil, notFound(err)
 	}
 	out := make(map[string]string, len(raw))
@@ -878,6 +929,9 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 	if err != nil {
 		return driver.GuestState{}, err
 	}
+	if m.Type == typeCT {
+		return d.observeCT(ctx, id)
+	}
 	cfg, next, err := d.views(ctx, id)
 	if err != nil {
 		return driver.GuestState{}, err
@@ -955,9 +1009,12 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 			}
 		}
 	}
-	id, _, err := d.own(ctx, string(gid))
+	id, m, err := d.own(ctx, string(gid))
 	if err != nil {
 		return err
+	}
+	if m.Type == typeCT {
+		return d.updateCT(ctx, id, changes, boot)
 	}
 	cfg, err := d.config(ctx, id)
 	if err != nil {
@@ -1097,26 +1154,34 @@ func (d *Driver) status(ctx context.Context, id int) (string, error) {
 // Power runs a power action. Restart is a shutdown and a start, not a
 // reboot: only a cold start gives the guest a new SMBIOS serial (D-078).
 func (d *Driver) Power(ctx context.Context, gid driver.GuestID, action driver.PowerAction) error {
-	id, _, err := d.own(ctx, string(gid))
+	id, m, err := d.own(ctx, string(gid))
 	if err != nil {
 		return err
 	}
-	st, err := d.status(ctx, id)
-	if err != nil {
-		return err
+	path := vmPath(d, id)
+	if m.Type == typeCT {
+		path = ctPath(d, id)
 	}
+	var st struct {
+		Status string `json:"status"`
+	}
+	if err := d.c.Get(ctx, path+"/status/current", nil, &st); err != nil {
+		return notFound(err)
+	}
+	// A container takes its pending values and a new env token at the
+	// same cold start (host C4): shutdown and start, as a VM.
 	stop := func() error {
-		if st != "running" {
+		if st.Status != "running" {
 			return nil
 		}
-		return d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/status/shutdown", url.Values{
+		return d.c.Task(ctx, d.cfg.Node, "POST", path+"/status/shutdown", url.Values{
 			"timeout": {strconv.Itoa(int(d.cfg.ShutdownTimeout.Seconds()))}, "forceStop": {"1"},
 		})
 	}
-	start := func() error { return d.c.Task(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/status/start", nil) }
+	start := func() error { return d.c.Task(ctx, d.cfg.Node, "POST", path+"/status/start", nil) }
 	switch action {
 	case driver.PowerStart:
-		if st == "running" {
+		if st.Status == "running" {
 			return nil
 		}
 		return start()
@@ -1131,12 +1196,6 @@ func (d *Driver) Power(ctx context.Context, gid driver.GuestID, action driver.Po
 	return fmt.Errorf("proxmox: unknown power action %q", action)
 }
 
-// ClearBootstrap removes the `env` token of a container. This version
-// manages only VMs; T-079 adds containers.
-func (d *Driver) ClearBootstrap(ctx context.Context, gid driver.GuestID) error {
-	return fmt.Errorf("proxmox: guest %s: only VMs in this version; a VM has no token to clear", gid)
-}
-
 // Delete stops the guest and removes it with its disks.
 func (d *Driver) Delete(ctx context.Context, gid driver.GuestID) error {
 	id, m, err := d.own(ctx, string(gid))
@@ -1145,6 +1204,9 @@ func (d *Driver) Delete(ctx context.Context, gid driver.GuestID) error {
 	}
 	if m.Template == 1 {
 		return fmt.Errorf("proxmox: VMID %d is a template; images are not deleted by Delete", id)
+	}
+	if m.Type == typeCT {
+		return d.deleteCT(ctx, id)
 	}
 	st, err := d.status(ctx, id)
 	if err != nil {

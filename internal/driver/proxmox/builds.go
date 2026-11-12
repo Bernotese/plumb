@@ -65,7 +65,7 @@ func (d *Driver) RemoveBuild(ctx context.Context, gid driver.GuestID, image stri
 		return err
 	}
 	name := buildName(image, version)
-	id, m, err := d.own(ctx, string(gid))
+	id, m, err := d.ownVM(ctx, string(gid))
 	if err != nil {
 		return err
 	}

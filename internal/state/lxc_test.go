@@ -54,6 +54,16 @@ func TestLXCTargetRules(t *testing.T) {
 		_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"user":"plumb"`)})
 		errAt(t, err, KindTarget, "/spec/guest/user", "no bootstrap user")
 	})
+	// D-249: the keys of a container live in its description (8 KiB).
+	t.Run("ssh keys too large", func(t *testing.T) {
+		key := `"ssh-rsa ` + strings.Repeat("A", 700) + ` k@example"`
+		keys := strings.TrimSuffix(strings.Repeat(key+",", 10), ",")
+		_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":[` + keys + `]`)})
+		errAt(t, err, KindTarget, "/spec/guest/ssh_keys", "at most 7168 fit")
+		if _, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":[` + key + `,` + key + `]`)}); err != nil {
+			t.Errorf("two RSA keys: %v", err)
+		}
+	})
 	t.Run("disk below 2 GiB", func(t *testing.T) {
 		_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":1`)})
 		errAt(t, err, KindTarget, "/spec/guest/disk", "at least 2 GiB")
