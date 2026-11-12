@@ -3,6 +3,8 @@ package proxmox
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -185,4 +187,82 @@ func TestCTBuildLifecycleFake(t *testing.T) {
 		}
 	})
 	runCTBuild(t, e.d, e.spec, "vmbr0")
+}
+
+// Inspect the wire boundary: final state alone cannot prove S8 ordering.
+type ctQATransport func(*http.Request) (*http.Response, error)
+
+func (fn ctQATransport) RoundTrip(r *http.Request) (*http.Response, error) { return fn(r) }
+
+func TestCTTemplateBoundaryQA(t *testing.T) {
+	f, d, gid := ctBuildEnv(t)
+	f.vms[9000].pending = map[string]string{"env": "PLUMB_ENROLL_TOKEN=pending"}
+	f.ctTemplateReads = 8
+	next := d.c.http.Transport
+	called := false
+	d.c.http.Transport = ctQATransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/template") {
+			called = true
+			f.mu.Lock()
+			vm := f.vms[9000]
+			if vm.cfg["env"] != "" || vm.pending["env"] != "" || vm.delete["env"] {
+				t.Error("template call before all env views were cleared")
+			}
+			f.mu.Unlock()
+		}
+		return next.RoundTrip(r)
+	})
+	if _, err := d.MakeImage(context.Background(), gid, ctBuilt); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !called || !f.vms[9000].template || f.lateCT[9000] != 0 {
+		t.Fatal("MakeImage returned before the late template worker completed")
+	}
+}
+
+func TestCTPendingOnlyGuardsQA(t *testing.T) {
+	for _, clone := range []bool{false, true} {
+		t.Run(map[bool]string{false: "template", true: "clone"}[clone], func(t *testing.T) {
+			f, d, gid := ctBuildEnv(t)
+			ref := driver.ImageRef("")
+			if clone {
+				var err error
+				ref, err = d.MakeImage(context.Background(), gid, ctBuilt)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				delete(f.vms[9000].cfg, "env")
+			}
+			// Inject a pending row which neither config view exposes. Even a
+			// pending delete must block use of the container as a clean template.
+			next := d.c.http.Transport
+			d.c.http.Transport = ctQATransport(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pending") && (!clone || !strings.Contains(r.URL.Path, "/9000/")) {
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[{"key":"env","delete":1}]}`))}, nil
+				}
+				return next.RoundTrip(r)
+			})
+			var err error
+			if clone {
+				s := ctSpec()
+				s.Image, s.SSHKeys = ref, nil
+				_, err = d.Create(context.Background(), s, driver.Bootstrap{Token: ctToken})
+			} else {
+				_, err = d.MakeImage(context.Background(), gid, ctBuilt)
+			}
+			if err == nil || !strings.Contains(err.Error(), "pending") {
+				t.Fatalf("pending env accepted: %v", err)
+			}
+			if clone {
+				if len(f.vms) != 1 || f.count("PUT /nodes/pve/lxc/9001/config") != 0 || f.count("POST /nodes/pve/lxc/9001/status/start") != 0 {
+					t.Fatal("tainted clone configured, started, or left behind")
+				}
+			} else if f.count("POST /nodes/pve/lxc/9000/template") != 0 {
+				t.Fatal("tainted build converted")
+			}
+		})
+	}
 }
