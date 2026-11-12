@@ -155,3 +155,17 @@ export const KNOWN_LXC_TEMPLATES: readonly { label: string; url: string; sha512:
       "d5607f124d01f8ddfebd8e7da34c0022fb2a464e1662ee1e39a13f5ed1bae08a7364c486247fbd9f69f26c710729884ee5047aadb89f33a40066cd5f0d9def88",
   },
 ];
+
+/**
+ * The base pin of a version (D-254): the SHA-256 of a vm base (64 hex) or the
+ * SHA-512 pin of an lxc base (128 hex). `short` is its first 12 digits; null
+ * for any other value.
+ */
+export function basePin(
+  pin: string | null | undefined,
+): { algo: "sha256" | "sha512"; short: string } | null {
+  if (typeof pin !== "string") return null;
+  if (/^[0-9a-f]{64}$/u.test(pin)) return { algo: "sha256", short: pin.slice(0, 12) };
+  if (/^[0-9a-f]{128}$/u.test(pin)) return { algo: "sha512", short: pin.slice(0, 12) };
+  return null;
+}

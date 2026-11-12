@@ -224,8 +224,83 @@ export function seedLxc(images: ImageView[], targets: Map<string, TargetView>): 
       unused_imports: [{ volume: old, size_bytes: 207696168, command: `pvesm free ${old}` }],
     },
   });
+  // A built lxc Image (T-082): its versions pin the SHA-512 of the base (D-254).
+  images.push({
+    revision: 7,
+    document: {
+      kind: "Image",
+      name: "debian-ct-web",
+      spec: {
+        title: "Debian 13 container with nginx",
+        type: "lxc",
+        url: debian.url,
+        sha512: debian.sha512,
+        build: {
+          blocks: [{ use: "nginx", params: {} }],
+          upgrade: true,
+          guest: { cores: 1, memory: 512, disk: 4, bridge: "vmbr0", ip: "dhcp" },
+        },
+        retention: { keep: 2 },
+      },
+    },
+    status: {
+      versions: [
+        {
+          version: 1,
+          status: "ready",
+          trigger: "change",
+          run_id: 3,
+          revision: 7,
+          recipe_sha256: "4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d",
+          base_sha256: debian.sha512,
+          disk_gb: 4,
+          started_at: "2026-11-10T08:00:00Z",
+          finished_at: "2026-11-10T08:04:30Z",
+          removed_at: null,
+          targets: ["ct-web1"],
+        },
+      ],
+      building: null,
+      last_build: null,
+      next_build_at: null,
+      unused_imports: [],
+    },
+  });
   const web1 = targets.get("web1");
   if (!web1 || targets.has("ct1")) return;
+  // A container from debian-ct-web v1: no ssh_keys, the Block deploy-user (D-251).
+  targets.set("ct-web1", {
+    revision: 7,
+    document: {
+      kind: "Target",
+      name: "ct-web1",
+      spec: {
+        type: "lxc",
+        image: "debian-ct-web",
+        guest: { cores: 1, memory: 512, disk: 4, bridge: "vmbr0", ip: "dhcp" },
+        blocks: [
+          {
+            use: "deploy-user",
+            params: {
+              ssh_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlumbExampleKeyOnly admin@example",
+            },
+          },
+        ],
+      },
+    },
+    status: {
+      ...structuredClone(web1.status),
+      phase: "ready",
+      guest_id: "9011",
+      ips: [],
+      reported_ips: ["192.168.1.48"],
+      reported_at: "2026-11-10T09:00:10Z",
+      open_issues: 0,
+      waiting: [],
+      image_version: 1,
+      last_run_id: 3,
+    },
+  });
   targets.set("ct1", {
     revision: 7,
     document: {

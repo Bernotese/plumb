@@ -10,7 +10,8 @@ test("lxc: image from a known template, container target form", async ({ page })
   await expect(page.getByRole("heading", { name: "New image" })).toBeVisible();
   await page.getByLabel("Name").fill("e2e-ct");
   await page.getByLabel("Container (LXC)").check();
-  await expect(page.getByLabel("Build templates from this image")).toHaveCount(0);
+  // T-082: an lxc Image may have a build; it is off by default.
+  await expect(page.getByLabel("Build templates from this image")).not.toBeChecked();
   await page.getByLabel("Known template").selectOption({ label: "Debian 13" });
   await expect(page.getByLabel("Download address")).toHaveValue(
     /^http:\/\/download\.proxmox\.com\//,
