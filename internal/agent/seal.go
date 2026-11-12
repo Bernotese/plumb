@@ -58,15 +58,22 @@ WantedBy=sysinit.target
 )
 
 // ctAgentFiles are removed after the seal of a container (D-253): the
-// agent binary and its unit. The first-boot installer of the template
-// file stays (agent.json, ca.pem, plump-agent-install and its unit), so a
-// clone fetches the current agent at its first boot.
+// state dir (credential, desired list) and the agent binary. Everything
+// else is the state of the template file (D-230) and stays: agent.json,
+// ca.pem, plumb-agent-install with its unit, and plumb-agent.service with
+// its wants link. The installer only puts the binary in place and runs
+// "systemctl enable --now plumb-agent.service", so a clone without the
+// unit would never start its agent (review B1 of #174); until then the
+// unit fails and restarts every 10 s, as in a fresh container.
 var ctAgentFiles = []string{
 	DefaultStateDir,
-	"/etc/systemd/system/multi-user.target.wants/plumb-agent.service",
-	"/etc/systemd/system/plumb-agent.service",
 	"/usr/local/bin/plumb-agent",
 }
+
+// ContainerSealRemoves returns the paths that a container seal removes
+// after its result (D-253). The guest test of the clone's first boot uses
+// it.
+func ContainerSealRemoves() []string { return append([]string(nil), ctAgentFiles...) }
 
 // agentFiles are the agent's own files, removed after the result of seal
 // was taken (D-206: a VM template holds no agent). The state dir (the
@@ -274,6 +281,7 @@ func (a *Agent) sealUpgrade(ctx context.Context, body wire.SealBody) (wire.Statu
 	if !body.Upgraded {
 		return skippedStep("the build ran without the upgrade")
 	}
+	var removed [][]string
 	if body.Container {
 		// No cloud-init in a container: seal upgrades itself (D-252).
 		// The runner's environment is noninteractive; old config files
@@ -281,6 +289,13 @@ func (a *Agent) sealUpgrade(ctx context.Context, body wire.SealBody) (wire.Statu
 		if _, err := a.opt.Runner.Run(ctx, "apt-get", "-q", "-o", "DPkg::Lock::Timeout=300", "update"); err != nil {
 			return failedStep("apt-get update: %v", err)
 		}
+		// The simulation first: dist-upgrade may remove packages, and the
+		// build log names them (review N2 of #174).
+		sim, err := a.opt.Runner.Run(ctx, "apt-get", "-s", "dist-upgrade")
+		if err != nil {
+			return failedStep("apt-get -s dist-upgrade: %v", err)
+		}
+		removed = aptRemoved.FindAllStringSubmatch(string(sim), -1)
 		if _, err := a.opt.Runner.Run(ctx, "apt-get", "-q", "-y", "-o", "DPkg::Lock::Timeout=300",
 			"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "dist-upgrade"); err != nil {
 			return failedStep("apt-get dist-upgrade: %v", err)
@@ -298,8 +313,21 @@ func (a *Agent) sealUpgrade(ctx context.Context, body wire.SealBody) (wire.Statu
 		return failedStep("the upgrade is not complete: %d packages left. End of %s:\n%s",
 			n, cloudInitLog, readGuestTail(a.opt.Root, cloudInitLog, 2048))
 	}
+	if body.Container {
+		var names []string
+		for _, m := range removed {
+			names = append(names, m[1])
+		}
+		if len(names) > 0 {
+			return applied("upgraded; nothing left to upgrade; removed by the upgrade: " + strings.Join(names, ", "))
+		}
+		return applied("upgraded; nothing left to upgrade; no package removed")
+	}
 	return applied("nothing left to upgrade")
 }
+
+// aptRemoved finds "Remv <package>" lines of apt-get -s.
+var aptRemoved = regexp.MustCompile(`(?m)^Remv (\S+)`)
 
 // (4) Stop the log writers for the rest of this boot.
 func (a *Agent) sealLogStop(ctx context.Context, _ wire.SealBody) (wire.Status, string) {

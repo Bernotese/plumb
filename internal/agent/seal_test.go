@@ -646,6 +646,9 @@ func TestSealContainer(t *testing.T) {
 	ctl.send(t, "s1", wire.CommandSeal, wire.SealBody{PlanID: 7, Upgraded: true, Container: true})
 	rep := ctl.result(t, "s1")
 	want := "guard=applied initramfs=skipped upgrade=applied log-stop=applied cloud-init=applied host-keys=applied build-user=applied seed=applied logs=applied trim=skipped"
+	if out := rep.Items[2].Output; !strings.Contains(out, "no package removed") {
+		t.Errorf("upgrade output %q", out)
+	}
 	if got := statuses(rep.Items); got != want {
 		t.Fatalf("seal result:\n got %s\nwant %s\n%+v", got, want, rep.Items)
 	}
@@ -656,6 +659,7 @@ func TestSealContainer(t *testing.T) {
 	}
 	wantCalls := []string{
 		"apt-get -q -o DPkg::Lock::Timeout=300 update",
+		"apt-get -s dist-upgrade",
 		"apt-get -q -y -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade",
 		"apt-get -s dist-upgrade",
 		"systemctl stop rsyslog.service", "systemctl stop syslog.socket", "journalctl --relinquish-var",
@@ -677,17 +681,29 @@ func TestSealContainer(t *testing.T) {
 			t.Errorf("unit misses %q:\n%s", part, unit)
 		}
 	}
-	for _, p := range []string{"etc/ssh/ssh_host_ed25519_key", "usr/local/bin/plumb-agent", "etc/systemd/system/plumb-agent.service",
-		"etc/systemd/system/multi-user.target.wants/plumb-agent.service", DefaultStateDir} {
+	for _, p := range []string{"etc/ssh/ssh_host_ed25519_key", "usr/local/bin/plumb-agent", DefaultStateDir} {
 		if exists(root, p) {
 			t.Errorf("%s still there", p)
 		}
 	}
-	for _, p := range []string{"etc/plumb-agent/agent.json", "etc/plumb-agent/ca.pem", "usr/local/sbin/plumb-agent-install",
+	// Review B1 of #174: the installer starts the agent through its unit.
+	for _, p := range []string{"etc/systemd/system/plumb-agent.service", "etc/systemd/system/multi-user.target.wants/plumb-agent.service",
+		"etc/plumb-agent/agent.json", "etc/plumb-agent/ca.pem", "usr/local/sbin/plumb-agent-install",
 		"etc/systemd/system/plumb-agent-install.service", "etc/systemd/system/multi-user.target.wants/plumb-agent-install.service",
 		"etc/cloud/cloud-init.disabled"} {
 		if !exists(root, p) {
 			t.Errorf("%s removed", p)
 		}
+	}
+}
+
+// Review N2 of #174: the upgrade in a container names what it removed.
+func TestSealContainerNamesRemovedPackages(t *testing.T) {
+	r := &sealRunner{apt: aptClean + "Remv openssh-server [1:10.0p1-5]\nRemv xauth [1:1.1.2-1]\n"}
+	_, ctl := startBuildAgent(t, true, r)
+	ctl.send(t, "s1", wire.CommandSeal, wire.SealBody{PlanID: 7, Upgraded: true, Container: true})
+	rep := ctl.result(t, "s1")
+	if out := rep.Items[2].Output; !strings.Contains(out, "removed by the upgrade: openssh-server, xauth") {
+		t.Errorf("upgrade output %q", out)
 	}
 }
