@@ -78,3 +78,18 @@ func vmidRange(t *testing.T) (int, int) {
 func TestHostImageBuild(t *testing.T) {
 	runImageBuild(t, hostDriver(t), hostImage(), os.Getenv("PLUMB_PVE_BRIDGE"))
 }
+
+// TestHostDiskSpace reads the use of the disk storage with the real token
+// (T-084, D-240). It only reads. On an lvmthin disk storage the token has
+// Sys.Audit on / since D-240, so the thin-pool metadata use is known.
+func TestHostDiskSpace(t *testing.T) {
+	ds, err := hostDriver(t).DiskSpace(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("host fact: %s total %d used %d; metadata known %v, %d of %d",
+		ds.Storage, ds.TotalBytes, ds.UsedBytes, ds.MetaKnown, ds.MetaUsedBytes, ds.MetaTotalBytes)
+	if !ds.MetaKnown || ds.MetaTotalBytes <= 0 || ds.MetaUsedBytes <= 0 || ds.MetaUsedBytes > ds.MetaTotalBytes {
+		t.Errorf("thin-pool metadata use not read: %+v (does the token have Sys.Audit on /?)", ds)
+	}
+}
