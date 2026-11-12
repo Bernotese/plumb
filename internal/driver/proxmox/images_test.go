@@ -485,6 +485,11 @@ func TestRemoveImageGuard(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v, want %q", ref, err, want)
 		}
+		// D-232: only a lock means "in use"; retention keeps the template
+		// then. Every other refusal fails the retention step.
+		if inUse := errors.Is(err, driver.ErrImageInUse); inUse != (want == "locked") {
+			t.Errorf("%s: in use = %v (%v)", ref, inUse, err)
+		}
 	}
 	// The object itself must be consistent: name, kind and digest.
 	bad := []driver.ImageObject{
@@ -533,6 +538,9 @@ func TestRemoveImageLinkedClone(t *testing.T) {
 			if c.blocked {
 				if err == nil || !strings.Contains(err.Error(), "linked clones") || !strings.Contains(err.Error(), "9090") {
 					t.Fatalf("not blocked: %v", err)
+				}
+				if !errors.Is(err, driver.ErrImageInUse) || strings.Contains(err.Error(), "driver: image in use") {
+					t.Errorf("not ErrImageInUse, or the message repeats it: %v", err)
 				}
 				if f.cfgOf(ref) == nil {
 					t.Fatal("deleted")
