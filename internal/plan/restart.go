@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
@@ -27,6 +28,8 @@ const (
 		"Stop the VM or set allow_restart, then plan again"
 	textStartedOutside = "the VM was started outside Plumb during the Run, so the new token was written while it ran: " +
 		"it stays pending in smbios1 and is not active. Plan the re-enrollment again"
+	textStartedOutsideCT = "the container was started outside Plumb during the Run, so the new token was written while it ran: " +
+		"it stays pending in env and is not active. Plan the re-enrollment again"
 	textRestartNotPlanned = "the guest runs now, and the change needs a restart that the Plan does not show; plan again"
 	textBridgeStuck       = "Proxmox did not apply the bridge change live; check the VM in Proxmox"
 	textWaitsOutput       = "%s: set in Proxmox, waits for a stop and start of the VM"
@@ -63,7 +66,10 @@ func (t userText) Error() string { return string(t) }
 // waiting the values of WaitingGuest. It returns the changes to show or
 // record and whether the guest restarts. The enroll_token change is not
 // part of it; the caller adds it.
-func restartRule(changes, waiting []wire.Change, power driver.Power, allow, reenroll bool) ([]wire.Change, bool, error) {
+//
+// A container takes cores, memory and the bridge live (host C5): only a
+// re-enrollment restarts it, and allow_restart changes nothing else.
+func restartRule(kind wire.Kind, changes, waiting []wire.Change, power driver.Power, allow, reenroll bool) ([]wire.Change, bool, error) {
 	out := append([]wire.Change(nil), changes...)
 	if power != driver.PowerRunning {
 		return out, false, nil // a stopped guest takes every value at its next start
@@ -73,6 +79,9 @@ func restartRule(changes, waiting []wire.Change, power driver.Power, allow, reen
 			return nil, false, userText(TextReenrollRefused)
 		}
 		return out, true, nil // the one restart of the re-enrollment makes all of them active
+	}
+	if kind == wire.KindLXC {
+		return out, false, nil
 	}
 	needs := len(waiting) > 0
 	for i, c := range out {
@@ -280,4 +289,12 @@ func (e *Engine) waitsOfRun(ctx context.Context, runID int64) int {
 		}
 	}
 	return n
+}
+
+// forKind says "container" for "VM" in a text about an LXC guest.
+func forKind(text string, kind wire.Kind) string {
+	if kind == wire.KindLXC {
+		return strings.ReplaceAll(text, "the VM", "the container")
+	}
+	return text
 }

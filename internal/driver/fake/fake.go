@@ -34,6 +34,8 @@ const (
 	OpUpdate     Op = "Update"
 	OpPower      Op = "Power"
 	OpDelete     Op = "Delete"
+	// OpClearBootstrap is ClearBootstrap of a container (T-080).
+	OpClearBootstrap Op = "ClearBootstrap"
 
 	OpCreateBuild Op = "CreateBuild"
 	OpMakeImage   Op = "MakeImage"
@@ -53,7 +55,8 @@ type template struct {
 	version int
 	digest  string // build digest of a version, checksum of a base template
 	size    int64
-	linked  int // linked clones that a person made (review S3)
+	linked  int  // linked clones that a person made (review S3)
+	lxc     bool // a container template (T-080)
 }
 
 // importFile is a downloaded base image. Plumb never deletes one (D-209).
@@ -77,7 +80,13 @@ type guest struct {
 	build *driver.BuiltImage
 	// template: a build guest that a late conversion left (LeftTemplate).
 	template bool
+	// env: a container has its enrollment token in the config (the `env`
+	// option, D-231) until ClearBootstrap. Without env, the next cold
+	// start has no token.
+	env bool
 }
+
+func (g *guest) lxc() bool { return g.spec.Kind == wire.KindLXC }
 
 // Driver is the fake driver. The zero value is not usable; call New.
 type Driver struct {
@@ -278,6 +287,8 @@ func (g *guest) coldStart() {
 	g.spec.SSHKeys = append([]string(nil), g.next.SSHKeys...)
 	if g.pending != "" {
 		g.token, g.pending = g.pending, ""
+	} else if g.lxc() && !g.env {
+		g.token = "" // PID 1 starts without the env token (host C4)
 	}
 	if changed {
 		g.gen++
@@ -381,12 +392,33 @@ func (d *Driver) do(ctx context.Context, op Op, fn func() error) error {
 	return err
 }
 
-var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var (
+	sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	sha512Hex = regexp.MustCompile(`^[0-9a-f]{128}$`)
+)
 
 // FetchImage records the image. It refuses a bad checksum or a non-HTTPS
-// URL. The same name and checksum give the same ref.
+// URL (an lxc Image: a SHA-512 and http or https, D-224). The same name
+// and checksum give the same ref.
 func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.ImageRef, error) {
 	return task(ctx, d, OpFetchImage, func() (driver.ImageRef, error) {
+		if spec.Kind == wire.KindLXC {
+			if !sha512Hex.MatchString(spec.SHA512) || spec.SHA256 != "" {
+				return "", errors.New("fake: an lxc image needs a SHA-512 of 128 hex digits and no SHA-256")
+			}
+			if !strings.HasPrefix(spec.URL, "https://") && !strings.HasPrefix(spec.URL, "http://") {
+				return "", errors.New("fake: image URL must use http or https")
+			}
+			key := spec.Name + "@" + spec.SHA512
+			if r, ok := d.images[key]; ok {
+				return r, nil
+			}
+			ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
+			d.nextTpl++
+			d.images[key] = ref
+			d.tpls[ref] = &template{kind: driver.ImageBaseTemplate, image: spec.Name, digest: spec.SHA512, size: GiB / 4, lxc: true}
+			return ref, nil
+		}
 		if !sha256Hex.MatchString(spec.SHA256) {
 			return "", errors.New("fake: image checksum must be 64 hex digits")
 		}
@@ -442,6 +474,12 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		if !d.hasImage(spec.Image) {
 			return "", fmt.Errorf("fake: image %s: %w", spec.Image, driver.ErrNotFound)
 		}
+		if lxc := spec.Kind == wire.KindLXC; lxc != d.tpls[spec.Image].lxc {
+			return "", fmt.Errorf("fake: guest type %s does not match image %s", spec.Kind, spec.Image)
+		}
+		if spec.Kind == wire.KindLXC && spec.User != "" {
+			return "", errors.New("fake: a container has no bootstrap user (D-226)")
+		}
 		if spec.Name == "" || spec.ImageName == "" || spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
 			return "", errors.New("fake: incomplete guest spec")
 		}
@@ -460,7 +498,8 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		spec.Image = "" // like Proxmox: the guest keeps the Image name, not the ref (D-189)
 		next := spec
 		next.SSHKeys = append([]string(nil), spec.SSHKeys...)
-		d.guests[id] = &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1}
+		d.guests[id] = &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
+			env: spec.Kind == wire.KindLXC}
 		return id, nil
 	})
 }
@@ -474,7 +513,7 @@ func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestSt
 		}
 		spec := g.spec
 		spec.SSHKeys = append([]string(nil), g.spec.SSHKeys...)
-		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != ""}
+		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != "", TokenInConfig: g.env}
 		if !equalSpec(g.spec, g.next) {
 			next := g.next
 			next.SSHKeys = append([]string(nil), g.next.SSHKeys...)
@@ -496,7 +535,8 @@ func digest(g *guest) string {
 		Spec, Next driver.GuestSpec
 		Gen        int
 		Pending    bool
-	}{g.spec, g.next, g.gen, g.pending != ""})
+		Env        bool
+	}{g.spec, g.next, g.gen, g.pending != "", g.env})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:20])
 }
@@ -515,8 +555,10 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 			return driver.ErrNotFound
 		}
 		// A running guest takes cores and memory only at the next cold
-		// start (unless hotplug), and the bridge live (unless stuck).
+		// start (unless hotplug), and the bridge live (unless stuck). A
+		// container takes all of them live (host C5).
 		running := g.power == driver.PowerRunning
+		hotplug := d.hotplug || g.lxc()
 		run, next := g.spec, g.next
 		for _, c := range changes {
 			if driver.IsCreateOnly(c.Attr) {
@@ -530,7 +572,7 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				if !(running && d.keepPending && v == run.Cores) {
 					next.Cores = v
 				}
-				if !running || d.hotplug {
+				if !running || hotplug {
 					run.Cores = v
 				}
 			case driver.AttrMemory:
@@ -539,7 +581,7 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				if !(running && d.keepPending && v == run.MemoryMB) {
 					next.MemoryMB = v
 				}
-				if !running || d.hotplug {
+				if !running || hotplug {
 					run.MemoryMB = v
 				}
 			case driver.AttrBridge:
@@ -570,6 +612,7 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 		g.spec, g.next = run, next
 		if boot != nil {
 			g.pending = boot.Token
+			g.env = g.lxc()
 		}
 		g.gen++
 		g.frozen = ""
@@ -604,6 +647,26 @@ func (d *Driver) Power(ctx context.Context, id driver.GuestID, action driver.Pow
 			g.coldStart()
 		default:
 			return fmt.Errorf("fake: unknown power action %q", action)
+		}
+		return nil
+	})
+}
+
+// ClearBootstrap removes the env token of a container. The running PID 1
+// keeps the used token until the next cold start (host C4).
+func (d *Driver) ClearBootstrap(ctx context.Context, id driver.GuestID) error {
+	return d.do(ctx, OpClearBootstrap, func() error {
+		g, ok := d.guests[id]
+		if !ok {
+			return driver.ErrNotFound
+		}
+		if !g.lxc() {
+			return fmt.Errorf("fake: guest %s is a VM; it has no token to clear", id)
+		}
+		if g.env || g.pending != "" {
+			g.env, g.pending = false, ""
+			g.gen++
+			g.frozen = ""
 		}
 		return nil
 	})
