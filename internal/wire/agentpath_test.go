@@ -6,7 +6,7 @@ func TestIsAgentPath(t *testing.T) {
 	yes := []string{
 		"/etc/plumb-agent", "/etc/plumb-agent/agent.json", "/var/lib/plumb-agent/credential",
 		"/var/lib/plumb-agent/", "/var/lib/x/../plumb-agent/marks", "//var/lib/plumb-agent/a",
-		"/usr/local/bin/plumb-agent", "/usr/local/sbin/plumb-agent-install",
+		"/usr/local/bin/plumb-agent", "/usr/local/sbin/plumb-agent-install", "/usr/local/bin/.plumb-agent.new",
 		"/etc/systemd/system/plumb-agent.service", "/etc/systemd/system/plumb-agent.service.d/x.conf",
 		"/run/systemd/system/plumb-agent.service.d", "/lib/systemd/system/plumb-agent.service",
 		"/etc/systemd/system/multi-user.target.wants/plumb-agent.service",
@@ -84,5 +84,33 @@ func TestAgentConflicts(t *testing.T) {
 		case tt.want != "" && (len(got) == 0 || got[0].ID != tt.want):
 			t.Errorf("%s: conflicts %+v, want %s", tt.name, got, tt.want)
 		}
+	}
+}
+
+// T-078: the first-boot installer unit of an LXC template (T-076) is the
+// agent's too.
+func TestIsAgentPathInstallUnit(t *testing.T) {
+	for _, p := range []string{
+		"/etc/systemd/system/plumb-agent-install.service",
+		"/etc/systemd/system/plumb-agent-install.service.d/x.conf",
+		"/etc/systemd/system/multi-user.target.wants/plumb-agent-install.service",
+		"/lib/systemd/system/plumb-agent-install.service",
+	} {
+		if !IsAgentPath(p) {
+			t.Errorf("IsAgentPath(%q) = false", p)
+		}
+	}
+	for _, p := range []string{"/etc/systemd/system/plumb-agent-install.service.old", "/etc/systemd/system/plumb-agent-installer.service"} {
+		if IsAgentPath(p) {
+			t.Errorf("IsAgentPath(%q) = true", p)
+		}
+	}
+	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent"} {
+		if !isAgentUnit(n) {
+			t.Errorf("isAgentUnit(%q) = false", n)
+		}
+	}
+	if isAgentUnit("plumb-agent-installer") || isAgentUnit("nginx") {
+		t.Error("isAgentUnit too wide")
 	}
 }
