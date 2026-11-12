@@ -156,3 +156,40 @@ func TestRetentionKeepsTemplateFiles(t *testing.T) {
 		t.Fatalf("RemoveImage of a template file: %v", err)
 	}
 }
+
+// Driver metadata is untrusted, including aliases in Name and Ref.
+type templateListDriver struct {
+	driver.Driver
+	objects []driver.ImageObject
+}
+
+func (d templateListDriver) ListImages(context.Context, string) ([]driver.ImageObject, error) {
+	return d.objects, nil
+}
+
+func TestUnusedTemplateFilesUntrustedMetadata(t *testing.T) {
+	f := newTemplateFixture(t)
+	hostile := "local:vztmpl/plumb-ct-x-0123456789ab.tar.gz\nreboot"
+	f.e.cfg.Driver = templateListDriver{Driver: f.drv, objects: []driver.ImageObject{
+		{Kind: driver.ImageTemplateFile, Name: string(f.cur)},
+		{Kind: driver.ImageTemplateFile, Name: "alias", Ref: f.cur},
+		{Kind: driver.ImageTemplateFile, Name: string(f.usedRef), Containers: 2},
+		{Kind: driver.ImageImportFile, Name: string(f.oldRef)},
+		{Kind: driver.ImageTemplateFile, Name: hostile},
+		{Kind: driver.ImageTemplateFile, Name: string(f.oldRef)},
+	}}
+	got, err := f.e.UnusedTemplateFiles(f.ctx, "ct", f.current.URL, f.current.SHA512)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("unused = %+v, %v", got, err)
+	}
+	commands := map[string]string{}
+	for _, file := range got {
+		commands[file.Volume] = file.Command
+	}
+	if cmd, ok := commands[hostile]; !ok || cmd != "" {
+		t.Fatalf("hostile volume command = %q, present = %v", cmd, ok)
+	}
+	if commands[string(f.oldRef)] != "pvesm free "+string(f.oldRef) {
+		t.Fatalf("safe volume missing: %+v", got)
+	}
+}
