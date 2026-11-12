@@ -33,6 +33,7 @@ export interface PlumbApi {
   /** Plans a manual build of a built Image (origin `build`, T-062). 422 for a stock Image. */
   buildImage(name: string, reason?: string): Promise<Plan>;
   listBlocks(): Promise<BlockView[]>;
+  getBlock(name: string): Promise<BlockView>;
   listTargets(): Promise<TargetView[]>;
   getTarget(name: string): Promise<TargetView>;
   createPlan(proposal: Proposal): Promise<Plan>;
