@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,7 +146,38 @@ func apply(base *state.Set, p Proposal) (*state.Set, error) {
 	if err != nil {
 		return nil, &ProposalError{Msg: "the documents are not valid:\n" + err.Error(), Err: err}
 	}
+	// The resource attributes of a Block that this proposal adds or
+	// changes, also when nothing uses it yet (T-101). An unchanged Block
+	// is not checked again, so a stored one never blocks a proposal.
+	if errs := set.CheckBlockAttrs(changedBlocks(base, set, p.Put)); len(errs) > 0 {
+		return nil, &ProposalError{Msg: "the documents are not valid:\n" + errs.Error(), Err: errs}
+	}
 	return set, nil
+}
+
+// changedBlocks returns the names of the Blocks in put whose canonical
+// spec differs from the base, or that the base does not have.
+func changedBlocks(base, next *state.Set, put []state.Doc) []string {
+	spec := func(s *state.Set) map[string][]byte {
+		m := map[string][]byte{}
+		for _, d := range s.Docs() {
+			if d.Kind == state.KindBlock {
+				m[d.Name] = d.Spec
+			}
+		}
+		return m
+	}
+	before, after := spec(base), spec(next)
+	var out []string
+	for _, d := range put {
+		if d.Kind != state.KindBlock {
+			continue
+		}
+		if old, ok := before[d.Name]; !ok || !bytes.Equal(old, after[d.Name]) {
+			out = append(out, d.Name)
+		}
+	}
+	return out
 }
 
 // renderOrNil renders a target, or returns nil when the set has none.
