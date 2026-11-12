@@ -2310,9 +2310,9 @@ components:
         status:
           $ref: "#/components/schemas/ImageStatus"
           description: |
-            Builds and versions of a built Image (D-198). Missing for a stock Image. Planned (T-079,
-            T-080, not yet served): present for every `lxc` Image, also without `build`, for its
-            `unused_imports` (D-233).
+            Builds and versions of a built Image (D-198). Present for every `lxc` Image, also
+            without `build`, for its `unused_imports` (D-233); without `build`, `versions` is empty.
+            Missing for a stock `vm` Image.
     ImageStatus:
       type: object
       additionalProperties: false
@@ -2340,9 +2340,13 @@ components:
             Downloaded base images in the image storage that no checksum needs: not the checksum of
             the document and not the base of a running build. Safe to remove: no version needs it,
             because a version template is a full copy; a rollback to that checksum downloads it
-            again (D-209). For an `lxc` Image (planned, T-079/T-080): the repacked template files
-            (`vztmpl`) whose name does not match the current pin, CA and URL (D-233). Plumb never deletes them; a person
-            runs `command` on the host.
+            again (D-209). For an `lxc` Image: the repacked template files (`vztmpl`) whose name
+            is not the current file of any `lxc` Image (pin, CA and agent URL), and that no container
+            of the pool names in its description (D-233, D-250). Plumb never deletes them; a person
+            runs `command` on the host. Empty when the driver cannot list the files or a current
+            file is not known. A file can show as unused for a moment while a Run creates a
+            container from an older revision; freeing it then fails that create, and a new Plan
+            fetches it again.
           items: { $ref: "#/components/schemas/UnusedImport" }
         disk:
           $ref: "#/components/schemas/DiskUse"
@@ -2416,7 +2420,11 @@ components:
         size_bytes: { type: integer, format: int64, minimum: 0 }
         command:
           type: string
-          description: The exact command for a person on the Proxmox host.
+          description: |
+            The exact command for a person on the Proxmox host:
+            `pvesm free <storage>:import/plumb-<image>-<12 hex>.qcow2` or
+            `pvesm free <storage>:vztmpl/plumb-ct-<image>-<12 hex>.tar.gz`. Empty when the file
+            does not have the name form of Plumb.
           examples: ["pvesm free plumb-images:import/plumb-ubuntu-web-3f1c0a9e5d6b.qcow2"]
     DiskUse:
       type: object

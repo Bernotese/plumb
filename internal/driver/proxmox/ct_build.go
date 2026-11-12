@@ -44,15 +44,23 @@ func guestPath(d *Driver, m member) string {
 // view, the view after the next start, or a pending row (review S8). It
 // never returns the value.
 func (d *Driver) ctEnvLeft(ctx context.Context, id int) (string, error) {
+	where, _, err := d.ctEnvProof(ctx, id)
+	return where, err
+}
+
+// ctEnvProof is ctEnvLeft that also returns the running view of the
+// proof, so a write can carry the digest of exactly that read (review N1
+// of #174): an env written after the proof makes the write fail.
+func (d *Driver) ctEnvProof(ctx context.Context, id int) (string, map[string]string, error) {
 	run, next, err := d.ctViews(ctx, id)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var pending []struct {
 		Key string `json:"key"`
 	}
 	if err := d.c.Get(ctx, ctPath(d, id)+"/pending", nil, &pending); err != nil {
-		return "", notFound(err)
+		return "", nil, notFound(err)
 	}
 	var where []string
 	if run["env"] != "" {
@@ -66,7 +74,7 @@ func (d *Driver) ctEnvLeft(ctx context.Context, id int) (string, error) {
 			where = append(where, "pending")
 		}
 	}
-	return strings.Join(where, ", "), nil
+	return strings.Join(where, ", "), run, nil
 }
 
 // createBuildCT makes the build container of one version from the
@@ -175,14 +183,12 @@ func (d *Driver) waitTemplate(ctx context.Context, id int) error {
 // name and description in one write with the digest; DNS and onboot of
 // the build go.
 func (d *Driver) nameVersionCT(ctx context.Context, id int, img driver.BuiltImage) error {
-	if where, err := d.ctEnvLeft(ctx, id); err != nil {
-		return err
-	} else if where != "" {
-		return fmt.Errorf("proxmox: CT %d still has an env value (%s); no template is made from it (D-234)", id, where)
-	}
-	cfg, err := d.ctConfig(ctx, id, true)
+	where, cfg, err := d.ctEnvProof(ctx, id)
 	if err != nil {
 		return err
+	}
+	if where != "" {
+		return fmt.Errorf("proxmox: CT %d still has an env value (%s); no template is made from it (D-234)", id, where)
 	}
 	params := url.Values{"digest": {cfg["digest"]}, "hostname": {versionName(img.Image, img.Version)}, "description": {versionDescription(img)}}
 	var del []string

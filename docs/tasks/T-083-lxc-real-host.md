@@ -13,6 +13,7 @@ LXC Targets are proven on `pve-dev`.
 
 ## Acceptance criteria
 - [ ] Every host check of §10 with its result in `docs/tasks/T-083.log.md` (no address, no token id, no key).
+- [ ] From T-082 (review B1, moved H-B2): a full real LXC image build with the controller on `main`, Debian 13 and Ubuntu 26.04: build → seal → template → a Target cloned from the version boots, its agent installs and enrolls, first Run green; `ssh-keygen` runs before ssh (journal); no `env` in the template or the clone.
 - [ ] The host is clean at the end.
 - [ ] New decisions go to `docs/decisions/T-083.md` (ask pl-lead for numbers). Merge `origin/main` before you report.
 

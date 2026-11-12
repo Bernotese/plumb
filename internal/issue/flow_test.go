@@ -235,7 +235,13 @@ func TestFailedTargetDoesNotStopOthers(t *testing.T) {
 		t.Errorf("web2 not applied: %v", g)
 	}
 	// Every step emitted events.
-	sub := e.events.Subscribe(e.ctx, 0)
+	ctx, cancel := context.WithCancel(e.ctx)
+	sub := e.events.Subscribe(ctx, 0)
+	defer func() {
+		cancel()
+		for range sub.C {
+		}
+	}()
 	kinds := map[string]bool{}
 	timeout := time.After(time.Second)
 loop:

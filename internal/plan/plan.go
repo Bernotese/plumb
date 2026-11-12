@@ -525,9 +525,9 @@ type sensitiveCache struct {
 	renders map[string]*state.Rendered
 }
 
-// headRender returns the render of a target in the head revision, or nil
-// when there is no revision or no such target.
-func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered, error) {
+// headCache returns the cache of the head revision, or nil when there is
+// no revision.
+func (e *Engine) headCache(ctx context.Context) (*sensitiveCache, error) {
 	head, err := e.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
@@ -547,6 +547,16 @@ func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered
 		e.mu.Lock()
 		e.cache = c
 		e.mu.Unlock()
+	}
+	return c, nil
+}
+
+// headRender returns the render of a target in the head revision, or nil
+// when there is no revision or no such target.
+func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered, error) {
+	c, err := e.headCache(ctx)
+	if c == nil || err != nil {
+		return nil, err
 	}
 	e.mu.Lock()
 	r, ok := c.renders[target]

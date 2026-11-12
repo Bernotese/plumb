@@ -374,6 +374,9 @@ func TestMigrateBasePin(t *testing.T) {
 	ctx := context.Background()
 	const ts = "'2026-11-12T00:00:00.000000000Z'"
 	h64 := strings.Repeat("a", 64)
+	// Every row that the code wrote before 0011 is lower-case hex: the
+	// store inserts only hex digests (BuildDigest, the pinned checksum).
+	// The rows below pass the new CHECK, so the copy keeps them.
 	path := openAt(t, migrationNumber(t, "_base_pin.sql")-1,
 		`INSERT INTO revision (id, author, reason, created_at) VALUES (1, 'system', 'seed', `+ts+`)`,
 		`INSERT INTO plan (id, base_revision, origin, proposal, changes, risk, status, reason, author, approved_by, created_at, approved_at)
@@ -402,10 +405,11 @@ func TestMigrateBasePin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SHA-512 pin: %v", err)
 	}
-	for _, bad := range []string{strings.Repeat("c", 100), ""} {
+	for i, bad := range []string{strings.Repeat("c", 100), "", strings.Repeat("g", 64), strings.Repeat("g", 128), strings.Repeat("C", 128), strings.Repeat("a", 63) + " ", strings.Repeat("a", 127) + "\n"} {
+		// One Image per case: a duplicate key cannot hide a missing check.
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at)
-			VALUES ('x', 1, 'building', 'manual', 1, 1, ?, ?, ?, 1, `+ts+`)`, h64, bad, h64); err == nil {
-			t.Errorf("base_sha256 of length %d accepted", len(bad))
+			VALUES (?, 1, 'building', 'manual', 1, 1, ?, ?, ?, 1, `+ts+`)`, fmt.Sprintf("bad%d", i), h64, bad, h64); err == nil {
+			t.Errorf("base_sha256 %q accepted", bad)
 		}
 	}
 	// Index and triggers: one building per Image, no delete, fixed columns.
@@ -421,5 +425,38 @@ func TestMigrateBasePin(t *testing.T) {
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE image_version SET status = 'building' WHERE image = 'web' AND version = 1`); err == nil {
 		t.Error("ready → building allowed")
+	}
+}
+
+// A database with a non-hex base_sha256 (only possible by hand, 0009
+// checked the length only) stops 0011 as a whole: the migration is one
+// transaction, so the old table and its row stay.
+func TestMigrateBasePinRefusesNonHex(t *testing.T) {
+	ctx := context.Background()
+	const ts = "'2026-11-12T00:00:00.000000000Z'"
+	h64 := strings.Repeat("a", 64)
+	path := openAt(t, migrationNumber(t, "_base_pin.sql")-1,
+		`INSERT INTO revision (id, author, reason, created_at) VALUES (1, 'system', 'seed', `+ts+`)`,
+		`INSERT INTO plan (id, base_revision, origin, proposal, changes, risk, status, reason, author, approved_by, created_at, approved_at)
+		 VALUES (1, 1, 'build', '{}', '[]', 'reversible', 'approved', 'b', 'user:admin', 'user:admin', `+ts+`, `+ts+`)`,
+		`INSERT INTO run (id, plan_id, revision_id, status, started_at) VALUES (1, 1, 1, 'succeeded', `+ts+`)`,
+		`INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at, finished_at)
+		 VALUES ('web', 1, 'ready', 'change', 1, 1, '`+h64+`', '`+strings.Repeat("Z", 64)+`', '`+h64+`', 10, `+ts+`, `+ts+`)`,
+	)
+	if s, err := Open(ctx, path); err == nil {
+		s.Close()
+		t.Fatal("0011 accepted a non-hex base_sha256")
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, rows int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != migrationNumber(t, "_base_pin.sql")-1 {
+		t.Errorf("user_version %d %v", version, err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM image_version").Scan(&rows); err != nil || rows != 1 {
+		t.Errorf("rows %d %v", rows, err)
 	}
 }
