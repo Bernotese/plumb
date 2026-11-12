@@ -121,8 +121,8 @@ func TestNginxSiteRequiresNginxPackage(t *testing.T) {
 // T-088 (D-255): the default site must serve the page that the Debian and
 // Ubuntu package puts in /var/www/html, else it answers 403. The Block owns
 // only the site config; it writes no page into the web root.
-func TestNginxDefaultSiteServesDistroPage(t *testing.T) {
-	set, err := state.Validate(nginxTargetDocs(t, []any{map[string]any{"use": "nginx"}}, true))
+func TestNginxSitesServeDistroPage(t *testing.T) {
+	set, err := state.Validate(nginxTargetDocs(t, []any{map[string]any{"use": "nginx"}, nginxSiteUse("shop")}, true))
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
@@ -130,17 +130,20 @@ func TestNginxDefaultSiteServesDistroPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	var content string
+	content := map[string]string{}
 	for _, r := range rendered.Resources {
 		if path, _ := r.Attrs["path"].(string); strings.HasPrefix(path, "/var/www") {
 			t.Errorf("%s writes into the web root", r.ID)
 		}
-		if r.ID == "file:/etc/nginx/sites-available/default" {
-			content, _ = r.Attrs["content"].(string)
+		if c, ok := r.Attrs["content"].(string); ok {
+			content[r.ID] = c
 		}
 	}
-	if !strings.Contains(content, "root /var/www/html;") ||
-		!strings.Contains(content, "index index.html index.htm index.nginx-debian.html;") {
-		t.Errorf("default site content = %q", content)
+	// nginx-site keeps /var/www/html as its default root, so it needs the same list.
+	for _, id := range []string{"file:/etc/nginx/sites-available/default", "file:/etc/nginx/sites-available/shop"} {
+		if c := content[id]; !strings.Contains(c, "root /var/www/html;") ||
+			!strings.Contains(c, "index index.html index.htm index.nginx-debian.html;") {
+			t.Errorf("%s content = %q", id, c)
+		}
 	}
 }
