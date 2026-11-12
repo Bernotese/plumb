@@ -6,7 +6,7 @@ func TestIsAgentPath(t *testing.T) {
 	yes := []string{
 		"/etc/plumb-agent", "/etc/plumb-agent/agent.json", "/var/lib/plumb-agent/credential",
 		"/var/lib/plumb-agent/", "/var/lib/x/../plumb-agent/marks", "//var/lib/plumb-agent/a",
-		"/usr/local/bin/plumb-agent", "/usr/local/sbin/plumb-agent-install",
+		"/usr/local/bin/plumb-agent", "/usr/local/sbin/plumb-agent-install", "/usr/local/bin/.plumb-agent.new",
 		"/etc/systemd/system/plumb-agent.service", "/etc/systemd/system/plumb-agent.service.d/x.conf",
 		"/run/systemd/system/plumb-agent.service.d", "/lib/systemd/system/plumb-agent.service",
 		"/etc/systemd/system/multi-user.target.wants/plumb-agent.service",

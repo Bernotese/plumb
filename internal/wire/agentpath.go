@@ -20,6 +20,7 @@ var (
 	}
 	agentFiles = []string{
 		"/usr/local/bin/plumb-agent",
+		"/usr/local/bin/.plumb-agent.new", // temp name of the first-boot script (T-076)
 		"/usr/local/sbin/plumb-agent-install",
 	}
 	// Unit search paths of systemd (systemd.unit(5), system manager). A

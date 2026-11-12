@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -129,4 +131,47 @@ func TestEnrollWithTokenEnv(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(ta.root, "etc/cloud")); err == nil {
 		t.Error("a container agent made /etc/cloud")
 	}
+}
+
+// Review S1 of #161: hostile environment files. The result is the first
+// exact-key entry, trimmed; an error is one of the fixed texts, so it
+// never holds input bytes.
+func FuzzEnvToken(f *testing.F) {
+	f.Add([]byte("PLUMB_ENROLL_TOKEN=abc\x00"))
+	f.Add([]byte("A=1\x00PLUMB_ENROLL_TOKEN=\x00PLUMB_ENROLL_TOKEN=x"))
+	f.Add([]byte("PLUMB_ENROLL_TOKEN_X=y\x00"))
+	const key = "PLUMB_ENROLL_TOKEN"
+	fixed := []string{
+		"no enrollment token yet: " + key + " is not set in the environment of PID 1",
+		"read token: the environment of PID 1 is larger than 64 KiB",
+	}
+	dir := f.TempDir()
+	f.Fuzz(func(t *testing.T, body []byte) {
+		p := filepath.Join(dir, "env")
+		if err := os.WriteFile(p, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := envToken(p, key)
+		want := ""
+		if len(body) <= maxEnviron {
+			for _, kv := range bytes.Split(body, []byte{0}) {
+				if v, ok := bytes.CutPrefix(kv, []byte(key+"=")); ok {
+					want = strings.TrimSpace(string(v))
+					break
+				}
+			}
+		}
+		if err != nil {
+			if want != "" {
+				t.Fatalf("err %v, want %q", err, want)
+			}
+			if !slices.Contains(fixed, err.Error()) {
+				t.Fatalf("error %q is not a fixed text", err)
+			}
+			return
+		}
+		if got != want || got == "" || strings.ContainsRune(got, 0) {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	})
 }
