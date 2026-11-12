@@ -734,7 +734,9 @@ func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot dr
 			return "", errors.New("fake: a build needs an image, a version and a token")
 		}
 		tpl, ok := d.tpls[spec.Base]
-		if !ok || tpl.kind != driver.ImageBaseTemplate {
+		// A VM build clones a base template; an lxc build starts from the
+		// template file (T-082).
+		if !ok || (tpl.kind != driver.ImageBaseTemplate && !(tpl.lxc && tpl.kind == driver.ImageTemplateFile)) {
 			return "", fmt.Errorf("fake: base image %s: %w", spec.Base, driver.ErrNotFound)
 		}
 		if spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
