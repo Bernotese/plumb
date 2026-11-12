@@ -20,6 +20,9 @@
   import Images from "./screens/Images.svelte";
   import ImageForm from "./screens/ImageForm.svelte";
   import ImageScreen from "./screens/ImageView.svelte";
+  import Blocks from "./screens/Blocks.svelte";
+  import BlockForm from "./screens/BlockForm.svelte";
+  import BlockScreen from "./screens/BlockView.svelte";
 
   // The API: /api/v1 of the controller (T-014). A mock build
   // (VITE_PLUMB_MOCK=1, `npm run dev:mock`, development only) uses the
@@ -140,6 +143,10 @@
         href={href({ name: "images" })}
         aria-current={navCurrent(["images", "image", "image-new", "image-edit"])}>Images</a
       >
+      <a
+        href={href({ name: "blocks" })}
+        aria-current={navCurrent(["blocks", "block", "block-new", "block-edit"])}>Blocks</a
+      >
       <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue", "rules"])}
         >Issues</a
       >
@@ -191,6 +198,14 @@
     {#key route.image}<ImageScreen {api} name={route.image} />{/key}
   {:else if route.name === "image-edit"}
     {#key route.image}<ImageForm {api} name={route.image} />{/key}
+  {:else if route.name === "blocks"}
+    <Blocks {api} />
+  {:else if route.name === "block-new"}
+    <BlockForm {api} />
+  {:else if route.name === "block"}
+    {#key route.block}<BlockScreen {api} name={route.block} />{/key}
+  {:else if route.name === "block-edit"}
+    {#key route.block}<BlockForm {api} name={route.block} />{/key}
   {:else if route.name === "plan"}
     {#key route.id}<PlanView {api} id={route.id} />{/key}
   {:else if route.name === "run"}
