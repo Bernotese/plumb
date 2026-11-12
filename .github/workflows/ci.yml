@@ -70,6 +70,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make lint
+      - name: Known vulnerabilities (govulncheck)
+        run: make vuln
       - run: make test
       - name: Race detector
         run: make test-race

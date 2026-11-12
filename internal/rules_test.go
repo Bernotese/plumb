@@ -50,6 +50,7 @@ var directDeps = []string{
 	"github.com/santhosh-tekuri/jsonschema/",
 	"golang.org/x/crypto",
 	"golang.org/x/sys",
+	"github.com/klauspost/compress", // zstd decoder only, internal/driver/proxmox/ctpack (D-225)
 }
 
 // imports returns the import paths of all non-test Go files below dir,

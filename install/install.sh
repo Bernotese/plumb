@@ -341,7 +341,8 @@ $(sed 's/^/      /' "$ca")
       url='$url/agent/v1/binary'
       ca=/etc/plumb-agent/ca.pem
       tmp=\$(mktemp)
-      trap 'rm -f "\$tmp"' EXIT
+      new=/usr/local/bin/.plumb-agent.new
+      trap 'rm -f "\$tmp" "\$new"' EXIT
       fetch() {
         if command -v curl >/dev/null 2>&1; then
           curl -fsS --proto =https --connect-timeout 10 --max-time 300 --cacert "\$ca" -o "\$tmp" "\$url"
@@ -359,7 +360,10 @@ $(sed 's/^/      /' "$ca")
         if [ "\$i" -ge 60 ]; then echo "plumb-agent-install: the controller did not answer" >&2; exit 1; fi
         sleep 10
       done
-      install -m 0755 "\$tmp" /usr/local/bin/plumb-agent
+      # A temp name and a rename: a crash or a full disk never leaves a half
+      # binary under the real name (review S4 of T-038).
+      install -m 0755 "\$tmp" "\$new"
+      mv -f "\$new" /usr/local/bin/plumb-agent
       systemctl daemon-reload
       systemctl enable --now plumb-agent.service
 runcmd:
