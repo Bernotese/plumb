@@ -1,5 +1,6 @@
 # T-089 – Plan for slice 3
 
+- **State:** approved by the user on 2026-11-12 (all 6 recommendations). Child cards: T-090 … T-100.
 - **Owner:** pl-architect   · **Reviewer:** pl-reviewer   · **QA:** –
 - **Size:** M (plan only, no code)   · **Depends on:** –
 
@@ -109,14 +110,14 @@ Slice 3 holds, in this order:
 - **`sysctl` in an LXC** is not allowed: the resource declares `vm` only and the UI hides it.
 - Host needed only for C10. C2–C5 run in the CI guest tests (Debian 13, Ubuntu 26.04).
 
-### New decisions (proposed)
-- D-256 · proposed · Slice 3 scope and order as above; slice 4 as above.
-- D-257 · proposed · Agent update is a Plan step per Target, risk `disruptive` (a service restart, D-054); `system` proposes it when the agent's capabilities differ from the controller's; a person or a token approves. Nothing updates silently.
-- D-258 · proposed · Update mechanism: command `update` with the SHA-256 only (no URL field); the agent fetches `wire.PathBinary` from its pinned controller, checks the hash, runs the new binary's self-test, renames it over its own, keeps `.prev`, writes an update marker and exits for a systemd restart. The step passes when a `hello` with the new version arrives within 2 min. Inside the guest: a crash loop or no successful `hello` within 5 min restores `.prev`. Agents from before C2 do not know `update`: a one-time manual install per guest (root: stop the agent, run `plumb-agent-install`), or re-create.
-- D-259 · proposed · Gate: the agent sends a capability list (resource types and attributes) in `hello`. A Plan that needs a capability the Target's agent did not send is refused with "update the agent first"; the Run checks again at start (a guest can be restored from an old backup in between). Closes the D-169 gap.
-- D-260 · proposed · New resource types: `apt_repository` (deb822 file with `Signed-By` naming its own inline key file; never `trusted.gpg.d`; `Trusted: yes` refused), `unit` (unit file + daemon-reload; timers are units), `sysctl` (vm only), `command` (no drift, `creates` guard, always `destructive` by D-031; an Image whose build Blocks hold a `command` is refused). `network` and `firewall` wait for slice 4 (need a safe apply with rollback).
-- D-261 · proposed · Blocks screen edits the Block as YAML text, checked against `schema/block.json` in the browser and the server; save is a normal proposal, the Plan lists every Target the change touches.
-- D-262 · proposed · `docker-compose` Block: Docker's apt repo with the key pinned in the Block; compose file as a `file` resource; secrets only in a separate `.env` `file` resource with secret markers, mode 0600 (D-099); a `unit` runs `docker compose up -d`. Supports `vm`; `lxc` only if C10 passes without new rights.
+### New decisions (accepted by the user, 2026-11-12; now in `docs/DECISIONS.md`)
+- D-256 · accepted · Slice 3 scope and order as above; slice 4 as above.
+- D-257 · accepted · Agent update is a Plan step per Target, risk `disruptive` (a service restart, D-054); `system` proposes it when the agent's capabilities differ from the controller's; a person or a token approves. Nothing updates silently.
+- D-258 · accepted · Update mechanism: command `update` with the SHA-256 only (no URL field); the agent fetches `wire.PathBinary` from its pinned controller, checks the hash, runs the new binary's self-test, renames it over its own, keeps `.prev`, writes an update marker and exits for a systemd restart. The step passes when a `hello` with the new version arrives within 2 min. Inside the guest: a crash loop or no successful `hello` within 5 min restores `.prev`. Agents from before C2 do not know `update`: a one-time manual install per guest (root: stop the agent, run `plumb-agent-install`), or re-create.
+- D-259 · accepted · Gate: the agent sends a capability list (resource types and attributes) in `hello`. A Plan that needs a capability the Target's agent did not send is refused with "update the agent first"; the Run checks again at start (a guest can be restored from an old backup in between). Closes the D-169 gap.
+- D-260 · accepted · New resource types: `apt_repository` (deb822 file with `Signed-By` naming its own inline key file; never `trusted.gpg.d`; `Trusted: yes` refused), `unit` (unit file + daemon-reload; timers are units), `sysctl` (vm only), `command` (no drift, `creates` guard, always `destructive` by D-031; an Image whose build Blocks hold a `command` is refused). `network` and `firewall` wait for slice 4 (need a safe apply with rollback).
+- D-261 · accepted · Blocks screen edits the Block as YAML text, checked against `schema/block.json` in the browser and the server; save is a normal proposal, the Plan lists every Target the change touches.
+- D-262 · accepted · `docker-compose` Block: Docker's apt repo with the key pinned in the Block; compose file as a `file` resource; secrets only in a separate `.env` `file` resource with secret markers, mode 0600 (D-099); a `unit` runs `docker compose up -d`. Supports `vm`; `lxc` only if C10 passes without new rights.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes

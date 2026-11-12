@@ -14,7 +14,15 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083, T-085 | plan approved by the user (D-238). H10 done (PR #153): the token cannot make a privileged container, a dangerous feature, a host mount or a device. **On main:** T-075 contract (#154), T-076 `ctpack` (#156, incl. the CA pin of the first-boot download for VMs and LXC), T-077 installer (#157), T-078 agent (#161), T-080 engine (#159), T-081 web (#165), T-079 PR A driver lifecycle (#162), PR B fetch + host recordings (#167) and PR C outside additions (#169): **T-079 done**. T-085 Image status for `lxc` (#171) merged. T-082 LXC image builds (#174, migration 0011) merged. T-082 web part (#176) merged (D-251 no `ssh_keys` for a Target from a built lxc Image, D-252 upgrade by the agent at seal). T-086 test flake fixed (#173). **All code cards are on main. T-083 real-host acceptance: all PASS (PR #178; log `docs/tasks/T-083.log.md`)**: upgrade path with migration 0011 on the live DB, Debian 13 static + Ubuntu 26.04 DHCP containers, drift, live cores/memory, re-enroll, delete, file reuse, link, disk gate, same VMID, stop during a fetch, and two real LXC image builds whose clones enroll. Test host: on main `8af26b0`, clean. Closing work done: fetch-limit tests (#179), T-087 audit findings (#180: Go 1.27.4, `minimatch` override; 2 low `npm audit` findings stay, `deepmerge`, dev-only, not in `web/dist`). **T-038 is done.** Notes, no defects: the `nginx` Block's default site answers 403 on Debian/Ubuntu (index file name); repacked files are per Image name. |
 | T-084 token gets `Sys.Audit` (D-239, D-240) | pl-backend | Done. PR #181 and #184 merged. Repair run on the test host ok: role `PlumbAudit` (`Sys.Audit` only) on `/`, propagate 0, user and token; the token reads the thin-pool metadata use (host test `TestHostDiskSpace` PASS); node status and syslog stay 403. Not shown with a real Image build Plan (no Image on the controller). Log: `docs/tasks/T-084.log.md`. |
 | T-088 `nginx` and `nginx-site` Blocks: default page answered 403 on Debian/Ubuntu | done | merged (PR #182, D-255): `index index.html index.htm index.nginx-debian.html;`. An existing install keeps its stored Block text: copy that line into the stored `nginx` / `nginx-site` Block. |
-| T-089 plan for slice 3 ("Blocks for every day") | pl-architect | plan merged (PR #185, reviewed). **Waits for the user's approval; no code before it.** D-256 … D-262 are proposed. Note for card C4b (reviewer): the build refusal must also catch a Block that gets a `command` after an Image uses it; the build checks again at start. |
+| T-089 plan for slice 3 ("Blocks for every day") | pl-architect | **approved by the user on 2026-11-12 with all 6 recommendations** (D-256 … D-262 accepted). Child cards T-090 … T-100. |
+| T-090 contract (C1) | pl-architect | started |
+| T-091 agent self-update (C2) · T-092 controller update + gate (C3) | pl-backend | T-091 starts on the T-090 wire part; T-092 after it |
+| T-093 resources `apt_repository`, `unit`, `sysctl` (C4) | pl-reviewer (implements; pl-architect reviews) | starts on the T-090 schemas |
+| T-094 resource `command` (C4b) | pl-architect | after T-090 |
+| T-095 starter Blocks (C5) | open | after T-093 |
+| T-096 Blocks screen (C6) · T-097 agent version in the web (C7) | pl-frontend | T-096 started; T-097 after T-092 |
+| T-098 QA debt (C8) · T-099 QA per card (C9) | pl-codex-qa | T-098 started |
+| T-100 real-host acceptance (C10) | pl-backend | last |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
@@ -80,6 +88,5 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- **Slice 3 plan (T-089): approve or change.** 6 questions with one recommendation each in `docs/tasks/T-089-slice-3-plan.md` ("For the user"): theme, agent updates, Docker source, Docker in LXC, `command` resource, guests made before slice 3.
 - (Decided 2026-11-12: `nginx` card yes, T-088. pl-lead decided: no card for the double upload of a repacked file by two Images with the same base.)
 - Known limit (D-192, D-220, D-223): a STOCK Ubuntu 26.04 image used directly can stay on DHCP until its first restart; an Ubuntu version built by Plumb does not have the limit.
