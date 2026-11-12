@@ -117,3 +117,30 @@ func TestNginxSiteRequiresNginxPackage(t *testing.T) {
 		t.Fatalf("Target without nginx Block error = %v; want package:nginx", err)
 	}
 }
+
+// T-088 (D-255): the default site must serve the page that the Debian and
+// Ubuntu package puts in /var/www/html, else it answers 403. The Block owns
+// only the site config; it writes no page into the web root.
+func TestNginxDefaultSiteServesDistroPage(t *testing.T) {
+	set, err := state.Validate(nginxTargetDocs(t, []any{map[string]any{"use": "nginx"}}, true))
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	rendered, err := set.Render("web1")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var content string
+	for _, r := range rendered.Resources {
+		if path, _ := r.Attrs["path"].(string); strings.HasPrefix(path, "/var/www") {
+			t.Errorf("%s writes into the web root", r.ID)
+		}
+		if r.ID == "file:/etc/nginx/sites-available/default" {
+			content, _ = r.Attrs["content"].(string)
+		}
+	}
+	if !strings.Contains(content, "root /var/www/html;") ||
+		!strings.Contains(content, "index index.html index.htm index.nginx-debian.html;") {
+		t.Errorf("default site content = %q", content)
+	}
+}

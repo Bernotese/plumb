@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,6 +116,10 @@ func TestGuestNginxSitesFirstRun(t *testing.T) {
 			}
 			if t.Failed() {
 				return
+			}
+			// T-088: the default site serves the distro page (no Host match → default_server).
+			if out := run(t, "curl", "--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "5", "http://127.0.0.1/"); !strings.Contains(string(out), "nginx") {
+				t.Errorf("default site returned %q", out)
 			}
 			for _, name := range []string{"a", "b"} {
 				out := run(t, "curl", "--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "5", "-H", "Host: "+name+".lan", "http://127.0.0.1/")
