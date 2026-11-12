@@ -17,7 +17,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-089 plan for slice 3 ("Blocks for every day") | pl-architect | **approved by the user on 2026-11-12 with all 6 recommendations** (D-256 … D-262 accepted). Child cards T-090 … T-100. |
 | T-090 contract (C1) | pl-architect | merged (PR #187, D-266 … D-270) |
 | T-091 agent self-update (C2) · T-092 controller update + gate (C3) | pl-backend | T-091: PR #190 in review (guest tests ok on Debian 13 + Ubuntu 26.04, VM + LXC, both reverts). T-092 started, stacked on it. |
-| T-093 resources `apt_repository`, `unit`, `sysctl` (C4) | pl-reviewer (implements; pl-architect reviews) | starts on the T-090 schemas |
+| T-093 resources `apt_repository`, `unit`, `sysctl` (C4) | pl-reviewer (implements; pl-architect reviews) | PR #191 in review (guest tests ok on Debian 13 + Ubuntu 26.04) |
 | T-094 resource `command` (C4b) | pl-architect | PR #189, in review + QA |
 | T-095 starter Blocks (C5) | pl-frontend | started (draft; builds on T-093) |
 | T-096 Blocks screen (C6) · T-097 agent version in the web (C7) | pl-frontend | T-096: PR #188, in review + QA; T-097 after T-092 |
