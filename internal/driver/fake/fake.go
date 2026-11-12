@@ -250,6 +250,37 @@ func (d *Driver) StartOutside(id driver.GuestID) error {
 	return nil
 }
 
+// ChangeOutside changes a guest outside Plumb, as a person on the host:
+// fn changes the running and the next settings alike (for a container:
+// features, mount points, devices, raw lxc lines).
+func (d *Driver) ChangeOutside(id driver.GuestID, fn func(*driver.GuestSpec)) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g, ok := d.guests[id]
+	if !ok {
+		return driver.ErrNotFound
+	}
+	fn(&g.spec)
+	fn(&g.next)
+	g.gen++
+	g.frozen = ""
+	return nil
+}
+
+// TemplateRef gives the ref of an lxc Image that FetchImage made before;
+// ErrNotFound before the first fetch. A VM Image has none.
+func (d *Driver) TemplateRef(spec driver.ImageSpec) (driver.ImageRef, error) {
+	if spec.Kind != wire.KindLXC {
+		return "", driver.ErrNotImplemented
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if r, ok := d.images[spec.Name+"@"+spec.SHA512]; ok {
+		return r, nil
+	}
+	return "", driver.ErrNotFound
+}
+
 // StopOutside stops a guest outside Plumb. Pending values stay pending.
 func (d *Driver) StopOutside(id driver.GuestID) error {
 	d.mu.Lock()
@@ -595,6 +626,17 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				if !running || !d.bridgeStuck {
 					run.Bridge = s
 				}
+			case driver.AttrFeatures:
+				// A container takes its features at the next start (host D4).
+				if v, _ := c.To.(string); !g.lxc() || v != driver.CTFeatures {
+					err = fmt.Errorf("fake: features %v", c.To)
+				}
+				next.Features = driver.CTFeatures
+				if !running {
+					run.Features = driver.CTFeatures
+				}
+			case driver.AttrMounts, driver.AttrDevices, driver.AttrRawLXC:
+				err = &driver.OutsideError{Attr: c.Attr}
 			case driver.AttrEnrollToken:
 				if !c.Sensitive || c.From != nil || c.To != nil {
 					err = errors.New("fake: enroll_token change must be sensitive and carry no value")

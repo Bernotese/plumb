@@ -815,6 +815,17 @@ func (d *Driver) readPath(ctx context.Context, path string, current bool) (map[s
 	out := make(map[string]string, len(raw))
 	for k, v := range raw {
 		switch v := v.(type) {
+		case []any:
+			// The raw lxc.* lines of a container: [[key, value], …].
+			var lines []string
+			for _, kv := range v {
+				if p, ok := kv.([]any); ok && len(p) == 2 {
+					lines = append(lines, fmt.Sprintf("%v: %v", p[0], p[1]))
+				} else {
+					lines = append(lines, fmt.Sprint(kv))
+				}
+			}
+			out[k] = strings.Join(lines, "\n")
 		case string:
 			out[k] = v
 		case float64:
