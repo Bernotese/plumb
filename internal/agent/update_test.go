@@ -24,8 +24,8 @@ import (
 type sysRunner struct {
 	mu       sync.Mutex
 	calls    []string
-	restarts int              // NRestarts of the agent unit
-	fail     map[string]error // by the joined arguments, e.g. "enable --now plumb-agent-guard.timer"
+	restarts int               // NRestarts of the agent unit
+	fail     map[string]error  // by the joined arguments, e.g. "enable --now plumb-agent-guard.timer"
 	before   map[string]func() // runs before a call answers, by the joined arguments
 }
 
