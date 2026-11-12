@@ -121,6 +121,10 @@ type fakePVE struct {
 	// failNextPUT: the next container config write ignores a delete of
 	// this key (a write that Proxmox did not take, T-082 S8 guard).
 	failNextPUT string
+	// ctTemplateReads: a container template call converts only at this
+	// many config reads later (default 2, as the host); lateCT counts.
+	ctTemplateReads int
+	lateCT          map[int]int
 }
 
 type fakeVM struct {
@@ -211,7 +215,7 @@ func newFakePVE(t *testing.T) *fakePVE {
 	f := &fakePVE{t: t, auth: "PVEAPIToken=" + fakeToken + "=" + fakeSecret, node: fakeNode,
 		vms: map[int]*fakeVM{}, files: map[string]bool{}, tasks: map[string]*fakeTask{},
 		failNext: map[string]string{}, lockReads: map[int]int{}, taskPolls: 2,
-		imagesAvail: 30 << 30, uploads: map[string][]byte{},
+		imagesAvail: 30 << 30, uploads: map[string][]byte{}, ctTemplateReads: 2, lateCT: map[int]int{},
 		version: "9.2.26", diskType: "lvmthin", diskTotal: 42 << 30, diskUsed: 1 << 30, linkInConfig: true, parentInContent: true,
 		storages: []map[string]any{
 			{"storage": "local-lvm", "content": "images,rootdir", "enabled": 1, "active": 1, "type": "lvmthin"},

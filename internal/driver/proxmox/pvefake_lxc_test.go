@@ -118,6 +118,14 @@ func ctNext(vm *fakeVM) map[string]string {
 func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int, vm *fakeVM, sub string) {
 	switch {
 	case r.Method == "GET" && sub == "/config":
+		if n, ok := f.lateCT[id]; ok {
+			if n <= 1 {
+				delete(f.lateCT, id)
+				f.convertCT(id, vm)
+			} else {
+				f.lateCT[id] = n - 1
+			}
+		}
 		view := ctNext(vm)
 		if r.Form.Get("current") == "1" {
 			view = vm.cfg
@@ -231,10 +239,13 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 			fail(w, 500, "CT is running", nil)
 			return
 		}
-		vm.template = true
-		vm.cfg["template"] = "1"
-		vm.cfg["rootfs"] = strings.Replace(vm.cfg["rootfs"], fmt.Sprintf(":vm-%d-disk-", id), fmt.Sprintf(":base-%d-disk-", id), 1)
-		reply(w, 200, nil) // sync (host C6)
+		// Like PVE 9.2: null, and a worker converts later (host T-082
+		// H-B1): the next reads still show no template.
+		f.lateCT[id] = f.ctTemplateReads
+		if f.lateCT[id] == 0 {
+			f.convertCT(id, vm)
+		}
+		reply(w, 200, nil)
 
 	case r.Method == "POST" && sub == "/clone":
 		var nid int
@@ -369,4 +380,11 @@ func (f *fakePVE) upload(w http.ResponseWriter, r *http.Request, key, storage st
 		f.uploads[name] = data
 	}
 	reply(w, 200, upid)
+}
+
+// convertCT makes a container a template (lvmthin: base- volume).
+func (f *fakePVE) convertCT(id int, vm *fakeVM) {
+	vm.template = true
+	vm.cfg["template"] = "1"
+	vm.cfg["rootfs"] = strings.Replace(vm.cfg["rootfs"], fmt.Sprintf(":vm-%d-disk-", id), fmt.Sprintf(":base-%d-disk-", id), 1)
 }

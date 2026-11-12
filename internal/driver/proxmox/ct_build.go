@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
 )
@@ -141,7 +142,33 @@ func (d *Driver) makeImageCT(ctx context.Context, id int, m member, img driver.B
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", ctPath(d, id)+"/template", nil); err != nil {
 		return d.afterFailedConversionCT(ctx, id, img, fmt.Errorf("proxmox: convert to template: %w", err))
 	}
+	if err := d.waitTemplate(ctx, id); err != nil {
+		return d.afterFailedConversionCT(ctx, id, img, err)
+	}
 	return ref, nil
+}
+
+// waitTemplate waits until a container config says template: 1. Proxmox
+// answers the template call with null but converts in a worker that it
+// does not name (host, T-082 H-B1: the read right after still shows the
+// vm- disk and no template key).
+func (d *Driver) waitTemplate(ctx context.Context, id int) error {
+	wait, cancel := context.WithTimeout(ctx, cleanupTimeout)
+	defer cancel()
+	for {
+		cfg, err := d.ctConfig(wait, id, true)
+		if err != nil {
+			return err
+		}
+		if cfg["template"] == "1" {
+			return nil
+		}
+		select {
+		case <-wait.Done():
+			return fmt.Errorf("proxmox: CT %d is no template %s after the template call: %w", id, cleanupTimeout, wait.Err())
+		case <-time.After(d.c.poll):
+		}
+	}
 }
 
 // nameVersionCT proves that no env is left (S8) and writes the version
