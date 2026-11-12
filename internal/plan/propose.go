@@ -452,10 +452,11 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		// Nobody can observe a guest that does not exist (D-066). The
 		// first apply may restart services, so the risk is disruptive.
 		for _, res := range r.Resources {
-			rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: wire.RiskDisruptive, Unverified: true}
+			risk := state.PlanRisk(res.Type, wire.RiskDisruptive)
+			rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: risk, Unverified: true}
 			// A sensitive attribute shows as "set", never with its value (D-089).
 			for _, attr := range res.Sensitive {
-				rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: wire.RiskDisruptive})
+				rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: risk})
 			}
 			tp.Resources = append(tp.Resources, rc)
 		}
@@ -555,8 +556,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		switch it.Status {
 		case wire.StatusUnchanged:
 		case wire.StatusDiffers:
+			typ, _, _ := wire.SplitID(it.Resource)
 			tp.Resources = append(tp.Resources, ResourceChange{Resource: it.Resource,
-				Action: wire.ActionOf(it.Changes), Changes: it.Changes, Risk: wire.MaxRisk(it.Changes)})
+				Action: wire.ActionOf(it.Changes), Changes: it.Changes, Risk: state.PlanRisk(typ, wire.MaxRisk(it.Changes))})
 		default:
 			return tp, &ProposalError{Target: target, Msg: fmt.Sprintf("observe of %s failed: %s", it.Resource, it.Output)}
 		}
@@ -651,9 +653,10 @@ func (e *Engine) planUnobserved(ctx context.Context, tp *TargetPlan, r *state.Re
 	}
 	var add []string
 	for _, res := range left {
-		rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: wire.RiskDisruptive, Unverified: true}
+		risk := state.PlanRisk(res.Type, wire.RiskDisruptive)
+		rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: risk, Unverified: true}
 		for _, attr := range res.Sensitive {
-			rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: wire.RiskDisruptive})
+			rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: risk})
 		}
 		tp.Resources = append(tp.Resources, rc)
 		for _, n := range state.ResourceSecrets(res) {

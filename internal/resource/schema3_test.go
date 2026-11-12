@@ -7,9 +7,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// The slice 3 types have a schema before they have an implementation
-// (T-090). T-093 and T-094 add them to the type table; then their cases
-// can move to TestSchemas.
+// Schema cases of the slice 3 types (T-090). command is in the type table
+// (T-094); T-093 adds the others.
 func TestSlice3Schemas(t *testing.T) {
 	const key = `-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBFit2ioBEADh\n-----END PGP PUBLIC KEY BLOCK-----\n`
 	const apt = `"name":"docker","uris":["https://download.docker.com/linux/debian"],"suites":["trixie"],"components":["stable"]`

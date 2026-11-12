@@ -94,6 +94,16 @@ type Type struct {
 	Key   string      // attribute that forms the key of the id ("path" → "file:<path>")
 	Kinds []wire.Kind // target kinds that support the type
 	New   Factory     // nil until the type is implemented
+	// NoDrift: the agent never reports drift of this type; the drift
+	// check skips it. A Plan still observes it (D-260).
+	NoDrift bool
+	// Destructive: every change of this type is destructive, also an
+	// unverified create in a Plan, so only a human session approves it
+	// (D-031, D-260).
+	Destructive bool
+	// NotInImage: an Image build must not hold this type; the Image is
+	// refused at save and the build checks again at start (D-260).
+	NotInImage bool
 }
 
 //go:embed schema/*.json
@@ -108,6 +118,8 @@ var types = map[string]Type{
 	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
 	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
 	"symlink":   {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
+	"command": {Name: "command", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newCommand,
+		NoDrift: true, Destructive: true, NotInImage: true},
 }
 
 // Lookup returns the type with the given name.
