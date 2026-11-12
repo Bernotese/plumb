@@ -148,7 +148,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 		"+ pveum acl modify /storage/plumb-snippets --tokens plumb@pve\\!plumb --roles PlumbSnippets --propagate 0",
 		"+ pveum user token add plumb@pve plumb --privsep 1",
 		"+ pvesm add dir plumb-snippets --path " + h.snippet + " --content snippets --shared 0",
-		"+ pvesm add dir plumb-images --path " + h.images() + " --content import --shared 0",
+		"+ pvesm add dir plumb-images --path " + h.images() + " --content import,vztmpl --shared 0",
 		"+ pveam download local debian-13-standard_13.1-2_amd64.tar.zst",
 		"+ pct create 105 local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst --hostname plumb --unprivileged 1",
 		"+ pct push 105 " + h.plumb + " /usr/local/bin/.plumb.plumb-new --perms 0755",

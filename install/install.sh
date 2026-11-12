@@ -12,6 +12,13 @@
 # binary comes from --plumb-binary, the LXC template from Proxmox's own
 # template list (pveam).
 #
+# Upgrade: run the new install.sh with the new plumb binary (a repair run).
+# It pushes the binary first, then changes the content of plumb-images to
+# import,vztmpl, then restarts plumb.service (D-229): an older binary refuses
+# that content at its start. When the new binary does not start, the run
+# sets the content back to import. Before you put an older binary back by
+# hand, run: pvesm set plumb-images --content import
+#
 # Test hooks (install/install_test.go; they only point the script at test
 # files and change nothing for root on a real host):
 #   PLUMB_INSTALL_ASSUME_ROOT=1   skip the root check (fake commands only)
@@ -80,7 +87,8 @@ Options:
   --plumb-binary FILE    the plumb binary (make build → bin/plumb)
   --disk-storage ID      storage for guest disks and the LXC (default local-lvm)
   --image-storage ID     storage for downloaded images; default: the new dir storage plumb-images.
-                         Another storage must have exactly the content "import" (D-081)
+                         Another storage must have exactly the content "import" or "import,vztmpl"
+                         (D-081, D-229); install.sh does not change it
   --template-storage ID  storage for the LXC template (default local)
   --bridge NAME          bridge for guests and the LXC (default vmbr0)
   --lxc-id N             VMID of the Plumb LXC (default: next free id)
@@ -109,7 +117,16 @@ say() { printf '%s\n' "$*"; }
 # TMP_FILES are removed on every exit, also on Ctrl-C (review T-013 #7).
 TMP_FILES=()
 cleanup_tmp() { [[ ${#TMP_FILES[@]} -eq 0 ]] || rm -f -- "${TMP_FILES[@]}"; }
-trap cleanup_tmp EXIT
+# on_exit keeps the exit status of the run: bash exits with the status
+# from before the trap.
+on_exit() {
+	local rc=$?
+	if [[ $rc != 0 && ${CONTENT_ROLLBACK:-0} == 1 ]]; then
+		rollback_image_content
+	fi
+	cleanup_tmp
+}
+trap on_exit EXIT
 trap 'exit 130' INT TERM
 # new_tmp NAME makes a temp file and sets the variable NAME to its path.
 # It runs in the main shell, so the exit trap knows the file.
@@ -410,6 +427,26 @@ storage_content() {
 	echo "${BASH_REMATCH[1]}"
 }
 
+# content_set LIST prints a content list as a sorted set: pvesm set
+# reorders the lists (host G0), so they are compared as sets (D-229).
+content_set() { awk -v RS=, 'NF { print $1 }' <<<"$1" | sort -u | paste -sd, -; }
+
+# The image storage has exactly {import} (an install from before D-229)
+# or exactly {import, vztmpl} (D-081, D-229).
+image_content_ok() {
+	local s
+	s=$(content_set "$1")
+	[[ $s == import || $s == import,vztmpl ]]
+}
+
+# vztmpl_note STORAGE C says that LXC Images need "vztmpl" on a storage
+# that install.sh does not change.
+vztmpl_note() {
+	[[ $(content_set "$2") == import ]] || return 0
+	say "NOTE: storage $1 has the content \"import\" only. VM Images work; LXC Images need \"import,vztmpl\"."
+	say "install.sh does not change a storage that it did not make. After the new plumb runs: pvesm set $1 --content import,vztmpl"
+}
+
 # check_storages refuses, before any change, a storage setup that would
 # let the token reach another snippet or overwrite foreign files (D-081).
 check_storages() {
@@ -419,10 +456,11 @@ check_storages() {
 		die "disk storage $DISK_STORAGE has the content \"snippets\": the token could point cicustom at any snippet there (D-081). Use a disk storage without snippets. Nothing was changed."
 	if [[ $IMAGE_STORAGE != plumb-images ]]; then
 		c=$(storage_content "$IMAGE_STORAGE") || die "storage $IMAGE_STORAGE does not exist"
-		[[ $c == import ]] ||
-			die "image storage $IMAGE_STORAGE has the content \"$c\"; it must have exactly \"import\" (D-081). Leave --image-storage out to get plumb-images. Nothing was changed."
+		image_content_ok "$c" ||
+			die "image storage $IMAGE_STORAGE has the content \"$c\"; it must have exactly \"import\" or \"import,vztmpl\" (D-081, D-229). Leave --image-storage out to get plumb-images. Nothing was changed."
+		vztmpl_note "$IMAGE_STORAGE" "$c"
 	elif c=$(storage_content plumb-images); then
-		[[ $c == import ]] || die "storage plumb-images exists with the content \"$c\", not \"import\". Nothing was changed."
+		image_content_ok "$c" || die "storage plumb-images exists with the content \"$c\", not \"import\" or \"import,vztmpl\". Nothing was changed."
 	fi
 	if c=$(storage_content "$SNIPPET_STORAGE"); then
 		[[ $c == snippets ]] || die "storage $SNIPPET_STORAGE exists with the content \"$c\", not \"snippets\". Nothing was changed."
@@ -430,12 +468,13 @@ check_storages() {
 }
 
 # ensure_image_storage makes the dir storage plumb-images (content import
-# only, root-owned). It never changes a storage that it did not make.
+# and vztmpl, D-229; root-owned). It never changes a storage that it did
+# not make; the content of ours changes in set_image_content.
 ensure_image_storage() {
 	[[ $IMAGE_STORAGE == plumb-images ]] || return 0
 	if [[ $IMAGES_PLAN == make ]]; then
 		run install -d -o root -g root -m 0755 "$IMAGE_DIR"
-		run pvesm add dir plumb-images --path "$IMAGE_DIR" --content import --shared 0
+		run pvesm add dir plumb-images --path "$IMAGE_DIR" --content import,vztmpl --shared 0
 		IMAGES_MADE=1
 	elif [[ $IMAGES_PLAN == ours || $IMAGES_PLAN == adopt ]]; then
 		IMAGES_MADE=1
@@ -463,11 +502,50 @@ check_images() {
 		IMAGES_PLAN=ours
 	elif images_like_ours "$cfg"; then
 		IMAGES_PLAN=adopt
-		say "Storage plumb-images ($IMAGE_DIR, content import) exists without a state entry; it is exactly what install.sh makes, so it is adopted (--remove removes it)."
+		say "Storage plumb-images ($IMAGE_DIR) exists without a state entry; it is exactly what install.sh makes, so it is adopted (--remove removes it)."
 	else
 		IMAGES_PLAN=foreign
 		say "Storage plumb-images exists, but not as install.sh makes it; it is used and --remove keeps it."
 	fi
+	local c
+	c=$(storage_content plumb-images) || die "cannot read storage plumb-images"
+	if [[ $IMAGES_PLAN == foreign ]]; then
+		vztmpl_note plumb-images "$c"
+	elif [[ $(content_set "$c") == import ]]; then
+		# An install from before D-229 (upgrade, D-084: shown, then asked).
+		IMAGES_SET_CONTENT=1
+		say "Change: storage plumb-images content import → import,vztmpl (LXC templates, D-229)."
+		say "  Order: the new plumb binary first, then the content, then the restart of plumb.service;"
+		say "  an older plumb refuses the new content at its start (exit 78)."
+		say "  pvesm set rewrites /etc/pve/storage.cfg and reorders the content lists of other storages"
+		say "  (for example local, local-lvm): same content, other order."
+	fi
+}
+
+# set_image_content changes the content of plumb-images to import,vztmpl
+# (D-229). It runs after the new binary is in place and before the
+# restart. From here until the new binary runs, a failed run sets the
+# content back to import (on_exit, review S9 of T-038).
+IMAGES_SET_CONTENT=0
+CONTENT_ROLLBACK=0
+set_image_content() {
+	[[ $IMAGES_SET_CONTENT == 1 ]] || return 0
+	[[ $DRY_RUN == 1 ]] || CONTENT_ROLLBACK=1
+	run pvesm set plumb-images --content import,vztmpl
+	IMAGES_SET_CONTENT=0
+}
+
+# rollback_image_content sets the content of plumb-images back to import
+# and says what it did. It runs from the exit trap: it never stops early.
+rollback_image_content() {
+	CONTENT_ROLLBACK=0
+	echo "install.sh: the new plumb did not start; the content of plumb-images is set back to \"import\" (D-229)." >&2
+	if run pvesm set plumb-images --content import; then
+		echo "install.sh: plumb-images has the content \"import\" again. VM Images work; LXC Images need a repair run (run install.sh again)." >&2
+	else
+		echo "install.sh: cannot set the content of plumb-images back." >&2
+	fi
+	echo "install.sh: before you put an older plumb binary back by hand, run: pvesm set plumb-images --content import" >&2
 }
 
 # check_image_dir refuses an image directory that someone else could
@@ -482,8 +560,8 @@ check_image_dir() {
 }
 
 # images_like_ours reports whether plumb-images is exactly the storage that
-# ensure_image_storage makes: type dir, path IMAGE_DIR, content import, not
-# shared.
+# ensure_image_storage makes: type dir, path IMAGE_DIR, content import (an
+# install from before D-229) or import,vztmpl, not shared.
 images_like_ours() {
 	local cfg=$1
 	# Only the keys that pvesm add dir … --content import --shared 0 gives
@@ -494,7 +572,7 @@ images_like_ours() {
 		for (keys %$d) { exit 1 unless $ok{$_} } exit 0' <<<"$cfg" || return 1
 	[[ $cfg =~ \"type\"\ *:\ *\"dir\" ]] &&
 		[[ $cfg =~ \"path\"\ *:\ *\"([^\"]*)\" && ${BASH_REMATCH[1]} == "$IMAGE_DIR" ]] &&
-		[[ $cfg =~ \"content\"\ *:\ *\"import\" ]] &&
+		[[ $cfg =~ \"content\"\ *:\ *\"([^\"]*)\" ]] && image_content_ok "${BASH_REMATCH[1]}" &&
 		! [[ $cfg =~ \"shared\"\ *:\ *\"?1 ]]
 }
 
@@ -1035,8 +1113,12 @@ setup_lxc() {
 	run pct exec "$LXC_ID" -- systemctl daemon-reload </dev/null
 	run pct exec "$LXC_ID" -- systemctl enable plumb.service </dev/null
 	key_init
+	# D-229 order: the new binary is in place (above), then the content,
+	# then the restart.
+	set_image_content
 	run pct exec "$LXC_ID" -- systemctl restart plumb.service </dev/null # a repair run brings a new binary
 	check_running_binary
+	CONTENT_ROLLBACK=0
 }
 
 # push_checked SRC DEST MODE copies SRC to DEST in the LXC (owner root):
@@ -1346,8 +1428,12 @@ do_remove() {
 	fi
 	if [[ -n $images ]] && query pvesm status --storage plumb-images >/dev/null 2>&1; then
 		run pvesm remove plumb-images
-		[[ -d $images/import ]] && { run rmdir -- "$images/import" 2>/dev/null || true; }
-		run rmdir -- "$images" 2>/dev/null || say "Kept $images: it holds the downloaded images (plumb-*.qcow2); remove them by hand if you want."
+		local sub
+		# The subdirectories of the content types (pvesm makes them).
+		for sub in import template/cache template; do
+			[[ -d $images/$sub ]] && { run rmdir -- "$images/$sub" 2>/dev/null || true; }
+		done
+		run rmdir -- "$images" 2>/dev/null || say "Kept $images: it holds the downloaded images and templates (import/, template/cache/); remove them by hand if you want."
 	fi
 	run rm -f -- "$STATE_FILE"
 	# The dir that install.sh made for the state file, when it is empty.

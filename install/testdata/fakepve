@@ -165,7 +165,13 @@ pvesm)
 			shift
 		done
 		;;
-	set) echo "${*:2}" >>"$st/storage-set" ;;
+	set)
+		echo "${*:2}" >>"$st/storage-set"
+		# Like Proxmox (host G0): the content list is stored reordered.
+		if [[ ${3:-} == --content ]]; then
+			tr , '\n' <<<"$4" | sort -r | paste -sd, - >"$st/content.$2"
+		fi
+		;;
 	remove) rm -f "$st/storage.$2" "$st/content.$2" "$st/type.$2" "$st/path.$2" ;;
 	list) # pvesm list STORAGE --vmid ID: volumes left in $st/vol.*
 		for f in "$st"/vol.*; do
