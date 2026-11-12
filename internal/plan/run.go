@@ -412,7 +412,10 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		return false
 	}
 	rep, err := e.command(ctx, tp.Target, wire.CommandApply,
-		wire.ApplyBody{PlanID: p.ID, Resources: body, Planned: planned(tp), MaxRisk: maxRisk}, e.cfg.ApplyTimeout,
+		wire.ApplyBody{PlanID: p.ID, Resources: body, Planned: planned(tp), MaxRisk: maxRisk},
+		// A command may run for its own timeout (T-094 review M2): the
+		// apply waits for it, so a Run never fails while one still runs.
+		e.cfg.ApplyTimeout+state.CommandTime(r.Resources),
 		func(pr wire.Report) {
 			for _, it := range pr.Items {
 				if it.Status == wire.StatusRunning {

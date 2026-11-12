@@ -7,9 +7,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// The slice 3 types have a schema before they have an implementation
-// (T-090). T-094 adds command to the type table; then its cases can move
-// to TestSchemas. (T-093 moved apt_repository, unit and sysctl.)
+// Schema cases of command (T-090, T-094). The other slice 3 types have
+// their cases in TestSchemas (T-093).
 func TestSlice3Schemas(t *testing.T) {
 	tests := []struct {
 		typ   string

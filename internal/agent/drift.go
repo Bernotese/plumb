@@ -236,6 +236,9 @@ func (a *Agent) check(ctx context.Context, ids []string) {
 		if ids != nil && !want[r.ID] {
 			continue
 		}
+		if t, ok := resource.Lookup(r.Type); ok && t.NoDrift {
+			continue // a command has no drift (D-260)
+		}
 		_, item := a.observeOne(ctx, r)
 		a.mu.Lock()
 		prev, wasOpen := a.open[r.ID]

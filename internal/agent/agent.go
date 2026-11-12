@@ -55,6 +55,14 @@ type Options struct {
 	// Sync flushes the file systems before the power-off at the end of
 	// seal; default unix.Sync. Tests record it.
 	Sync func()
+
+	// Self-update (T-091): ConfigPath is the config file the agent runs
+	// with (for the self-test and the guard unit; default
+	// DefaultConfigPath), BinaryPath the agent binary (default
+	// DefaultBinaryPath), UnitDir where the guard units go (default
+	// DefaultUnitDir), SelfExe the running binary that BinarySHA256 hashes
+	// (default /proc/self/exe).
+	ConfigPath, BinaryPath, UnitDir, SelfExe string
 }
 
 // Agent is one agent process.
@@ -92,6 +100,14 @@ type Agent struct {
 	addrTry   time.Time // last address report, sent or not
 	addrRead  time.Time // last read at a poll round
 	addrErr   bool      // the last read failed (log once)
+
+	// Self-update (T-091); only the Run goroutine uses these.
+	upd        *updater
+	binarySHA  string // SHA-256 of the running binary, read at start
+	caps       wire.Capabilities
+	confirmed  bool      // a pending update was checked after a hello
+	restartCmd string    // id of an update that swapped the binary
+	restartBy  time.Time // exit at the latest then
 
 	sealedCmd string // id of a seal that ended without a failed step (under mu)
 	// sealedContainer: that seal was of a container (D-253; under mu).
@@ -143,6 +159,18 @@ func New(opt Options) (*Agent, error) {
 	if opt.Sync == nil {
 		opt.Sync = unix.Sync
 	}
+	if opt.ConfigPath == "" {
+		opt.ConfigPath = DefaultConfigPath
+	}
+	if opt.BinaryPath == "" {
+		opt.BinaryPath = DefaultBinaryPath
+	}
+	if opt.UnitDir == "" {
+		opt.UnitDir = DefaultUnitDir
+	}
+	if opt.SelfExe == "" {
+		opt.SelfExe = "/proc/self/exe"
+	}
 	c, err := newClient(cfg, time.Duration(opt.PollWait)*time.Second)
 	if err != nil {
 		return nil, err
@@ -157,6 +185,12 @@ func New(opt Options) (*Agent, error) {
 		resolved:    map[string]wire.Item{},
 		listChanged: make(chan struct{}, 1),
 		applyDone:   make(chan []string, 64),
+		caps:        Capabilities(),
+	}
+	a.upd = &updater{state: a.state, bin: binPaths{bin: opt.BinaryPath}, unitDir: opt.UnitDir,
+		config: opt.ConfigPath, run: opt.Runner, log: opt.Log}
+	if a.binarySHA, err = hashFile(opt.SelfExe); err != nil {
+		a.log.Warn("cannot hash the running binary", "err", err)
 	}
 	// An unsafe state dir stops the start: it would hold the credential and
 	// clear secret values (D-159, D-161). A cleanup error only warns.
@@ -195,6 +229,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	// forgotten the command, so the result is dropped.
 	var pending *wire.Report
 	for ctx.Err() == nil {
+		// After an update: exit once the controller took the result, or
+		// after restartWait without that (D-258).
+		if a.restartCmd != "" && (pending == nil || time.Now().After(a.restartBy)) {
+			a.log.Info("agent binary updated; exiting for the restart")
+			return ErrRestart
+		}
 		if a.credential() == "" {
 			if err := a.enroll(ctx); err != nil {
 				a.log.Warn("enroll failed", "err", err)
@@ -210,6 +250,14 @@ func (a *Agent) Run(ctx context.Context) error {
 				continue
 			}
 			a.addrsTaken(hello.Addrs, hello.AddrsTruncated, time.Now())
+			if !a.confirmed {
+				// The first accepted hello confirms an update (D-271).
+				if err := a.upd.confirm(ctx, a.binarySHA); err != nil {
+					a.log.Warn("confirm the agent update", "err", err)
+				} else {
+					a.confirmed = true
+				}
+			}
 			if err := a.flushDrift(ctx, true); err != nil {
 				connected = a.connError(ctx, err, &b, connected)
 				continue
@@ -362,7 +410,9 @@ func (a *Agent) send(ctx context.Context, r wire.Report) error {
 // cannot be read, Addrs is nil and the controller treats the list as
 // unknown (D-212).
 func (a *Agent) hello() *wire.Hello {
-	h := &wire.Hello{Version: a.opt.Version, Hostname: a.opt.Hostname, OS: osName(a.opt.Root)}
+	caps := a.caps
+	h := &wire.Hello{Version: a.opt.Version, Hostname: a.opt.Hostname, OS: osName(a.opt.Root),
+		BinarySHA256: a.binarySHA, Capabilities: &caps, Reverted: a.upd.reverted()}
 	if l, ok := a.readAddrs(); ok {
 		h.Addrs, h.AddrsTruncated = l.List, l.Truncated
 	}

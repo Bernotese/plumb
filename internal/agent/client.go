@@ -74,6 +74,7 @@ const maxCommandBytes = 16 << 20
 type client struct {
 	base string
 	http *http.Client
+	dl   *http.Client // the binary download: same pin, a longer timeout
 }
 
 func newClient(cfg Config, pollWait time.Duration) (*client, error) {
@@ -92,12 +93,16 @@ func newClient(cfg Config, pollWait time.Duration) (*client, error) {
 	return &client{
 		base: strings.TrimSuffix(cfg.URL, "/"),
 		http: &http.Client{Transport: tr, Timeout: pollWait + 30*time.Second},
+		dl:   &http.Client{Transport: tr, Timeout: downloadTimeout},
 	}, nil
 }
 
 // do sends a JSON request. A non-nil out is filled from a 200 answer.
 // It returns the status code.
 func (c *client) do(ctx context.Context, method, path, cred string, in, out any) (int, error) {
+	if brokenLink {
+		return 0, errBrokenLink
+	}
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -178,5 +183,32 @@ func (c *client) report(ctx context.Context, cred string, r wire.Report) error {
 		r = wire.Report{Type: r.Type, CommandID: r.CommandID, Error: "report too large; items dropped"}
 	}
 	_, err := c.do(ctx, http.MethodPost, wire.PathReport, cred, r, nil)
+	return err
+}
+
+// errBrokenLink: a guest test binary that must not connect (D-273).
+var errBrokenLink = errors.New("controller link broken in this test build")
+
+// download writes the agent binary of the controller (wire.PathBinary)
+// to w. Only the pinned Plumb CA is trusted; the caller checks the hash.
+func (c *client) download(ctx context.Context, w io.Writer) error {
+	if brokenLink {
+		return errBrokenLink
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+wire.PathBinary, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.dl.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return &statusError{Status: resp.StatusCode,
+			Msg: fmt.Sprintf("GET %s: %s %s", wire.PathBinary, resp.Status, strings.TrimSpace(string(msg)))}
+	}
+	_, err = io.Copy(w, resp.Body)
 	return err
 }
