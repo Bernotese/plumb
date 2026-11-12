@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"github.com/Bernotese/plumb/internal/store"
 	"strings"
 	"testing"
 
@@ -71,9 +72,34 @@ func TestLXCImageStatusUnusedTemplateFiles(t *testing.T) {
 		t.Fatalf("image list: %d %s", code, body)
 	}
 
+	// Delete the document through an approved Run, keeping every template file.
+	before := e.drv.Calls(fake.OpRemoveImage)
+	e.runPlan(adm, map[string]any{"reason": "delete lxc image", "delete": []map[string]string{{"kind": "Image", "name": "ct"}}})
+	if n := e.drv.Calls(fake.OpRemoveImage) - before; n != 0 {
+		t.Fatalf("Image delete called RemoveImage %d times", n)
+	}
+	if files, err := e.drv.ListImages(e.ctx, "ct"); err != nil || len(files) != 3 {
+		t.Fatalf("files after Image delete: %+v, %v", files, err)
+	}
+	e.approve(adm, "restore lxc image", state.Doc{Kind: state.KindImage, Name: "ct", Spec: doc})
+
 	// A driver error leaves the list empty; the status is still there.
 	e.drv.Fail(fake.OpListImages, errors.New("storage down"))
 	if v := get(); len(v.Status.UnusedImports) != 0 {
 		t.Fatalf("list error: %+v", v.Status.UnusedImports)
+	}
+}
+
+// Status exists for stock and built LXC Images, even without any files or versions.
+func TestLXCImageStatusWithAndWithoutBuild(t *testing.T) {
+	e := newEnv(t, false)
+	for _, build := range []string{"", `,"build":null`, `,"build":{"blocks":[]}`} {
+		t.Run(build, func(t *testing.T) {
+			body := `{"spec":{"type":"lxc","url":"http://download.proxmox.com/a.tar.zst","sha512":"` + strings.Repeat("c", 128) + `"` + build + `}}`
+			status, err := e.srv.imageStatus(e.ctx, store.DocRow{Name: "ct", Body: json.RawMessage(body)})
+			if err != nil || status == nil || status.Versions == nil || status.UnusedImports == nil {
+				t.Fatalf("status = %+v, %v", status, err)
+			}
+		})
 	}
 }
