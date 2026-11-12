@@ -231,3 +231,21 @@ agent:   compares locally, reports {attr: content, sensitive: true, risk}; desir
 - **LXC targets:** the controller checks the base template against the Proxmox checksum, repacks it with the agent inside and uploads it through the API. Enrollment uses the `env` token (§5). No host access.
 
 Questions for the user: `docs/tasks/T-025-slice-2-plan.md`.
+
+## 13. LXC Images: the pin (D-224, D-235)
+An `lxc` Image names a Proxmox system template by URL and pins its SHA-512. Proxmox serves the templates over http only; the pin is the trust. Copy the pin from the `sha512sum` field of the signed Proxmox appliance index, never from the downloaded file. Creating an `lxc` Image or changing its `url` or `sha512` needs a human approval (`image-recipe`).
+
+Supported templates (index `aplinfo-pve-9.dat`, signature checked against the Proxmox Trixie Release Key on 2026-11-12):
+
+| Template | `url` | `sha512` |
+|---|---|---|
+| Debian 13 | `http://download.proxmox.com/images/system/debian-13-standard_13.6-1_amd64.tar.zst` | `4c0c27ca6ceab5ef0b84db57825a00f26157ef1854bafe97297813e1cbe8ecb8cc9c453cab6b3b0efe1ba193a50c47ece1e41d950e411b8730b835b71e9e754b` |
+| Ubuntu 26.04 | `http://download.proxmox.com/images/system/ubuntu-26.04-standard_26.04-1_amd64.tar.zst` | `d5607f124d01f8ddfebd8e7da34c0022fb2a464e1662ee1e39a13f5ed1bae08a7364c486247fbd9f69f26c710729884ee5047aadb89f33a40066cd5f0d9def88` |
+
+Other templates and newer versions: on the Proxmox host, `pveam update` downloads the index and checks its signature; then this command prints the `url` and `sha512` of each template from the checked index cache:
+
+```sh
+pveam update && awk '/^Location:/{l=$2} /^sha512sum:/{s=$2} function p(){if(l)print "http://download.proxmox.com/images/" l, s; l=""} /^$/{p()} END{p()}' /var/lib/pve-manager/apl-info/download.proxmox.com
+```
+
+When Proxmox removes an old version from its mirror, the download fails with 404: run the command again and update the Image.

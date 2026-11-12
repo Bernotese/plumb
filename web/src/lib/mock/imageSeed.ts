@@ -151,7 +151,7 @@ export function seedImages(images: ImageView[]): void {
           run_id: 18,
           revision: 7,
           recipe_sha256: "7d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e",
-          base_sha256: debian.document.spec.sha256,
+          base_sha256: debian.document.spec.sha256 ?? "",
           disk_gb: 8,
           started_at: "2026-11-10T09:10:00Z",
           finished_at: null,
