@@ -341,18 +341,37 @@ func TestAgentGate(t *testing.T) {
 	if st.AgentUpdate != plan.AgentUpdateRequired || !slices.Equal(st.AgentMissing, []string{"file.mode"}) {
 		t.Errorf("status %+v", st)
 	}
-	// The watch list leaves out what the agent lacks.
-	var last wire.WatchBody
-	cmds, bodies := e.agents["web1"].Commands(), e.agents["web1"].Bodies()
-	for i, cmd := range cmds {
-		if cmd == wire.CommandWatch {
-			json.Unmarshal(bodies[i], &last)
+	// The watch list after the hello leaves out what the agent lacks. The
+	// agent gets it at its next poll, so the test waits for it (CI of #198:
+	// it read the seed's list before that poll).
+	watches := func() []wire.WatchBody {
+		var out []wire.WatchBody
+		cmds, bodies := e.agents["web1"].Commands(), e.agents["web1"].Bodies()
+		for i, cmd := range cmds {
+			if cmd == wire.CommandWatch {
+				var w wire.WatchBody
+				json.Unmarshal(bodies[i], &w)
+				out = append(out, w)
+			}
 		}
+		return out
 	}
-	for _, r := range last.Resources {
-		if r.Type == "file" {
-			t.Errorf("watch list holds %s", r.ID)
+	hasFile := func(w wire.WatchBody) bool {
+		return slices.ContainsFunc(w.Resources, func(r wire.Resource) bool { return r.Type == "file" })
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		ws := watches()
+		if len(ws) > 0 && !hasFile(ws[len(ws)-1]) {
+			break
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no watch list without the file after the hello: %d lists", len(ws))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ws := watches(); !hasFile(ws[0]) {
+		t.Error("the seed's watch list had no file: the test proves nothing")
 	}
 }
 

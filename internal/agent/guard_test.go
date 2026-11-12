@@ -93,6 +93,13 @@ func TestGuardNoHelloWindow(t *testing.T) {
 
 func TestGuardCrashLoop(t *testing.T) {
 	g := newGuardEnv(t)
+	// The restored agent reads the marker at its start: it must say
+	// reverted before the restart (CI of #198).
+	g.r.before = map[string]func(){"restart " + agentService: func() {
+		if m, _, _ := g.u.marker(); m.State != updateReverted || m.Reason != wire.RevertCrashLoop {
+			t.Errorf("marker at the restart: %+v", m)
+		}
+	}}
 	g.r.restarts = 7
 	if err := g.tick(t); err != nil { // base 7
 		t.Fatal(err)
