@@ -251,7 +251,8 @@ func (l *lane) done() {
 // context without the cancel: a closing engine still cleans up.
 func (l *lane) fail(ctx context.Context, run store.Run) {
 	e := l.e
-	ctx = context.WithoutCancel(ctx)
+	ctx, stop := e.cleanupContext(ctx, "clean-up of a failed build", "run", run.ID, "image", l.image, "version", l.version, "guest", l.guest)
+	defer stop()
 	defer l.done()
 	if err := e.cfg.Agents.Revoke(ctx, l.link); err != nil {
 		e.log.Error("revoke build agent", "image", l.image, "err", err)
@@ -460,7 +461,9 @@ func (e *Engine) LeftTemplates(ctx context.Context, image string) ([]LeftTemplat
 // new version is ready (n2): the caller calls it only then. A template
 // that the driver's guard refuses is left and named in the output.
 func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, image string, built int) {
-	ctx = context.WithoutCancel(ctx) // the version is ready; finish the clean-up
+	// The version is ready; finish the clean-up, within the shutdown grace.
+	ctx, stop := e.cleanupContext(ctx, "retention", "run", s.run.ID, "image", image)
+	defer stop()
 	s.set(ctx, StepImageRetention, wire.StatusRunning, nil, "")
 	info, ok := set.ImageInfo(image)
 	keep := 0

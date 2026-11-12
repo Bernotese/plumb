@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -166,6 +167,12 @@ type Config struct {
 	// PowerPoll is how often a build lane reads the power state after
 	// seal; default 2 s.
 	PowerPoll time.Duration
+	// ShutdownGrace bounds the clean-up of Runs after Close (review S1 of
+	// #144): a failed build removes its guest and retention removes old
+	// templates with Proxmox tasks that can take minutes. What is not done
+	// in this time is cut off and logged; Recover finishes it at the next
+	// start. Default 2 min; the unit's TimeoutStopSec is above it.
+	ShutdownGrace time.Duration
 	// DiskLimitPercent is the limit of the disk gate for creates and
 	// builds (D-219); default DefaultDiskLimitPercent.
 	DiskLimitPercent int
@@ -180,6 +187,12 @@ type Engine struct {
 	ctx    context.Context // runs live as long as the engine
 	cancel context.CancelFunc
 	runs   sync.WaitGroup
+	// grace ends ShutdownGrace after Close: the clean-up contexts of
+	// cleanupContext end with it.
+	grace      context.Context
+	stopGrace  context.CancelFunc
+	stopOnce   sync.Once
+	graceTimer *time.Timer // set once by Stop
 
 	mu      sync.Mutex
 	results map[string]chan wire.Report // command id → reports; only waiters create them
@@ -259,6 +272,9 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.PowerPoll == 0 {
 		cfg.PowerPoll = 2 * time.Second
 	}
+	if cfg.ShutdownGrace <= 0 {
+		cfg.ShutdownGrace = DefaultShutdownGrace
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -269,15 +285,70 @@ func New(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("plan: disk limit %d %% is outside 1 … 100", cfg.DiskLimitPercent)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel,
+	grace, stopGrace := context.WithCancel(context.Background())
+	return &Engine{cfg: cfg, st: cfg.Store, log: cfg.Logger, ctx: ctx, cancel: cancel, grace: grace, stopGrace: stopGrace,
 		results: map[string]chan wire.Report{}, busy: map[string]int{}, hello: map[string]int{}, active: map[int64]bool{},
 		addrs: map[string]*addrWatch{}, pinned: map[imageKey]int{}, removing: map[imageKey]bool{}, disk: NewDiskGate(cfg.Driver, cfg.DiskLimitPercent)}, nil
 }
 
-// Close cancels all Runs and waits for them.
+// Stop cancels all Runs and does not wait (Close waits). It also starts
+// the clock of ShutdownGrace: a shutdown calls Stop before it waits for
+// other goroutines, and one of them may wait for a Run (the dev seed), so
+// the clean-up of that Run must end without Close (CI race job of #144,
+// and its re-review S1). A second call does nothing.
+func (e *Engine) Stop() {
+	e.stopOnce.Do(func() {
+		e.cancel()
+		if e.stopGrace == nil { // an Engine built by a test without New
+			return
+		}
+		e.graceTimer = time.AfterFunc(e.cfg.ShutdownGrace, func() {
+			e.mu.Lock()
+			var runs []int64
+			for id := range e.active {
+				runs = append(runs, id)
+			}
+			e.mu.Unlock()
+			slices.Sort(runs)
+			e.log.Warn("shutdown: clean-up cut off; Recover finishes it at the next start", "grace", e.cfg.ShutdownGrace, "runs", runs)
+			e.stopGrace()
+		})
+	})
+}
+
+// DefaultShutdownGrace is the default of Config.ShutdownGrace.
+const DefaultShutdownGrace = 2 * time.Minute
+
+// Close cancels all Runs (Stop, when nobody called it yet) and waits for
+// them. Their clean-up (a failed build, retention) may go on until
+// ShutdownGrace after the first Stop; then it is cut off, and the Runs
+// that were still active are named in the log. Recover finishes them at
+// the next start.
 func (e *Engine) Close() {
-	e.cancel()
+	e.Stop()
 	e.runs.Wait()
+	if e.graceTimer != nil && e.graceTimer.Stop() {
+		e.stopGrace() // all Runs ended in time: nothing was cut off
+	}
+}
+
+// cleanupContext is the context of a clean-up that must outlive the
+// cancel of its Run (a failed build, retention): it keeps the values of
+// ctx, ignores its cancel, and ends ShutdownGrace after Close. When it is
+// cut off, it logs what with attrs. Call the stop function when done.
+func (e *Engine) cleanupContext(ctx context.Context, what string, attrs ...any) (context.Context, func()) {
+	c, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	if e.grace == nil { // an Engine built by a test without New
+		return c, cancel
+	}
+	stop := context.AfterFunc(e.grace, func() {
+		e.log.Warn("shutdown: "+what+" cut off; Recover finishes it at the next start", attrs...)
+		cancel()
+	})
+	return c, func() {
+		stop()
+		cancel()
+	}
 }
 
 // Hellos returns how many Hellos the agent of a target sent since the
