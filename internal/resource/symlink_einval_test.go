@@ -2,6 +2,8 @@ package resource
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,5 +53,33 @@ func TestSymlinkRenameEINVAL(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".plumb-link-") {
 			t.Errorf("temp link left: %s", e.Name())
 		}
+	}
+}
+
+func TestRename2WrappedEINVAL(t *testing.T) {
+	old := renameat2
+	t.Cleanup(func() { renameat2 = old })
+	for _, flags := range []uint{unix.RENAME_NOREPLACE, unix.RENAME_EXCHANGE} {
+		calls := 0
+		renameat2 = func(_ int, _ string, _ int, _ string, got uint) error {
+			calls++
+			if got != flags {
+				t.Error("rename flags changed")
+			}
+			return fmt.Errorf("rename: %w", unix.EINVAL)
+		}
+		err := rename2(-1, "from", "to", flags, "/etc/nginx/sites-enabled/default")
+		want := "the file system of /etc/nginx/sites-enabled does not support atomic rename (RENAME_NOREPLACE/RENAME_EXCHANGE); on ZFS it needs ZFS 2.2 or newer"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %s", err, want)
+		}
+		if calls != 1 {
+			t.Errorf("rename called %d times, want 1", calls)
+		}
+	}
+	// Other errno values must retain their identity for caller handling.
+	renameat2 = func(int, string, int, string, uint) error { return unix.EACCES }
+	if err := rename2(-1, "from", "to", unix.RENAME_NOREPLACE, "/srv/link"); !errors.Is(err, unix.EACCES) {
+		t.Errorf("non-EINVAL error changed: %v", err)
 	}
 }
