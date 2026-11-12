@@ -127,7 +127,12 @@ on_exit() {
 	cleanup_tmp
 }
 trap on_exit EXIT
-trap 'exit 130' INT TERM
+# Each signal exits with 128+n, so on_exit sees a failure. Without its own
+# trap, SIGHUP (an SSH drop, the usual way a host run stops) runs the exit
+# trap with $? = 0 and skips the rollback (review M1 of T-077).
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # new_tmp NAME makes a temp file and sets the variable NAME to its path.
 # It runs in the main shell, so the exit trap knows the file.
 new_tmp() {
@@ -536,16 +541,24 @@ set_image_content() {
 }
 
 # rollback_image_content sets the content of plumb-images back to import
-# and says what it did. It runs from the exit trap: it never stops early.
+# and says what it did. It runs from the exit trap, also after SIGHUP: the
+# pvesm set comes first, because the terminal can be gone and a write to
+# it can fail; no write stops the trap.
 rollback_image_content() {
 	CONTENT_ROLLBACK=0
-	echo "install.sh: the new plumb did not start; the content of plumb-images is set back to \"import\" (D-229)." >&2
-	if run pvesm set plumb-images --content import; then
-		echo "install.sh: plumb-images has the content \"import\" again. VM Images work; LXC Images need a repair run (run install.sh again)." >&2
-	else
-		echo "install.sh: cannot set the content of plumb-images back." >&2
-	fi
-	echo "install.sh: before you put an older plumb binary back by hand, run: pvesm set plumb-images --content import" >&2
+	trap '' PIPE
+	local ok=1
+	run pvesm set plumb-images --content import || ok=0
+	{
+		echo "install.sh: the run stopped before the new plumb was checked; the content of plumb-images is set back to \"import\" (D-229)."
+		if [[ $ok == 1 ]]; then
+			echo "install.sh: plumb-images has the content \"import\" again. VM Images work; LXC Images need a repair run (run install.sh again)."
+			echo "install.sh: if plumb.service runs, restart it so that it reads the content again: pct exec $LXC_ID -- systemctl restart plumb.service"
+		else
+			echo "install.sh: cannot set the content of plumb-images back."
+		fi
+		echo "install.sh: before you put an older plumb binary back by hand, run: pvesm set plumb-images --content import"
+	} >&2 2>/dev/null || true
 }
 
 # check_image_dir refuses an image directory that someone else could

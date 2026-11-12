@@ -110,7 +110,9 @@ func (d *Driver) TemplateContentError() error {
 	if d.templates {
 		return nil
 	}
-	return fmt.Errorf("%s has no content vztmpl: run install.sh again (repair run)", d.cfg.ImageStorage)
+	// D-244: install.sh changes only a plumb-images that it made; for any
+	// other storage a person runs pvesm set (D-245: then a restart).
+	return fmt.Errorf("%[1]s has no content vztmpl: run install.sh again (repair run); for a storage that install.sh did not make: pvesm set %[1]s --content import,vztmpl, then restart plumb.service", d.cfg.ImageStorage)
 }
 
 func (d *Driver) checkVersion(ctx context.Context) (string, error) {

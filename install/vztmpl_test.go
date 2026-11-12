@@ -126,6 +126,10 @@ func TestUpgradeRollback(t *testing.T) {
 		"crash loop":     {"FAKE_CRASH_LOOP=1", "PLUMB_INSTALL_RUNNING_TRIES=2"},
 		"old process":    {"FAKE_RESTART_OLD=1", "PLUMB_INSTALL_RUNNING_TRIES=2"},
 		"restart failed": {"FAKE_EXEC_FAIL=systemctl restart plumb.service"},
+		// An SSH drop or a kill during the restart (review M1 of T-077).
+		"SIGHUP":  {"FAKE_SIGNAL_ON_RESTART=HUP"},
+		"SIGINT":  {"FAKE_SIGNAL_ON_RESTART=INT"},
+		"SIGTERM": {"FAKE_SIGNAL_ON_RESTART=TERM"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := oldInstall(t)
@@ -158,6 +162,15 @@ func TestUpgradeRollback(t *testing.T) {
 	code, _, _ := h.run(append(asRoot, "FAKE_EXEC_FAIL=systemctl daemon-reload"), "--yes", "--plumb-binary", h.plumb)
 	if code == 0 || index(h.calls(), "pvesm set") >= 0 || h.content("plumb-images") != "import" {
 		t.Errorf("failure before the content step: %d %v", code, h.calls())
+	}
+	// A signal gives 128+n, so the exit trap sees a failure.
+	for sig, want := range map[string]int{"HUP": 129, "INT": 130, "TERM": 143} {
+		h := oldInstall(t)
+		h.newBinary()
+		code, _, errOut := h.run(append(asRoot, "FAKE_SIGNAL_ON_RESTART="+sig), "--yes", "--plumb-binary", h.plumb)
+		if code != want || h.content("plumb-images") != "import" {
+			t.Errorf("SIG%s: exit %d (want %d), content %q: %s", sig, code, want, h.content("plumb-images"), errOut)
+		}
 	}
 	// The rollback keeps the exit code of the failure.
 	h = oldInstall(t)

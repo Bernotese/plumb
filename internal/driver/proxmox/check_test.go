@@ -319,7 +319,7 @@ func TestCheckImageTemplateContent(t *testing.T) {
 		if templates != (err == nil) {
 			t.Errorf("%q: TemplateContentError = %v", content, err)
 		}
-		if err != nil && err.Error() != "local has no content vztmpl: run install.sh again (repair run)" {
+		if err != nil && err.Error() != "local has no content vztmpl: run install.sh again (repair run); for a storage that install.sh did not make: pvesm set local --content import,vztmpl, then restart plumb.service" {
 			t.Errorf("%q: text %q", content, err)
 		}
 	}

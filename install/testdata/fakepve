@@ -320,6 +320,10 @@ pct)
 			;;
 		"rm -f "*) rm -f "$st/push/${3//\//_}" "$st/push/${3//\//_}.opts" ;;
 		"systemctl restart plumb.service")
+			# FAKE_SIGNAL_ON_RESTART=HUP: the installer gets the signal
+			# during the restart, like an SSH drop (review M1 of T-077).
+			# pct is its direct child.
+			[[ -n ${FAKE_SIGNAL_ON_RESTART:-} ]] && kill -s "$FAKE_SIGNAL_ON_RESTART" "$PPID"
 			# The service now runs the binary that is in place, unless
 			# FAKE_RESTART_OLD=1 (a restart that keeps the old process).
 			if [[ ${FAKE_RESTART_OLD:-0} != 1 && -e $st/push/_usr_local_bin_plumb ]]; then
