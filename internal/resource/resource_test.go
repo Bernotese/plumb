@@ -153,3 +153,27 @@ func TestWireAgentTypes(t *testing.T) {
 		t.Fatalf("wire.AgentTypes() = %v, resource.Names() = %v", got, want)
 	}
 }
+
+// Agents before slice 3 send no capabilities; the controller assumes
+// wire.BaselineCapabilities. Every type and attribute in it must still be
+// in this table, or an old agent would look able to apply it (D-259).
+func TestBaselineCapabilities(t *testing.T) {
+	for typ, attrs := range wire.BaselineCapabilities().Resources {
+		rt, ok := Lookup(typ)
+		if !ok {
+			t.Errorf("baseline type %s is not in the table", typ)
+			continue
+		}
+		var s struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(rt.Schema(), &s); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range attrs {
+			if _, ok := s.Properties[a]; !ok {
+				t.Errorf("baseline attribute %s.%s is not in the schema", typ, a)
+			}
+		}
+	}
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/unit.json",
+  "title": "unit",
+  "description": "A systemd unit file in /etc/systemd/system, mode 0644 root:root, followed by systemctl daemon-reload (D-260). Key: name. Timers, sockets and so on are units too. The unit is not enabled or started here: use a service resource with the same name (restart_on: [unit:<name>]). Risk: create and change reversible, delete destructive. Kinds: vm, lxc.",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9@_.:][A-Za-z0-9@_.:-]*\\.(service|timer|socket|path|mount|automount|target|slice|swap)$",
+      "not": {
+        "pattern": "^plumb-agent\\."
+      },
+      "description": "Unit file name with its suffix. plumb-agent.* is refused: the agent unit belongs to Plumb."
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 65536,
+      "description": "Full content of the unit file. Required when state is present."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  },
+  "if": {
+    "properties": {
+      "state": {
+        "const": "absent"
+      }
+    },
+    "required": [
+      "state"
+    ]
+  },
+  "else": {
+    "required": [
+      "content"
+    ]
+  }
+}

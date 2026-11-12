@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/sysctl.json",
+  "title": "sysctl",
+  "description": "A kernel parameter, set now and kept in /etc/sysctl.d/60-plumb-<name>.conf (D-260). Key: name. VM only: a container shares the host kernel. Risk: create and change disruptive (a kernel setting can cut the network); absent removes the file and keeps the running value (reversible).",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^[a-z0-9_]+(\\.[a-zA-Z0-9_-]+)+$",
+      "description": "Dotted name, for example net.ipv4.ip_forward."
+    },
+    "value": {
+      "type": [
+        "string",
+        "integer"
+      ],
+      "maxLength": 4096,
+      "pattern": "^[^\\r\\n\\x00]*\\S[^\\r\\n\\x00]*$",
+      "description": "Desired value. Runs of white space compare as one space. Required when state is present."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  },
+  "if": {
+    "properties": {
+      "state": {
+        "const": "absent"
+      }
+    },
+    "required": [
+      "state"
+    ]
+  },
+  "else": {
+    "required": [
+      "value"
+    ]
+  }
+}

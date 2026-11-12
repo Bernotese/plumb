@@ -54,6 +54,11 @@ const (
 	// Only for a link name with the prefix BuildLinkPrefix, and only an
 	// agent with the build mark that never got a watch runs it (D-207).
 	CommandSeal CommandType = "seal"
+	// CommandUpdate replaces the agent binary (D-258). Body: UpdateBody.
+	// An agent from before slice 3 answers it with "unknown command type";
+	// it does not list "update" in Capabilities.Commands, so the controller
+	// never sends it there (CanUpdate).
+	CommandUpdate CommandType = "update"
 )
 
 // BuildLinkPrefix starts the link name of an image build guest:
@@ -61,7 +66,7 @@ const (
 const BuildLinkPrefix = "build:"
 
 // Command is the answer to a poll. Body depends on Type:
-// ObserveBody, ApplyBody, WatchBody or SealBody.
+// ObserveBody, ApplyBody, WatchBody, SealBody or UpdateBody.
 type Command struct {
 	ID   string          `json:"id"`
 	Type CommandType     `json:"type"`
@@ -111,6 +116,48 @@ type SealBody struct {
 	// first-boot installer.
 	Container bool `json:"container,omitempty"`
 }
+
+// UpdateBody asks the agent to replace its own binary (D-258). It holds no
+// URL: the agent fetches PathBinary from the controller that it pinned at
+// enrollment, over the same TLS link, and refuses a file whose SHA-256
+// differs from SHA256.
+//
+// The agent then runs "<new binary> self-test" (exit 0 and nothing else),
+// renames its own binary to "<path>.prev", renames the new one over it,
+// writes the update marker, sends the result and exits for a systemd
+// restart. The result has one Item AgentBinaryID: StatusApplied when the
+// swap is done, StatusFailed with Output when a step before the swap
+// failed (download, hash, self-test, disk), and the agent keeps running
+// its old binary. StatusApplied does not pass the step: the controller
+// passes it only when a Hello with Hello.BinarySHA256 == SHA256 arrives
+// within UpdateHelloSeconds. Inside the guest, a crash loop or no
+// successful Hello within UpdateRevertSeconds restores ".prev" (D-258).
+type UpdateBody struct {
+	PlanID int64 `json:"plan_id"`
+	// SHA256 is the lowercase hex SHA-256 of the binary that PathBinary
+	// serves now: the agent of this controller build.
+	SHA256 string `json:"sha256"`
+}
+
+// Times of the agent update (D-258).
+const (
+	UpdateHelloSeconds  = 120 // the controller waits this long for the Hello of the new binary
+	UpdateRevertSeconds = 300 // the agent restores .prev when it had no successful Hello by then
+)
+
+// AgentItemType is the type part of AgentBinaryID. Like SealItemType it is
+// no resource type: no Block can name it, and link takes an Item of it only
+// as the answer of an outstanding update command.
+const AgentItemType = "agent"
+
+// AgentBinaryID is the resource id of the "update agent" Plan step and of
+// the Item in the result of an update command (D-257). Its one change is
+// {attr: "version", from: <agent version>, to: <controller version>,
+// risk: disruptive}.
+const AgentBinaryID = AgentItemType + ":binary"
+
+// AttrAgentVersion is the attribute of the change of AgentBinaryID.
+const AttrAgentVersion = "version"
 
 // The result of seal has one Item per step, in this order, with the
 // resource id "seal:<step>" (SealItemID). Status is applied, skipped (the
@@ -210,7 +257,39 @@ type Hello struct {
 	// AddrsTruncated: the guest has more than MaxAddrs addresses; Addrs
 	// holds the first MaxAddrs in sort order.
 	AddrsTruncated bool `json:"addrs_truncated,omitempty"`
+	// BinarySHA256 is the lowercase hex SHA-256 of the running agent
+	// binary (/proc/self/exe), read once at start. Empty from an agent
+	// before slice 3. The controller compares it with the SHA-256 of the
+	// binary that it serves to tell whether an update is available, and
+	// to pass an update step (D-258).
+	BinarySHA256 string `json:"binary_sha256,omitempty"`
+	// Capabilities lists what the agent can do (D-259). nil (an agent
+	// before slice 3) means BaselineCapabilities.
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+	// Reverted is set when the agent restored ".prev" after an update
+	// (crash loop or no successful Hello within UpdateRevertSeconds). The
+	// agent sends it in every Hello until it gets the next update command.
+	// The controller fails an open update step with it and shows it in the
+	// Target status. nil: no revert since the last update command.
+	Reverted *UpdateRevert `json:"reverted,omitempty"`
 }
+
+// UpdateRevert describes a failed update that the agent rolled back.
+type UpdateRevert struct {
+	From string `json:"from"` // version of the restored binary (now running)
+	To   string `json:"to"`   // version that failed
+	// ToSHA256 is the SHA-256 of the failed binary, so the controller can
+	// tell it from a later build with the same version text.
+	ToSHA256 string `json:"to_sha256"`
+	Reason   string `json:"reason"` // "crash-loop" or "no-hello"
+	At       string `json:"at"`     // RFC 3339, UTC, guest clock
+}
+
+// The reasons of UpdateRevert.
+const (
+	RevertCrashLoop = "crash-loop"
+	RevertNoHello   = "no-hello"
+)
 
 // Status is the state of one resource in a Report.
 type Status string
