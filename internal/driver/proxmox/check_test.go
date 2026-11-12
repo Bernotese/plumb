@@ -168,6 +168,8 @@ func TestCheckStorages(t *testing.T) {
 		"disk without images": {func(f *fakePVE) { set(f, "local-lvm", "content", "rootdir") }, []string{ProblemStorageContent}},
 		"image import,iso":    {func(f *fakePVE) { set(f, "local", "content", "import,iso") }, []string{ProblemStorageContent}},
 		"snippets + vztmpl":   {func(f *fakePVE) { set(f, "plumb-snippets", "content", "snippets,vztmpl") }, []string{ProblemStorageContent}},
+		"image vztmpl only":   {func(f *fakePVE) { set(f, "local", "content", "vztmpl") }, []string{ProblemStorageContent}},
+		"image + vztmpl,iso":  {func(f *fakePVE) { set(f, "local", "content", "import,vztmpl,iso") }, []string{ProblemStorageContent}},
 		"two problems": {func(f *fakePVE) {
 			f.noPool = true
 			set(f, "local", "content", "iso")
@@ -288,5 +290,71 @@ func TestCheckEachStorageFailure(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// D-229: the image storage has exactly {import} (an install from before
+// D-229: the check passes, LXC Images get the repair-run text) or exactly
+// {import, vztmpl}, compared as sets (pvesm set reorders, host G0).
+func TestCheckImageTemplateContent(t *testing.T) {
+	for content, templates := range map[string]bool{
+		"import":               false,
+		"import,vztmpl":        true,
+		"vztmpl,import":        true,
+		" vztmpl, import":      true,
+		"import,import":        false,
+		"vztmpl,import,vztmpl": true,
+	} {
+		f := newFakePVE(t)
+		for _, s := range f.storages {
+			if s["storage"] == "local" {
+				s["content"] = content
+			}
+		}
+		d := checkDriver(t, f)
+		if _, err := d.Check(context.Background()); err != nil {
+			t.Fatalf("%q: %v", content, err)
+		}
+		err := d.TemplateContentError()
+		if templates != (err == nil) {
+			t.Errorf("%q: TemplateContentError = %v", content, err)
+		}
+		if err != nil && err.Error() != "local has no content vztmpl: run install.sh again (repair run); for a storage that install.sh did not make: pvesm set local --content import,vztmpl, then restart plumb.service" {
+			t.Errorf("%q: text %q", content, err)
+		}
+	}
+}
+
+// Check every subset, including empty, to guard against permitting an
+// unrelated content type alongside either supported set.
+func TestCheckImageContentSets(t *testing.T) {
+	contents := []string{"import", "vztmpl", "images", "rootdir", "iso", "backup", "snippets"}
+	for mask := 0; mask < 1<<len(contents); mask++ {
+		var set []string
+		for i, content := range contents {
+			if mask&(1<<i) != 0 {
+				set = append(set, content)
+			}
+		}
+		content := strings.Join(set, ",")
+		t.Run(content, func(t *testing.T) {
+			f := newFakePVE(t)
+			for _, storage := range f.storages {
+				if storage["storage"] == "local" {
+					storage["content"] = content
+				}
+			}
+			_, err := checkDriver(t, f).Check(context.Background())
+			if mask == 1 || mask == 3 {
+				if err != nil {
+					t.Fatalf("accepted set rejected: %v", err)
+				}
+				return
+			}
+			p := problems(t, err)
+			if len(p) != 1 || p[0].Kind != ProblemStorageContent || p[0].ID != "local" {
+				t.Fatalf("want image storage content problem, got %+v", p)
+			}
+		})
 	}
 }
