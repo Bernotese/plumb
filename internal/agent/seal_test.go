@@ -477,6 +477,8 @@ func TestOwnPathThroughGuestLinks(t *testing.T) {
 		{ID: "service:plumb-agent-install", Type: "service", Attrs: map[string]any{"name": "plumb-agent-install"}},
 		{ID: "unit:plumb-agent.service", Type: "unit", Attrs: map[string]any{"name": "plumb-agent.service"}},
 		{ID: "unit:plumb-agent.timer", Type: "unit", Attrs: map[string]any{"name": "plumb-agent.timer"}},
+		{ID: "unit:plumb-agent-guard.timer", Type: "unit", Attrs: map[string]any{"name": "plumb-agent-guard.timer"}},
+		{ID: "service:plumb-agent-guard", Type: "service", Attrs: map[string]any{"name": "plumb-agent-guard"}},
 	}
 	for _, r := range refused {
 		if why := ta.a.ownPathRefusal(r); why == "" {

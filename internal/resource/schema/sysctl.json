@@ -22,7 +22,7 @@
       ],
       "maxLength": 4096,
       "pattern": "^[^\\r\\n\\x00]*\\S[^\\r\\n\\x00]*$",
-      "description": "Desired value. Runs of white space compare as one space. Required when state is present."
+      "description": "Desired value, written as sysctl -n prints it (the kernel form: 1, not 01): the agent compares the text, so another form drifts on every check. Runs of white space compare as one space. Required when state is present."
     },
     "state": {
       "enum": [

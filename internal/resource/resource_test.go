@@ -127,8 +127,10 @@ func TestSchemas(t *testing.T) {
 		{"unit", `{"name":"backup.timer","content":"[Timer]\nOnCalendar=daily\n"}`, true},
 		{"unit", `{"name":"app.service"}`, false}, // present needs content
 		{"unit", `{"name":"app.service","state":"absent"}`, true},
-		{"unit", `{"name":"app","content":"x"}`, false},                 // no unit suffix
-		{"unit", `{"name":"plumb-agent.service","content":"x"}`, false}, // the agent unit is Plumb's
+		{"unit", `{"name":"app","content":"x"}`, false},                     // no unit suffix
+		{"unit", `{"name":"plumb-agent.service","content":"x"}`, false},     // the agent unit is Plumb's
+		{"unit", `{"name":"plumb-agent-guard.timer","content":"x"}`, false}, // every plumb-agent* unit (D-274)
+		{"unit", `{"name":"plumb-agent@x.service","state":"absent"}`, false},
 		{"unit", `{"name":"-x.service","content":"x"}`, false},
 		{"unit", `{"name":"a/b.service","content":"x"}`, false},
 		{"sysctl", `{"name":"net.ipv4.ip_forward","value":"1"}`, true},

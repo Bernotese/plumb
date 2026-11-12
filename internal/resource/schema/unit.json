@@ -14,9 +14,9 @@
       "maxLength": 255,
       "pattern": "^[A-Za-z0-9@_.:][A-Za-z0-9@_.:-]*\\.(service|timer|socket|path|mount|automount|target|slice|swap)$",
       "not": {
-        "pattern": "^plumb-agent\\."
+        "pattern": "^plumb-agent"
       },
-      "description": "Unit file name with its suffix. plumb-agent.* is refused: the agent unit belongs to Plumb."
+      "description": "Unit file name with its suffix. Names that start with plumb-agent are refused: the agent's units belong to Plumb (D-274)."
     },
     "content": {
       "type": "string",

@@ -107,12 +107,16 @@ func TestIsAgentPathInstallUnit(t *testing.T) {
 			t.Errorf("IsAgentPath(%q) = true", p)
 		}
 	}
-	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent", "plumb-agent.service", "plumb-agent.timer", "plumb-agent.path", "plumb-agent-install.socket"} {
+	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent", "plumb-agent.service", "plumb-agent.timer",
+		"plumb-agent.path", "plumb-agent-install.socket", "plumb-agent-guard.service", "plumb-agent-guard.timer", "plumb-agent-update.timer",
+		"plumb-agent@qa.service", "plumb-agent-extra.socket", "plumb-agentx.service"} {
 		if !IsAgentUnit(n) {
 			t.Errorf("IsAgentUnit(%q) = false", n)
 		}
 	}
-	if IsAgentUnit("plumb-agent-installer") || IsAgentUnit("nginx") || IsAgentUnit("plumb-agent.service.d") || IsAgentUnit("plumb-agent-x.service") {
-		t.Error("IsAgentUnit too wide")
+	for _, n := range []string{"nginx", "nginx.service", "my-plumb-agent.service", "plumb.service", "xplumb-agent.timer"} {
+		if IsAgentUnit(n) {
+			t.Errorf("IsAgentUnit(%q) = true", n)
+		}
 	}
 }
