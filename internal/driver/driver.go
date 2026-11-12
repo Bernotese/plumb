@@ -274,6 +274,22 @@ var ErrNotImplemented = errors.New("driver: image builds are not implemented yet
 // ErrNotFound is returned when a guest or an image does not exist.
 var ErrNotFound = errors.New("driver: not found")
 
+// ErrImageInUse is wrapped by RemoveImage when its guard refuses a template
+// that is in use now: it has linked clones or a lock. Retention keeps such a
+// template on purpose and tries again on the next build (D-232).
+var ErrImageInUse = errors.New("driver: image in use")
+
+// InUse returns an error with the message of format that matches
+// ErrImageInUse with errors.Is; the message does not repeat it.
+func InUse(format string, args ...any) error {
+	return inUseError{fmt.Sprintf(format, args...)}
+}
+
+type inUseError struct{ msg string }
+
+func (e inUseError) Error() string { return e.msg }
+func (e inUseError) Unwrap() error { return ErrImageInUse }
+
 // CreateOnlyError says that a setting cannot change after creation.
 type CreateOnlyError struct {
 	Attr string

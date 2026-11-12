@@ -459,7 +459,10 @@ func (e *Engine) LeftTemplates(ctx context.Context, image string) ([]LeftTemplat
 // base templates with another checksum. An Image that is not built in the
 // set (deleted, or stock now) loses every template. It runs only after the
 // new version is ready (n2): the caller calls it only then. A template
-// that the driver's guard refuses is left and named in the output.
+// that is in use (pinned by a create, linked clones, a lock) is left and
+// named in the output; the step is applied. Every other error fails the
+// step and the Run, and the output says that the new version is still
+// ready (D-232).
 func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, image string, built int) {
 	// The version is ready; finish the clean-up, within the shutdown grace.
 	ctx, stop := e.cleanupContext(ctx, "retention", "run", s.run.ID, "image", image)
@@ -471,15 +474,31 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 		keep = info.Keep
 	}
 	removed, left, err := e.retain(ctx, image, keep, info.SHA256, built)
-	if err != nil {
-		s.set(ctx, StepImageRetention, wire.StatusFailed, nil, err.Error())
-		return
-	}
 	var lines []string
 	for _, r := range removed {
 		lines = append(lines, "removed "+r)
 	}
 	lines = append(lines, left...)
+	if err != nil {
+		// A template stays unless every error is a stale store row of a
+		// removed template (review of PR #150).
+		var re retentionError
+		stay := !errors.As(err, &re) || re.templatesStay
+		next := "the next retention"
+		line := err.Error()
+		if built > 0 {
+			next = "the next build"
+			line += fmt.Sprintf("; v%d is ready and usable", built)
+		}
+		if stay {
+			line += "; old templates stay until " + next
+		} else {
+			line += "; " + next + " fixes the store row"
+		}
+		lines = append(lines, line)
+		s.set(ctx, StepImageRetention, wire.StatusFailed, nil, strings.Join(lines, "\n"))
+		return
+	}
 	status := wire.StatusApplied
 	if len(removed) == 0 && len(left) == 0 {
 		status = wire.StatusUnchanged
@@ -489,8 +508,16 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 
 // retain applies the retention rule. keep 0 removes every template of the
 // Image (sha256 is then ignored). It returns what it removed and what it
-// left (with the reason).
+// left on purpose (with the reason). err joins every other error (D-232):
+// removed and left are still valid then.
 func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 string, built int) (removed, left []string, err error) {
+	var hard []string
+	stay := false // a removal failed: its template is still there
+	defer func() {
+		if err == nil && len(hard) > 0 {
+			err = retentionError{msg: strings.Join(hard, "; "), templatesStay: stay}
+		}
+	}()
 	versions, err := e.st.ImageVersions(ctx, image)
 	if err != nil {
 		return nil, nil, err
@@ -514,13 +541,18 @@ func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 stri
 			defer e.endRemove(image, version)
 		}
 		if err := e.cfg.Driver.RemoveImage(ctx, o); err != nil {
-			left = append(left, fmt.Sprintf("left %s: %v", o.Name, err))
+			if errors.Is(err, driver.ErrImageInUse) {
+				left = append(left, fmt.Sprintf("left %s: %v", o.Name, err))
+			} else {
+				hard = append(hard, fmt.Sprintf("could not remove %s: %v", o.Name, err))
+				stay = true
+			}
 			return
 		}
 		removed = append(removed, o.Name)
 		if version > 0 {
 			if err := e.st.RemoveImageVersion(ctx, image, version); err != nil && !errors.Is(err, store.ErrImageVersionState) {
-				left = append(left, fmt.Sprintf("version %d: %v", version, err))
+				hard = append(hard, fmt.Sprintf("version %d: the template is removed, the store row is not: %v", version, err))
 			}
 		}
 	}
@@ -554,6 +586,15 @@ func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 stri
 	}
 	return removed, left, nil
 }
+
+// retentionError joins the errors of retain that fail the step (D-232).
+// templatesStay says that at least one template could not be removed.
+type retentionError struct {
+	msg           string
+	templatesStay bool
+}
+
+func (e retentionError) Error() string { return e.msg }
 
 // --- Target from a version (D-200) ---
 
