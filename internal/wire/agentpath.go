@@ -51,7 +51,9 @@ var (
 	}
 )
 
-const agentUnit = "plumb-agent.service"
+// The agent's units: the agent, and the first-boot installer of an LXC
+// template (T-076).
+var agentUnits = []string{"plumb-agent.service", "plumb-agent-install.service"}
 
 // IsAgentPath reports whether p (absolute) is the agent's own path, or a
 // path inside one of its directories. p is cleaned first.
@@ -81,11 +83,13 @@ func IsAgentPath(p string) bool {
 			continue
 		}
 		parts := strings.Split(rest, "/")
-		switch {
-		case parts[0] == agentUnit || parts[0] == agentUnit+".d":
-			return true // the unit, or its drop-ins
-		case len(parts) == 2 && strings.HasSuffix(parts[0], ".wants") && parts[1] == agentUnit:
-			return true // the enable link
+		for _, u := range agentUnits {
+			switch {
+			case parts[0] == u || parts[0] == u+".d":
+				return true // the unit, or its drop-ins
+			case len(parts) == 2 && strings.HasSuffix(parts[0], ".wants") && parts[1] == u:
+				return true // the enable link
+			}
 		}
 	}
 	return false
@@ -129,7 +133,12 @@ type AgentConflict struct {
 
 // isAgentUnit reports whether a service name is the agent's unit.
 func isAgentUnit(name string) bool {
-	return name == "plumb-agent" || name == agentUnit
+	for _, u := range agentUnits {
+		if name == u || name+".service" == u {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentConflicts lists the resources of one target that would change the

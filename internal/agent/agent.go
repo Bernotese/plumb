@@ -313,13 +313,9 @@ func (a *Agent) dropCredential() error {
 // enroll reads the token source again and exchanges the token for a
 // credential. After success it disables cloud-init (D-025).
 func (a *Agent) enroll(ctx context.Context) error {
-	b, err := os.ReadFile(a.cfg.TokenFile)
+	token, err := a.readToken()
 	if err != nil {
-		return fmt.Errorf("read token: %w", err)
-	}
-	token := strings.TrimSpace(string(b))
-	if token == "" {
-		return errors.New("token source is empty")
+		return err
 	}
 	resp, err := a.client.enroll(ctx, wire.EnrollRequest{Token: token, Hostname: a.opt.Hostname, Version: a.opt.Version})
 	if err != nil {
@@ -335,8 +331,10 @@ func (a *Agent) enroll(ctx context.Context) error {
 	a.credMu.Lock()
 	a.cred = resp.Credential
 	a.credMu.Unlock()
-	if err := disableCloudInit(a.opt.CloudInitFlag); err != nil {
-		a.log.Error("disable cloud-init", "err", err)
+	if a.cfg.TokenEnv == "" { // a container has no cloud-init (host D5)
+		if err := disableCloudInit(a.opt.CloudInitFlag); err != nil {
+			a.log.Error("disable cloud-init", "err", err)
+		}
 	}
 	a.log.Info("enrolled", "agent_id", resp.AgentID, "build", id.Build)
 	return nil

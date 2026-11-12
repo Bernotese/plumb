@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/Bernotese/plumb/internal/wire"
@@ -214,6 +215,21 @@ func tempLinkName(name string) string {
 // So a node that was swapped in is never removed; at worst it stays under
 // the temp name when a second swap blocks the undo, and Apply then names it.
 
+// renameat2 is unix.Renameat2; a test replaces it.
+var renameat2 = unix.Renameat2
+
+// rename2 renames dirfd/from to dirfd/to with flags. EINVAL means that the
+// file system has no RENAME_NOREPLACE/RENAME_EXCHANGE (ZFS before 2.2):
+// there is no fallback, because a plain rename has the leaf races of D-163
+// (D-228). p is the path of the link, for the text.
+func rename2(dirfd int, from, to string, flags uint, p string) error {
+	err := renameat2(dirfd, from, dirfd, to, flags)
+	if errors.Is(err, unix.EINVAL) {
+		return fmt.Errorf("the file system of %s does not support atomic rename (RENAME_NOREPLACE/RENAME_EXCHANGE); on ZFS it needs ZFS 2.2 or newer", path.Dir(p))
+	}
+	return err
+}
+
 // prepTemp removes a stale temp link of name (a crash between two steps);
 // any other node under the temp name is an error and stays.
 func prepTemp(dirfd int, tmp, p string) error {
@@ -242,7 +258,7 @@ func symlinkAt(dirfd int, name, p, target, was string) error {
 		return fmt.Errorf("create link %s: %w", p, err)
 	}
 	if was == "" {
-		if err := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_NOREPLACE); err != nil {
+		if err := rename2(dirfd, tmp, name, unix.RENAME_NOREPLACE, p); err != nil {
 			unlinkTempLink(dirfd, tmp)
 			if errors.Is(err, unix.EEXIST) {
 				return fmt.Errorf("%s changed while it was applied; plan again", p)
@@ -251,7 +267,7 @@ func symlinkAt(dirfd int, name, p, target, was string) error {
 		}
 		return unix.Fsync(dirfd)
 	}
-	if err := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_EXCHANGE); err != nil {
+	if err := rename2(dirfd, tmp, name, unix.RENAME_EXCHANGE, p); err != nil {
 		unlinkTempLink(dirfd, tmp)
 		if errors.Is(err, unix.ENOENT) {
 			return fmt.Errorf("%s changed while it was applied; plan again", p)
@@ -280,14 +296,14 @@ func removeLinkAt(dirfd int, name, p string) error {
 	if err := prepTemp(dirfd, tmp, p); err != nil {
 		return err
 	}
-	if err := unix.Renameat2(dirfd, name, dirfd, tmp, unix.RENAME_NOREPLACE); err != nil {
+	if err := rename2(dirfd, name, tmp, unix.RENAME_NOREPLACE, p); err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return nil // gone already
 		}
 		return fmt.Errorf("remove link %s: %w", p, err)
 	}
 	if kind, _, err := readLinkAt(dirfd, tmp, p); err != nil || kind != "symlink" {
-		if uerr := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_NOREPLACE); uerr != nil {
+		if uerr := rename2(dirfd, tmp, name, unix.RENAME_NOREPLACE, p); uerr != nil {
 			return fmt.Errorf("%s changed while it was removed; the new node is kept as %s", p, tmp)
 		}
 		return fmt.Errorf("%s changed while it was removed; plan again", p)
@@ -308,7 +324,7 @@ func removeIfKind(dirfd int, tmp, name, p, want string) error {
 		}
 		return nil
 	}
-	if uerr := unix.Renameat2(dirfd, tmp, dirfd, name, unix.RENAME_EXCHANGE); uerr != nil {
+	if uerr := rename2(dirfd, tmp, name, unix.RENAME_EXCHANGE, p); uerr != nil {
 		return fmt.Errorf("%s changed while it was applied; the old node is kept as %s", p, tmp)
 	}
 	unlinkTempLink(dirfd, tmp) // our new link, back under tmp

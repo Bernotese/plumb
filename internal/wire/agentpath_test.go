@@ -86,3 +86,31 @@ func TestAgentConflicts(t *testing.T) {
 		}
 	}
 }
+
+// T-078: the first-boot installer unit of an LXC template (T-076) is the
+// agent's too.
+func TestIsAgentPathInstallUnit(t *testing.T) {
+	for _, p := range []string{
+		"/etc/systemd/system/plumb-agent-install.service",
+		"/etc/systemd/system/plumb-agent-install.service.d/x.conf",
+		"/etc/systemd/system/multi-user.target.wants/plumb-agent-install.service",
+		"/lib/systemd/system/plumb-agent-install.service",
+	} {
+		if !IsAgentPath(p) {
+			t.Errorf("IsAgentPath(%q) = false", p)
+		}
+	}
+	for _, p := range []string{"/etc/systemd/system/plumb-agent-install.service.old", "/etc/systemd/system/plumb-agent-installer.service"} {
+		if IsAgentPath(p) {
+			t.Errorf("IsAgentPath(%q) = true", p)
+		}
+	}
+	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent"} {
+		if !isAgentUnit(n) {
+			t.Errorf("isAgentUnit(%q) = false", n)
+		}
+	}
+	if isAgentUnit("plumb-agent-installer") || isAgentUnit("nginx") {
+		t.Error("isAgentUnit too wide")
+	}
+}
