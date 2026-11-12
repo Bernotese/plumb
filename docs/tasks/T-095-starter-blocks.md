@@ -37,4 +37,7 @@ Blocks:
 Tests: `blocks/` (schema, params, render on VM, refused on LXC, no marker outside `.env`, no `AllowUsers`, no `service:ssh`); agent guest tests `TestGuestStarter*` on both distros (tools + shell, ssh: password refused, key login of bootstrap user/deploy/root kept, start mode unchanged; compose: real busybox app serves the secret canary, port change restarts, canary in no report and no journal).
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-095-starter-blocks` (on T-093, PR #191). Decisions D-279 … D-281 in `docs/decisions/T-095.md`.
+- Blocks `ssh-hardening`, `common-tools`, `shell`, `docker-compose` in `blocks/`; `blocks` tests render them through `state` (VM ok, `docker-compose` refused on LXC, no secret marker outside `.env`, no `AllowUsers`, no `service:ssh`).
+- Guest tests `TestGuestStarter*` (agent applies the real Blocks) pass on Debian 13 and Ubuntu 26.04: tools and shell; SSH: passwords refused, key login of bootstrap user, deploy-user and root kept, a broken drop-in does not restart sshd, start mode unchanged; compose: a busybox app serves the secret canary, a port change restarts it, the canary is in no report and no journal.
+- `make lint test build` → ok; `make test-guest` → ok (both distros, all guest tests).
