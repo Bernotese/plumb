@@ -335,7 +335,9 @@ $(sed 's/^/      /' "$ca")
     content: |
       #!/bin/sh
       # Install the Plumb agent from the controller. Idempotent: it does
-      # nothing when the agent runs. Only the pinned Plumb CA is trusted.
+      # nothing when the agent runs. Only the pinned Plumb CA is trusted:
+      # --capath/--ca-directory replace the system CA store with a directory
+      # that holds no hashed CA names (review S1 of T-076).
       set -eu
       if systemctl is-active --quiet plumb-agent.service; then exit 0; fi
       url='$url/agent/v1/binary'
@@ -345,9 +347,9 @@ $(sed 's/^/      /' "$ca")
       trap 'rm -f "\$tmp" "\$new"' EXIT
       fetch() {
         if command -v curl >/dev/null 2>&1; then
-          curl -fsS --proto =https --connect-timeout 10 --max-time 300 --cacert "\$ca" -o "\$tmp" "\$url"
+          curl -fsS --proto =https --connect-timeout 10 --max-time 300 --cacert "\$ca" --capath /etc/plumb-agent -o "\$tmp" "\$url"
         elif command -v wget >/dev/null 2>&1; then
-          wget -q --https-only --timeout=60 --tries=1 --ca-certificate="\$ca" -O "\$tmp" "\$url"
+          wget -q --https-only --timeout=60 --tries=1 --ca-certificate="\$ca" --ca-directory=/etc/plumb-agent -O "\$tmp" "\$url"
         elif command -v python3 >/dev/null 2>&1; then
           python3 -c 'import ssl,sys,urllib.request; c=ssl.create_default_context(cafile=sys.argv[1]); open(sys.argv[3],"wb").write(urllib.request.urlopen(sys.argv[2],context=c,timeout=60).read())' "\$ca" "\$url" "\$tmp"
         else

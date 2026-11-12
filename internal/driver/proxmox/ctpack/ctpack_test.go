@@ -344,6 +344,9 @@ func TestRefuse(t *testing.T) {
 		{"parent: dir then file", with(std, file("./usr/local/sbin")), "/usr/local/sbin in the template is not a directory"},
 		{"parent: hard link", with(std, ent{name: "etc/systemd", flag: tar.TypeLink, link: "./usr/bin/wget"}), "/etc/systemd in the template is not a directory"},
 		{"parent missing", without(std, "./usr/local/sbin/"), "has no directory /usr/local/sbin"},
+		{"file below a plumb dir", with(std, file("./etc/plumb-agent/x")), "already has /etc/plumb-agent/x"},
+		{"drop-in of the agent unit", with(std, dir("./etc/systemd/system/plumb-agent.service.d/"), file("./etc/systemd/system/plumb-agent.service.d/override.conf")), "already has /etc/systemd/system/plumb-agent.service.d"},
+		{"drop-in of the install unit", with(std, file("etc/systemd/system/plumb-agent-install.service.d/x.conf")), "already has /etc/systemd/system/plumb-agent-install.service.d/x.conf"},
 		{"char device", with(std, ent{name: "./dev/null", flag: tar.TypeChar, mode: 0o666}), "device nodes"},
 		{"block device", with(std, ent{name: "./dev/sda", flag: tar.TypeBlock, mode: 0o660}), "device nodes"},
 		{"fifo", with(std, ent{name: "./run/initctl", flag: tar.TypeFifo, mode: 0o600}), "device nodes or fifos"},
@@ -364,6 +367,12 @@ func TestRefuse(t *testing.T) {
 	base := zst(t, plain)
 	if _, err := pack(t, base, opts(base)); err != nil {
 		t.Errorf("last entry a dir: %v", err)
+	}
+	// A name that only starts like a Plumb tree is fine.
+	plain, _ = mkTar(t, with(std, file("./etc/plumb-agent-old"), file("./etc/systemd/system/plumb-agent.service.dx")))
+	base = zst(t, plain)
+	if _, err := pack(t, base, opts(base)); err != nil {
+		t.Errorf("look-alike names: %v", err)
 	}
 	// curl or python3 alone is enough.
 	for _, tool := range []string{"./usr/bin/curl", "./usr/bin/python3"} {

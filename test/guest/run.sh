@@ -32,6 +32,7 @@ trap 'exit 129' HUP
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/guest.test" ./test/guest
 CGO_ENABLED=0 GOOS=linux go test -c -o "$tmp/resource.test" ./internal/resource
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/agent.test" ./internal/agent
+CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/ctpack.test" ./internal/driver/proxmox/ctpack
 for distro in \
   debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 \
   ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c; do
@@ -67,6 +68,8 @@ for distro in \
   run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
   # guest.test installs cron and refreshes the apt lists needed by agent.test.
   run_test /tests/agent.test -test.v -test.timeout=5m -test.run '^TestGuest'
+  # Review S1 of T-076: a CA of the system store does not pass the agent pin.
+  run_test /tests/ctpack.test -test.v -test.timeout=5m -test.run '^TestFirstBootPinInGuest$'
   # T-060: seal changes the whole container, so it runs last.
   run_test /tests/agent.test -test.v -test.timeout=5m -test.run '^TestSeal(AptOutput)?InGuest$'
   docker rm -f "$name" >/dev/null

@@ -129,6 +129,9 @@ func Pack(ctx context.Context, src io.ReadSeeker, dst io.Writer, o Options) erro
 	if hex.EncodeToString(h.Sum(nil)) != o.SHA512 {
 		return ErrPin
 	}
+	// The second read is not checked again: src is a 0600 file in the
+	// controller's 0700 temp directory, which only the controller writes
+	// (review N3 of T-076).
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("ctpack: %w", err)
 	}
@@ -263,6 +266,24 @@ var plumbParents = []string{
 	"usr/local/sbin",
 }
 
+// plumbTrees: names at or below them are refused too (review N1 of
+// T-076): a file in /etc/plumb-agent, or a drop-in that changes a Plumb
+// unit.
+var plumbTrees = []string{
+	"etc/plumb-agent",
+	"etc/systemd/system/plumb-agent.service.d",
+	"etc/systemd/system/plumb-agent-install.service.d",
+}
+
+func inPlumbTree(n string) bool {
+	for _, d := range plumbTrees {
+		if n == d || strings.HasPrefix(n, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // fetchTools: the first-boot script needs one of them (D-082).
 var fetchTools = []string{"usr/bin/curl", "usr/bin/wget", "usr/bin/python3"}
 
@@ -314,6 +335,9 @@ func scan(r io.Reader, cr *countReader) (end int64, prefix string, err error) {
 			return 0, "", refuse("the template has sparse files (%s)", hdr.Name)
 		}
 		n := normName(hdr.Name)
+		if inPlumbTree(n) {
+			return 0, "", refuse("the template already has /%s", n)
+		}
 		if _, ok := watch[n]; ok {
 			watch[n] = hdr.Typeflag
 			seen[n] = true
