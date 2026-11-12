@@ -331,6 +331,12 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 			if len(r.Sensitive) > 0 {
 				return nil, errf(u.blocksPath, "resource %s from %s: an Image cannot hold a secret (D-202)", r.ID, where[r.ID])
 			}
+			// A build starts without a person (D-101, D-199), so it must
+			// not run a command, which only a person approves (D-260).
+			if rt, ok := resource.Lookup(r.Type); ok && rt.NotInImage {
+				return nil, errf(u.blocksPath, "resource %s from %s: an Image build cannot hold a %s resource; only a person approves it, and a build starts without one (D-260)",
+					r.ID, where[r.ID], r.Type)
+			}
 		}
 	}
 
