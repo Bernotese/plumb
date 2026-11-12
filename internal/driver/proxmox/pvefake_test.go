@@ -81,7 +81,8 @@ type fakePVE struct {
 	dropPath      string // a request to this path loses its connection
 	// writeDuringRead: this many reads of the config without current=1
 	// change the config first (a write between the reads of Observe).
-	writeDuringRead int
+	writeDuringRead     int
+	ctWriteBeforeConfig bool // concurrent CT edit before the next config PUT
 	// noDigest: config answers have no digest (a proxy or a broken API).
 	noDigest bool
 	// keepPending: a write of the running value on a running VM keeps

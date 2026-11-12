@@ -141,8 +141,10 @@ func checkCTSpec(s driver.GuestSpec) error {
 		return fmt.Errorf("proxmox: %q is no host name for a container", s.Name)
 	}
 	for _, k := range s.SSHKeys {
-		if k == "" || strings.ContainsAny(k, "\r\n") {
-			return errors.New("proxmox: an SSH key must be one line")
+		// One description line that comes back byte-equal (D-249,
+		// review S1 of #162).
+		if k == "" || strings.TrimSpace(k) != k || strings.IndexFunc(k, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+			return errors.New("proxmox: an SSH key must be one line without white space at its ends or control characters")
 		}
 	}
 	return nil
@@ -249,6 +251,9 @@ func (d *Driver) removeHalfMadeCT(ctx context.Context, id int, name string, made
 	_, m, err := d.own(cleanup, strconv.Itoa(id))
 	switch {
 	case errors.Is(err, driver.ErrNotFound), errors.Is(err, ErrForeignGuest):
+		// Not in our pool: nothing of ours. A create that failed before
+		// Proxmox added the CT to the pool is destroyed by Proxmox itself
+		// (the create worker removes it on error; review N2 of #162).
 		return nil
 	case err != nil:
 		return err

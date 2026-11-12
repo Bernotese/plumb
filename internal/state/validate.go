@@ -732,9 +732,14 @@ func (s *Set) checkTarget(name string) Errors {
 		// (D-249).
 		if keys, ok := t.Guest["ssh_keys"].([]any); ok {
 			n := 0
-			for _, k := range keys {
+			for i, k := range keys {
 				if s, ok := k.(string); ok {
 					n += len(lxcKeyLine) + len(s) + 1
+					// The line must come back byte-equal from the
+					// description (review S1 of #162).
+					if strings.TrimSpace(s) != s || strings.IndexFunc(s, isControl) >= 0 {
+						errs = append(errs, errf(fmt.Sprintf("/spec/guest/ssh_keys/%d", i), "an SSH key of an LXC Target must not start or end with white space or hold a control character (D-249)"))
+					}
 				}
 			}
 			if n > maxLXCKeyBytes {
@@ -764,6 +769,9 @@ const (
 	lxcKeyLine     = "plumb-ssh-key: "
 	maxLXCKeyBytes = 7168
 )
+
+// isControl is a control character of ASCII (with tab and NUL).
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
 // minLXCDisk is the smallest root file system of an LXC Target in GiB
 // (a fresh Ubuntu root fs uses about 0.7 GB, T-038 host E1).

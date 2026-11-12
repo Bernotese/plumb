@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -254,5 +255,162 @@ func TestCTKeyLineEdited(t *testing.T) {
 	var co *driver.CreateOnlyError
 	if _, err := d.Diff(ctSpec(), st); !errors.As(err, &co) || co.Attr != driver.AttrSSHKeys {
 		t.Errorf("diff %v", err)
+	}
+}
+
+// A concurrent config edit must reject the clear without deleting env.
+func TestCTClearBootstrapStaleDigest(t *testing.T) {
+	f, d, id := newCT(t)
+	f.ctWriteBeforeConfig = true
+	err := d.ClearBootstrap(context.Background(), id)
+	if err == nil || !strings.Contains(err.Error(), "modified configuration") {
+		t.Fatalf("stale digest: %v", err)
+	}
+	if f.count("PUT /nodes/pve/lxc/9000/config") != 1 || f.vms[9000].delete["env"] || f.vms[9000].cfg["env"] != tokenPrefix+ctToken {
+		t.Fatal("stale clear retried or changed env")
+	}
+}
+
+// Exercise the pending-delete view independently of ClearBootstrap.
+func TestCTObserveTokenViews(t *testing.T) {
+	for _, mode := range []string{"active", "set", "delete"} {
+		t.Run(mode, func(t *testing.T) {
+			f, d, id := newCT(t)
+			f.mu.Lock()
+			switch mode {
+			case "set":
+				delete(f.vms[9000].cfg, "env")
+				f.vms[9000].pending = map[string]string{"env": tokenPrefix + ctToken}
+			case "delete":
+				f.vms[9000].delete = map[string]bool{"env": true}
+			}
+			f.mu.Unlock()
+			st, err := d.Observe(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.TokenInConfig != (mode != "delete") || st.TokenPending != (mode == "set") || st.Pending != nil {
+				t.Errorf("%s: in config=%v, pending token=%v, pending spec=%v", mode, st.TokenInConfig, st.TokenPending, st.Pending)
+			}
+		})
+	}
+}
+
+func TestCTFailedCreateCleanupFailure(t *testing.T) {
+	f := newFakePVE(t)
+	f.files[ctTemplate] = true
+	d := f.driver(t)
+	f.failNext["POST /nodes/pve/lxc"] = "unpack failed " + ctToken
+	f.failNext["DELETE /nodes/pve/lxc/9000"] = "storage busy " + ctToken
+	id, err := d.Create(context.Background(), ctSpec(), driver.Bootstrap{Token: ctToken})
+	if err == nil {
+		t.Fatal("created")
+	}
+	for _, want := range []string{"unpack failed", "storage busy", "pct destroy 9000"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q: %v", want, err)
+		}
+	}
+	if id != "" || strings.Contains(err.Error(), ctToken) || len(f.vms) != 1 || f.count("DELETE /nodes/pve/lxc/9000") != 1 || f.count("POST /nodes/pve/lxc/9000/status/start") != 0 {
+		t.Fatal("wrong cleanup result or leaked token")
+	}
+}
+
+func TestCTObserveOwnershipGuards(t *testing.T) {
+	for _, mode := range []string{"privileged", "foreign"} {
+		t.Run(mode, func(t *testing.T) {
+			f, d, id := newCT(t)
+			f.mu.Lock()
+			if mode == "privileged" {
+				f.vms[9000].cfg["unprivileged"] = "0"
+			} else {
+				f.vms[9000].pool = "other"
+			}
+			f.mu.Unlock()
+			_, err := d.Observe(context.Background(), id)
+			if mode == "foreign" && !errors.Is(err, driver.ErrNotFound) {
+				t.Fatalf("foreign: %v", err)
+			}
+			if mode == "privileged" && (err == nil || !strings.Contains(err.Error(), "only unprivileged containers")) {
+				t.Fatalf("privileged: %v", err)
+			}
+		})
+	}
+}
+
+func TestCTDescriptionByteLimit(t *testing.T) {
+	for _, extra := range []int{0, 1} {
+		t.Run(string(rune('0'+extra)), func(t *testing.T) {
+			f := newFakePVE(t)
+			f.files[ctTemplate] = true
+			d := f.driver(t)
+			s := ctSpec()
+			s.SSHKeys = []string{"ssh-ed25519 "}
+			// Multibyte comments count as bytes, not characters.
+			s.SSHKeys[0] += strings.Repeat("é", (8192-len(ctDescription(s)))/2)
+			s.SSHKeys[0] += strings.Repeat("A", 8192+extra-len(ctDescription(s)))
+			_, err := d.Create(context.Background(), s, driver.Bootstrap{Token: ctToken})
+			if extra == 0 {
+				if err != nil {
+					t.Fatal(err)
+				}
+				st, err := d.Observe(context.Background(), "9000")
+				if err != nil || len(st.Spec.SSHKeys) != 1 || st.Spec.SSHKeys[0] != s.SSHKeys[0] {
+					t.Fatal("boundary key did not round trip")
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "8193 bytes") || f.count("POST /nodes/pve/lxc") != 0 {
+				t.Fatalf("oversized description: %v", err)
+			}
+		})
+	}
+}
+
+func TestCTKeyLineReplaced(t *testing.T) {
+	f, d, id := newCT(t)
+	posts := f.count("POST ")
+	f.mu.Lock()
+	f.vms[9000].cfg["description"] = strings.Replace(f.vms[9000].cfg["description"], ctSpec().SSHKeys[1], "ssh-ed25519 AAAAC3Nzc edited@example", 1)
+	f.mu.Unlock()
+	st, err := d.Observe(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Spec.SSHKeys) != 2 || st.Spec.SSHKeys[1] != "ssh-ed25519 AAAAC3Nzc edited@example" {
+		t.Fatalf("edited keys: %v", st.Spec.SSHKeys)
+	}
+	if drift := driver.DriftGuest(ctSpec(), st); len(drift) != 1 || drift[0].Attr != driver.AttrSSHKeys {
+		t.Errorf("drift: %+v", drift)
+	}
+	var co *driver.CreateOnlyError
+	if _, err := d.Diff(ctSpec(), st); !errors.As(err, &co) || co.Attr != driver.AttrSSHKeys {
+		t.Errorf("diff: %v", err)
+	}
+	if f.count("PUT ") != 0 || f.count("DELETE ") != 0 || f.count("POST ") != posts {
+		t.Fatal("edited key caused a write")
+	}
+}
+
+// Review S1 of #162: a key comes back byte-equal (D-249); one with white
+// space at its ends or a control character is refused.
+func TestCTKeyRoundTrip(t *testing.T) {
+	f := newFakePVE(t)
+	f.files[ctTemplate] = true
+	d := f.driver(t)
+	ctx := context.Background()
+	s := ctSpec()
+	s.SSHKeys = []string{"ssh-ed25519 AAAAC3Nza Jürgen's Schlüssel ✓", "ssh-rsa AAAAB3Nzb x"}
+	id, err := d.Create(ctx, s, driver.Bootstrap{Token: ctToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := d.Observe(ctx, id)
+	if err != nil || !reflect.DeepEqual(st.Spec.SSHKeys, s.SSHKeys) {
+		t.Fatalf("keys %q %v", st.Spec.SSHKeys, err)
+	}
+	for _, k := range []string{"ssh-ed25519 AAAAC3Nza x ", " ssh-ed25519 AAAAC3Nza", "ssh-ed25519 AAAAC3Nza a\tb", "ssh-ed25519 AAAAC3Nza a\x00b", "ssh-ed25519 AAAAC3Nza a\x7fb"} {
+		s.SSHKeys = []string{k}
+		if _, err := d.Create(ctx, s, driver.Bootstrap{Token: ctToken}); err == nil {
+			t.Errorf("%q accepted", k)
+		}
 	}
 }

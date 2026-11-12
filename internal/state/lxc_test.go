@@ -64,6 +64,19 @@ func TestLXCTargetRules(t *testing.T) {
 			t.Errorf("two RSA keys: %v", err)
 		}
 	})
+	// Review S1 of #162: a key must come back byte-equal from the
+	// container description.
+	t.Run("ssh key edges", func(t *testing.T) {
+		for _, k := range []string{`"ssh-ed25519 AAAAC3Nza one@example "`, `" ssh-ed25519 AAAAC3Nza"`, `"ssh-ed25519 AAAAC3Nza a\tb"`, `"ssh-ed25519 AAAAC3Nza a\u0000b"`, `"ssh-ed25519 AAAAC3Nza a\u007fb"`} {
+			_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":[` + k + `]`)})
+			if err == nil || !strings.Contains(err.Error(), "white space") && !strings.Contains(err.Error(), "pattern") {
+				t.Errorf("%s: %v", k, err)
+			}
+		}
+		if _, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":8,"ssh_keys":["ssh-ed25519 AAAAC3Nza Jürgen's Schlüssel ✓"]`)}); err != nil {
+			t.Errorf("non-ASCII comment: %v", err)
+		}
+	})
 	t.Run("disk below 2 GiB", func(t *testing.T) {
 		_, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":1`)})
 		errAt(t, err, KindTarget, "/spec/guest/disk", "at least 2 GiB")

@@ -134,6 +134,10 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 		reply(w, 200, out)
 
 	case r.Method == "PUT" && sub == "/config":
+		if f.ctWriteBeforeConfig {
+			f.ctWriteBeforeConfig = false
+			vm.cfg["hostname"] = "edited-before-write"
+		}
 		if d := r.Form.Get("digest"); d != "" && d != ctDigest(vm) {
 			fail(w, 500, "detected modified configuration - file changed by other user? Try again.", nil)
 			return
