@@ -194,3 +194,9 @@ describe("secret parameters (D-088)", () => {
     expect(secretName(null)).toBeUndefined();
   });
 });
+
+it("accepts numeric bounds and rejects values outside them (T-098)", () => {
+  const fields = fieldsOf({ properties: { n: { type: "integer", minimum: 1, maximum: 3 } } });
+  for (const n of ["1", "3"]) expect(validate(fields, { n })).toEqual({});
+  for (const n of ["0", "4"]) expect(validate(fields, { n }).n).toBeTruthy();
+});

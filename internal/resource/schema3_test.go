@@ -26,6 +26,7 @@ func TestSlice3Schemas(t *testing.T) {
 		{"command", `{"name":"x","argv":["/bin/true"],"creates":"/a/../b"}`, false},
 		{"command", `{"name":"x","argv":["/bin/true"],"creates":"/x","state":"absent"}`, false}, // no state
 		{"command", `{"name":"x","argv":["/bin/true"],"creates":"/x","timeout":0}`, false},
+		{"command", `{"name":"x","argv":["/` + strings.Repeat("a", 4096) + `"],"creates":"/x"}`, false}, // argv[0] max 4096
 	}
 	compiled := map[string]*jsonschema.Schema{}
 	for _, tt := range tests {

@@ -12,9 +12,9 @@ Write the contract that all slice 3 cards build on: command `update` (SHA-256 on
 - New decisions: `docs/decisions/T-090.md`; ask pl-lead for numbers (ask pl-lead)
 
 ## Acceptance criteria
-- [ ] OpenAPI, `schema/*.json`, wire types and ARCHITECTURE text for all items above (D-257 … D-260); no behaviour yet
-- [ ] `make lint test build` passes; `check:api` passes
-- [ ] Push the wire and schema part first and report it, so T-091, T-093 and T-094 can start against it
+- [x] OpenAPI, `schema/*.json`, wire types and ARCHITECTURE text for all items above (D-257 … D-260); no behaviour yet
+- [x] `make lint test build` passes; `check:api` passes
+- [x] Push the wire and schema part first and report it, so T-091, T-093 and T-094 can start against it
 
 ## Out of scope
 - Any agent or controller behaviour
@@ -22,4 +22,5 @@ Write the contract that all slice 3 cards build on: command `update` (SHA-256 on
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+pl-architect/T-090-slice3-contract · PR #187 · `make lint test build` ok, `check:api` valid.
+Wire in `internal/wire/protocol.go` + `capability.go`; schemas in `internal/resource/schema/` (not registered); OpenAPI endpoint marked `x-plumb-planned: T-092`; ARCHITECTURE §14; D-266 … D-270.

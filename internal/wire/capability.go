@@ -17,6 +17,54 @@ type Capabilities struct {
 	Resources map[string][]string `json:"resources"`
 }
 
+// Limits of a Capabilities list from a Hello (guest data). The controller
+// refuses (treats as BaselineCapabilities and logs) a list that breaks
+// one, before it stores it: Valid is the check.
+const (
+	MaxCapabilityTypes    = 64 // resource types
+	MaxCapabilityAttrs    = 64 // attributes per type
+	MaxCapabilityCommands = 16 // command types
+	MaxCapabilityName     = 64 // bytes of a type or attribute name
+)
+
+// Valid reports whether c keeps the limits: at most MaxCapabilityTypes
+// types and MaxCapabilityAttrs attributes per type, names of 1 to
+// MaxCapabilityName bytes of [a-z0-9_], and at most MaxCapabilityCommands
+// commands. Unknown command names are allowed (a newer agent) but count.
+func (c Capabilities) Valid() bool {
+	if len(c.Resources) > MaxCapabilityTypes || len(c.Commands) > MaxCapabilityCommands {
+		return false
+	}
+	for _, cmd := range c.Commands {
+		if !capName(string(cmd)) {
+			return false
+		}
+	}
+	for typ, attrs := range c.Resources {
+		if !capName(typ) || len(attrs) > MaxCapabilityAttrs {
+			return false
+		}
+		for _, a := range attrs {
+			if !capName(a) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func capName(s string) bool {
+	if s == "" || len(s) > MaxCapabilityName {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 // BaselineCapabilities is what every agent before slice 3 can do: an agent
 // that sends no Capabilities (Hello.Capabilities == nil) has exactly these.
 // Never change this list: it describes agents that are already in guests.
@@ -35,9 +83,9 @@ func BaselineCapabilities() Capabilities {
 }
 
 // CapabilitiesOf returns the capabilities of a Hello: its list, or the
-// baseline for an agent that sends none.
+// baseline for an agent that sends none or a list that is not Valid.
 func CapabilitiesOf(h Hello) Capabilities {
-	if h.Capabilities == nil {
+	if h.Capabilities == nil || !h.Capabilities.Valid() {
 		return BaselineCapabilities()
 	}
 	return *h.Capabilities

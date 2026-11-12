@@ -15,14 +15,15 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-084 token gets `Sys.Audit` (D-239, D-240) | pl-backend | Done. PR #181 and #184 merged. Repair run on the test host ok: role `PlumbAudit` (`Sys.Audit` only) on `/`, propagate 0, user and token; the token reads the thin-pool metadata use (host test `TestHostDiskSpace` PASS); node status and syslog stay 403. Not shown with a real Image build Plan (no Image on the controller). Log: `docs/tasks/T-084.log.md`. |
 | T-088 `nginx` and `nginx-site` Blocks: default page answered 403 on Debian/Ubuntu | done | merged (PR #182, D-255): `index index.html index.htm index.nginx-debian.html;`. An existing install keeps its stored Block text: copy that line into the stored `nginx` / `nginx-site` Block. |
 | T-089 plan for slice 3 ("Blocks for every day") | pl-architect | **approved by the user on 2026-11-12 with all 6 recommendations** (D-256 … D-262 accepted). Child cards T-090 … T-100. |
-| T-090 contract (C1) | pl-architect | started |
+| T-090 contract (C1) | pl-architect | merged (PR #187, D-266 … D-270) |
 | T-091 agent self-update (C2) · T-092 controller update + gate (C3) | pl-backend | T-091 starts on the T-090 wire part; T-092 after it |
 | T-093 resources `apt_repository`, `unit`, `sysctl` (C4) | pl-reviewer (implements; pl-architect reviews) | starts on the T-090 schemas |
-| T-094 resource `command` (C4b) | pl-architect | after T-090 |
+| T-094 resource `command` (C4b) | pl-architect | PR #189, in review + QA |
 | T-095 starter Blocks (C5) | open | after T-093 |
-| T-096 Blocks screen (C6) · T-097 agent version in the web (C7) | pl-frontend | T-096 started; T-097 after T-092 |
-| T-098 QA debt (C8) · T-099 QA per card (C9) | pl-codex-qa | T-098 started |
+| T-096 Blocks screen (C6) · T-097 agent version in the web (C7) | pl-frontend | T-096: PR #188, in review + QA; T-097 after T-092 |
+| T-098 QA debt (C8) · T-099 QA per card (C9) | pl-codex-qa | T-098 merged (PR #186: 9 web mutants, 3 gaps closed, Content-Length == cap test). T-099 runs per card. |
 | T-100 real-host acceptance (C10) | pl-backend | last |
+| T-101 server checks Block resource attributes at save (found in T-096) | pl-architect | started |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 

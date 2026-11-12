@@ -114,12 +114,14 @@ func TestSchemas(t *testing.T) {
 		{"symlink", `{"path":"/etc/../x","target":"y"}`, false},             // no ".." in the path
 		{"symlink", `{"path":"/etc/x","target":"y","owner":"root"}`, false}, // unknown attribute
 		{"apt_repository", `{` + apt + `,"key":"` + pgp + `"}`, true},
-		{"apt_repository", `{` + apt + `}`, false},                                    // present needs the key
-		{"apt_repository", `{"name":"docker","state":"absent"}`, true},                // absent needs nothing else
-		{"apt_repository", `{` + apt + `,"key":"https://x/key.gpg"}`, false},          // never a URL
-		{"apt_repository", `{` + apt + `,"key":"` + pgp + `","trusted":true}`, false}, // no Trusted
-		{"apt_repository", `{` + apt + `,"key":"` + pgp + `","options":"x"}`, false},  // no free options
-		{"apt_repository", `{"name":"../x","state":"absent"}`, false},                 // name is part of a path
+		{"apt_repository", `{` + apt + `}`, false},                                                                                                     // present needs the key
+		{"apt_repository", `{"name":"docker","state":"absent"}`, true},                                                                                 // absent needs nothing else
+		{"apt_repository", `{` + apt + `,"key":"https://x/key.gpg"}`, false},                                                                           // never a URL
+		{"apt_repository", `{` + apt + `,"key":"` + pgp + `-----BEGIN PGP PRIVATE KEY BLOCK-----\nxx\n-----END PGP PRIVATE KEY BLOCK-----\n"}`, false}, // a second, private block
+		{"apt_repository", `{` + apt + `,"key":"` + pgp + pgp + `"}`, false},                                                                           // two public blocks
+		{"apt_repository", `{` + apt + `,"key":"` + pgp + `","trusted":true}`, false},                                                                  // no Trusted
+		{"apt_repository", `{` + apt + `,"key":"` + pgp + `","options":"x"}`, false},                                                                   // no free options
+		{"apt_repository", `{"name":"../x","state":"absent"}`, false},                                                                                  // name is part of a path
 		{"apt_repository", `{"name":"d","uris":["file:///srv"],"suites":["a"],"key":"` + pgp + `"}`, false},
 		{"apt_repository", `{"name":"d","uris":["https://x"],"suites":["a b"],"key":"` + pgp + `"}`, false},
 		{"unit", `{"name":"backup.timer","content":"[Timer]\nOnCalendar=daily\n"}`, true},

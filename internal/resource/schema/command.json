@@ -26,7 +26,8 @@
           "pattern": "^/",
           "not": {
             "pattern": "(^|/)\\.\\.(/|$)|\\x00"
-          }
+          },
+          "maxLength": 4096
         }
       ],
       "items": {

@@ -65,7 +65,10 @@
       "type": "string",
       "maxLength": 65536,
       "pattern": "^-----BEGIN PGP PUBLIC KEY BLOCK-----\\r?\\n[\\s\\S]*\\r?\\n-----END PGP PUBLIC KEY BLOCK-----\\s*$",
-      "description": "The ASCII-armored public signing key, inline: it is never downloaded at apply. The agent refuses anything that is not exactly one public key block. Required when state is present."
+      "description": "The ASCII-armored public signing key, inline: it is never downloaded at apply. Exactly one public key block; a private key block is refused here, before it reaches a revision. Required when state is present.",
+      "not": {
+        "pattern": "PRIVATE KEY BLOCK|-----END PGP PUBLIC KEY BLOCK-----[\\s\\S]*-----BEGIN"
+      }
     },
     "state": {
       "enum": [
