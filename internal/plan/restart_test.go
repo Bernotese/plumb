@@ -107,3 +107,15 @@ func TestAllowRestartChange(t *testing.T) {
 		t.Errorf("driverChanges = %+v", got)
 	}
 }
+
+func TestForKind(t *testing.T) {
+	if got := forKind(textReenrollRuns, wire.KindLXC); !strings.Contains(got, "Stop the container") || strings.Contains(got, "VM") {
+		t.Errorf("lxc: %q", got)
+	}
+	if forKind(textReenrollRuns, wire.KindVM) != textReenrollRuns {
+		t.Error("vm text changed")
+	}
+	if strings.Contains(textStartedOutsideCT, "smbios1") || strings.Contains(textStartedOutsideCT, "VM") {
+		t.Error("container text names the VM")
+	}
+}

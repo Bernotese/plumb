@@ -2,6 +2,7 @@ package issue_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -348,5 +349,65 @@ func TestVMHasNoBootstrapStep(t *testing.T) {
 	}
 	if e.drv.Calls(fake.OpClearBootstrap) != 0 {
 		t.Error("ClearBootstrap on a VM")
+	}
+}
+
+// Review S1 of #159: a Stop right after a good Create still records the
+// binding, so a later Run can clear the token or delete the guest. For
+// containers and VMs.
+func TestStopAfterCreateKeepsBinding(t *testing.T) {
+	for _, kind := range []string{"lxc", "vm"} {
+		t.Run(kind, func(t *testing.T) {
+			e, _ := newCTEnv(t)
+			put := append(seedCT(), ctTarget("c1", "hi", 1, false))
+			if kind == "vm" {
+				put = []state.Doc{doc(state.KindImage, "ubuntu", image), doc(state.KindBlock, "motd", motd), target("c1", "hi", 10)}
+			}
+			// The first Observe of the Run is the one after Create.
+			e.drv.Hook(fake.OpObserve, func() { e.eng.Stop() })
+			run := e.approve(e.propose(plan.Proposal{Put: put}).ID)
+			if run.Status == "succeeded" {
+				t.Fatal("the Run went on after Stop")
+			}
+			ids := e.drv.Guests()
+			if len(ids) != 1 {
+				t.Fatalf("guests %v", ids)
+			}
+			b, err := e.st.GetBinding(e.ctx, state.KindTarget, "c1")
+			if err != nil || b.Ref != string(ids[0]) || b.Digest == "" {
+				t.Fatalf("binding %+v %v", b, err)
+			}
+		})
+	}
+}
+
+// Review N4 of #159: a Stop between the hello and the clear fails the
+// step and leaves the token; the next Run after the restart clears it.
+func TestLXCStopBeforeClear(t *testing.T) {
+	e, _ := newCTEnv(t)
+	a := e.agent("c1")
+	e.drv.Hook(fake.OpClearBootstrap, func() {
+		e.eng.Stop()
+		e.drv.Fail(fake.OpClearBootstrap, context.Canceled) // the call never reached Proxmox
+	})
+	run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))}).ID)
+	steps := e.steps(run)
+	if run.Status == "succeeded" || len(steps) < 3 || steps[2].Resource != plan.StepGuestBootstrap || steps[2].Status != "failed" {
+		t.Fatalf("run %s: %s", run.Status, stepNames(steps))
+	}
+	if !e.observe("c1").TokenInConfig {
+		t.Fatal("token left the config without a clear")
+	}
+	// Controller restart: the next Run of the target clears the token.
+	e.eng.Close()
+	e.start()
+	a.SetHandler(e.link.Handler())
+	e.online("c1")
+	run = e.approve(e.propose(plan.Proposal{Put: []state.Doc{ctTarget("c1", "again", 1, false)}}).ID)
+	if run.Status != "succeeded" || !strings.HasPrefix(stepNames(e.steps(run)), "guest:bootstrap=applied") {
+		t.Fatalf("next run %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	if e.observe("c1").TokenInConfig {
+		t.Error("token still in the config")
 	}
 }
