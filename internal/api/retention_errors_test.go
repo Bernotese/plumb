@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/driver/fake"
-	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 )
 
@@ -52,43 +51,7 @@ func twoVersions(t *testing.T) (*env, *client) {
 
 const readySentence = "; v3 is ready and usable; old templates stay until the next build"
 
-func TestRetentionRemoveErrorFailsRunVersionReady(t *testing.T) {
-	e, adm := twoVersions(t)
-	e.drv.Fail(fake.OpRemoveImage, errors.New("retention remove unavailable"))
-	e.manualBuild(adm, "web", 3, nil) // v3 is ready
-	status, s := e.retentionOf("web", 3)
-	if status != "failed" || s.Status != "failed" ||
-		!strings.Contains(s.Output, "could not remove plumb-img-web-v1: retention remove unavailable"+readySentence) {
-		t.Fatalf("run %s, retention %+v", status, s)
-	}
-	if got := e.versionTemplates("web"); len(got) != 3 {
-		t.Fatalf("templates: %v", got)
-	}
-	e.noBuildLeft("web")
-	// The new version is usable: a new Target takes it.
-	e.agent("web1")
-	target := doc(state.KindTarget, "web1", `{"type":"vm","image":"web","guest":{"cores":1,"memory":1024,"disk":10,"bridge":"vmbr0"}}`)
-	e.runPlan(adm, map[string]any{"reason": "use ready version", "put": []state.Doc{target}})
-	if code, body := adm.do("GET", "/api/v1/targets/web1", nil); code != 200 || !strings.Contains(string(body), `"image_version":3`) {
-		t.Fatalf("target: %d %s", code, body)
-	}
-	// The next build removes the old templates and succeeds.
-	e.manualBuild(adm, "web", 4, nil)
-	if status, s := e.retentionOf("web", 4); status != "succeeded" || s.Status != "applied" {
-		t.Fatalf("v4: run %s, retention %+v", status, s)
-	}
-	for n := 1; n <= 4; n++ {
-		v, err := e.st.GetImageVersion(e.ctx, "web", n)
-		want := store.ImageReady
-		if n < 3 {
-			want = store.ImageRemoved
-		}
-		if err != nil || v.Status != want {
-			t.Fatalf("v%d: %+v %v", n, v, err)
-		}
-	}
-	e.noBuildLeft("web")
-}
+// The remove error class: TestRetentionRemoveErrorFailsRunAndRetriesQA.
 
 func TestRetentionListErrorFailsRunVersionReady(t *testing.T) {
 	e, adm := twoVersions(t)
