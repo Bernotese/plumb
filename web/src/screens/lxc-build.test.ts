@@ -31,6 +31,8 @@ describe("lxc image build form", () => {
     expect(el("#i-upgrade-hint").textContent).toContain("apt-get dist-upgrade");
     expect(el("#i-upgrade-hint").textContent).toContain("old configuration files");
     expect(text()).toContain("root file system of the build container, at least 2");
+    expect(text()).toContain("CIDR form for the build container.");
+    expect(text()).not.toContain("for the build guest");
     expect(text()).not.toContain("1.4 GB (Debian)");
     expect(document.querySelector("#i-guest-user")).toBeNull();
     type("#i-known", "Debian 13");
@@ -66,6 +68,23 @@ describe("lxc image build form", () => {
   });
 });
 
+describe("build of an lxc Image with keyed Targets (N1 of the #176 review)", () => {
+  it("warns that the server refuses the build while a Target has SSH keys", async () => {
+    show(ImageForm, { api: adminApi(), name: "debian-ct" });
+    await until(() => document.querySelector("#i-build"));
+    expect(document.querySelector("#i-lxc-keyed-targets")).toBeNull();
+    el<HTMLInputElement>("#i-build").click();
+    flushSync();
+    expect(el("#i-lxc-keyed-targets").textContent).toContain("ct1");
+  });
+
+  it("does not warn for an Image whose Targets have no keys", async () => {
+    show(ImageForm, { api: adminApi(), name: "debian-ct-web" });
+    await until(() => document.querySelector("#i-lxc-keys"));
+    expect(document.querySelector("#i-lxc-keyed-targets")).toBeNull();
+  });
+});
+
 describe("target from a built lxc Image (D-251)", () => {
   it("has no SSH key field and names the Block deploy-user", async () => {
     const api = adminApi();
@@ -78,6 +97,12 @@ describe("target from a built lxc Image (D-251)", () => {
     el<HTMLButtonElement>("#guest-ssh_keys-add").click();
     flushSync();
     type("#guest-ssh_keys-0", KEY);
+    type("#t-image", "debian-ct-web");
+    // N2 of the #176 review: the dropped key is said, not hidden.
+    expect(el("#t-keys-dropped").textContent).toMatch(/SSH key you typed[\s\S]*is not sent/);
+    type("#t-image", "debian-ct");
+    expect(document.querySelector("#t-keys-dropped")).toBeNull();
+    expect(el<HTMLInputElement>("#guest-ssh_keys-0").value).toBe(KEY);
     type("#t-image", "debian-ct-web");
     expect(document.querySelector("#guest-ssh_keys-add")).toBeNull();
     expect(text()).not.toContain("SSH keys for root");

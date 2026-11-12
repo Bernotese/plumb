@@ -121,6 +121,13 @@
       images.find((i) => i.document.name === image)?.document.spec.build !== undefined,
   );
   const deployUser = $derived(blocks.some((b) => b.document.name === "deploy-user"));
+  // N2 of the #176 review: keys typed for a stock Image are not sent for a
+  // built one; say it, do not drop them without a word.
+  const droppedKeys = $derived(
+    builtLxc && !editing && Array.isArray(guest["ssh_keys"])
+      ? (guest["ssh_keys"] as unknown[]).filter((k) => String(k).trim() !== "").length
+      : 0,
+  );
   const usesDeployUser = $derived(uses.some((u) => u.use === "deploy-user"));
   // A container has no bootstrap user; its SSH keys go to root (D-226).
   const kindFields = $derived(
@@ -442,6 +449,14 @@
             A container from the built image <span class="mono">{image}</span> gets no SSH keys from
             Proxmox. Add the keys with the Block <span class="mono">deploy-user</span> (D-251).
           </p>
+          {#if droppedKeys}
+            <p class="warn" id="t-keys-dropped">
+              The {droppedKeys === 1 ? "SSH key" : `${droppedKeys} SSH keys`} you typed for the other
+              image {droppedKeys === 1 ? "is" : "are"} not sent. Put {droppedKeys === 1
+                ? "it"
+                : "them"} into the Block <span class="mono">deploy-user</span>.
+            </p>
+          {/if}
           {#if deployUser && !usesDeployUser}
             <button
               type="button"

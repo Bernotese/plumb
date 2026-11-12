@@ -38,7 +38,7 @@
     lxc: new RegExp(specProps.sha512.pattern, "u"),
   };
   const atPattern = new RegExp(specProps.schedule.properties.at.pattern, "u");
-  // The root file system of a container needs at least 2 GiB (D-234).
+  // The root file system of a container needs at least 2 GiB (T-075, minLXCDisk).
   const MIN_LXC_DISK = 2;
   const editing = $derived(name !== undefined);
 
@@ -53,6 +53,7 @@
   }
 
   let existing = $state<ImageView | null>(null);
+  let keyedTargets = $state<string[]>([]);
   let allBlocks = $state<BlockView[]>([]);
   let loaded = $state(false);
   let loadError = $state<unknown>(null);
@@ -119,10 +120,18 @@
   }
 
   $effect(() => {
-    Promise.all([api.listBlocks(), name ? api.getImage(name) : Promise.resolve(null)]).then(
-      ([b, i]) => {
+    Promise.all([
+      api.listBlocks(),
+      name ? api.getImage(name) : Promise.resolve(null),
+      name ? api.listTargets() : Promise.resolve([]),
+    ]).then(
+      ([b, i, t]) => {
         allBlocks = b;
         existing = i;
+        // D-251: a Target of this Image with SSH keys blocks a build of it.
+        keyedTargets = t
+          .filter((x) => x.document.spec.image === name && x.document.spec.guest.ssh_keys?.length)
+          .map((x) => x.document.name);
         addChoice = b.find((x) => !hasSecret(x))?.document.name ?? "";
         const s = i?.document.spec;
         const g = s?.build?.guest;
@@ -274,7 +283,12 @@
                 ...f,
                 description: `GiB: the root file system of the build container, at least ${MIN_LXC_DISK}. A Target from this image needs at least this size.`,
               }
-            : f,
+            : f.name === "ip"
+              ? {
+                  ...f,
+                  description: "dhcp or an IPv4 address in CIDR form for the build container.",
+                }
+              : f,
         )
       : guestFields,
   );
@@ -440,6 +454,14 @@
             class="mono">deploy-user</span
           > on the Target or in this build (D-251).
         </p>
+        {#if keyedTargets.length}
+          <p class="banner warn" id="i-lxc-keyed-targets">
+            The server refuses this build while Targets of this image have SSH keys: <span
+              class="mono">{keyedTargets.join(", ")}</span
+            >. Remove their keys first (use the Block <span class="mono">deploy-user</span>), then
+            switch on the build.
+          </p>
+        {/if}
       {/if}
       {#if wasBuilt && !build}
         <p class="banner warn" id="i-unbuild">
