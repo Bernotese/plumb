@@ -21,6 +21,7 @@ import (
 	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/resource"
 	"github.com/Bernotese/plumb/internal/secret"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -125,6 +126,9 @@ func (e *env) agent(target string) *linktest.Agent {
 		return boot.Token, ok
 	}
 	a := linktest.New(e.link.Handler(), tok)
+	// The agent of this build (T-092): it passes the gate for every type.
+	caps := wire.Capabilities{Commands: wire.AgentCommands(), Resources: resource.Capabilities()}
+	a.SetHello(wire.Hello{Capabilities: &caps})
 	e.agents[target] = a
 	go a.Run(e.ctx)
 	return a

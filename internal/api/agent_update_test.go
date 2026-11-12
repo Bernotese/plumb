@@ -290,7 +290,8 @@ func TestAgentUpdateRevertedShownAndNotProposedAgain(t *testing.T) {
 func TestAgentUpdateManualAndUnknown(t *testing.T) {
 	e := newUpdateEnv(t)
 	c := e.admin()
-	e.seed(c, "web1") // the fake agent sends no capabilities: before slice 3
+	e.seed(c, "web1")
+	e.hello(wire.Hello{}) // no capabilities: an agent from before slice 3
 	st := e.agentStatus(c, "web1")
 	if st.AgentUpdate != plan.AgentUpdateManual {
 		t.Fatalf("status %+v", st)
