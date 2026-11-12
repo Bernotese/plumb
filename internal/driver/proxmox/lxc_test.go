@@ -494,6 +494,9 @@ func TestCTTemplateFiles(t *testing.T) {
 	f.files["local:vztmpl/plumb-ct-debian-13-ct-ffffffffffff.tar.gz"] = true // another Image
 	f.files["local:vztmpl/plumb-ct-alpine-0123456789ab.tar.gz"] = true
 	f.files["local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"] = true
+	f.vms[9001] = &fakeVM{ct: true, pool: "plumb", cfg: map[string]string{"description": "plumb-template: " + ctTemplate + "\n"}}
+	f.vms[9002] = &fakeVM{ct: true, pool: "plumb", cfg: map[string]string{"description": "plumb-template: " + other + "\n"}}
+	f.vms[9003] = &fakeVM{ct: true, pool: "other", cfg: map[string]string{"description": "plumb-template: " + other + "\n"}}
 	d.templates = false
 	objs, _ := d.ListImages(ctx, "debian-13")
 	for _, o := range objs {
@@ -515,7 +518,7 @@ func TestCTTemplateFiles(t *testing.T) {
 			}
 		}
 	}
-	if strings.Join(got, " ") != ctTemplate+":1 "+other+":0" {
+	if strings.Join(got, " ") != ctTemplate+":2 "+other+":1" {
 		t.Errorf("files %v", got)
 	}
 }
@@ -550,5 +553,53 @@ func TestCTOutsideRecorded(t *testing.T) {
 	}
 	if strings.Join(attrs, ",") != "features,mounts,devices,raw_lxc" {
 		t.Errorf("drift %v", attrs)
+	}
+}
+
+func TestCTOutsideAdditionsIndividually(t *testing.T) {
+	for _, tc := range []struct{ key, value, attr string }{
+		{"features", "nesting=1,fuse=1", driver.AttrFeatures},
+		{"mp2", "/srv/data,mp=/data", driver.AttrMounts},
+		{"dev3", "/dev/fuse", driver.AttrDevices},
+		{"lxc", "lxc.apparmor.profile: unconfined", driver.AttrRawLXC},
+	} {
+		for _, pending := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/pending=%t", tc.attr, pending), func(t *testing.T) {
+				f, d, id := newCT(t)
+				f.mu.Lock()
+				if pending {
+					f.vms[9000].pending = map[string]string{tc.key: tc.value}
+				} else {
+					f.vms[9000].cfg[tc.key] = tc.value
+				}
+				f.mu.Unlock()
+				st, err := d.Observe(context.Background(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				changes := driver.DriftGuest(ctSpec(), st)
+				if len(changes) != 1 || changes[0].Attr != tc.attr || changes[0].Risk != wire.RiskDestructive || changes[0].Pending != pending {
+					t.Fatalf("drift: %+v", changes)
+				}
+				changes, err = d.Diff(ctSpec(), st)
+				if tc.attr != driver.AttrFeatures {
+					var outside *driver.OutsideError
+					if !errors.As(err, &outside) || outside.Attr != tc.attr {
+						t.Fatalf("diff: %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := d.Update(context.Background(), id, changes, nil); err != nil {
+					t.Fatal(err)
+				}
+				params := f.lastParams("PUT /nodes/pve/lxc/9000/config")
+				if params.Get("features") != driver.CTFeatures || params.Get("digest") == "" || len(params) != 2 {
+					t.Fatalf("revert must write only features and digest: %v", params)
+				}
+			})
+		}
 	}
 }
