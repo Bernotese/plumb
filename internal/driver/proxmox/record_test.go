@@ -36,7 +36,7 @@ func newRecorder(next http.RoundTripper, dir, baseURL, node string) *recorder {
 	}
 	ipv4 := regexp.MustCompile(`\b(\d{1,3}\.){3}\d{1,3}\b`)
 	mac := regexp.MustCompile(`\b([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`)
-	sshKey := regexp.MustCompile(`(ssh-[a-z0-9-]+)(%20|\s|\+)[A-Za-z0-9+/=%]+`)
+	sshKey := sshKeyRE // leakscan_test.go (review S1 of #167)
 	// The enrollment token of a container (env, D-231): in a form, in a
 	// config answer and in a pending row (T-079).
 	envToken := regexp.MustCompile(`(PLUMB_ENROLL_TOKEN(?:=|%3D|\\u003d))[A-Za-z0-9_-]+`)

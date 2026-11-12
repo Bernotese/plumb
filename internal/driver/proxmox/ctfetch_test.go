@@ -178,6 +178,18 @@ func TestCTFetchRefusals(t *testing.T) {
 				http.Redirect(w, r, "http://mirror.example.org/x", http.StatusFound)
 			})
 		}, "redirects to mirror.example.org"},
+		{"redirect to metadata", func(t *testing.T, e *ctFetchEnv) {
+			e.d.ct.dialOK = func(ip net.IP) bool {
+				if !ip.IsLoopback() {
+					t.Errorf("redirect attempted to dial %s", ip)
+					return false
+				}
+				return true
+			}
+			e.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+			})
+		}, "redirects to 169.254.169.254"},
 		{"too large", func(t *testing.T, e *ctFetchEnv) { setLimit(t, &maxDownload, 100) }, "larger than"},
 		{"too large without length", func(t *testing.T, e *ctFetchEnv) {
 			setLimit(t, &maxDownload, 100)
@@ -227,9 +239,20 @@ func TestCTDialCheck(t *testing.T) {
 	for ip, ok := range map[string]bool{
 		"127.0.0.1": false, "::1": false, "169.254.169.254": false, "fe80::1": false, "0.0.0.0": false, "::": false,
 		"224.0.0.1": false, "ff02::1": false, "10.0.0.5": true, "192.168.1.2": true, "203.0.113.7": true, "2001:db8::1": true,
+		// IPv4-mapped forms (review N2 of #167).
+		"::ffff:127.0.0.1": false, "::ffff:169.254.169.254": false, "::ffff:10.0.0.5": true,
 	} {
 		if dialCheck(net.ParseIP(ip)) != ok {
 			t.Errorf("%s: want %v", ip, ok)
+		}
+	}
+	// The controller's own LAN address (review N1 of #167).
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() {
+			if dialCheck(n.IP) {
+				t.Errorf("own address %s allowed", n.IP)
+			}
 		}
 	}
 }
