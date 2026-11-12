@@ -141,7 +141,7 @@ describe("humanOnlyReasons (D-099)", () => {
   });
   it("names an image recipe change (D-201)", () => {
     expect(humanOnlyReasons({ ...base, human_only: ["image-recipe"], targets: [] })).toEqual([
-      "It makes, changes or deletes the recipe of a built image.",
+      "It makes, changes or deletes the recipe of a built image, or makes a container image or changes its address or checksum.",
     ]);
   });
   it("names the secrets and the target", () => {

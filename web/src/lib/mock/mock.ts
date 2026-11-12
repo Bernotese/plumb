@@ -41,7 +41,7 @@ import { diskUse, nextSlot } from "../images";
 import { toYaml } from "../yaml";
 import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
-import { buildRuns, diskRefusal, GIB, seedImages, seedTargets } from "./imageSeed";
+import { buildRuns, diskRefusal, GIB, seedImages, seedLxc, seedTargets } from "./imageSeed";
 
 /** Banner of a mock build. */
 export const MOCK_BANNER = "Demo data: this build uses a mock of the Plumb API.";
@@ -355,6 +355,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]),
   );
   seedTargets(targets);
+  seedLxc(images, targets);
 
   // Slice 2 demo data that the examples of the list operations do not show
   // (D-140): the Block "app" with a secret parameter, as in the
@@ -935,6 +936,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       checkImageDoc(img, at);
       const view = findImage(img.name);
       const old = view?.document.spec;
+      // D-235: a new lxc Image, or a new url or sha512 of one, is human-only.
+      if (
+        img.spec.type === "lxc" &&
+        (old?.type !== "lxc" || old.url !== img.spec.url || old.sha512 !== img.spec.sha512)
+      )
+        recipe = true;
       if (!img.spec.build) {
         if (old?.build) {
           recipe = true;
@@ -1154,7 +1161,9 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       view.revision = head;
       view.document = img;
-      if (!img.spec.build) {
+      // A stock vm Image has no status; an lxc Image has one for its
+      // unused template files (D-233).
+      if (!img.spec.build && img.spec.type !== "lxc") {
         delete view.status;
         continue;
       }
