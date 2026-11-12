@@ -1,0 +1,46 @@
+{
+  "seq": 3,
+  "method": "GET",
+  "path": "/nodes/pve/storage",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "storage": "plumb-snippets",
+        "total": 36601102336,
+        "content": "snippets",
+        "avail": 27797901312,
+        "used": 6910943232,
+        "shared": 0,
+        "active": 1,
+        "used_fraction": 0.188817898667564,
+        "enabled": 1,
+        "type": "dir"
+      },
+      {
+        "shared": 0,
+        "active": 1,
+        "used": 1303093916,
+        "type": "lvmthin",
+        "used_fraction": 0.028599999989746,
+        "enabled": 1,
+        "storage": "local-lvm",
+        "content": "rootdir,images",
+        "avail": 44259630436,
+        "total": 45562724352
+      },
+      {
+        "total": 36601102336,
+        "content": "import,vztmpl",
+        "avail": 27797901312,
+        "storage": "plumb-images",
+        "enabled": 1,
+        "used_fraction": 0.188817898667564,
+        "type": "dir",
+        "used": 6910943232,
+        "active": 1,
+        "shared": 0
+      }
+    ]
+  }
+}

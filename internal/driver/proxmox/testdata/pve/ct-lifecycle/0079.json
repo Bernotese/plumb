@@ -1,0 +1,27 @@
+{
+  "seq": 79,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9000/config",
+  "query": "current=1",
+  "status": 200,
+  "body": {
+    "data": {
+      "swap": 512,
+      "ostype": "debian",
+      "onboot": 1,
+      "features": "nesting=1",
+      "nameserver": "192.0.2.10",
+      "rootfs": "local-lvm:vm-9000-disk-0,size=4G",
+      "arch": "amd64",
+      "digest": "fa32fdbdf66d13b9a23aa5bc652201b42c1c14dc",
+      "unprivileged": 1,
+      "memory": 768,
+      "description": "plumb-image: t079-debian-13\nplumb-ssh-key: ssh-ed25519 AAAAtestkey t079\nplumb-ssh-key: ssh-ed25519 AAAAtestkey Jürgen's Schlüssel ✓\nManaged by Plumb. Do not change it here.\n",
+      "searchdomain": "plumb.test",
+      "cores": 2,
+      "env": "PLUMB_ENROLL_TOKEN=scrubbed-2",
+      "net0": "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth",
+      "hostname": "plumb-ct-test"
+    }
+  }
+}

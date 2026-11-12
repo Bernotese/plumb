@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// hostCTKeys are public test keys without a private half (made for T-079
+// and thrown away). The second one has a non-ASCII comment (review S1 of
+// #162). The replay sees them as the recorder scrubbed them.
+var hostCTKeys = []string{
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMHuvKdtDvFdfKZ91D5pB6tM/c80ZiwpVeGJBZfWOygU t079",
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFij5Knm0cqjtziBGCk3P49yteRZKWJ1JuHOp03EVi+O Jürgen's Schlüssel ✓",
+}
+
 // hostCTDriver is hostDriver with the start check (it reads the vztmpl
 // content of the image storage, D-229) and the test CTSource.
 func hostCTDriver(t *testing.T) *Driver {
@@ -48,5 +56,5 @@ func TestHostCTFetch(t *testing.T) {
 
 // TestHostCTLifecycle runs runCTLifecycle on the host (recorded).
 func TestHostCTLifecycle(t *testing.T) {
-	runCTLifecycle(t, hostCTDriver(t), hostCTImage, os.Getenv("PLUMB_PVE_BRIDGE"))
+	runCTLifecycle(t, hostCTDriver(t), hostCTImage, os.Getenv("PLUMB_PVE_BRIDGE"), hostCTKeys)
 }

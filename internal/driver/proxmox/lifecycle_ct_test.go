@@ -28,7 +28,7 @@ func testCTSource(dir string) CTSource {
 // runCTLifecycle: the file exists (TestHostCTFetch made it); create,
 // observe, live update, clear, re-enroll, delete, then H11: a new
 // container with the freed VMID starts.
-func runCTLifecycle(t *testing.T, d *Driver, img driver.ImageSpec, bridge string) {
+func runCTLifecycle(t *testing.T, d *Driver, img driver.ImageSpec, bridge string, keys []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	ref, err := d.FetchImage(ctx, img)
@@ -36,7 +36,7 @@ func runCTLifecycle(t *testing.T, d *Driver, img driver.ImageSpec, bridge string
 		t.Fatal(err)
 	}
 	spec := driver.GuestSpec{Name: "plumb-ct-test", Kind: wire.KindLXC, ImageName: img.Name, Image: ref, Cores: 1, MemoryMB: 512, DiskGB: 4,
-		Bridge: bridge, IP: "dhcp", SSHKeys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlumbHostTestKeyOnlyForT079xxxxxxxxxxxx t079"}}
+		Bridge: bridge, IP: "dhcp", SSHKeys: keys}
 	id, err := d.Create(ctx, spec, driver.Bootstrap{Token: "host-test-ct-token-1"})
 	if err != nil {
 		t.Fatal(err)

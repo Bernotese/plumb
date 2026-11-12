@@ -156,5 +156,5 @@ func TestReplayCTLifecycle(t *testing.T) {
 	if err := d.SetCTSource(testCTSource(t.TempDir())); err != nil {
 		t.Fatal(err)
 	}
-	runCTLifecycle(t, d, hostCTImage, "vmbr0")
+	runCTLifecycle(t, d, hostCTImage, "vmbr0", []string{"ssh-ed25519 AAAAtestkey t079", "ssh-ed25519 AAAAtestkey Jürgen's Schlüssel ✓"})
 }

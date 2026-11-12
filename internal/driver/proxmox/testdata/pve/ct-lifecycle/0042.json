@@ -1,0 +1,10 @@
+{
+  "seq": 42,
+  "method": "PUT",
+  "path": "/nodes/pve/lxc/9000/config",
+  "form": "delete=env\u0026digest=4c8cdbedb31b46cc5cb30f2e27ce622e265a0f15",
+  "status": 200,
+  "body": {
+    "data": null
+  }
+}

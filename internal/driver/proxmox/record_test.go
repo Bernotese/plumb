@@ -40,8 +40,18 @@ func newRecorder(next http.RoundTripper, dir, baseURL, node string) *recorder {
 	// The enrollment token of a container (env, D-231): in a form, in a
 	// config answer and in a pending row (T-079).
 	envToken := regexp.MustCompile(`(PLUMB_ENROLL_TOKEN(?:=|%3D|\\u003d))[A-Za-z0-9_-]+`)
+	// Each token gets its own placeholder, so the replay still sees an
+	// old and a new token as two values (TokenPending).
+	tokens := map[string]int{}
 	scrub := func(s string) string {
-		s = envToken.ReplaceAllString(s, "${1}scrubbed")
+		s = envToken.ReplaceAllStringFunc(s, func(m string) string {
+			sub := envToken.FindStringSubmatch(m)
+			tok := strings.TrimPrefix(m, sub[1])
+			if tokens[tok] == 0 {
+				tokens[tok] = len(tokens) + 1
+			}
+			return fmt.Sprintf("%sscrubbed-%d", sub[1], tokens[tok])
+		})
 		if host != "" {
 			s = strings.ReplaceAll(s, host, "pve.example")
 		}

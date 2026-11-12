@@ -1,0 +1,41 @@
+{
+  "seq": 4,
+  "method": "GET",
+  "path": "/access/permissions",
+  "status": 200,
+  "body": {
+    "data": {
+      "/storage/plumb-snippets": {
+        "Datastore.AllocateSpace": 0
+      },
+      "/nodes/pve": {
+        "Sys.AccessNetwork": 0
+      },
+      "/storage/plumb-images": {
+        "Datastore.Audit": 0,
+        "Datastore.AllocateTemplate": 0
+      },
+      "/sdn/zones/localnetwork/vmbr0": {
+        "SDN.Use": 0
+      },
+      "/pool/plumb": {
+        "VM.Audit": 1,
+        "VM.PowerMgmt": 1,
+        "VM.Config.Disk": 1,
+        "VM.Allocate": 1,
+        "VM.Config.HWType": 1,
+        "Pool.Audit": 1,
+        "VM.Config.Cloudinit": 1,
+        "VM.Config.CPU": 1,
+        "VM.Config.Network": 1,
+        "VM.Config.Options": 1,
+        "VM.Clone": 1,
+        "VM.Config.Memory": 1
+      },
+      "/storage/local-lvm": {
+        "Datastore.AllocateSpace": 0,
+        "Datastore.Audit": 0
+      }
+    }
+  }
+}

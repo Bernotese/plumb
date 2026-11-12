@@ -1,0 +1,21 @@
+{
+  "seq": 121,
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:00046A7C:006B69AB:6AF5C47B:vzdestroy:9000:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "user": "plumb@pve",
+      "node": "pve",
+      "id": "9000",
+      "tokenid": "plumb",
+      "exitstatus": "OK",
+      "starttime": 1794491515,
+      "pid": 289404,
+      "upid": "UPID:pve:00046A7C:006B69AB:6AF5C47B:vzdestroy:9000:plumb@pve!plumb:",
+      "pstart": 7039403,
+      "type": "vzdestroy",
+      "status": "stopped"
+    }
+  }
+}

@@ -54,7 +54,7 @@ func TestRecordingsHoldNoSecret(t *testing.T) {
 			}
 		}
 		for _, m := range token.FindAllStringSubmatch(s, -1) {
-			if m[1] != "scrubbed" {
+			if !regexp.MustCompile(`^scrubbed-[0-9]+$`).MatchString(m[1]) {
 				t.Errorf("%s holds an enrollment token (env)", p)
 			}
 		}

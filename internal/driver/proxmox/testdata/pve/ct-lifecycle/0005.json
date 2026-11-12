@@ -1,0 +1,18 @@
+{
+  "seq": 5,
+  "method": "GET",
+  "path": "/nodes/pve/storage/plumb-images/content",
+  "query": "content=vztmpl",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "format": "tgz",
+        "content": "vztmpl",
+        "volid": "plumb-images:vztmpl/plumb-ct-t079-debian-13-2d416348aec2.tar.gz",
+        "size": 207696290,
+        "ctime": 1794491489
+      }
+    ]
+  }
+}

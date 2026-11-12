@@ -1,0 +1,10 @@
+{
+  "seq": 7,
+  "method": "POST",
+  "path": "/nodes/pve/lxc",
+  "form": "cores=1\u0026description=plumb-image%3A+t079-debian-13%0Aplumb-ssh-key%3A+ssh-ed25519+AAAAtestkey-ssh-key%3A+ssh-ed25519+AAAAtestkey.+Do+not+change+it+here.\u0026env=PLUMB_ENROLL_TOKEN%3Dscrubbed-1\u0026features=nesting%3D1\u0026hostname=plumb-ct-test\u0026memory=512\u0026nameserver=192.0.2.10\u0026net0=name%3Deth0%2Cbridge%3Dvmbr0%2Cip%3Ddhcp\u0026onboot=1\u0026ostemplate=plumb-images%3Avztmpl%2Fplumb-ct-t079-debian-13-2d416348aec2.tar.gz\u0026pool=plumb\u0026rootfs=local-lvm%3A4\u0026searchdomain=plumb.test\u0026ssh-public-keys=ssh-ed25519+AAAAtestkey-ed25519+AAAAC3NzaC1lZDI1NTE5AAAAIFij5Knm0cqjtziBGCk3P49yteRZKWJ1JuHOp03EVi%2BO+J%C3%BCrgen%27s+Schl%C3%BCssel+%E2%9C%93\u0026swap=512\u0026unprivileged=1\u0026vmid=9000",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:0004669F:006B622E:6AF5C467:vzcreate:9000:plumb@pve!plumb:"
+  }
+}

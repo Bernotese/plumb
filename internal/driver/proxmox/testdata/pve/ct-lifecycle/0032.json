@@ -1,0 +1,10 @@
+{
+  "seq": 32,
+  "method": "PUT",
+  "path": "/nodes/pve/lxc/9000/config",
+  "form": "cores=2\u0026digest=00c35f529a7a88dd41cee4e2d1a8474fef6d6223\u0026memory=768",
+  "status": 200,
+  "body": {
+    "data": null
+  }
+}
