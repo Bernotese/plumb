@@ -68,8 +68,15 @@ func TestLXCImageStatusUnusedTemplateFiles(t *testing.T) {
 
 	// The list of all Images has the same status.
 	code, body := adm.do("GET", "/api/v1/images", nil)
-	if code != 200 || !strings.Contains(string(body), `"command":"pvesm free `+string(refs["a"])+`"`) {
+	var listed struct {
+		Items []view `json:"items"`
+	}
+	if code != 200 || json.Unmarshal(body, &listed) != nil || len(listed.Items) != 1 || listed.Items[0].Status == nil {
 		t.Fatalf("image list: %d %s", code, body)
+	}
+	files := listed.Items[0].Status.UnusedImports
+	if len(files) != 1 || files[0].Volume != string(refs["a"]) || files[0].Command != "pvesm free "+string(refs["a"]) {
+		t.Fatalf("image list unused files: %+v", files)
 	}
 
 	// Delete the document through an approved Run, keeping every template file.
