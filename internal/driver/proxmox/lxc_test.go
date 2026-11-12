@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ const (
 func ctSpec() driver.GuestSpec {
 	return driver.GuestSpec{Name: "web1", Kind: wire.KindLXC, ImageName: "debian-13-ct", Image: ctTemplate,
 		Cores: 1, MemoryMB: 512, DiskGB: 8, Bridge: "vmbr0", IP: "192.0.2.21/24", Gateway: "192.0.2.1",
-		SSHKeys: []string{"ssh-ed25519 AAAAC3Nza one@example", "ssh-ed25519 AAAAC3Nzb two@example"}}
+		SSHKeys: []string{"ssh-ed25519 AAAAC3Nza one@example", "ssh-ed25519 AAAAC3Nzb two@example"}, Features: driver.CTFeatures}
 }
 
 func newCT(t *testing.T) (*fakePVE, *Driver, driver.GuestID) {
@@ -411,6 +412,194 @@ func TestCTKeyRoundTrip(t *testing.T) {
 		s.SSHKeys = []string{k}
 		if _, err := d.Create(ctx, s, driver.Bootstrap{Token: ctToken}); err == nil {
 			t.Errorf("%q accepted", k)
+		}
+	}
+}
+
+// T-038 §3 (review S6): what a person adds on the host is read and is
+// drift; Diff refuses the additions Plumb cannot remove; Plumb writes the
+// features back, and they wait for the next start.
+func TestCTOutsideAdditions(t *testing.T) {
+	f, d, id := newCT(t)
+	ctx := context.Background()
+	f.mu.Lock()
+	c := f.vms[9000].cfg
+	c["features"] = "nesting=1,keyctl=1"
+	c["mp0"] = "/srv/data,mp=/data"
+	c["mp1"] = "local-lvm:vm-9000-disk-1,mp=/var,size=2G"
+	c["dev0"] = "/dev/fuse"
+	c["lxc"] = "lxc.apparmor.profile: unconfined\nlxc.cap.drop: "
+	f.mu.Unlock()
+	st, err := d.Observe(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := st.Spec
+	if s.Features != "keyctl=1,nesting=1" || !reflect.DeepEqual(s.Mounts, []string{"mp0=/srv/data,mp=/data", "mp1=local-lvm:vm-9000-disk-1,mp=/var,size=2G"}) ||
+		!reflect.DeepEqual(s.Devices, []string{"dev0=/dev/fuse"}) || !reflect.DeepEqual(s.RawLXC, []string{"lxc.apparmor.profile: unconfined", "lxc.cap.drop: "}) {
+		t.Fatalf("observed %+v", s)
+	}
+	drift := driver.DriftGuest(ctSpec(), st)
+	var attrs []string
+	for _, ch := range drift {
+		attrs = append(attrs, ch.Attr)
+		if ch.Risk != wire.RiskDestructive {
+			t.Errorf("%s risk %s", ch.Attr, ch.Risk)
+		}
+	}
+	if strings.Join(attrs, ",") != "features,mounts,devices,raw_lxc" {
+		t.Errorf("drift attrs %v", attrs)
+	}
+	var oe *driver.OutsideError
+	if _, err := d.Diff(ctSpec(), st); !errors.As(err, &oe) || oe.Attr != driver.AttrMounts {
+		t.Errorf("diff: %v", err)
+	}
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrMounts, To: nil}}, nil); !errors.As(err, &oe) {
+		t.Errorf("update of mounts: %v", err)
+	}
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrFeatures, To: "nesting=1,fuse=1"}}, nil); err == nil {
+		t.Error("features other than nesting written")
+	}
+	// The person removes the rest; Plumb writes the features back.
+	f.mu.Lock()
+	for _, k := range []string{"mp0", "mp1", "dev0", "lxc"} {
+		delete(c, k)
+	}
+	f.mu.Unlock()
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrFeatures, To: driver.CTFeatures}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.lastParams("PUT /nodes/pve/lxc/9000/config"); p.Get("features") != "nesting=1" || p.Get("digest") == "" {
+		t.Errorf("params %v", p)
+	}
+	st, _ = d.Observe(ctx, id)
+	if st.Spec.Features != "keyctl=1,nesting=1" || st.Next().Features != driver.CTFeatures {
+		t.Errorf("features %q next %q", st.Spec.Features, st.Next().Features)
+	}
+	if drift := driver.DriftGuest(ctSpec(), st); len(drift) != 0 {
+		t.Errorf("waiting features are drift: %+v", drift)
+	}
+}
+
+// T-085: the container template files of an Image, with the containers
+// made from each (description marker); RemoveImage never deletes one.
+func TestCTTemplateFiles(t *testing.T) {
+	f, d, _ := newCT(t)
+	ctx := context.Background()
+	if !strings.Contains(f.vms[9000].cfg["description"], "plumb-template: "+ctTemplate+"\n") {
+		t.Errorf("description %q", f.vms[9000].cfg["description"])
+	}
+	other := "local:vztmpl/plumb-ct-debian-13-ffffffffffff.tar.gz"
+	f.files[other] = true
+	f.files["local:vztmpl/plumb-ct-debian-13-ct-ffffffffffff.tar.gz"] = true // another Image
+	f.files["local:vztmpl/plumb-ct-alpine-0123456789ab.tar.gz"] = true
+	f.files["local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"] = true
+	f.vms[9001] = &fakeVM{ct: true, pool: "plumb", cfg: map[string]string{"description": "plumb-template: " + ctTemplate + "\n"}}
+	f.vms[9002] = &fakeVM{ct: true, pool: "plumb", cfg: map[string]string{"description": "plumb-template: " + other + "\n"}}
+	f.vms[9003] = &fakeVM{ct: true, pool: "other", cfg: map[string]string{"description": "plumb-template: " + other + "\n"}}
+	d.templates = false
+	objs, _ := d.ListImages(ctx, "debian-13")
+	for _, o := range objs {
+		if o.Kind == driver.ImageTemplateFile {
+			t.Error("template files listed without vztmpl content")
+		}
+	}
+	d.templates = true
+	objs, err := d.ListImages(ctx, "debian-13")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, o := range objs {
+		if o.Kind == driver.ImageTemplateFile {
+			got = append(got, fmt.Sprintf("%s:%d", o.Name, o.Containers))
+			if err := d.RemoveImage(ctx, o); err == nil || !strings.Contains(err.Error(), "never deletes") {
+				t.Errorf("RemoveImage %s: %v", o.Name, err)
+			}
+		}
+	}
+	if strings.Join(got, " ") != ctTemplate+":2 "+other+":1" {
+		t.Errorf("files %v", got)
+	}
+}
+
+// The token's view of a container with outside additions, recorded on
+// pve-dev (T-079 PR C host check, never started): mp0 with a host path,
+// dev0, features with keyctl, and a raw lxc.apparmor.profile line.
+func TestCTOutsideRecorded(t *testing.T) {
+	_, d := newReplay(t, "testdata/pve/ct-outside")
+	ctx := context.Background()
+	run, err := d.ctConfig(ctx, 9001, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := d.ctConfig(ctx, 9001, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := driver.GuestState{Spec: specOfCT(run)}
+	if p := specOfCT(next); !equalCTSpec(p, st.Spec) {
+		st.Pending = &p
+	}
+	s := st.Spec
+	if s.Features != "keyctl=1,nesting=1" || !reflect.DeepEqual(s.Mounts, []string{"mp0=/tmp,mp=/mnt/t079"}) ||
+		!reflect.DeepEqual(s.Devices, []string{"dev0=/dev/null"}) || !reflect.DeepEqual(s.RawLXC, []string{"lxc.apparmor.profile: unconfined"}) || st.Pending != nil {
+		t.Fatalf("spec %+v pending %+v", s, st.Pending)
+	}
+	want := driver.GuestSpec{Name: "t079-outside", Kind: wire.KindLXC, Cores: s.Cores, MemoryMB: 512, DiskGB: 2, Features: driver.CTFeatures}
+	var attrs []string
+	for _, c := range driver.DriftGuest(want, st) {
+		attrs = append(attrs, c.Attr)
+	}
+	if strings.Join(attrs, ",") != "features,mounts,devices,raw_lxc" {
+		t.Errorf("drift %v", attrs)
+	}
+}
+
+func TestCTOutsideAdditionsIndividually(t *testing.T) {
+	for _, tc := range []struct{ key, value, attr string }{
+		{"features", "nesting=1,fuse=1", driver.AttrFeatures},
+		{"mp2", "/srv/data,mp=/data", driver.AttrMounts},
+		{"dev3", "/dev/fuse", driver.AttrDevices},
+		{"lxc", "lxc.apparmor.profile: unconfined", driver.AttrRawLXC},
+	} {
+		for _, pending := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/pending=%t", tc.attr, pending), func(t *testing.T) {
+				f, d, id := newCT(t)
+				f.mu.Lock()
+				if pending {
+					f.vms[9000].pending = map[string]string{tc.key: tc.value}
+				} else {
+					f.vms[9000].cfg[tc.key] = tc.value
+				}
+				f.mu.Unlock()
+				st, err := d.Observe(context.Background(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				changes := driver.DriftGuest(ctSpec(), st)
+				if len(changes) != 1 || changes[0].Attr != tc.attr || changes[0].Risk != wire.RiskDestructive || changes[0].Pending != pending {
+					t.Fatalf("drift: %+v", changes)
+				}
+				changes, err = d.Diff(ctSpec(), st)
+				if tc.attr != driver.AttrFeatures {
+					var outside *driver.OutsideError
+					if !errors.As(err, &outside) || outside.Attr != tc.attr {
+						t.Fatalf("diff: %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := d.Update(context.Background(), id, changes, nil); err != nil {
+					t.Fatal(err)
+				}
+				params := f.lastParams("PUT /nodes/pve/lxc/9000/config")
+				if params.Get("features") != driver.CTFeatures || params.Get("digest") == "" || len(params) != 2 {
+					t.Fatalf("revert must write only features and digest: %v", params)
+				}
+			})
 		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,19 @@ func specOfCT(cfg map[string]string) driver.GuestSpec {
 	s.Bridge = net["bridge"]
 	s.IP, s.Gateway = net["ip"], net["gw"]
 	s.DiskGB = sizeGB(parseProps(cfg["rootfs"])["size"])
+	s.Features = sortedProps(cfg["features"])
+	for k, v := range cfg {
+		switch {
+		case reMountKey.MatchString(k):
+			s.Mounts = append(s.Mounts, k+"="+v)
+		case reDeviceKey.MatchString(k):
+			s.Devices = append(s.Devices, k+"="+v)
+		case k == "lxc" && v != "":
+			s.RawLXC = strings.Split(v, "\n")
+		}
+	}
+	slices.Sort(s.Mounts)
+	slices.Sort(s.Devices)
 	for _, line := range strings.Split(cfg["description"], "\n") {
 		line = strings.TrimSpace(line)
 		if v, ok := strings.CutPrefix(line, imageMarker); ok {
@@ -103,6 +117,27 @@ func specOfCT(cfg map[string]string) driver.GuestSpec {
 	return s
 }
 
+var (
+	reMountKey  = regexp.MustCompile(`^mp[0-9]+$`)
+	reDeviceKey = regexp.MustCompile(`^dev[0-9]+$`)
+)
+
+// sortedProps puts the keys of a property string in order, so
+// "keyctl=1,nesting=1" and "nesting=1,keyctl=1" compare equal.
+func sortedProps(v string) string {
+	if v == "" {
+		return ""
+	}
+	parts := strings.Split(v, ",")
+	slices.Sort(parts)
+	return strings.Join(parts, ",")
+}
+
+// templateMarker is a description line that names the template file of a
+// container: Proxmox keeps no ostemplate in the config, and the Image
+// status must tell a file in use (T-085).
+const templateMarker = "plumb-template: "
+
 // ctDescription is the description of a new container: the image marker
 // (D-189), the version of a built Image (D-200) and the SSH keys.
 func ctDescription(spec driver.GuestSpec) string {
@@ -110,6 +145,9 @@ func ctDescription(spec driver.GuestSpec) string {
 	b.WriteString(imageMarker + spec.ImageName + "\n")
 	if spec.ImageVersion > 0 {
 		fmt.Fprintf(&b, "%s%d\n", versionMarker, spec.ImageVersion)
+	}
+	if spec.Image != "" {
+		b.WriteString(templateMarker + string(spec.Image) + "\n")
 	}
 	for _, k := range spec.SSHKeys {
 		b.WriteString(sshKeyMarker + k + "\n")
@@ -331,7 +369,8 @@ func (d *Driver) observeCT(ctx context.Context, id int) (driver.GuestState, erro
 func equalCTSpec(a, b driver.GuestSpec) bool {
 	return a.Name == b.Name && a.Cores == b.Cores && a.MemoryMB == b.MemoryMB && a.Bridge == b.Bridge &&
 		a.IP == b.IP && a.Gateway == b.Gateway && a.DiskGB == b.DiskGB && a.ImageName == b.ImageName &&
-		a.ImageVersion == b.ImageVersion && strings.Join(a.SSHKeys, "\n") == strings.Join(b.SSHKeys, "\n")
+		a.ImageVersion == b.ImageVersion && slices.Equal(a.SSHKeys, b.SSHKeys) && a.Features == b.Features &&
+		slices.Equal(a.Mounts, b.Mounts) && slices.Equal(a.Devices, b.Devices) && slices.Equal(a.RawLXC, b.RawLXC)
 }
 
 // ctAddresses reads the IPv4 addresses of eth0 that Proxmox sees from the
@@ -363,7 +402,7 @@ func (d *Driver) ctAddresses(ctx context.Context, id int) []string {
 }
 
 // ctUpdateKeys are the only keys that updateCT writes.
-var ctUpdateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "env": true}
+var ctUpdateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "env": true, "features": true}
 
 // updateCT changes cores, memory and the bridge (live, host C5) and for a
 // re-enrollment sets the new token in env; the caller restarts.
@@ -401,6 +440,16 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 				return errors.New("proxmox: enroll_token needs a Bootstrap and carries no value")
 			}
 			params.Set("env", tokenPrefix+boot.Token)
+		case driver.AttrFeatures:
+			// Only the features of a Plumb container (D-227); the token
+			// may write nesting alone (host H10). On a running container
+			// it waits for the next start (host D4).
+			if v, _ := c.To.(string); v != driver.CTFeatures {
+				return fmt.Errorf("proxmox: features %v: Plumb sets only %s", c.To, driver.CTFeatures)
+			}
+			params.Set("features", driver.CTFeatures)
+		case driver.AttrMounts, driver.AttrDevices, driver.AttrRawLXC:
+			return &driver.OutsideError{Attr: c.Attr}
 		default:
 			return fmt.Errorf("proxmox: unknown attribute %q", c.Attr)
 		}

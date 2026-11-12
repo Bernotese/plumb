@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/proxmox/ctpack"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // Limits of D-236. Tests lower them.
@@ -102,6 +104,72 @@ var sha512Hex = regexp.MustCompile(`^[0-9a-f]{128}$`)
 // case, digits and "-" (an Image name may hold dots).
 func ctImageName(name string) string {
 	return strings.Trim(safeName.ReplaceAllString(strings.ReplaceAll(strings.ToLower(name), ".", "-"), "-"), "-")
+}
+
+// TemplateRef is the ref of the template file that FetchImage makes for
+// an lxc Image, without a host call (T-085).
+func (d *Driver) TemplateRef(spec driver.ImageSpec) (driver.ImageRef, error) {
+	if spec.Kind != wire.KindLXC {
+		return "", driver.ErrNotImplemented
+	}
+	src, err := d.ctSource()
+	if err != nil {
+		return "", err
+	}
+	name, err := ctpack.Name(ctImageName(spec.Name), ctpack.Options{SHA512: spec.SHA512, CA: src.CA, AgentURL: src.AgentURL})
+	if err != nil {
+		return "", fmt.Errorf("proxmox: %w", err)
+	}
+	return driver.ImageRef(d.cfg.ImageStorage + ":vztmpl/" + name), nil
+}
+
+// templateFiles lists the container template files of an Image and how
+// many pool containers name each one in their description.
+func (d *Driver) templateFiles(ctx context.Context, image string) ([]driver.ImageObject, error) {
+	var files []storageVolume
+	if err := d.c.Get(ctx, d.node()+"/storage/"+url.PathEscape(d.cfg.ImageStorage)+"/content",
+		url.Values{"content": {"vztmpl"}}, &files); err != nil {
+		return nil, err
+	}
+	re := regexp.MustCompile(`^` + regexp.QuoteMeta(d.cfg.ImageStorage) + `:vztmpl/plumb-ct-` + regexp.QuoteMeta(ctImageName(image)) + `-[0-9a-f]{12}\.tar\.gz$`)
+	var out []driver.ImageObject
+	for _, f := range files {
+		if re.MatchString(f.VolID) {
+			out = append(out, driver.ImageObject{Kind: driver.ImageTemplateFile, Image: image, Ref: driver.ImageRef(f.VolID), Name: f.VolID, SizeBytes: f.Size})
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	gs, err := d.guests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range gs {
+		if g.Type != typeCT {
+			continue
+		}
+		cfg, err := d.ctConfig(ctx, g.VMID, true)
+		if err != nil {
+			if errors.Is(notFound(err), driver.ErrNotFound) {
+				continue // deleted meanwhile
+			}
+			return nil, err
+		}
+		for _, line := range strings.Split(cfg["description"], "\n") {
+			v, ok := strings.CutPrefix(strings.TrimSpace(line), templateMarker)
+			if !ok {
+				continue
+			}
+			for i := range out {
+				if out[i].Name == v {
+					out[i].Containers++
+				}
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b driver.ImageObject) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
 }
 
 // fetchCT returns the template file of an lxc Image; force skips the

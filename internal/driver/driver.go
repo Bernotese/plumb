@@ -55,6 +55,17 @@ type GuestSpec struct {
 	// description as "plumb-image-version: <N>", and Observe reads it. It
 	// is information only: Diff and DriftGuest ignore it.
 	ImageVersion int
+
+	// Container settings (lxc only; empty for a VM). Features is the
+	// features option of Proxmox in a fixed order; a Plumb container has
+	// "nesting=1" (D-227) and Plumb can write it back. Mounts (mpN),
+	// Devices (devN) and RawLXC (lxc.* lines) are what a person added on
+	// the host: Plumb sets none, cannot remove them with its token (host
+	// H10) and reports them as drift (T-038 §3, review S6).
+	Features string   // AttrFeatures
+	Mounts   []string // AttrMounts: "mp0=<value>", sorted
+	Devices  []string // AttrDevices: "dev0=<value>", sorted
+	RawLXC   []string // AttrRawLXC: "lxc.<key>: <value>", in config order
 }
 
 // Attribute names of guest:config changes.
@@ -71,7 +82,16 @@ const (
 	// (D-038) lists it as a sensitive change: {attr, sensitive, risk}.
 	// The token itself is never in a Change. It goes to Update as Bootstrap.
 	AttrEnrollToken = "enroll_token"
+
+	// Container attributes (T-079 PR C).
+	AttrFeatures = "features"
+	AttrMounts   = "mounts"
+	AttrDevices  = "devices"
+	AttrRawLXC   = "raw_lxc"
 )
+
+// CTFeatures is the features value of every Plumb container (D-227).
+const CTFeatures = "nesting=1"
 
 // Bootstrap is what a guest needs to enroll its agent. How the token
 // reaches the guest is the business of the driver (ARCHITECTURE §5).
@@ -175,8 +195,13 @@ type Driver interface {
 	// digest line, in the pool and the VMID range (D-198). ErrNotFound
 	// when it is gone.
 	FindImage(ctx context.Context, image string, version int, digest string) (ImageRef, error)
-	// ListImages lists the templates and import files of an Image.
+	// ListImages lists the templates, import files and container
+	// template files of an Image.
 	ListImages(ctx context.Context, image string) ([]ImageObject, error)
+	// TemplateRef is the ref that FetchImage gives for an lxc Image, made
+	// without a host call or a download, so the status can tell the file
+	// of the current Image (T-085). ErrNotImplemented: no such files.
+	TemplateRef(spec ImageSpec) (ImageRef, error)
 	// RemoveImage deletes one template after the guard of D-209: range,
 	// pool, template, no lock, exact name, a description that names the
 	// Image with the full digest or checksum, and no linked clone in the
@@ -247,6 +272,10 @@ const (
 	ImageVersionTemplate ImageObjectKind = "version" // a built version, plumb-img-<name>-v<N>
 	ImageBaseTemplate    ImageObjectKind = "base"    // a stock template, plumb-img-<name>-<sha12>
 	ImageImportFile      ImageObjectKind = "import"  // a downloaded base image in the image storage
+	// ImageTemplateFile is a repacked container template (vztmpl) in the
+	// image storage, plumb-ct-<image>-<d12>.tar.gz. Plumb never deletes
+	// one (D-233).
+	ImageTemplateFile ImageObjectKind = "template_file"
 )
 
 // ImageObject is one hypervisor object of an Image, as ListImages sees it.
@@ -266,6 +295,9 @@ type ImageObject struct {
 	// LinkedClones is the number of pool guests that are linked clones
 	// of this template (review S3). RemoveImage refuses a template with one.
 	LinkedClones int
+	// Containers is the number of pool containers made from a container
+	// template file (ImageTemplateFile): their description names it.
+	Containers int
 }
 
 // DiskSpace is the real use of the disk storage of guests (D-203). The
@@ -310,6 +342,18 @@ type CreateOnlyError struct {
 
 func (e *CreateOnlyError) Error() string {
 	return fmt.Sprintf("driver: %q can only be set when the guest is created", e.Attr)
+}
+
+// OutsideError is returned by Diff for an addition that a person made on
+// the host and that Plumb cannot remove (mount points, devices, raw lxc
+// lines of a container): a person removes it on the host, or ignores the
+// Issue.
+type OutsideError struct {
+	Attr string
+}
+
+func (e *OutsideError) Error() string {
+	return fmt.Sprintf("driver: %q was added outside Plumb and only a person on the host can remove it", e.Attr)
 }
 
 // OverLimit is the exact disk rule of D-203 and T-074: need is over the

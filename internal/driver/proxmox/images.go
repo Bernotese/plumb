@@ -639,7 +639,14 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 		out = append(out, driver.ImageObject{Kind: driver.ImageImportFile, Image: image, Name: f.VolID,
 			Digest: baseSums[sm[1]], SizeBytes: f.Size})
 	}
-	return out, nil
+	if !d.templates {
+		return out, nil // no vztmpl content: no container template files
+	}
+	tf, err := d.templateFiles(ctx, image)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, tf...), nil
 }
 
 // --- RemoveImage ---
@@ -654,6 +661,9 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error {
 	if obj.Kind == driver.ImageImportFile {
 		return fmt.Errorf("proxmox: %s is an import file; Plumb never deletes one (D-209): run pvesm free on the host", obj.Name)
+	}
+	if obj.Kind == driver.ImageTemplateFile {
+		return fmt.Errorf("proxmox: %s is a container template file; Plumb never deletes one (D-233): run pvesm free on the host", obj.Name)
 	}
 	if obj.Kind != driver.ImageVersionTemplate && obj.Kind != driver.ImageBaseTemplate {
 		return fmt.Errorf("proxmox: unknown image object kind %q", obj.Kind)

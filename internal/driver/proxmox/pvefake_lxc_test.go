@@ -125,6 +125,14 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 		out := map[string]any{}
 		for k, v := range view {
 			out[k] = v
+			if k == "lxc" { // raw lxc.* lines: [[key, value], …]
+				var pairs [][]string
+				for _, l := range strings.Split(v, "\n") {
+					kk, vv, _ := strings.Cut(l, ": ")
+					pairs = append(pairs, []string{kk, vv})
+				}
+				out[k] = pairs
+			}
 		}
 		if f.lockReads[id] > 0 {
 			f.lockReads[id]--

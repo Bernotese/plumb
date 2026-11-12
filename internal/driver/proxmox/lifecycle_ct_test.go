@@ -36,7 +36,7 @@ func runCTLifecycle(t *testing.T, d *Driver, img driver.ImageSpec, bridge string
 		t.Fatal(err)
 	}
 	spec := driver.GuestSpec{Name: "plumb-ct-test", Kind: wire.KindLXC, ImageName: img.Name, Image: ref, Cores: 1, MemoryMB: 512, DiskGB: 4,
-		Bridge: bridge, IP: "dhcp", SSHKeys: keys}
+		Bridge: bridge, IP: "dhcp", SSHKeys: keys, Features: driver.CTFeatures}
 	id, err := d.Create(ctx, spec, driver.Bootstrap{Token: "host-test-ct-token-1"})
 	if err != nil {
 		t.Fatal(err)

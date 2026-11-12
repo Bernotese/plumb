@@ -8,6 +8,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -304,5 +305,33 @@ func TestSetCTSourceCleansOldTempFiles(t *testing.T) {
 	}
 	if _, err := d.FetchImage(context.Background(), driver.ImageSpec{Name: "x", Kind: wire.KindLXC}); err == nil {
 		t.Error("fetch without a pin")
+	}
+}
+
+// T-085: TemplateRef names the file that FetchImage makes, without a call.
+func TestCTTemplateRef(t *testing.T) {
+	e := newCTFetch(t)
+	e.f.mu.Lock()
+	calls := len(e.f.log)
+	e.f.mu.Unlock()
+	want, err := e.d.TemplateRef(e.spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.mu.Lock()
+	after := len(e.f.log)
+	e.f.mu.Unlock()
+	if after != calls || e.hits.Load() != 0 {
+		t.Error("TemplateRef made a call")
+	}
+	ref, err := e.d.FetchImage(context.Background(), e.spec)
+	if err != nil || ref != want {
+		t.Errorf("FetchImage %q %v, TemplateRef %q", ref, err, want)
+	}
+	if _, err := e.d.TemplateRef(driver.ImageSpec{Name: "x", Kind: wire.KindVM}); !errors.Is(err, driver.ErrNotImplemented) {
+		t.Errorf("vm: %v", err)
+	}
+	if _, err := newFakePVE(t).driver(t).TemplateRef(e.spec); err == nil {
+		t.Error("TemplateRef without a CTSource")
 	}
 }
