@@ -178,6 +178,18 @@ func TestCTFetchRefusals(t *testing.T) {
 				http.Redirect(w, r, "http://mirror.example.org/x", http.StatusFound)
 			})
 		}, "redirects to mirror.example.org"},
+		{"redirect to metadata", func(t *testing.T, e *ctFetchEnv) {
+			e.d.ct.dialOK = func(ip net.IP) bool {
+				if !ip.IsLoopback() {
+					t.Errorf("redirect attempted to dial %s", ip)
+					return false
+				}
+				return true
+			}
+			e.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+			})
+		}, "redirects to 169.254.169.254"},
 		{"too large", func(t *testing.T, e *ctFetchEnv) { setLimit(t, &maxDownload, 100) }, "larger than"},
 		{"too large without length", func(t *testing.T, e *ctFetchEnv) {
 			setLimit(t, &maxDownload, 100)
