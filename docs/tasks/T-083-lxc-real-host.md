@@ -47,4 +47,5 @@ LXC Targets are proven on `pve-dev`.
 **Cleanup (end).** Delete Plans for all Targets and Images (admin session); built versions removed by Plumb; template files freed by root `pvesm free` by exact name (Plumb never deletes them, D-233); C8 leftovers of the VMIDs of this run (`rm` of `rules.seccomp`, `rm -r` of an empty `passthrough/`, `rmdir`); credential and CA copies shredded. End: `pct list` only 100, pool empty, `plumb-images` without `vztmpl` files of this run, no `pveupload-*`, controller `active`.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-backend/T-083-real-host` · log `docs/tasks/T-083.log.md` · all PASS on pve-dev with main `8af26b0`: R0 = H12 (upgrade, migration 0011 live), H1–H9, H11, H13, B-D13 and B-U26 (real build → seal → template without env → clone enrolls, ssh-keys before ssh). No defect. Host clean.
+Notes: nginx Block default site 403 (index name), cores reach the CT after ~10 s, two old T-039 Issues open.
