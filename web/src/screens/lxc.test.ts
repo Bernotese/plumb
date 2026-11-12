@@ -80,6 +80,37 @@ describe("lxc image form", () => {
   });
 });
 
+describe("review nits of #165", () => {
+  it("N2, N3: no recipe text for lxc; a manual edit clears the known template", async () => {
+    show(ImageForm, { api: adminApi() });
+    await until(() => document.querySelector("#i-build"));
+    expect(text()).toContain("A new or changed recipe builds a new version");
+    el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
+    flushSync();
+    expect(text()).toContain("Nothing changes until you approve the plan.");
+    expect(text()).not.toContain("recipe builds");
+    type("#i-known", "Debian 13");
+    expect(el<HTMLSelectElement>("#i-known").value).toBe("Debian 13");
+    type("#i-sha", debian.sha512.slice(0, -1) + "0");
+    expect(el<HTMLSelectElement>("#i-known").value).toBe("");
+    type("#i-known", "Ubuntu 26.04");
+    type("#i-url", "http://mirror.example.org/x.tar.zst");
+    expect(el<HTMLSelectElement>("#i-known").value).toBe("");
+  });
+
+  it("N1: container fields have container help, no VM or cloud-init text", async () => {
+    show(TargetForm, { api: adminApi() });
+    await until(() => document.querySelector("#t-image"));
+    type("#t-image", "debian-ct");
+    const form = text(el("form"));
+    for (const bad of ["cloud-init", "bootstrap user, without", "lxc:", "Ubuntu 26.04 image", "VM"])
+      expect(form).not.toContain(bad);
+    expect(form).toContain("the size of the root file system, at least 2");
+    expect(form).toContain("Proxmox writes it into the container at every start");
+    expect(form).toContain("Public keys for root");
+  });
+});
+
 describe("lxc image page", () => {
   it("shows the SHA-512 and the unused template files with the pvesm line (D-233)", async () => {
     show(ImageScreen, { api: adminApi(), name: "debian-ct" });

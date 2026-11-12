@@ -346,6 +346,7 @@
         <label for="i-url">Download address<span aria-hidden="true"> *</span></label>
         <input
           id="i-url"
+          oninput={() => (known = "")}
           type="text"
           inputmode="url"
           spellcheck="false"
@@ -374,6 +375,7 @@
         >
         <input
           id="i-sha"
+          oninput={() => (known = "")}
           type="text"
           class="mono"
           bind:value={sha}
@@ -615,8 +617,9 @@
       >
     </div>
     <p class="muted">
-      Nothing changes until you approve the plan. A new or changed recipe builds a new version in
-      the Run of that plan.
+      {kind === "vm"
+        ? "Nothing changes until you approve the plan. A new or changed recipe builds a new version in the Run of that plan."
+        : "Nothing changes until you approve the plan."}
     </p>
   </form>
 {:else if !loadError}

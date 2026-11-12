@@ -100,6 +100,14 @@
       : "",
   );
 
+  // The schema texts speak of VMs and cloud-init; a container field gets
+  // its own help (review N1 of #165).
+  const LXC_FIELD_HELP: Record<string, string> = {
+    disk: "GiB: the size of the root file system, at least 2. Create-only.",
+    ip: "dhcp or an IPv4 address in CIDR form. Create-only. Proxmox writes it into the container at every start.",
+    ssh_keys: "Public keys for root; a container has no bootstrap user (D-226). Create-only.",
+  };
+
   // The type follows the Image (T-038 §8); a stored Target keeps its own.
   const kind = $derived<GuestKind>(
     existing?.document.spec.type ??
@@ -111,7 +119,11 @@
     kind === "lxc"
       ? guestFields
           .filter((f) => f.name !== "user")
-          .map((f) => (f.name === "ssh_keys" ? { ...f, label: "SSH keys for root" } : f))
+          .map((f) => {
+            const description = LXC_FIELD_HELP[f.name];
+            const label = f.name === "ssh_keys" ? "SSH keys for root" : f.label;
+            return description ? { ...f, label, description } : { ...f, label };
+          })
       : guestFields,
   );
   // A container takes cores and memory live: no "Restart needed" (D-248).
