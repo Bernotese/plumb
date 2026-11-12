@@ -55,7 +55,7 @@ The plan needs these facts. Write the answers to `docs/tasks/T-038.log.md`: one 
 - **D2** Static address: the `ip=` address answers at the **first** start (neighbor table of the controller LXC, as in T-015), and after a reboot. DHCP: lease, time to the first address.
 - **D3** The agent as root (copy `bin/plumb-agent` with `pct push`, run it by hand with a test config that points at nothing): `id`, `/proc/self/uid_map`, the capability set (`/proc/self/status` `CapEff`), the file system of `/` (`stat -f`), `renameat2` with `RENAME_NOREPLACE` and `RENAME_EXCHANGE` (the `symlink` resource test of the agent, or a tiny test binary), netlink read of addresses and link kinds (what kind is `eth0` from inside?).
 - **D4** systemd units: does a unit like `plumb-agent.service` start at boot with `nesting=1`? Without `nesting=1`? `systemctl --failed` in a fresh container with and without nesting. Do `apt-get install nginx`, `useradd -m`, `chown` to a high uid (65534), `systemctl restart nginx` work?
-- **D5** `fstrim`, `journalctl --vacuum-time`, `apt-get clean`, `/var/lib/systemd/random-seed`, `/var/lib/dbus/machine-id`: which exist and which fail in a container (the `seal` steps of D-206)?
+- **D5** `fstrim`, `journalctl --vacuum-time`, `apt-get clean`, `/var/lib/systemd/random-seed`, `/var/lib/dbus/machine-id`: which exist and which fail in a container (the `seal` steps of D-205)?
 
 ### E. Space and time
 - **E1** Space: data use of the rootfs volume of a fresh Debian container (`lvs`), of the uploaded template file, of a container template (`base-…`) and of a full clone. Free space of `plumb-images` (it is a dir on the host root fs?) and of `local-lvm`.
