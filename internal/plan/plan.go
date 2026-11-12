@@ -60,6 +60,9 @@ type Proposal struct {
 	// example the secrets that an import wrote (D-095). They stay with the
 	// stored proposal, also when the Plan is dropped.
 	Notes []string `json:"notes,omitempty"`
+	// AgentSHA256 is the served agent binary of an agent_update Plan
+	// (T-092): a discarded Plan stops system proposals of that binary.
+	AgentSHA256 string `json:"agent_sha256,omitempty"`
 }
 
 // Input is a request to plan.

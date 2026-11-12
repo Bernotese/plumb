@@ -224,6 +224,9 @@ func (e *Engine) maybeProposeUpdate(ctx context.Context, target string, h store.
 	if pending, err := e.pendingAgentUpdate(ctx, target); err != nil || pending != 0 {
 		return
 	}
+	if discarded, err := e.discardedAgentUpdate(ctx, target, served.SHA256); err != nil || discarded {
+		return // a person discarded this update once (review L1 of #196)
+	}
 	_, err := e.ProposeAgentUpdate(ctx, target,
 		"The agent can do other things than the agent of this controller.", PrincipalSystem)
 	if err != nil && !errors.Is(err, ErrAgentNoUpdate) && !errors.Is(err, ErrTargetBusy) {
@@ -259,7 +262,8 @@ func gateOrigin(origin string) bool {
 }
 
 // checkGate refuses a set when a target's agent lacks what the target
-// needs (D-259). A target without a hello is not gated here (D-276).
+// needs (D-259). A target without an agent is not gated here (D-276); an
+// agent without a stored hello counts as the baseline.
 func (e *Engine) checkGate(ctx context.Context, set *state.Set, targets []string) error {
 	out := &AgentOutdatedError{By: map[string][]string{}}
 	all := map[string]bool{}
@@ -271,12 +275,17 @@ func (e *Engine) checkGate(ctx context.Context, set *state.Set, targets []string
 		if r == nil {
 			continue
 		}
-		caps, _, known, err := e.agentCaps(ctx, t)
+		caps, a, known, err := e.agentCaps(ctx, t)
 		if err != nil {
 			return err
 		}
 		if !known {
-			continue
+			if a.ID == "" {
+				continue // no agent yet (a new Target): the Run checks it (D-276)
+			}
+			// An enrolled agent without a stored hello: the baseline, as
+			// in the Run (review L2 of #196).
+			caps = wire.BaselineCapabilities()
 		}
 		if m := caps.Missing(r.Resources); len(m) > 0 {
 			out.Targets = append(out.Targets, t)
@@ -390,6 +399,23 @@ func (e *Engine) pendingAgentUpdate(ctx context.Context, target string) (int64, 
 	return 0, nil
 }
 
+// discardedAgentUpdate reports whether a person discarded an update Plan
+// of the target to the binary sha. Only a discard makes an agent_update
+// Plan stale (D-278).
+func (e *Engine) discardedAgentUpdate(ctx context.Context, target, sha string) (bool, error) {
+	plans, err := e.st.StalePlans(ctx, OriginAgentUpdate)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range plans {
+		var prop Proposal
+		if json.Unmarshal(p.Proposal, &prop) == nil && prop.AgentSHA256 == sha && slices.Equal(prop.Targets, []string{target}) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ProposeAgentUpdate makes a Plan of origin agent_update for one Target
 // (D-257, D-267): one step agent:binary, risk disruptive.
 func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author string) (store.Plan, error) {
@@ -438,7 +464,7 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 		Changes: []wire.Change{{Attr: wire.AttrAgentVersion, From: st.Version, To: e.cfg.Agent.Version, Risk: wire.RiskDisruptive}},
 	}}}
 	changes, _ := json.Marshal([]TargetPlan{tp})
-	proposal, _ := json.Marshal(Proposal{Targets: []string{target}})
+	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, AgentSHA256: e.cfg.Agent.SHA256})
 	p, err := e.st.CreatePlan(ctx, store.Plan{BaseRevision: head.ID, Origin: OriginAgentUpdate, Proposal: proposal,
 		Changes: changes, Risk: string(wire.RiskDisruptive), Reason: reason, Author: author})
 	if err != nil {
