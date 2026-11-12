@@ -168,6 +168,10 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 			case k == "digest":
 			case k == "delete":
 				for _, d := range strings.Split(v[0], ",") {
+					if d == f.failNextPUT {
+						f.failNextPUT = ""
+						continue
+					}
 					switch {
 					case vm.running && cold[d]:
 						if vm.delete == nil {
@@ -176,7 +180,10 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 						vm.delete[d] = true
 						delete(vm.pending, d)
 					default:
+						// A stopped CT takes the delete at once, also of
+						// a pending value of the key.
 						delete(vm.cfg, d)
+						delete(vm.pending, d)
 					}
 				}
 			case vm.running && cold[k]:
@@ -197,6 +204,59 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 			st = "running"
 		}
 		reply(w, 200, map[string]any{"status": st, "vmid": id, "type": "lxc"})
+
+	case r.Method == "GET" && sub == "/pending":
+		// Like PVE: one row per key, "pending" for a new value, "delete" for
+		// a pending delete (host C4).
+		rows := []map[string]any{}
+		for k, v := range vm.cfg {
+			row := map[string]any{"key": k, "value": v}
+			if p, ok := vm.pending[k]; ok {
+				row["pending"] = p
+			}
+			if vm.delete[k] {
+				row["delete"] = 1
+			}
+			rows = append(rows, row)
+		}
+		for k, p := range vm.pending {
+			if _, ok := vm.cfg[k]; !ok {
+				rows = append(rows, map[string]any{"key": k, "pending": p})
+			}
+		}
+		reply(w, 200, rows)
+
+	case r.Method == "POST" && sub == "/template":
+		if vm.running {
+			fail(w, 500, "CT is running", nil)
+			return
+		}
+		vm.template = true
+		vm.cfg["template"] = "1"
+		vm.cfg["rootfs"] = strings.Replace(vm.cfg["rootfs"], fmt.Sprintf(":vm-%d-disk-", id), fmt.Sprintf(":base-%d-disk-", id), 1)
+		reply(w, 200, nil) // sync (host C6)
+
+	case r.Method == "POST" && sub == "/clone":
+		var nid int
+		fmt.Sscan(r.Form.Get("newid"), &nid)
+		if _, taken := f.vms[nid]; taken {
+			fail(w, 500, fmt.Sprintf("CT %d already exists", nid), nil)
+			return
+		}
+		cfg := map[string]string{}
+		for k, v := range vm.cfg {
+			if k != "template" {
+				cfg[k] = v
+			}
+		}
+		cfg["hostname"] = r.Form.Get("hostname")
+		cfg["rootfs"] = fmt.Sprintf("local-lvm:vm-%d-disk-0,size=%s", nid, parseProps(vm.cfg["rootfs"])["size"])
+		f.vms[nid] = &fakeVM{ct: true, cfg: cfg, pool: r.Form.Get("pool")}
+		reply(w, 200, f.task(key))
+
+	case r.Method == "PUT" && sub == "/resize":
+		vm.cfg["rootfs"] = strings.Replace(vm.cfg["rootfs"], "size="+parseProps(vm.cfg["rootfs"])["size"], "size="+r.Form.Get("size"), 1)
+		reply(w, 200, f.task(key))
 
 	case r.Method == "GET" && sub == "/interfaces":
 		if !vm.running {

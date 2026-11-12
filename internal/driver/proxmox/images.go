@@ -114,6 +114,9 @@ func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot dr
 	if boot.Token == "" {
 		return "", errors.New("proxmox: a build guest needs an enrollment token")
 	}
+	if d.checkTemplateRef(spec.Base) == nil {
+		return d.createBuildCT(ctx, spec, boot) // an lxc Image (T-082)
+	}
 	name := buildName(spec.Image, spec.Version)
 	gs := driver.GuestSpec{Name: name, ImageName: spec.Image, Image: spec.Base, Cores: spec.Cores, MemoryMB: spec.MemoryMB,
 		DiskGB: spec.DiskGB, Bridge: spec.Bridge, IP: spec.IP, Gateway: spec.Gateway, User: BuildUser}
@@ -189,9 +192,12 @@ func (d *Driver) MakeImage(ctx context.Context, gid driver.GuestID, img driver.B
 	if img.Version < 1 || !sha256Hex.MatchString(img.Digest) {
 		return "", errors.New("proxmox: a built image needs a version and a full build digest")
 	}
-	id, m, err := d.ownVM(ctx, string(gid))
+	id, m, err := d.own(ctx, string(gid))
 	if err != nil {
 		return "", err
+	}
+	if m.Type == typeCT {
+		return d.makeImageCT(ctx, id, m, img)
 	}
 	bname := buildName(img.Image, img.Version)
 	cfg, err := d.config(ctx, id)
@@ -415,7 +421,7 @@ func (d *Driver) FindImage(ctx context.Context, image string, version int, diges
 		return "", errors.New("proxmox: FindImage needs a version and a full build digest")
 	}
 	name := versionName(image, version)
-	ms, err := d.members(ctx)
+	ms, err := d.guests(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -427,7 +433,7 @@ func (d *Driver) FindImage(ctx context.Context, image string, version int, diges
 		if m.Name != name && m.Name != "" && m.Name != buildName(image, version) {
 			continue
 		}
-		cfg, err := d.config(ctx, m.VMID)
+		cfg, err := d.guestConfig(ctx, m)
 		if errors.Is(err, driver.ErrNotFound) {
 			continue
 		}
@@ -483,7 +489,7 @@ func (d *Driver) scanPool(ctx context.Context, ms []member) (*poolScan, error) {
 		if m.VMID < d.cfg.VMIDMin || m.VMID > d.cfg.VMIDMax {
 			continue
 		}
-		cfg, err := d.config(ctx, m.VMID)
+		cfg, err := d.guestConfig(ctx, m)
 		if errors.Is(err, driver.ErrNotFound) {
 			continue
 		}
@@ -499,7 +505,7 @@ func (d *Driver) scanPool(ctx context.Context, ms []member) (*poolScan, error) {
 	return s, nil
 }
 
-var diskKeyRE = regexp.MustCompile(`^(scsi|virtio|sata|ide)[0-9]+$|^efidisk0$|^tpmstate0$|^unused[0-9]+$`)
+var diskKeyRE = regexp.MustCompile(`^(scsi|virtio|sata|ide)[0-9]+$|^efidisk0$|^tpmstate0$|^unused[0-9]+$|^rootfs$|^mp[0-9]+$`)
 
 // diskVolumes returns the volume ids of the disk lines of a config, without
 // cloud-init drives and CD-ROMs.
@@ -580,7 +586,7 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 	if err := checkImageName(image); err != nil {
 		return nil, err
 	}
-	ms, err := d.members(ctx)
+	ms, err := d.guests(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -603,8 +609,12 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 		if sm == nil || cfg["template"] != "1" {
 			continue
 		}
+		disk := cfg["scsi0"]
+		if disk == "" {
+			disk = cfg["rootfs"] // a container template (T-082)
+		}
 		obj := driver.ImageObject{Image: image, Ref: driver.ImageRef(strconv.Itoa(id)), Name: name,
-			SizeBytes: int64(sizeMB(parseProps(cfg["scsi0"])["size"])) << 20, LinkedClones: len(scan.linkedClones(id))}
+			SizeBytes: int64(sizeMB(parseProps(disk)["size"])) << 20, LinkedClones: len(scan.linkedClones(id))}
 		desc := cfg["description"]
 		if v, ok := strings.CutPrefix(sm[1], "v"); ok {
 			n, err := strconv.Atoi(v)
@@ -693,11 +703,12 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 	if id < d.cfg.VMIDMin || id > d.cfg.VMIDMax {
 		return fmt.Errorf("%w: VMID %d is outside %d–%d", ErrForeignGuest, id, d.cfg.VMIDMin, d.cfg.VMIDMax)
 	}
-	ms, err := d.members(ctx)
+	ms, err := d.guests(ctx)
 	if err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(ms, func(m member) bool { return m.VMID == id }) {
+	mi := slices.IndexFunc(ms, func(m member) bool { return m.VMID == id })
+	if mi < 0 {
 		return fmt.Errorf("proxmox: template %s (VMID %d) is not in pool %s: %w", want, id, d.cfg.Pool, driver.ErrNotFound)
 	}
 	scan, err := d.scanPool(ctx, ms)
@@ -724,7 +735,7 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 	if linked := scan.linkedClones(id); len(linked) > 0 {
 		return driver.InUse("proxmox: template %s (VMID %d) has linked clones in the pool (VMIDs %v); Proxmox would delete it under them: remove them or make them full clones first", want, id, linked)
 	}
-	if err := d.c.Task(ctx, d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}}); err != nil {
+	if err := d.c.Task(ctx, d.cfg.Node, "DELETE", guestPath(d, ms[mi]), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}}); err != nil {
 		return fmt.Errorf("proxmox: delete template %s (VMID %d): %w", want, id, err)
 	}
 	return nil

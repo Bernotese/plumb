@@ -118,6 +118,9 @@ type fakePVE struct {
 	uploads     map[string][]byte
 	uploadOrder []string // the field names of the last upload, in order
 	imagesAvail int64
+	// failNextPUT: the next container config write ignores a delete of
+	// this key (a write that Proxmox did not take, T-082 S8 guard).
+	failNextPUT string
 }
 
 type fakeVM struct {

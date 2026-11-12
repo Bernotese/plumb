@@ -168,14 +168,18 @@ func (d *Driver) checkTemplateRef(ref driver.ImageRef) error {
 	return nil
 }
 
-func checkCTSpec(s driver.GuestSpec) error {
+func checkCTSpec(s driver.GuestSpec) error { return checkCTSpecName(s, false) }
+
+// checkCTSpecName is checkCTSpec; dotted allows a name with dots (the
+// build container of an Image whose name holds a dot).
+func checkCTSpecName(s driver.GuestSpec, dotted bool) error {
 	if err := checkSpec(s); err != nil {
 		return err
 	}
 	if s.User != "" {
 		return errors.New("proxmox: a container has no bootstrap user (D-226)")
 	}
-	if !dnsNameRE.MatchString(s.Name) || strings.Contains(s.Name, ".") || len(s.Name) > 63 {
+	if !dnsNameRE.MatchString(s.Name) || (!dotted && strings.Contains(s.Name, ".")) || len(s.Name) > 63 {
 		return fmt.Errorf("proxmox: %q is no host name for a container", s.Name)
 	}
 	for _, k := range s.SSHKeys {
@@ -205,16 +209,24 @@ func ctNet0(s driver.GuestSpec) string {
 // createCT makes an unprivileged container from a template file and
 // starts it. A failure after Proxmox made the container removes it.
 func (d *Driver) createCT(ctx context.Context, spec driver.GuestSpec, boot driver.Bootstrap) (driver.GuestID, error) {
+	if _, err := vmid(string(spec.Image)); err == nil {
+		return d.cloneCT(ctx, spec, boot) // a version of a built Image (T-082)
+	}
 	if err := checkCTSpec(spec); err != nil {
 		return "", err
 	}
+	return d.createFromFile(ctx, spec, boot, ctDescription(spec), "1")
+}
+
+// createFromFile makes a container from a template file with the given
+// description and onboot, and starts it (a Target or a build container).
+func (d *Driver) createFromFile(ctx context.Context, spec driver.GuestSpec, boot driver.Bootstrap, desc, onboot string) (driver.GuestID, error) {
 	if err := d.checkBridge(spec.Bridge); err != nil {
 		return "", err
 	}
 	if err := d.checkTemplateRef(spec.Image); err != nil {
 		return "", err
 	}
-	desc := ctDescription(spec)
 	if len(desc) > maxDescription {
 		return "", fmt.Errorf("proxmox: the description with the SSH keys has %d bytes; Proxmox allows %d (D-249)", len(desc), maxDescription)
 	}
@@ -237,7 +249,7 @@ func (d *Driver) createCT(ctx context.Context, spec driver.GuestSpec, boot drive
 		"cores":        {strconv.Itoa(spec.Cores)},
 		"memory":       {strconv.Itoa(spec.MemoryMB)},
 		"swap":         {strconv.Itoa(ctSwapMB)},
-		"onboot":       {"1"},
+		"onboot":       {onboot},
 		"description":  {desc},
 		// The form encoding sends "=" as %3D, as Proxmox needs (host C2).
 		"env": {tokenPrefix + boot.Token},
