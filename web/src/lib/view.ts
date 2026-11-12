@@ -240,7 +240,9 @@ export function humanOnlyReasons(plan: Plan): string[] {
       continue;
     }
     if (reason === "image-recipe") {
-      out.push("It makes, changes or deletes the recipe of a built image.");
+      out.push(
+        "It makes, changes or deletes the recipe of a built image, or makes a container image or changes its address or checksum.",
+      );
       continue;
     }
     // The targets that get a secret in a changed resource of this Plan.
@@ -315,3 +317,23 @@ export function mismatchLine(issue: Issue): string {
   if (!c || isSensitive(c)) return "The guest does not use its configured address.";
   return `Configured: ${valueText(c.to)} — the guest reports ${listText(c.from)}`;
 }
+
+/** The guest type of a Target or Image: "vm" or "lxc" (D-097). */
+export type GuestKind = "vm" | "lxc";
+
+/** The name of a guest type for people. */
+export const KIND_NAME: Record<GuestKind, string> = {
+  vm: "Virtual machine",
+  lxc: "Container (LXC)",
+};
+
+/** A text about a VM, said about a container for an `lxc` guest. */
+export function forKind(text: string, kind: GuestKind): string {
+  return kind === "lxc"
+    ? text.replace(/\bVMs?\b/gu, (m) => (m === "VM" ? "container" : "containers"))
+    : text;
+}
+
+/** The allow_restart help of a container: cores and memory change live (host C5, D-248). */
+export const ALLOW_RESTART_HELP_LXC =
+  "A container takes cores and memory at once, without a restart. On: a re-enrollment may restart the running container.";

@@ -37,8 +37,9 @@ const builtDoc = (name: string, disk = 10): ImageDoc => ({
 describe("image list", () => {
   it("shows stock and built images, the newest version, a running build, the next build", async () => {
     show(Images, { api: adminApi() });
-    const r = await until(() => rows().length === 4 && rows());
-    expect(r.find((x) => x.startsWith("debian-13"))).toContain("Stock");
+    const r = await until(() => rows().length === 5 && rows());
+    expect(r.find((x) => x.startsWith("debian-13 "))).toContain("Stock");
+    expect(r.find((x) => x.startsWith("debian-ct"))).toMatch(/Stock ?Container/);
     const web = r.find((x) => x.startsWith("ubuntu-web"));
     expect(web).toContain("Built");
     expect(web).toContain("v3");
