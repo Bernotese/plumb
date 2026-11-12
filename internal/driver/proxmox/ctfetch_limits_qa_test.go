@@ -106,3 +106,21 @@ func TestCTFetchContentLengthJustOverCap(t *testing.T) {
 	}
 	e.noTempFiles(t)
 }
+
+func TestCTFetchContentLengthAtCap(t *testing.T) {
+	e := newCTFetch(t)
+	setLimit(t, &maxDownload, int64(len(e.base)))
+	e.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(e.base)))
+		_, _ = w.Write(e.base)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := e.d.FetchImage(ctx, e.spec); err != nil {
+		t.Fatalf("Content-Length equal to cap: %v", err)
+	}
+	if len(e.f.uploads) != 1 {
+		t.Fatalf("uploads = %d, want 1", len(e.f.uploads))
+	}
+	e.noTempFiles(t)
+}

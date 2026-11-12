@@ -275,6 +275,11 @@ type Hello struct {
 }
 
 // UpdateRevert describes a failed update that the agent rolled back.
+// It is guest text: before the controller stores or shows it, it keeps
+// Reason only when it is RevertCrashLoop or RevertNoHello (else it drops
+// the whole value), At only when it parses as RFC 3339 (else null), From
+// and To only up to MaxRevertVersion bytes of printable ASCII (else cut
+// and marked), and ToSHA256 only when it is 64 lowercase hex digits.
 type UpdateRevert struct {
 	From string `json:"from"` // version of the restored binary (now running)
 	To   string `json:"to"`   // version that failed
@@ -284,6 +289,10 @@ type UpdateRevert struct {
 	Reason   string `json:"reason"` // "crash-loop" or "no-hello"
 	At       string `json:"at"`     // RFC 3339, UTC, guest clock
 }
+
+// MaxRevertVersion is the longest From or To of an UpdateRevert that the
+// controller keeps.
+const MaxRevertVersion = 64
 
 // The reasons of UpdateRevert.
 const (

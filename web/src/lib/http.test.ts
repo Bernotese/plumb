@@ -320,3 +320,15 @@ describe("lost session on the stream (m1)", () => {
     vi.useRealTimers();
   });
 });
+
+it("keeps session credentials and encodes opaque list cursors (T-098)", async () => {
+  const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    expect(init?.credentials).toBe("same-origin");
+    return Response.json({ items: [], next: fetchFn.mock.calls.length === 1 ? "a &b" : null });
+  });
+  await createHttpApi({ fetch: fetchFn }).listTargets();
+  expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/targets?limit=200",
+    "/api/v1/targets?limit=200&cursor=a%20%26b",
+  ]);
+});

@@ -46,3 +46,30 @@ func TestCapabilitiesOf(t *testing.T) {
 		}
 	}
 }
+
+func TestCapabilitiesValid(t *testing.T) {
+	if b := BaselineCapabilities(); !b.Valid() {
+		t.Fatal("baseline is not valid")
+	}
+	many := map[string][]string{}
+	for i := range MaxCapabilityTypes + 1 {
+		many[strings.Repeat("a", i+1)] = nil
+	}
+	bad := []Capabilities{
+		{Resources: many},
+		{Resources: map[string][]string{"File": nil}},
+		{Resources: map[string][]string{"file": {"a.b"}}},
+		{Resources: map[string][]string{"file": {strings.Repeat("a", MaxCapabilityName+1)}}},
+		{Resources: map[string][]string{"file": make([]string, MaxCapabilityAttrs+1)}},
+		{Commands: []CommandType{""}},
+		{Commands: make([]CommandType, MaxCapabilityCommands+1)},
+	}
+	for i, c := range bad {
+		if c.Valid() {
+			t.Errorf("case %d: valid", i)
+		}
+		if got := CapabilitiesOf(Hello{Capabilities: &c}); !slices.Equal(got.Commands, BaselineCapabilities().Commands) {
+			t.Errorf("case %d: CapabilitiesOf did not fall back to the baseline", i)
+		}
+	}
+}

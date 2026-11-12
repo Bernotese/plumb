@@ -37,6 +37,9 @@ func TestAgentUpdateCommand(t *testing.T) {
 	if h.BinarySHA256 != shaOf(old) || h.Capabilities == nil || !h.Capabilities.CanUpdate() || h.Reverted != nil {
 		t.Fatalf("hello %+v", h)
 	}
+	if !h.Capabilities.Valid() {
+		t.Errorf("capabilities break the wire limits: %+v", h.Capabilities)
+	}
 	if !slices.Equal(h.Capabilities.Resources["file"], wire.BaselineCapabilities().Resources["file"]) {
 		t.Errorf("file attrs %v", h.Capabilities.Resources["file"])
 	}

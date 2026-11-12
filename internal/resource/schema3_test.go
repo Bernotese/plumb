@@ -19,12 +19,14 @@ func TestSlice3Schemas(t *testing.T) {
 		valid bool
 	}{
 		{"apt_repository", `{` + apt + `,"key":"` + key + `"}`, true},
-		{"apt_repository", `{` + apt + `}`, false},                                    // present needs the key
-		{"apt_repository", `{"name":"docker","state":"absent"}`, true},                // absent needs nothing else
-		{"apt_repository", `{` + apt + `,"key":"https://x/key.gpg"}`, false},          // never a URL
-		{"apt_repository", `{` + apt + `,"key":"` + key + `","trusted":true}`, false}, // no Trusted
-		{"apt_repository", `{` + apt + `,"key":"` + key + `","options":"x"}`, false},  // no free options
-		{"apt_repository", `{"name":"../x","state":"absent"}`, false},                 // name is part of a path
+		{"apt_repository", `{` + apt + `}`, false},                     // present needs the key
+		{"apt_repository", `{"name":"docker","state":"absent"}`, true}, // absent needs nothing else
+		{"apt_repository", `{` + apt + `,"key":"https://x/key.gpg"}`, false},
+		{"apt_repository", `{` + apt + `,"key":"` + key + `-----BEGIN PGP PRIVATE KEY BLOCK-----\nxx\n-----END PGP PRIVATE KEY BLOCK-----\n"}`, false}, // a second, private block
+		{"apt_repository", `{` + apt + `,"key":"` + key + key + `"}`, false},                                                                           // two public blocks          // never a URL
+		{"apt_repository", `{` + apt + `,"key":"` + key + `","trusted":true}`, false},                                                                  // no Trusted
+		{"apt_repository", `{` + apt + `,"key":"` + key + `","options":"x"}`, false},                                                                   // no free options
+		{"apt_repository", `{"name":"../x","state":"absent"}`, false},                                                                                  // name is part of a path
 		{"apt_repository", `{"name":"d","uris":["file:///srv"],"suites":["a"],"key":"` + key + `"}`, false},
 		{"apt_repository", `{"name":"d","uris":["https://x"],"suites":["a b"],"key":"` + key + `"}`, false},
 		{"unit", `{"name":"backup.timer","content":"[Timer]\nOnCalendar=daily\n"}`, true},
@@ -52,6 +54,7 @@ func TestSlice3Schemas(t *testing.T) {
 		{"command", `{"name":"x","argv":["/bin/true"],"creates":"/a/../b"}`, false},
 		{"command", `{"name":"x","argv":["/bin/true"],"creates":"/x","state":"absent"}`, false}, // no state
 		{"command", `{"name":"x","argv":["/bin/true"],"creates":"/x","timeout":0}`, false},
+		{"command", `{"name":"x","argv":["/` + strings.Repeat("a", 4096) + `"],"creates":"/x"}`, false}, // argv[0] max 4096
 	}
 	compiled := map[string]*jsonschema.Schema{}
 	for _, tt := range tests {
