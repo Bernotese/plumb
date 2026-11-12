@@ -107,6 +107,17 @@ func TestBuildThenTargetFromVersion(t *testing.T) {
 	if st, _ := e.drv.Observe(e.ctx, driver.GuestID(b2.Ref)); st.Spec.ImageVersion != 2 {
 		t.Fatalf("web2 from version %d, want 2", st.Spec.ImageVersion)
 	}
+	for target, version := range map[string]int{"web1": 1, "web2": 2} {
+		code, body := adm.do("GET", "/api/v1/targets/"+target, nil)
+		var response struct {
+			Status struct {
+				ImageVersion int `json:"image_version"`
+			} `json:"status"`
+		}
+		if err := json.Unmarshal(body, &response); err != nil || code != 200 || response.Status.ImageVersion != version {
+			t.Fatalf("%s status: %d %s, err %v; want image_version %d", target, code, body, err, version)
+		}
+	}
 }
 
 func TestBuildFailures(t *testing.T) {
