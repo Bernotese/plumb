@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,8 +55,10 @@ func TestGuestNginxSitesFirstRun(t *testing.T) {
 				write(t, filepath.Join(root, "index.html"), name+" guest page\n")
 				uses = append(uses, map[string]any{"use": "nginx-site", "id": "site-" + name, "params": map[string]any{"name": name, "server_name": name + ".lan", "root": root}})
 			}
+			// T-088: site c keeps the default root /var/www/html with the distro page.
+			uses = append(uses, map[string]any{"use": "nginx-site", "id": "site-c", "params": map[string]any{"name": "c", "server_name": "c.lan"}})
 			if sitesFirst {
-				uses = []any{uses[1], uses[2], uses[0]}
+				uses = []any{uses[1], uses[2], uses[3], uses[0]}
 			}
 			docs := []state.Doc{}
 			add := func(value any) {
@@ -92,8 +95,8 @@ func TestGuestNginxSitesFirstRun(t *testing.T) {
 				t.Fatal(err)
 			}
 			list := rendered.Resources
-			if len(list) != 8 {
-				t.Fatalf("expected eight resources, got %d", len(list))
+			if len(list) != 10 {
+				t.Fatalf("expected ten resources, got %d", len(list))
 			}
 			ca := newCA(t)
 			ctl := newController(t, ca, "guest-token")
@@ -115,6 +118,13 @@ func TestGuestNginxSitesFirstRun(t *testing.T) {
 			}
 			if t.Failed() {
 				return
+			}
+			// T-088: the default site serves the distro page (no Host match → default_server).
+			if out := run(t, "curl", "--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "5", "http://127.0.0.1/"); !strings.Contains(string(out), "nginx") {
+				t.Errorf("default site returned %q", out)
+			}
+			if out := run(t, "curl", "--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "5", "-H", "Host: c.lan", "http://127.0.0.1/"); !strings.Contains(string(out), "nginx") {
+				t.Errorf("c.lan (default root) returned %q", out)
 			}
 			for _, name := range []string{"a", "b"} {
 				out := run(t, "curl", "--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "5", "-H", "Host: "+name+".lan", "http://127.0.0.1/")

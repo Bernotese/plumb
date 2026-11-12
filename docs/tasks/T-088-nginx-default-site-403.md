@@ -22,4 +22,7 @@ After a Run with only the Block `nginx`, `GET /` on the guest answers 200, on De
 - Any other Block. Real-host run (pl-lead adds it to the next host job).
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-088-nginx-default-site`. Cause: the Block's site config had `index index.html`; the Debian/Ubuntu package ships only `/var/www/html/index.nginx-debian.html` → 403.
+- Fix: the same line in `blocks/nginx.yaml` and `blocks/nginx-site.yaml` (default root `/var/www/html`, T-083 H8): `index index.html index.htm index.nginx-debian.html;`. No Block writes a page; a person's `index.html` still wins. For existing installs: note in `docs/ARCHITECTURE.md` §3. D-255 in `docs/decisions/T-088.md`.
+- Existing guest: the stored Block changes only by a Plan (file content, reversible + `service:nginx` restart, disruptive). Agent drift compares with its last applied list → no Issue before that Plan. Starter Blocks are not seeded into a controller; the user puts the new Block.
+- Tests: `make lint test build` → rc 0; `sg docker -c "make test-guest"` → rc 0 (Debian 13 + Ubuntu 26.04: default site and an `nginx-site` with the default root → 200). Mutation (old index line) → guest test fails with 403. New unit test `TestNginxSitesServeDistroPage` (index line of both Blocks, no resource under `/var/www`).
