@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -386,5 +387,30 @@ func TestCTKeyLineReplaced(t *testing.T) {
 	}
 	if f.count("PUT ") != 0 || f.count("DELETE ") != 0 || f.count("POST ") != posts {
 		t.Fatal("edited key caused a write")
+	}
+}
+
+// Review S1 of #162: a key comes back byte-equal (D-249); one with white
+// space at its ends or a control character is refused.
+func TestCTKeyRoundTrip(t *testing.T) {
+	f := newFakePVE(t)
+	f.files[ctTemplate] = true
+	d := f.driver(t)
+	ctx := context.Background()
+	s := ctSpec()
+	s.SSHKeys = []string{"ssh-ed25519 AAAAC3Nza Jürgen's Schlüssel ✓", "ssh-rsa AAAAB3Nzb x"}
+	id, err := d.Create(ctx, s, driver.Bootstrap{Token: ctToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := d.Observe(ctx, id)
+	if err != nil || !reflect.DeepEqual(st.Spec.SSHKeys, s.SSHKeys) {
+		t.Fatalf("keys %q %v", st.Spec.SSHKeys, err)
+	}
+	for _, k := range []string{"ssh-ed25519 AAAAC3Nza x ", " ssh-ed25519 AAAAC3Nza", "ssh-ed25519 AAAAC3Nza a\tb", "ssh-ed25519 AAAAC3Nza a\x00b", "ssh-ed25519 AAAAC3Nza a\x7fb"} {
+		s.SSHKeys = []string{k}
+		if _, err := d.Create(ctx, s, driver.Bootstrap{Token: ctToken}); err == nil {
+			t.Errorf("%q accepted", k)
+		}
 	}
 }
