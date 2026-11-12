@@ -12,6 +12,7 @@ The UI can make an `lxc` Image and an LXC Target and shows the unused template f
 - `web/`
 
 ## Acceptance criteria
+- [ ] Review N1 of PR #154: `ImageView` shows "sha256 undefined" for an `lxc` Image and `ImageForm` is VM-only; both handle `lxc` (SHA-512).
 - [ ] Everything in §8 of the plan. Screenshots with `browser-shot` (light and dark).
 - [ ] Tests: `make lint test build` passes.
 - [ ] New decisions go to `docs/decisions/T-081.md` (ask pl-lead for numbers). Merge `origin/main` before you report.

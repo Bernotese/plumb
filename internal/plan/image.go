@@ -16,7 +16,8 @@ import (
 )
 
 // HumanOnlyImageRecipe: the Plan makes or deletes a built Image, or changes
-// its recipe, schedule or retention (D-201).
+// its recipe, schedule or retention (D-201); or it makes an lxc Image or
+// changes its url or sha512 (D-235).
 const HumanOnlyImageRecipe = "image-recipe"
 
 // ErrStockImage is wrapped when a build is asked for an Image without
@@ -96,7 +97,8 @@ func factsOf(set *state.Set, name string) (imageFacts, bool, error) {
 
 // imagesHumanOnly reports whether a Plan from base to next needs a human
 // approver for an Image (D-201): a built Image is made or deleted, turns
-// built or stock, or changes its recipe, schedule or retention. The rule
+// built or stock, or changes its recipe, schedule or retention; or an lxc
+// Image is made or changes its url or sha512 (D-235). The rule
 // reads the content, for every origin; a Block change that reaches a
 // built Image changes its recipe.
 func imagesHumanOnly(base, next *state.Set) (bool, error) {
@@ -108,6 +110,12 @@ func imagesHumanOnly(base, next *state.Set) (bool, error) {
 		n, okn, err := factsOf(next, name)
 		if err != nil {
 			return false, err
+		}
+		// The controller fetches an LXC template itself and the pin is its
+		// only trust: a new lxc Image or a new url or sha512 (D-235).
+		if okn && n.info.Type == wire.KindLXC && (!okb || b.info.Type != wire.KindLXC ||
+			b.info.URL != n.info.URL || b.info.SHA512 != n.info.SHA512) {
+			return true, nil
 		}
 		wasBuilt, isBuilt := okb && b.info.Built, okn && n.info.Built
 		if !wasBuilt && !isBuilt {

@@ -126,6 +126,8 @@ type ImageInfo struct {
 	Name     string
 	Type     wire.Kind
 	SHA256   string
+	SHA512   string // lxc (D-224)
+	URL      string
 	Built    bool
 	Keep     int
 	Schedule json.RawMessage
@@ -141,7 +143,7 @@ func (s *Set) ImageInfo(name string) (ImageInfo, bool) {
 	if !ok {
 		return ImageInfo{}, false
 	}
-	info := ImageInfo{Name: name, Type: wire.Kind(img.Type), SHA256: img.SHA256, Built: img.Build != nil, Keep: DefaultKeep}
+	info := ImageInfo{Name: name, Type: wire.Kind(img.Type), SHA256: img.SHA256, SHA512: img.SHA512, URL: img.URL, Built: img.Build != nil, Keep: DefaultKeep}
 	if img.Retention != nil && img.Retention.Keep > 0 {
 		info.Keep = img.Retention.Keep
 	}

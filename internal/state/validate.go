@@ -302,6 +302,7 @@ type imageSpec struct {
 	Type      string      `json:"type"`
 	URL       string      `json:"url"`
 	SHA256    string      `json:"sha256"`
+	SHA512    string      `json:"sha512"` // lxc only (D-224)
 	Build     *imageBuild `json:"build"`
 	Retention *struct {
 		Keep int `json:"keep"`
@@ -470,6 +471,14 @@ func validate(docs []Doc, lim Limits, stored bool) (*Set, error) {
 		}
 		var canon Doc
 		_ = json.Unmarshal(body, &canon)
+		if d.Kind == KindImage {
+			var spec imageSpec
+			_ = decode(canon.Spec, &spec)
+			if ierrs := checkImageSpec(d.Name, spec); len(ierrs) > 0 {
+				errs = append(errs, ierrs...)
+				continue
+			}
+		}
 		if d.Kind == KindBlock {
 			b, berrs := parseBlock(d.Name, canon.Spec)
 			if len(berrs) > 0 {
@@ -710,6 +719,15 @@ func (s *Set) checkTarget(name string) Errors {
 				"disk %d GiB is smaller than the disk of Image %q (%d GiB); a disk cannot shrink (D-202)", have, t.Image, want))
 		}
 	}
+	if t.Type == string(wire.KindLXC) {
+		// Proxmox has no cloud-init for containers: keys go to root (D-226).
+		if _, ok := t.Guest["user"]; ok {
+			errs = append(errs, errf("/spec/guest/user", "an LXC Target has no bootstrap user; use a Block such as deploy-user (D-226)"))
+		}
+		if have, ok := intOf(t.Guest["disk"]); ok && have < minLXCDisk {
+			errs = append(errs, errf("/spec/guest/disk", "the root file system of an LXC Target needs at least %d GiB", minLXCDisk))
+		}
+	}
 	// guest and overrides never hold a reference, at any depth (D-088).
 	if at := findRef(t.Guest, "/spec/guest"); at != "" {
 		errs = append(errs, errf(at, "guest settings cannot hold a secret reference (D-088)"))
@@ -723,6 +741,43 @@ func (s *Set) checkTarget(name string) Errors {
 	}
 	u, _ := s.targetUnit(name)
 	return append(errs, s.checkUses(u)...)
+}
+
+// minLXCDisk is the smallest root file system of an LXC Target in GiB
+// (a fresh Ubuntu root fs uses about 0.7 GB, T-038 host E1).
+const minLXCDisk = 2
+
+// checkImageSpec checks the rules of an Image that depend on its type; the
+// schema checks the shape only, so that each rule has a clear text. vm: an
+// https:// url and a sha256 pin. lxc: an http(s) url and a sha512 pin from
+// the signed Proxmox index (D-224), no build yet (T-082).
+func checkImageSpec(name string, img imageSpec) Errors {
+	errf := func(path, format string, args ...any) *Error {
+		return &Error{Kind: KindImage, Name: name, Path: path, Msg: fmt.Sprintf(format, args...)}
+	}
+	var errs Errors
+	if img.Type == string(wire.KindLXC) {
+		if img.SHA256 != "" {
+			errs = append(errs, errf("/spec/sha256", "an LXC Image pins sha512, not sha256 (D-224)"))
+		}
+		if img.SHA512 == "" {
+			errs = append(errs, errf("/spec", "an LXC Image needs sha512: the sha512sum of the template in the signed Proxmox index (D-224)"))
+		}
+		if img.Build != nil {
+			errs = append(errs, errf("/spec/build", "LXC image builds come later; use a stock LXC Image"))
+		}
+		return errs
+	}
+	if !strings.HasPrefix(img.URL, "https://") {
+		errs = append(errs, errf("/spec/url", "a VM Image needs an https:// url"))
+	}
+	if img.SHA512 != "" {
+		errs = append(errs, errf("/spec/sha512", "a VM Image pins sha256, not sha512"))
+	}
+	if img.SHA256 == "" {
+		errs = append(errs, errf("/spec", "a VM Image needs sha256"))
+	}
+	return errs
 }
 
 // checkUses checks the Block uses of a unit: ids, Blocks, parameters and
