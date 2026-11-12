@@ -32,6 +32,9 @@ const (
 const (
 	DefaultBuildEnrollTimeout = 20 * time.Minute
 	DefaultSealTimeout        = 5 * time.Minute
+	// DefaultContainerSealTimeout: seal of a container runs the upgrade
+	// (D-252).
+	DefaultContainerSealTimeout = 15 * time.Minute
 )
 
 // buildLink is the link name of the build guest of an Image (D-203).
@@ -105,9 +108,15 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, "an old build guest could not be removed: "+err.Error())
 		return false
 	}
+	// The pin of the base: SHA-256 for a VM, SHA-512 for lxc (D-224).
+	pin := info.SHA256
+	lxc := info.Type == wire.KindLXC
+	if lxc {
+		pin = info.SHA512
+	}
 	v, err := e.st.AddImageVersion(ctx, store.ImageVersion{Image: l.image, Trigger: buildTrigger(p, l.image), RunID: run.ID,
-		RevisionID: run.RevisionID, RecipeSHA256: r.RecipeSHA256, BaseSHA256: info.SHA256, DiskGB: r.Recipe.DiskGB},
-		func(n int) string { return BuildDigest(l.image, n, r.RecipeSHA256, info.SHA256, run.ID) })
+		RevisionID: run.RevisionID, RecipeSHA256: r.RecipeSHA256, BaseSHA256: pin, DiskGB: r.Recipe.DiskGB},
+		func(n int) string { return BuildDigest(l.image, n, r.RecipeSHA256, pin, run.ID) })
 	if err != nil {
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, err.Error())
 		return false
@@ -123,12 +132,16 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, fmt.Sprintf("%v; nothing was made", err))
 		return false
 	}
-	base, err := e.cfg.Driver.FetchImage(ctx, driver.ImageSpec{Name: l.image, Kind: info.Type, URL: r.Recipe.URL, SHA256: info.SHA256})
+	is := driver.ImageSpec{Name: l.image, Kind: info.Type, URL: r.Recipe.URL, SHA256: info.SHA256}
+	if lxc {
+		is.SHA256, is.SHA512 = "", info.SHA512 // the repacked template file (D-234)
+	}
+	base, err := e.cfg.Driver.FetchImage(ctx, is)
 	if err != nil {
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, err.Error())
 		return false
 	}
-	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", info.SHA256[:12])+planNotes(p, l.image))
+	s.set(ctx, StepImageBase, wire.StatusApplied, nil, fmt.Sprintf("base %s", pin[:12])+planNotes(p, l.image))
 
 	// 2. The build guest, under the disk gate (D-203, T-074): its disk
 	// counts until the lane ends.
@@ -201,8 +214,13 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 	// revokes the agent; it sends no stop. The agent removes its files and
 	// powers the guest off; the controller waits for stopped.
 	s.set(ctx, StepImageSeal, wire.StatusRunning, nil, "")
-	deadline := time.Now().Add(e.cfg.SealTimeout)
-	rep, err = e.command(ctx, l.link, wire.CommandSeal, wire.SealBody{PlanID: p.ID, Upgraded: r.Recipe.Upgrade}, e.cfg.SealTimeout, nil)
+	// A container upgrades in seal (D-252): a longer timeout.
+	sealTimeout := e.cfg.SealTimeout
+	if lxc {
+		sealTimeout = e.cfg.ContainerSealTimeout
+	}
+	deadline := time.Now().Add(sealTimeout)
+	rep, err = e.command(ctx, l.link, wire.CommandSeal, wire.SealBody{PlanID: p.ID, Upgraded: r.Recipe.Upgrade, Container: lxc}, sealTimeout, nil)
 	if rerr := e.cfg.Agents.Revoke(context.WithoutCancel(ctx), l.link); rerr != nil {
 		e.log.Error("revoke build agent", "image", l.image, "err", rerr)
 	}

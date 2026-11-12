@@ -734,12 +734,15 @@ func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot dr
 		d.nextID++
 		gs := driver.GuestSpec{Name: name, Kind: wire.KindVM, ImageName: spec.Image, Cores: spec.Cores, MemoryMB: spec.MemoryMB,
 			DiskGB: spec.DiskGB, Bridge: spec.Bridge, IP: spec.IP, Gateway: spec.Gateway, User: "plumb-build"}
+		if tpl.lxc { // a build container from a template file (T-082)
+			gs.Kind, gs.User, gs.Features = wire.KindLXC, "", driver.CTFeatures
+		}
 		ip := strings.SplitN(spec.IP, "/", 2)[0]
 		if spec.IP == "" || spec.IP == "dhcp" {
 			ip = fmt.Sprintf("10.98.%d.%d", d.nextID/250, d.nextID%250+2)
 		}
 		d.guests[id] = &guest{spec: gs, next: gs, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
-			build: &driver.BuiltImage{Image: spec.Image, Version: spec.Version}}
+			build: &driver.BuiltImage{Image: spec.Image, Version: spec.Version}, env: tpl.lxc}
 		return id, nil
 	})
 }
@@ -761,11 +764,14 @@ func (d *Driver) MakeImage(ctx context.Context, id driver.GuestID, img driver.Bu
 		if g.power != driver.PowerStopped {
 			return "", fmt.Errorf("fake: build guest %s is not stopped", id)
 		}
+		// A container template holds no env token (D-234): MakeImage
+		// clears it first, as the Proxmox driver does.
+		g.env = false
 		delete(d.guests, id)
 		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
 		d.nextTpl++
 		d.tpls[ref] = &template{kind: driver.ImageVersionTemplate, image: img.Image, version: img.Version,
-			digest: img.Digest, size: int64(g.spec.DiskGB) * GiB}
+			digest: img.Digest, size: int64(g.spec.DiskGB) * GiB, lxc: g.lxc()}
 		return ref, nil
 	})
 }

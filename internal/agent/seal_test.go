@@ -629,3 +629,65 @@ func TestSealResetsIdentityBeforeDracut(t *testing.T) {
 		t.Fatalf("step ids %v, want %v", ids, wire.SealSteps)
 	}
 }
+
+// D-252, D-253: seal in a container. No dracut, no cloud-init, no fstrim;
+// the upgrade runs in seal; machine-id emptied; the SSH host key unit is
+// written and enabled; the first-boot installer stays, the agent goes.
+func TestSealContainer(t *testing.T) {
+	r := &sealRunner{apt: aptClean}
+	ta, ctl := startBuildAgent(t, true, r)
+	root := ta.root
+	write(t, filepath.Join(root, "etc/systemd/system/plumb-agent-install.service"), "[Unit]")
+	if err := os.Symlink("/etc/systemd/system/plumb-agent-install.service", filepath.Join(root, "etc/systemd/system/multi-user.target.wants/plumb-agent-install.service")); err != nil {
+		t.Fatal(err)
+	}
+	powered := make(chan struct{})
+	r.onPower = func() { close(powered) }
+	ctl.send(t, "s1", wire.CommandSeal, wire.SealBody{PlanID: 7, Upgraded: true, Container: true})
+	rep := ctl.result(t, "s1")
+	want := "guard=applied initramfs=skipped upgrade=applied log-stop=applied cloud-init=applied host-keys=applied build-user=applied seed=applied logs=applied trim=skipped"
+	if got := statuses(rep.Items); got != want {
+		t.Fatalf("seal result:\n got %s\nwant %s\n%+v", got, want, rep.Items)
+	}
+	select {
+	case <-powered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no power off")
+	}
+	wantCalls := []string{
+		"apt-get -q -o DPkg::Lock::Timeout=300 update",
+		"apt-get -q -y -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade",
+		"apt-get -s dist-upgrade",
+		"systemctl stop rsyslog.service", "systemctl stop syslog.socket", "journalctl --relinquish-var",
+		"systemctl enable plumb-ssh-hostkeys.service",
+		"pkill -KILL -u plumb-build", "userdel -r -f plumb-build",
+		"systemctl stop systemd-random-seed.service",
+		"apt-get clean",
+		"sync", "systemctl poweroff",
+	}
+	if got := r.list(); !slices.Equal(got, wantCalls) {
+		t.Fatalf("calls:\n got %q\nwant %q", got, wantCalls)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "etc/machine-id")); err != nil || len(b) != 0 {
+		t.Errorf("machine-id %q %v", b, err)
+	}
+	unit, _ := os.ReadFile(filepath.Join(root, hostKeyUnitPath))
+	for _, part := range []string{"DefaultDependencies=no", "Before=ssh.service ssh.socket sshd-keygen.service sockets.target", "ExecStart=/usr/bin/ssh-keygen -A", "WantedBy=sysinit.target"} {
+		if !strings.Contains(string(unit), part) {
+			t.Errorf("unit misses %q:\n%s", part, unit)
+		}
+	}
+	for _, p := range []string{"etc/ssh/ssh_host_ed25519_key", "usr/local/bin/plumb-agent", "etc/systemd/system/plumb-agent.service",
+		"etc/systemd/system/multi-user.target.wants/plumb-agent.service", DefaultStateDir} {
+		if exists(root, p) {
+			t.Errorf("%s still there", p)
+		}
+	}
+	for _, p := range []string{"etc/plumb-agent/agent.json", "etc/plumb-agent/ca.pem", "usr/local/sbin/plumb-agent-install",
+		"etc/systemd/system/plumb-agent-install.service", "etc/systemd/system/multi-user.target.wants/plumb-agent-install.service",
+		"etc/cloud/cloud-init.disabled"} {
+		if !exists(root, p) {
+			t.Errorf("%s removed", p)
+		}
+	}
+}

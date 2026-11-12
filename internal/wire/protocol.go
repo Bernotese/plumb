@@ -105,6 +105,11 @@ type SealBody struct {
 	// Upgraded: the build guest ran the package upgrade (D-204), so seal
 	// checks that nothing is left to upgrade.
 	Upgraded bool `json:"upgraded"`
+	// Container: the build guest is an lxc container (D-253): seal skips
+	// cloud-init, initramfs and trim, runs the upgrade itself (D-252),
+	// empties /etc/machine-id, adds the SSH host key unit and keeps the
+	// first-boot installer.
+	Container bool `json:"container,omitempty"`
 }
 
 // The result of seal has one Item per step, in this order, with the

@@ -60,7 +60,7 @@
             "guest"
           ],
           "additionalProperties": false,
-          "description": "Present: Plumb builds templates from the base image (url, sha256) plus Blocks, then runs seal (D-197, D-205). Only for type vm; refused for type lxc until LXC image builds exist (T-082).",
+          "description": "Present: Plumb builds templates from the base image (url, sha256) plus Blocks, then runs seal (D-197, D-205). For type lxc (T-082): the build container comes from the repacked template file; no user; upgrade runs in seal (D-252); Targets of a built lxc Image get no ssh_keys (D-251).",
           "properties": {
             "blocks": {
               "type": "array",
@@ -93,7 +93,7 @@
             "upgrade": {
               "type": "boolean",
               "default": true,
-              "description": "Upgrade all packages in the build (cloud-init, D-204). seal fails when packages are left to upgrade."
+              "description": "Upgrade all packages in the build (vm: cloud-init at the first boot, D-204; lxc: apt-get dist-upgrade in seal, D-252). seal fails when packages are left to upgrade."
             },
             "guest": {
               "type": "object",

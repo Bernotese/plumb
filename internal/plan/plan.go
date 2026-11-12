@@ -164,6 +164,8 @@ type Config struct {
 	// seal 5 min (the apply uses ApplyTimeout).
 	BuildEnrollTimeout time.Duration
 	SealTimeout        time.Duration
+	// ContainerSealTimeout bounds seal of an lxc build (D-252). Default 15 min.
+	ContainerSealTimeout time.Duration
 	// PowerPoll is how often a build lane reads the power state after
 	// seal; default 2 s.
 	PowerPoll time.Duration
@@ -268,6 +270,9 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if cfg.SealTimeout == 0 {
 		cfg.SealTimeout = DefaultSealTimeout
+	}
+	if cfg.ContainerSealTimeout == 0 {
+		cfg.ContainerSealTimeout = DefaultContainerSealTimeout
 	}
 	if cfg.PowerPoll == 0 {
 		cfg.PowerPoll = 2 * time.Second
