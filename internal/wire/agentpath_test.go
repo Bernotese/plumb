@@ -62,6 +62,9 @@ func TestAgentConflicts(t *testing.T) {
 	service := func(n string) Resource {
 		return Resource{ID: "service:" + n, Type: "service", Attrs: map[string]any{"name": n}}
 	}
+	unit := func(n string) Resource {
+		return Resource{ID: "unit:" + n, Type: "unit", Attrs: map[string]any{"name": n}}
+	}
 	tests := []struct {
 		name string
 		rs   []Resource
@@ -75,6 +78,12 @@ func TestAgentConflicts(t *testing.T) {
 		{"service", []Resource{service("plumb-agent")}, "service:plumb-agent"},
 		{"service with suffix", []Resource{service("plumb-agent.service")}, "service:plumb-agent.service"},
 		{"harmless", []Resource{service("nginx"), link("/opt/x", "/var/lib"), file("/opt/x/nginx/a")}, ""},
+		// Review of #190: a unit file or a service of the update guard.
+		{"guard timer unit", []Resource{unit("plumb-agent-guard.timer")}, "unit:plumb-agent-guard.timer"},
+		{"guard service unit", []Resource{unit("plumb-agent-guard.service")}, "unit:plumb-agent-guard.service"},
+		{"agent unit file", []Resource{unit("plumb-agent.service")}, "unit:plumb-agent.service"},
+		{"guard service", []Resource{service("plumb-agent-guard")}, "service:plumb-agent-guard"},
+		{"harmless unit", []Resource{unit("backup.timer")}, ""},
 	}
 	for _, tt := range tests {
 		got := AgentConflicts(tt.rs)
@@ -95,6 +104,13 @@ func TestIsAgentPathInstallUnit(t *testing.T) {
 		"/etc/systemd/system/plumb-agent-install.service.d/x.conf",
 		"/etc/systemd/system/multi-user.target.wants/plumb-agent-install.service",
 		"/lib/systemd/system/plumb-agent-install.service",
+		"/usr/local/bin/plumb-agent.prev",
+		"/usr/bin/../local/bin/.plumb-agent.update",
+		"/usr/local/bin/.plumb-agent.prev-new",
+		"/etc/systemd/system/plumb-agent-guard.service",
+		"/etc/systemd/system/plumb-agent-guard.timer",
+		"/etc/systemd/system/timers.target.wants/plumb-agent-guard.timer",
+		"/etc/systemd/system/plumb-agent-guard.service.d/x.conf",
 	} {
 		if !IsAgentPath(p) {
 			t.Errorf("IsAgentPath(%q) = false", p)
@@ -105,7 +121,7 @@ func TestIsAgentPathInstallUnit(t *testing.T) {
 			t.Errorf("IsAgentPath(%q) = true", p)
 		}
 	}
-	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent"} {
+	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent", "plumb-agent-guard", "plumb-agent-guard.timer"} {
 		if !isAgentUnit(n) {
 			t.Errorf("isAgentUnit(%q) = false", n)
 		}

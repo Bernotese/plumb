@@ -274,7 +274,7 @@ func TestCommandErrors(t *testing.T) {
 	ca := newCA(t)
 	ctl := newController(t, ca, "tok-1")
 	startAgent(t, ctl, ca, "tok-1")
-	ctl.send(t, "x1", "update", map[string]any{})
+	ctl.send(t, "x1", "frobnicate", map[string]any{})
 	ctl.send(t, "x2", wire.CommandApply, wire.ApplyBody{MaxRisk: "huge"})
 	ctl.commands <- wire.Command{ID: "x3", Type: wire.CommandObserve, Body: json.RawMessage(`"no"`)}
 	for _, id := range []string{"x1", "x2", "x3"} {
