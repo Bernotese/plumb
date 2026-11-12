@@ -139,9 +139,18 @@ func normalCaps(c wire.Capabilities) wire.Capabilities {
 }
 
 // agentHello is a checked hello for the waiters of an update step.
+// afterResult: the hello came after a result of the target, so it is not
+// a reconnect of the old agent before the swap.
 type agentHello struct {
-	sha      string
-	reverted *wire.UpdateRevert
+	sha         string
+	reverted    *wire.UpdateRevert
+	afterResult bool
+}
+
+// helloWaiter is one update step that waits for hellos.
+type helloWaiter struct {
+	ch          chan agentHello
+	afterResult bool // a result of the target came in (under e.mu)
 }
 
 // recordHello stores the checked hello of a bound Target, wakes an update
@@ -158,9 +167,9 @@ func (e *Engine) recordHello(ctx context.Context, d link.Delivery) error {
 		return err
 	}
 	e.mu.Lock()
-	for _, ch := range e.helloWait[d.Target] {
+	for _, w := range e.helloWait[d.Target] {
 		select {
-		case ch <- agentHello{sha: h.BinarySHA256, reverted: rev}:
+		case w.ch <- agentHello{sha: h.BinarySHA256, reverted: rev, afterResult: w.afterResult}:
 		default:
 		}
 	}
@@ -171,20 +180,29 @@ func (e *Engine) recordHello(ctx context.Context, d link.Delivery) error {
 
 // waitHellos registers a waiter for the hellos of a target.
 func (e *Engine) waitHellos(target string) (<-chan agentHello, func()) {
-	ch := make(chan agentHello, 16)
+	w := &helloWaiter{ch: make(chan agentHello, 16)}
 	e.mu.Lock()
 	if e.helloWait == nil {
-		e.helloWait = map[string][]chan agentHello{}
+		e.helloWait = map[string][]*helloWaiter{}
 	}
-	e.helloWait[target] = append(e.helloWait[target], ch)
+	e.helloWait[target] = append(e.helloWait[target], w)
 	e.mu.Unlock()
-	return ch, func() {
+	return w.ch, func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		e.helloWait[target] = slices.DeleteFunc(e.helloWait[target], func(c chan agentHello) bool { return c == ch })
+		e.helloWait[target] = slices.DeleteFunc(e.helloWait[target], func(x *helloWaiter) bool { return x == w })
 		if len(e.helloWait[target]) == 0 {
 			delete(e.helloWait, target)
 		}
+	}
+}
+
+// resultSeen marks the hello waiters of a target: a result came in, so
+// the next hellos are of an agent that may have restarted. The caller
+// holds e.mu.
+func (e *Engine) resultSeen(target string) {
+	for _, w := range e.helloWait[target] {
+		w.afterResult = true
 	}
 }
 
@@ -526,28 +544,22 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 		s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, it.Output)
 		return false
 	}
-	// Hellos from before the swap (a reconnect of the old agent) do not count.
-	for drained := false; !drained; {
-		select {
-		case <-hellos:
-		default:
-			drained = true
-		}
-	}
 	timer := time.NewTimer(e.cfg.UpdateHelloWait)
 	defer timer.Stop()
 	for {
 		select {
 		case h := <-hellos:
 			switch {
-			case h.reverted != nil && (h.reverted.ToSHA256 == served || h.reverted.ToSHA256 == ""):
+			case h.afterResult && h.reverted != nil && (h.reverted.ToSHA256 == served || h.reverted.ToSHA256 == ""):
 				s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil,
 					fmt.Sprintf("the new agent failed in the guest (%s); the agent went back to its old binary", h.reverted.Reason))
 				return false
 			case h.sha == served:
 				s.set(ctx, wire.AgentBinaryID, wire.StatusApplied, planned, "")
 				return true
-			case oldSHA != "" && h.sha == oldSHA:
+			case h.afterResult && oldSHA != "" && h.sha == oldSHA:
+				// Not a reconnect of the old agent before its result: it
+				// restarted on the old binary.
 				s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, "the agent came back with its old binary")
 				return false
 			}

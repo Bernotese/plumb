@@ -45,14 +45,14 @@ type Agent struct {
 	hello2    wire.Hello // binary_sha256, capabilities and reverted of the Hello (T-092)
 
 	// seal (D-205, D-207), simulated like the real agent (T-060).
-	build     bool   // the build mark of the enrollment
-	watched   bool   // a watch arrived once; never taken back
-	off       bool   // the guest powered off after seal: Run ends
-	onSeal    func() // see OnSeal
+	build     bool                                           // the build mark of the enrollment
+	watched   bool                                           // a watch arrived once; never taken back
+	off       bool                                           // the guest powered off after seal: Run ends
+	onSeal    func()                                         // see OnSeal
 	onUpdate  func(wire.UpdateBody) (wire.Item, *wire.Hello) // see OnUpdate
-	sealFail  string // a step that fails; "" for none
-	sealStuck bool   // the guest does not power off after seal
-	noMark    bool   // the agent does not take the build mark
+	sealFail  string                                         // a step that fails; "" for none
+	sealStuck bool                                           // the guest does not power off after seal
+	noMark    bool                                           // the agent does not take the build mark
 }
 
 // NoBuildMark makes the agent ignore the build mark, like an agent that

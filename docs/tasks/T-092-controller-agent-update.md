@@ -32,4 +32,7 @@ The controller knows each agent's version and capabilities, proposes an "update 
 - **Status/API:** `agent_version`, `agent_update` (`unknown` no hello · `none` same sha · `manual` no `update` command · `required` something missing · `available`), `agent_missing`, `agent_reverted`. `POST /targets/{name}/agent-update`: 201; 409 `nothing-to-do` for `none` or a pending `agent_update` Plan; 422 for `manual`/`unknown`. Problem `agent-outdated` with `targets`, `missing`.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-backend/T-092-controller-agent-update` (stacked on T-091). Migration 0012 (origin `agent_update`, hello columns on `agent`); link sends `update` and checks the `agent:binary` Item; engine: checked hello store, `ProposeAgentUpdate`, update Run step (hello with the served sha within 120 s; `reverted` or old sha after the result fails), system proposal (D-275), gate at Propose/Approve/Run (D-276), watch list filter; API `POST /targets/{name}/agent-update`, status `agent_*`, problem `agent-outdated`.
+- Tests: `make lint test build` ok. New: `internal/api/agent_update_test.go` (flow, 4 failure kinds, revert + D-275, manual, gate at approve/propose, gate in the Run, watch filter), store and link unit tests.
+- Decisions D-275 … D-278 in `docs/decisions/T-092.md`. `wire.AgentCommands()` is new (cmd/plumb may not import the agent).
+- Notes: `agent_reverted.at` uses the hello time when the guest's `at` is no RFC 3339 time (schema needs a time). The planning observe of a Target without a stored hello is not filtered.

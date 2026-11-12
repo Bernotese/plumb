@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Bernotese/plumb/internal/agent"
 	"github.com/Bernotese/plumb/internal/api"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
@@ -22,6 +21,7 @@ import (
 	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/resource"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -42,16 +42,18 @@ func agentBinary() []byte {
 	return b
 }
 
-// servedAgent describes the agent binary that the link serves (T-092):
+// servedAgent describes the agent binary that the link serves (T-092);
+// SHA256 is empty in a build without the agent binary:
 // its SHA-256, the version of this build (make builds both with one
-// version) and the capabilities of the agent code of this build.
+// version) and the capabilities of the agent code of this build (the same
+// list as agent.Capabilities; cmd/plumb does not import the agent).
 func servedAgent() plan.AgentBuild {
-	b := agentBinary()
-	if b == nil {
-		return plan.AgentBuild{}
+	a := plan.AgentBuild{Version: version, Capabilities: wire.Capabilities{Commands: wire.AgentCommands(), Resources: resource.Capabilities()}}
+	if b := agentBinary(); b != nil {
+		sum := sha256.Sum256(b)
+		a.SHA256 = hex.EncodeToString(sum[:])
 	}
-	sum := sha256.Sum256(b)
-	return plan.AgentBuild{SHA256: hex.EncodeToString(sum[:]), Version: version, Capabilities: agent.Capabilities()}
+	return a
 }
 
 // devTargets are the simulated guests of --dev.

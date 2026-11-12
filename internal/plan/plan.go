@@ -219,7 +219,7 @@ type Engine struct {
 	// scheduled builds (T-063): they run one after the other.
 	schedPlans map[int64]bool // Plans of scheduled builds that run now
 	// helloWait: update steps that wait for a hello (T-092).
-	helloWait map[string][]chan agentHello
+	helloWait map[string][]*helloWaiter
 }
 
 // Disk is the disk gate of the engine. Image builds (T-062) reserve their
@@ -398,6 +398,9 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 	case wire.ReportResult, wire.ReportProgress:
 		e.mu.Lock()
 		ch, ok := e.results[d.Report.CommandID]
+		if d.Report.Type == wire.ReportResult {
+			e.resultSeen(d.Target)
+		}
 		e.mu.Unlock()
 		if ok {
 			select {
