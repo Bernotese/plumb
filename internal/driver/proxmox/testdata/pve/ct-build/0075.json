@@ -1,0 +1,10 @@
+{
+  "seq": 75,
+  "method": "PUT",
+  "path": "/nodes/pve/lxc/9001/resize",
+  "form": "disk=rootfs\u0026size=5G",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:000495B1:006F70C7:6AF5CECA:resize:9001:plumb@pve!plumb:"
+  }
+}

@@ -2389,7 +2389,10 @@ components:
           $ref: "#/components/schemas/Revision"
           description: The head revision that the Run rendered the recipe from.
         recipe_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
-        base_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        base_sha256:
+          type: string
+          pattern: "^([0-9a-f]{64}|[0-9a-f]{128})$"
+          description: "SHA-256 of a vm base, SHA-512 pin of an lxc base (D-224, D-254)."
         disk_gb: { type: integer, minimum: 1 }
         started_at: { $ref: "#/components/schemas/Time" }
         finished_at: { $ref: "#/components/schemas/NullableTime" }

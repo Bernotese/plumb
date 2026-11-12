@@ -1,0 +1,10 @@
+{
+  "seq": 8,
+  "method": "POST",
+  "path": "/nodes/pve/lxc",
+  "form": "cores=1\u0026description=plumb-build%3A+t082-debian-13+v1%0APlumb+image+build.+Do+not+change+it+here.\u0026env=PLUMB_ENROLL_TOKEN%3Dscrubbed-1\u0026features=nesting%3D1\u0026hostname=plumb-build-t082-debian-13-v1\u0026memory=512\u0026nameserver=192.0.2.10\u0026net0=name%3Deth0%2Cbridge%3Dvmbr0%2Cip%3Ddhcp\u0026onboot=0\u0026ostemplate=plumb-images%3Avztmpl%2Fplumb-ct-t079-debian-13-2d416348aec2.tar.gz\u0026pool=plumb\u0026rootfs=local-lvm%3A4\u0026searchdomain=plumb.test\u0026swap=512\u0026unprivileged=1\u0026vmid=9000",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:00049423:006F6AF2:6AF5CEBB:vzcreate:9000:plumb@pve!plumb:"
+  }
+}

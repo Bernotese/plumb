@@ -158,3 +158,21 @@ func TestReplayCTLifecycle(t *testing.T) {
 	}
 	runCTLifecycle(t, d, hostCTImage, "vmbr0", []string{"ssh-ed25519 AAAAtestkey t079", "ssh-ed25519 AAAAtestkey Jürgen's Schlüssel ✓"})
 }
+
+// TestReplayCTBuild runs the container build lifecycle (T-082 H-B1)
+// against the answers of the host, the late template worker included.
+func TestReplayCTBuild(t *testing.T) {
+	rs, d := newReplay(t, "testdata/pve/ct-build")
+	t.Cleanup(func() {
+		if len(rs.missed) > 0 {
+			t.Errorf("requests without a recording: %v", rs.missed)
+		}
+	})
+	if _, err := d.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetCTSource(testCTSource(t.TempDir())); err != nil {
+		t.Fatal(err)
+	}
+	runCTBuild(t, d, hostCTImage, "vmbr0")
+}

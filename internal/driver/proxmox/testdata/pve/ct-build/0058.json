@@ -1,0 +1,10 @@
+{
+  "seq": 58,
+  "method": "POST",
+  "path": "/nodes/pve/lxc/9000/clone",
+  "form": "full=1\u0026hostname=plumb-ctb-test\u0026newid=9001\u0026pool=plumb\u0026storage=local-lvm",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:00049567:006F6EC2:6AF5CEC5:vzclone:9000:plumb@pve!plumb:"
+  }
+}

@@ -367,3 +367,59 @@ func TestMigrateWaiting(t *testing.T) {
 		t.Error("waiting accepts a JSON object")
 	}
 }
+
+// D-254: 0011 rebuilds image_version so base_sha256 takes a SHA-512 pin
+// too. Rows, the index and the triggers survive.
+func TestMigrateBasePin(t *testing.T) {
+	ctx := context.Background()
+	const ts = "'2026-11-12T00:00:00.000000000Z'"
+	h64 := strings.Repeat("a", 64)
+	path := openAt(t, migrationNumber(t, "_base_pin.sql")-1,
+		`INSERT INTO revision (id, author, reason, created_at) VALUES (1, 'system', 'seed', `+ts+`)`,
+		`INSERT INTO plan (id, base_revision, origin, proposal, changes, risk, status, reason, author, approved_by, created_at, approved_at)
+		 VALUES (1, 1, 'build', '{}', '[]', 'reversible', 'approved', 'b', 'user:admin', 'user:admin', `+ts+`, `+ts+`)`,
+		`INSERT INTO run (id, plan_id, revision_id, status, started_at) VALUES (1, 1, 1, 'succeeded', `+ts+`)`,
+		`INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at, finished_at)
+		 VALUES ('web', 1, 'ready', 'change', 1, 1, '`+h64+`', '`+h64+`', '`+h64+`', 10, `+ts+`, `+ts+`)`,
+		`INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at)
+		 VALUES ('web', 2, 'building', 'manual', 1, 1, '`+h64+`', '`+h64+`', '`+h64+`', 10, `+ts+`)`,
+	)
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for v, want := range map[int]string{1: "ready", 2: "building"} {
+		got, err := s.GetImageVersion(ctx, "web", v)
+		if err != nil || got.Status != want || got.BaseSHA256 != h64 || got.DiskGB != 10 {
+			t.Errorf("v%d after 0011: %+v %v", v, got, err)
+		}
+	}
+	// A SHA-512 pin goes in now; 64 and 128 only.
+	pin := strings.Repeat("c", 128)
+	_, err = s.AddImageVersion(ctx, ImageVersion{Image: "ct", Trigger: "change", RunID: 1, RevisionID: 1, RecipeSHA256: h64, BaseSHA256: pin, DiskGB: 4},
+		func(int) string { return h64 })
+	if err != nil {
+		t.Fatalf("SHA-512 pin: %v", err)
+	}
+	for _, bad := range []string{strings.Repeat("c", 100), ""} {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at)
+			VALUES ('x', 1, 'building', 'manual', 1, 1, ?, ?, ?, 1, `+ts+`)`, h64, bad, h64); err == nil {
+			t.Errorf("base_sha256 of length %d accepted", len(bad))
+		}
+	}
+	// Index and triggers: one building per Image, no delete, fixed columns.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at)
+		VALUES ('web', 3, 'building', 'manual', 1, 1, ?, ?, ?, 1, `+ts+`)`, h64, h64, h64); err == nil {
+		t.Error("two building versions of one Image")
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM image_version WHERE image = 'web'`); err == nil {
+		t.Error("delete allowed")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE image_version SET disk_gb = 11 WHERE image = 'web' AND version = 1`); err == nil {
+		t.Error("fixed column changed")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE image_version SET status = 'building' WHERE image = 'web' AND version = 1`); err == nil {
+		t.Error("ready → building allowed")
+	}
+}

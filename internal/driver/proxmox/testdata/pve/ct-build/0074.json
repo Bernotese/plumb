@@ -1,0 +1,10 @@
+{
+  "seq": 74,
+  "method": "PUT",
+  "path": "/nodes/pve/lxc/9001/config",
+  "form": "cores=1\u0026description=plumb-image%3A+t082-debian-13%0Aplumb-image-version%3A+1%0AManaged+by+Plumb.+Do+not+change+it+here.\u0026digest=9cbc000328fb4356d7707457d1ed8dcec670a1eb\u0026env=PLUMB_ENROLL_TOKEN%3Dscrubbed-2\u0026features=nesting%3D1\u0026memory=512\u0026nameserver=192.0.2.10\u0026net0=name%3Deth0%2Cbridge%3Dvmbr0%2Cip%3Ddhcp\u0026onboot=1\u0026searchdomain=plumb.test\u0026swap=512",
+  "status": 200,
+  "body": {
+    "data": null
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "seq": 70,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9001/config",
+  "query": "current=1",
+  "status": 200,
+  "body": {
+    "data": {
+      "ostype": "debian",
+      "features": "nesting=1",
+      "swap": 512,
+      "description": "plumb-image: t082-debian-13\nversion=1\nbuild=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\nPlumb image template. Do not change it here.\n",
+      "memory": 512,
+      "cores": 1,
+      "hostname": "plumb-ctb-test",
+      "net0": "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth",
+      "arch": "amd64",
+      "digest": "9cbc000328fb4356d7707457d1ed8dcec670a1eb",
+      "rootfs": "local-lvm:vm-9001-disk-0,size=4G",
+      "unprivileged": 1
+    }
+  }
+}

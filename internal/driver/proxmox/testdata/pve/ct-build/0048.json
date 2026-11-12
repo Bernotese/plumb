@@ -1,0 +1,9 @@
+{
+  "seq": 48,
+  "method": "POST",
+  "path": "/nodes/pve/lxc/9000/template",
+  "status": 200,
+  "body": {
+    "data": null
+  }
+}

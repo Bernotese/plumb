@@ -1,0 +1,58 @@
+{
+  "seq": 72,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9001/pending",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "key": "features",
+        "value": "nesting=1"
+      },
+      {
+        "value": "debian",
+        "key": "ostype"
+      },
+      {
+        "value": 512,
+        "key": "swap"
+      },
+      {
+        "value": "plumb-ctb-test",
+        "key": "hostname"
+      },
+      {
+        "value": "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth",
+        "key": "net0"
+      },
+      {
+        "key": "cores",
+        "value": 1
+      },
+      {
+        "value": "plumb-image: t082-debian-13\nversion=1\nbuild=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\nPlumb image template. Do not change it here.\n",
+        "key": "description"
+      },
+      {
+        "key": "memory",
+        "value": 512
+      },
+      {
+        "key": "unprivileged",
+        "value": 1
+      },
+      {
+        "value": "9cbc000328fb4356d7707457d1ed8dcec670a1eb",
+        "key": "digest"
+      },
+      {
+        "value": "amd64",
+        "key": "arch"
+      },
+      {
+        "value": "local-lvm:vm-9001-disk-0,size=4G",
+        "key": "rootfs"
+      }
+    ]
+  }
+}

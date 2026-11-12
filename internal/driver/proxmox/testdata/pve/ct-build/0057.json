@@ -1,0 +1,10 @@
+{
+  "seq": 57,
+  "method": "GET",
+  "path": "/cluster/nextid",
+  "query": "vmid=9001",
+  "status": 200,
+  "body": {
+    "data": "9001"
+  }
+}
