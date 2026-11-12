@@ -38,6 +38,8 @@
     lxc: new RegExp(specProps.sha512.pattern, "u"),
   };
   const atPattern = new RegExp(specProps.schedule.properties.at.pattern, "u");
+  // The root file system of a container needs at least 2 GiB (T-075, minLXCDisk).
+  const MIN_LXC_DISK = 2;
   const editing = $derived(name !== undefined);
 
   interface Use {
@@ -51,6 +53,7 @@
   }
 
   let existing = $state<ImageView | null>(null);
+  let keyedTargets = $state<string[]>([]);
   let allBlocks = $state<BlockView[]>([]);
   let loaded = $state(false);
   let loadError = $state<unknown>(null);
@@ -117,10 +120,18 @@
   }
 
   $effect(() => {
-    Promise.all([api.listBlocks(), name ? api.getImage(name) : Promise.resolve(null)]).then(
-      ([b, i]) => {
+    Promise.all([
+      api.listBlocks(),
+      name ? api.getImage(name) : Promise.resolve(null),
+      name ? api.listTargets() : Promise.resolve([]),
+    ]).then(
+      ([b, i, t]) => {
         allBlocks = b;
         existing = i;
+        // D-251: a Target of this Image with SSH keys blocks a build of it.
+        keyedTargets = t
+          .filter((x) => x.document.spec.image === name && x.document.spec.guest.ssh_keys?.length)
+          .map((x) => x.document.name);
         addChoice = b.find((x) => !hasSecret(x))?.document.name ?? "";
         const s = i?.document.spec;
         const g = s?.build?.guest;
@@ -186,8 +197,12 @@
           ? "Give the SHA-512 checksum: 128 characters 0-9 and a-f."
           : "Give the SHA-256 checksum: 64 characters 0-9 and a-f.";
     if (!reason.trim()) e["reason"] = "Say why you make this change.";
-    if (kind === "lxc") build = false; // LXC image builds come later (T-082)
-    guestErrors = build ? validate(guestFields, guest) : {};
+    guestErrors = build ? validate(kindGuestFields, guest) : {};
+    if (build && kind === "lxc" && !guestErrors["disk"] && Number(guest["disk"]) < MIN_LXC_DISK)
+      guestErrors = {
+        ...guestErrors,
+        disk: `The root file system of a container build needs at least ${MIN_LXC_DISK} GiB.`,
+      };
     if (build) {
       if (!(Number.isInteger(keep) && keep >= 1 && keep <= 20))
         e["keep"] = "Keep 1 to 20 versions.";
@@ -237,7 +252,7 @@
           params: mergeParams(u.stored, u.fields, u.values),
         })),
         upgrade,
-        guest: mergeParams(old?.build?.guest ?? {}, guestFields, guest) as NonNullable<
+        guest: mergeParams(old?.build?.guest ?? {}, kindGuestFields, guest) as NonNullable<
           ImageSpec["build"]
         >["guest"],
       };
@@ -259,6 +274,24 @@
   }
 
   const shaKey = $derived(kind === "lxc" ? "sha512" : "sha256");
+  // The schema texts speak of VMs; a container build field gets its own help.
+  const kindGuestFields = $derived(
+    kind === "lxc"
+      ? guestFields.map((f) =>
+          f.name === "disk"
+            ? {
+                ...f,
+                description: `GiB: the root file system of the build container, at least ${MIN_LXC_DISK}. A Target from this image needs at least this size.`,
+              }
+            : f.name === "ip"
+              ? {
+                  ...f,
+                  description: "dhcp or an IPv4 address in CIDR form for the build container.",
+                }
+              : f,
+        )
+      : guestFields,
+  );
 
   /** The pick list fills url and pin of a known Proxmox template. */
   function pickKnown(label: string) {
@@ -395,40 +428,50 @@
       </div>
     </fieldset>
 
-    {#if kind === "lxc"}
-      <p class="muted" id="i-lxc-build">
-        Plumb uses the Proxmox template with the agent installer added. Builds of container images
-        come later.
-      </p>
-    {:else}
-      <fieldset>
-        <legend>Build</legend>
-        <div class="field">
-          <label class="check">
-            <input
-              type="checkbox"
-              id="i-build"
-              bind:checked={build}
-              aria-describedby="i-build-hint"
-            />
-            Build templates from this image
-          </label>
-          <span class="hint" id="i-build-hint"
-            >Off: a stock image, imported as it is. On: Plumb makes versioned templates with the
-            Blocks below and fresh packages. Only a person can approve a change of the recipe, the
-            schedule or the retention.</span
-          >
-        </div>
-        {#if wasBuilt && !build}
-          <p class="banner warn" id="i-unbuild">
-            Without a build, the plan removes every built version of this image. Guests made from
-            them keep running.
+    <fieldset>
+      <legend>Build</legend>
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            id="i-build"
+            bind:checked={build}
+            aria-describedby="i-build-hint"
+          />
+          Build templates from this image
+        </label>
+        <span class="hint" id="i-build-hint"
+          >{#if kind === "lxc"}Off: each create uses the Proxmox template with the agent installer
+            added. On: Plumb makes versioned container templates with the Blocks below and fresh
+            packages.{:else}Off: a stock image, imported as it is. On: Plumb makes versioned
+            templates with the Blocks below and fresh packages.{/if} Only a person can approve a change
+          of the recipe, the schedule or the retention.</span
+        >
+      </div>
+      {#if build && kind === "lxc"}
+        <p class="banner info" id="i-lxc-keys">
+          A container from a built image gets no SSH keys from Proxmox. Add the keys with the Block <span
+            class="mono">deploy-user</span
+          > on the Target or in this build (D-251).
+        </p>
+        {#if keyedTargets.length}
+          <p class="banner warn" id="i-lxc-keyed-targets">
+            The server refuses this build while Targets of this image have SSH keys: <span
+              class="mono">{keyedTargets.join(", ")}</span
+            >. Remove their keys first (use the Block <span class="mono">deploy-user</span>), then
+            switch on the build.
           </p>
         {/if}
-      </fieldset>
-    {/if}
+      {/if}
+      {#if wasBuilt && !build}
+        <p class="banner warn" id="i-unbuild">
+          Without a build, the plan removes every built version of this image. Guests made from them
+          keep running.
+        </p>
+      {/if}
+    </fieldset>
 
-    {#if build && kind === "vm"}
+    {#if build}
       <h2>Blocks</h2>
       <p class="muted">
         The build applies these Blocks before the template is made. A Block with a secret parameter
@@ -485,7 +528,7 @@
       </div>
 
       <fieldset>
-        <legend>Build guest</legend>
+        <legend>{kind === "lxc" ? "Build container" : "Build guest"}</legend>
         <div class="field">
           <label class="check">
             <input
@@ -497,12 +540,17 @@
             Upgrade all packages in the build
           </label>
           <span class="hint" id="i-upgrade-hint"
-            >On: every build installs what the package mirror serves at that time. apt checks the
-            signatures. Off: the packages of the base image.</span
+            >{#if kind === "lxc"}On: before the template is made, the build runs
+              <span class="mono">apt-get update</span> and
+              <span class="mono">apt-get dist-upgrade</span> in the container (old configuration files
+              stay), so the template has what the package mirror serves at that time. apt checks the signatures.
+              The build fails when a package is left to upgrade. Off: the packages of the Proxmox template.{:else}On:
+              every build installs what the package mirror serves at that time. apt checks the
+              signatures. Off: the packages of the base image.{/if}</span
           >
         </div>
         <SchemaFields
-          fields={guestFields}
+          fields={kindGuestFields}
           bind:values={guest}
           errors={{
             ...guestErrors,
@@ -529,8 +577,9 @@
               aria-describedby={desc("i-keep", errors["keep"])}
             />
             <span class="hint" id="i-keep-hint"
-              >Newest ready versions that stay (1 … 20). One version takes about 1.4 GB (Debian) or
-              3.3 … 3.9 GB (Ubuntu).</span
+              >Newest ready versions that stay (1 … 20). {kind === "lxc"
+                ? "One version is a full copy of the root file system of the build container."
+                : "One version takes about 1.4 GB (Debian) or 3.3 … 3.9 GB (Ubuntu)."}</span
             >
             {#if errors["keep"]}<span class="error" id="i-keep-error">{errors["keep"]}</span>{/if}
           </div>

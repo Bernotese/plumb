@@ -29,7 +29,7 @@ describe("lxc image form", () => {
     await until(() => document.querySelector("#i-build"));
     el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
     flushSync();
-    expect(document.querySelector("#i-build")).toBeNull();
+    expect(el<HTMLInputElement>("#i-build").checked).toBe(false); // T-082: a build is optional
     expect(text()).toContain("SHA-512 checksum");
     expect(text()).toContain("signed Proxmox appliance index");
     type("#i-known", "Debian 13");
@@ -70,7 +70,7 @@ describe("lxc image form", () => {
     expect(createPlan).not.toHaveBeenCalled();
   });
 
-  it("switches a configured VM build to an lxc recipe without build fields", async () => {
+  it("switches a configured VM build to an lxc Image and back; a build switched off sends none", async () => {
     const api = adminApi();
     const createPlan = vi.spyOn(api, "createPlan");
     show(ImageForm, { api });
@@ -79,13 +79,16 @@ describe("lxc image form", () => {
     flushSync();
     el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
     flushSync();
-    expect(document.querySelector("#i-build")).toBeNull();
+    expect(el<HTMLInputElement>("#i-build").checked).toBe(true);
+    expect(document.querySelector("#i-lxc-keys")).not.toBeNull();
     el<HTMLInputElement>('input[name="i-type"][value="vm"]').click();
     flushSync();
     expect(document.querySelector("#i-known")).toBeNull();
-    expect(document.querySelector("#i-build")).not.toBeNull();
+    expect(document.querySelector("#i-lxc-keys")).toBeNull();
     expect(text()).toContain("SHA-256 checksum");
     el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
+    flushSync();
+    el<HTMLInputElement>("#i-build").click();
     flushSync();
     type("#i-known", "Ubuntu 26.04");
     const ubuntu = KNOWN_LXC_TEMPLATES.find((t) => t.label === "Ubuntu 26.04");
@@ -127,7 +130,7 @@ describe("lxc image form", () => {
     expect(el("#i-type").textContent).toBe("Container (LXC)");
     expect(el<HTMLInputElement>("#i-sha").value).toBe(debian.sha512);
     expect(document.querySelector('input[name="i-type"]')).toBeNull();
-    expect(document.querySelector("#i-build")).toBeNull();
+    expect(el<HTMLInputElement>("#i-build").checked).toBe(false);
   });
 });
 
@@ -174,7 +177,7 @@ describe("lxc image page", () => {
       "pvesm free plumb-images:vztmpl/plumb-ct-debian-ct-0a1b2c3d4e5f.tar.gz",
     );
     expect(button(/^Copy/)).toBeDefined();
-    expect(text()).toContain("A container image has no versions");
+    expect(text()).toContain("A stock container image has no versions");
   });
 
   it.each([false, true])("handles unused template files safely (empty=%s)", async (empty) => {

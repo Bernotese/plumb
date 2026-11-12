@@ -991,6 +991,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   /** The Target part of D-202: a smaller disk than the template, or no ready version yet. */
   function checkTargetImage(t: TargetDoc, at: number, isNew: boolean) {
     const view = findImage(t.spec.image);
+    if (
+      view?.document.spec.type === "lxc" &&
+      view.document.spec.build &&
+      t.spec.guest.ssh_keys?.length
+    ) {
+      const message = `a container from the built Image "${t.spec.image}" gets no SSH keys from Proxmox; add them with a Block such as deploy-user (D-251)`;
+      throw problem("validation", "Validation failed", 422, message, {
+        errors: [{ pointer: `/put/${at}/spec/guest/ssh_keys`, message }],
+      });
+    }
     const min = view?.document.spec.build?.guest.disk;
     if (min !== undefined && t.spec.guest.disk < min) {
       const message = `The disk must be at least ${min} GiB: the template of image ${t.spec.image} has ${min} GiB, and a disk cannot shrink.`;
@@ -1081,7 +1091,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       run_id: run.id,
       revision: run.revision,
       recipe_sha256: recipeHash(spec),
-      base_sha256: spec.sha256 ?? "",
+      // D-254: the SHA-512 pin of an lxc base, the SHA-256 of a vm base.
+      base_sha256: (spec.type === "lxc" ? spec.sha512 : spec.sha256) ?? "",
       disk_gb: spec.build.guest.disk,
       started_at: now(),
       finished_at: null,
