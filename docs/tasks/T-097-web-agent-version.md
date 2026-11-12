@@ -23,4 +23,7 @@ The Target view shows the agent version, offers "update agent" and explains the 
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-frontend/T-097-web-agent-version` (on T-092, PR #196).
+- Agent card (version, connection, state, what the agent lacks, a revert, "Propose agent update" → the Plan) on the Target page and on `#/targets/<name>/agent`; Targets list shows `agent vX` and a badge link; a Target with `required` has a top banner; the problem box shows `agent-outdated` with what is missing and a link per Target; PlanView names origin `agent_update`.
+- Mock: agent states for web1 (available), cache1 (required + revert), backup1 (manual); `updateTargetAgent`; 409 `agent-outdated` on a Plan for cache1.
+- Tests: `make lint-web test-web` → ok (397); new `lib/agent.test.ts`, `screens/agent.test.ts`. Screenshots `docs/screenshots/T-097-*.png`. No e2e: the demo agents of `plumb serve --dev-demo` do not run the update path (T-092 tests cover the server).

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { missingText, outdatedOf } from "../lib/agent";
   import { ApiError, NetworkError } from "../lib/api";
+  import { href } from "../lib/router";
 
   /** `fields`: pointers that the form shows at its fields; they are not listed here. */
   let { error, fields = [] }: { error: unknown; fields?: string[] } = $props();
@@ -8,6 +10,8 @@
   const atFields = $derived((p?.errors?.length ?? 0) > rest.length);
   // Only the HTTP client marks a failed fetch; any other error is a bug.
   const network = $derived(error instanceof NetworkError);
+  // The gate refusal (D-259) links to the agent of each Target (T-097).
+  const outdated = $derived(outdatedOf(error));
   const text = $derived(error instanceof Error ? error.message : String(error));
 </script>
 
@@ -16,7 +20,20 @@
     {#if p}
       <strong>{p.title}.</strong>
       {#if p.detail}{p.detail}{/if}
-      {#if p.targets?.length}
+      {#if outdated}
+        {#if outdated.missing.length}
+          <p class="list">
+            The agent lacks: {outdated.missing.map(missingText).join(", ")}.
+          </p>
+        {/if}
+        <ul class="agents">
+          {#each outdated.targets as t (t)}
+            <li>
+              <a href={href({ name: "target-agent", target: t })}>Update the agent of {t}</a>
+            </li>
+          {/each}
+        </ul>
+      {:else if p.targets?.length}
         <p class="list">Targets: <span class="mono">{p.targets.join(", ")}</span></p>
       {/if}
       {#if p.plans?.length}
@@ -44,5 +61,12 @@
 <style>
   .list {
     margin: var(--space-1) 0 0;
+  }
+  .agents {
+    margin: var(--space-1) 0 0;
+  }
+  .agents a {
+    color: inherit;
+    font-weight: 600;
   }
 </style>
