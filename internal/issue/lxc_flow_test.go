@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"log/slog"
+	"net/http"
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // T-080: the engine part of LXC Targets (T-038 §4) against driver/fake.
@@ -243,12 +245,23 @@ func TestLXCReenroll(t *testing.T) {
 	if run.Status != "succeeded" {
 		t.Fatalf("create %s: %s", run.Status, stepNames(e.steps(run)))
 	}
+	oldCredential := a.Credential()
+	boots := e.drv.Boots(e.guestID("c1"))
 	run = e.approve(e.propose(plan.Proposal{Reenroll: []string{"c1"}}).ID)
 	if run.Status != "succeeded" || stepNames(e.steps(run)) != "guest:config=applied guest:bootstrap=applied" {
 		t.Fatalf("reenroll %s: %s", run.Status, stepNames(e.steps(run)))
 	}
 	if a.Enrolls() != 2 || e.observe("c1").TokenInConfig || e.drv.Calls(fake.OpClearBootstrap) != 2 {
 		t.Errorf("enrolls %d token %v clears %d", a.Enrolls(), e.observe("c1").TokenInConfig, e.drv.Calls(fake.OpClearBootstrap))
+	}
+	if e.drv.Boots(e.guestID("c1")) != boots+1 {
+		t.Error("re-enrollment did not cold restart exactly once")
+	}
+	if a.Credential() == oldCredential {
+		t.Error("re-enrollment reused the credential")
+	}
+	if code := ctRequest(e, wire.PathReport, oldCredential, wire.Report{Type: wire.ReportHello}); code != http.StatusUnauthorized {
+		t.Errorf("old credential after re-enrollment: %d", code)
 	}
 }
 
@@ -283,6 +296,7 @@ func TestLXCDelete(t *testing.T) {
 		t.Fatalf("create %s", run.Status)
 	}
 	id := e.guestID("c1")
+	credential := a.Credential()
 	run := e.approve(e.propose(plan.Proposal{Delete: []plan.DocKey{{Kind: state.KindTarget, Name: "c1"}}}).ID)
 	if run.Status != "succeeded" || stepNames(e.steps(run)) != "guest:config=applied" {
 		t.Fatalf("delete %s: %s", run.Status, stepNames(e.steps(run)))
@@ -291,7 +305,12 @@ func TestLXCDelete(t *testing.T) {
 		t.Error("container still there")
 	}
 	eventually(t, "agent offline", func() bool { return !e.link.Online("c1") })
-	_ = a
+	if code := ctRequest(e, wire.PathReport, credential, wire.Report{Type: wire.ReportHello}); code != http.StatusUnauthorized {
+		t.Errorf("deleted credential: %d", code)
+	}
+	if _, err := e.st.GetBinding(e.ctx, state.KindTarget, "c1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("deleted binding: %v", err)
+	}
 }
 
 // A stop during the fetch cancels it: nothing is made, no token is made,
