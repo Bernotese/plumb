@@ -268,10 +268,14 @@ check_host() {
 # json_has FIELD VALUE: stdin is the JSON of a pveum/pvesh list.
 json_has() { grep -Eq "\"$1\" *: *\"$2\""; }
 
-# --- roles and rights (ARCHITECTURE §7, D-032, D-081) ---
+# --- roles and rights (ARCHITECTURE §7, D-032, D-081, D-240) ---
 
 # One role per ACL path, so no path gets a right it does not need.
-ROLE_NAMES=(PlumbGuests PlumbDisk PlumbImages PlumbSnippets PlumbBridge PlumbNode)
+# PlumbAudit: GET /nodes/<node>/disks/lvmthin (thin-pool metadata use for
+# the disk gate) checks Sys.Audit on the fixed path / (PVE/API2/Disks/
+# LVMThin.pm), so no narrower path works. Propagate 0: it does not reach
+# /nodes, /vms or /storage (D-240).
+ROLE_NAMES=(PlumbGuests PlumbDisk PlumbImages PlumbSnippets PlumbBridge PlumbNode PlumbAudit)
 declare -A ROLE_PRIVS=(
 	[PlumbGuests]="VM.Allocate VM.Audit VM.Clone VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt Pool.Audit"
 	[PlumbDisk]="Datastore.AllocateSpace Datastore.Audit"
@@ -279,6 +283,7 @@ declare -A ROLE_PRIVS=(
 	[PlumbSnippets]="Datastore.AllocateSpace"
 	[PlumbBridge]="SDN.Use"
 	[PlumbNode]="Sys.AccessNetwork"
+	[PlumbAudit]="Sys.Audit"
 )
 
 role_path() {
@@ -289,7 +294,13 @@ role_path() {
 	PlumbSnippets) echo "/storage/$SNIPPET_STORAGE" ;;
 	PlumbBridge) echo "/sdn/zones/localnetwork/$BRIDGE" ;;
 	PlumbNode) echo "/nodes/$NODE" ;;
+	PlumbAudit) echo "/" ;;
 	esac
+}
+
+# role_propagate: only the pool ACL is inherited (pool members).
+role_propagate() {
+	if [[ $1 == PlumbGuests ]]; then echo 1; else echo 0; fi
 }
 
 print_rights() {
@@ -298,7 +309,18 @@ print_rights() {
 	for role in "${ROLE_NAMES[@]}"; do
 		printf '  %-38s %-14s %s\n' "$(role_path "$role")" "$role" "${ROLE_PRIVS[$role]}"
 	done
-	say "It gets no Sys.Modify, Sys.Audit, Permissions.Modify, Pool.Allocate, console or guest-agent right, and no other ACL."
+	say "Sys.Audit on / is not inherited (propagate 0). It reads the thin-pool metadata use for the disk gate. It also lets"
+	say "Plumb read, never write, cluster-wide (D-240):"
+	say "  - the task list of all users, root included (no task logs);"
+	say "  - the use metrics (CPU, memory, disk, network, uptime, with history) of every guest, node and storage;"
+	say "  - the IDs, names and volumes of the guests in backup jobs, and the backup jobs and their config;"
+	say "  - the node disk lists and SMART data, the PCI list, /etc/hosts and the node config;"
+	say "  - all datacenter options, cluster status and config, HA, metric-server config (not its token),"
+	say "    cluster firewall options, rules, security groups, aliases and IP sets, realm sync jobs, Ceph status,"
+	say "    the backup job IDs and comments in the notification values, the cluster name at login."
+	say "  It reads no config of a guest outside pool $POOL, and no node status, syslog, network or task log."
+	say "It gets no Sys.Modify, no Sys.Audit on /nodes or any other path, no Permissions.Modify, Pool.Allocate, console"
+	say "or guest-agent right, and no other ACL."
 	say "The Plumb LXC is not in pool $POOL, so Plumb cannot change itself or foreign guests."
 }
 
@@ -698,8 +720,8 @@ ensure_acls() {
 	local role acls
 	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER"
 	for role in "${ROLE_NAMES[@]}"; do
-		local propagate=0 path
-		[[ $role == PlumbGuests ]] && propagate=1 # pool members inherit
+		local propagate path
+		propagate=$(role_propagate "$role")
 		path=$(role_path "$role")
 		# An ACL that exists as planned is kept (repair run).
 		grep -qxF "$path $PVE_USER $role user $propagate" <<<"$acls" ||

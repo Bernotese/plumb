@@ -288,6 +288,7 @@ func seedHalfInstalled(t *testing.T, h *host, imagesPath string) {
 		"PlumbSnippets": "Datastore.AllocateSpace",
 		"PlumbBridge":   "SDN.Use",
 		"PlumbNode":     "Sys.AccessNetwork",
+		"PlumbAudit":    "Sys.Audit",
 	} {
 		files["role."+name] = privs + "\n"
 	}

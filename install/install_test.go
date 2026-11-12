@@ -148,6 +148,9 @@ func TestDryRunChangesNothing(t *testing.T) {
 		"+ pveum user add plumb@pve",
 		`+ pveum acl modify /pool/plumb --tokens plumb@pve\!plumb --roles PlumbGuests --propagate 1`,
 		"+ pveum acl modify /storage/plumb-snippets --tokens plumb@pve\\!plumb --roles PlumbSnippets --propagate 0",
+		"+ pveum role add PlumbAudit --privs Sys.Audit",
+		"+ pveum acl modify / --users plumb@pve --roles PlumbAudit --propagate 0",
+		"+ pveum acl modify / --tokens plumb@pve\\!plumb --roles PlumbAudit --propagate 0",
 		"+ pveum user token add plumb@pve plumb --privsep 1",
 		"+ pvesm add dir plumb-snippets --path " + h.snippet + " --content snippets --shared 0",
 		"+ pvesm add dir plumb-images --path " + h.images() + " --content import\\,vztmpl --shared 0",
@@ -180,7 +183,8 @@ func TestDryRunChangesNothing(t *testing.T) {
 	}
 }
 
-// The rights are printed before any change and are exactly those of D-081.
+// The rights are printed before any change and are exactly those of D-081
+// and D-240.
 func TestRights(t *testing.T) {
 	h := newHost(t)
 	_, out, _ := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
@@ -192,6 +196,7 @@ func TestRights(t *testing.T) {
 		"/storage/plumb-snippets":       "Datastore.AllocateSpace",
 		"/sdn/zones/localnetwork/vmbr0": "SDN.Use",
 		"/nodes/pve1":                   "Sys.AccessNetwork",
+		"/":                             "Sys.Audit",
 	}
 	for path, privs := range want {
 		re := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(path) + ` +Plumb\w+ +` + regexp.QuoteMeta(privs) + `$`)
@@ -210,10 +215,205 @@ func TestRights(t *testing.T) {
 	if len(granted) != len(want) {
 		t.Errorf("%d rights lines, want %d", len(granted), len(want))
 	}
+	// Sys.Audit only on / (D-240): every other line must not have it.
+	var others []string
+	for _, line := range granted {
+		if !strings.HasPrefix(line, "  / ") {
+			others = append(others, line)
+		}
+	}
+	if len(others) != len(granted)-1 {
+		t.Errorf("want exactly one rights line for /:\n%s", strings.Join(granted, "\n"))
+	}
+	if o := strings.Join(others, "\n"); strings.Contains(o, "Sys.Audit") {
+		t.Errorf("Sys.Audit granted on another path than /:\n%s", o)
+	}
+	if !strings.Contains(rights, "Sys.Audit on / is not inherited (propagate 0)") ||
+		!strings.Contains(rights, "the task list of all users") ||
+		!strings.Contains(rights, "use metrics (CPU, memory, disk, network, uptime, with history) of every guest") ||
+		!strings.Contains(rights, "names and volumes of the guests in backup jobs") ||
+		!strings.Contains(rights, "no Sys.Audit on /nodes or any other path") {
+		t.Errorf("the rights text does not say what Sys.Audit on / is:\n%s", rights)
+	}
 	all := strings.Join(granted, "\n")
-	for _, bad := range []string{"Sys.Audit", "VM.Config.CDROM", "Sys.Modify", "Permissions.Modify", "Pool.Allocate", "Sys.Console", "VM.Console", "VM.Monitor", "VM.GuestAgent", "Realm.", "User.Modify", "VM.Backup", "VM.Snapshot", "VM.Migrate", "Datastore.Allocate "} {
+	for _, bad := range []string{"VM.Config.CDROM", "Sys.Modify", "Permissions.Modify", "Pool.Allocate", "Sys.Console", "VM.Console", "VM.Monitor", "VM.GuestAgent", "Realm.", "User.Modify", "VM.Backup", "VM.Snapshot", "VM.Migrate", "Datastore.Allocate "} {
 		if strings.Contains(all+" ", bad) {
 			t.Errorf("forbidden right %s granted", bad)
+		}
+	}
+}
+
+// D-240: a repair run on a host installed before T-084 adds only the role
+// PlumbAudit and its ACL on / (propagate 0), for user and token. An ACL on
+// / that is inherited is set back to propagate 0.
+func TestRepairAddsSysAudit(t *testing.T) {
+	h := newHost(t)
+	root := h.installed()
+	acl := filepath.Join(h.state, "acl")
+	old, _ := os.ReadFile(acl)
+	var kept []string
+	for _, line := range strings.Split(strings.TrimSpace(string(old)), "\n") {
+		if !strings.HasPrefix(line, "/ ") {
+			kept = append(kept, line)
+		}
+	}
+	if len(kept) != strings.Count(string(old), "\n")-2 {
+		t.Fatalf("install did not set two ACLs on /:\n%s", old)
+	}
+	os.WriteFile(acl, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
+	os.Remove(filepath.Join(h.state, "role.PlumbAudit"))
+
+	code, out, errOut := h.run(root, "--dry-run", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("dry run: %d %s %s", code, out, errOut)
+	}
+	if c := h.changed(); len(c) != 0 {
+		t.Errorf("dry run changed the host: %v", c)
+	}
+	var pveum []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "+ pveum ") {
+			pveum = append(pveum, line)
+		}
+	}
+	want := []string{
+		"+ pveum role add PlumbAudit --privs Sys.Audit",
+		"+ pveum acl modify / --users plumb@pve --roles PlumbAudit --propagate 0",
+		`+ pveum acl modify / --tokens plumb@pve\!plumb --roles PlumbAudit --propagate 0`,
+	}
+	if strings.Join(pveum, "\n") != strings.Join(want, "\n") {
+		t.Errorf("dry run pveum changes:\n%s\nwant:\n%s", strings.Join(pveum, "\n"), strings.Join(want, "\n"))
+	}
+
+	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("repair: %d %s %s", code, out, errOut)
+	}
+	var actual []string
+	for _, c := range h.changed() {
+		if strings.HasPrefix(c, "pveum ") {
+			actual = append(actual, c)
+		}
+	}
+	wantReal := strings.ReplaceAll(strings.TrimPrefix(strings.Join(want, "\n"), "+ "), "\n+ ", "\n")
+	wantReal = strings.ReplaceAll(wantReal, `\!`, "!")
+	if strings.Join(actual, "\n") != wantReal {
+		t.Errorf("repair pveum changes: %v; want %s", actual, wantReal)
+	}
+	now, _ := os.ReadFile(acl)
+	for _, w := range []string{"/ plumb@pve PlumbAudit user 0\n", "/ plumb@pve!plumb PlumbAudit token 0\n"} {
+		if !strings.Contains(string(now), w) {
+			t.Errorf("ACL %q missing after the repair:\n%s", w, now)
+		}
+	}
+
+	// An inherited ACL on / is set back to propagate 0, for user and token
+	// (the token's rights are what counts).
+	flipped := strings.Replace(string(now), "/ plumb@pve PlumbAudit user 0", "/ plumb@pve PlumbAudit user 1", 1)
+	flipped = strings.Replace(flipped, "/ plumb@pve!plumb PlumbAudit token 0", "/ plumb@pve!plumb PlumbAudit token 1", 1)
+	os.WriteFile(acl, []byte(flipped), 0o644)
+	h.resetCalls()
+	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("repair 2: %d %s %s", code, out, errOut)
+	}
+	var acls []string
+	for _, c := range h.changed() {
+		if strings.HasPrefix(c, "pveum ") {
+			acls = append(acls, c)
+		}
+	}
+	if strings.Join(acls, "\n") != "pveum acl modify / --users plumb@pve --roles PlumbAudit --propagate 0\n"+
+		"pveum acl modify / --tokens plumb@pve!plumb --roles PlumbAudit --propagate 0" {
+		t.Errorf("repair of the inherited ACLs: %v", acls)
+	}
+	now, _ = os.ReadFile(acl)
+	for _, w := range []string{"/ plumb@pve PlumbAudit user 0\n", "/ plumb@pve!plumb PlumbAudit token 0\n"} {
+		if !strings.Contains(string(now), w) {
+			t.Errorf("ACL %q still inherited:\n%s", w, now)
+		}
+	}
+}
+
+// Audit privileges must stay exact even when repairing an existing install.
+func TestAuditRoleRepair(t *testing.T) {
+	for _, appendRights := range []bool{false, true} {
+		t.Run(map[bool]string{false: "replace", true: "refuse-append"}[appendRights], func(t *testing.T) {
+			h := newHost(t)
+			root := h.installed()
+			role := filepath.Join(h.state, "role.PlumbAudit")
+			if err := os.WriteFile(role, []byte("Sys.Audit,Sys.Modify\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			code, out, errOut := h.run(root, "--dry-run", "--plumb-binary", h.plumb)
+			if code != 0 || !strings.Contains(out, "+ pveum role modify PlumbAudit --privs Sys.Audit") {
+				t.Fatalf("dry run: %d %s %s", code, out, errOut)
+			}
+			if c := h.changed(); len(c) != 0 {
+				t.Fatalf("dry run changed host: %v", c)
+			}
+			if appendRights {
+				root = append(root, "FAKE_ROLE_APPEND=1")
+			}
+			code, out, errOut = h.run(root, "--yes", "--plumb-binary", h.plumb)
+			if appendRights {
+				if code == 0 || !strings.Contains(errOut, "role PlumbAudit has the rights") {
+					t.Fatalf("unsafe role accepted: %d %s %s", code, out, errOut)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("repair: %d %s %s", code, out, errOut)
+			}
+			got, err := os.ReadFile(role)
+			if err != nil || strings.TrimSpace(string(got)) != "Sys.Audit" {
+				t.Fatalf("audit role: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestAuditACLRepairAndRemove(t *testing.T) {
+	h := newHost(t)
+	root := h.installed()
+	acl := filepath.Join(h.state, "acl")
+	got, err := os.ReadFile(acl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both principals have an inherited root ACL and an unwanted node ACL.
+	bad := strings.ReplaceAll(string(got), "PlumbAudit user 0", "PlumbAudit user 1")
+	bad = strings.ReplaceAll(bad, "PlumbAudit token 0", "PlumbAudit token 1")
+	bad += "/nodes/pve1 plumb@pve PlumbAudit user 1\n/nodes/pve1 plumb@pve!plumb PlumbAudit token 1\n"
+	if err := os.WriteFile(acl, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("repair: %d %s %s", code, out, errOut)
+	}
+	got, err = os.ReadFile(acl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audit []string
+	for _, line := range strings.Split(string(got), "\n") {
+		if strings.Contains(line, " PlumbAudit ") {
+			audit = append(audit, line)
+		}
+	}
+	want := "/ plumb@pve PlumbAudit user 0\n/ plumb@pve!plumb PlumbAudit token 0"
+	if strings.Join(audit, "\n") != want {
+		t.Fatalf("audit ACLs: %v", audit)
+	}
+	if code, out, errOut := h.run(root, "--remove", "--yes"); code != 0 {
+		t.Fatalf("remove: %d %s %s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(h.state, "role.PlumbAudit")); !os.IsNotExist(err) {
+		t.Errorf("audit role remains: %v", err)
+	}
+	// The fake does not cascade ACL deletion when principals are removed.
+	calls := "\n" + strings.Join(h.changed(), "\n") + "\n"
+	for _, want := range []string{"pveum user token remove plumb@pve plumb", "pveum user delete plumb@pve", "pveum role delete PlumbAudit"} {
+		if !strings.Contains(calls, "\n"+want+"\n") {
+			t.Errorf("remove did not call %q", want)
 		}
 	}
 }
@@ -547,7 +747,7 @@ func TestOldRights(t *testing.T) {
 		t.Error("printed after a change")
 	}
 	acl, _ := os.ReadFile(filepath.Join(h.state, "acl"))
-	if strings.Contains(string(acl), "/ plumb@pve Plumb") {
+	if strings.Contains("\n"+string(acl), "\n/ plumb@pve Plumb user") {
 		t.Errorf("the old right stays:\n%s", acl)
 	}
 	// A role with an extra right is modified; a PVE that appends instead of
