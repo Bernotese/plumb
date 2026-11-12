@@ -40,7 +40,7 @@ func starterRender(t *testing.T, uses []any, secrets map[string]string) []wire.R
 		}
 		docs = append(docs, doc)
 	}
-	for _, name := range []string{"ssh-hardening", "common-tools", "shell", "docker-compose", "deploy-user"} {
+	for _, name := range []string{"ssh-hardening", "common-tools", "shell", "docker-engine", "docker-compose", "deploy-user"} {
 		raw, err := blocks.FS.ReadFile(name + ".yaml")
 		if err != nil {
 			t.Fatal(err)
@@ -326,8 +326,8 @@ func TestGuestStarterDockerCompose(t *testing.T) {
 	defer cancel()
 	g := newStarterGuest(t, ctx)
 	distro, suite := osRelease(t)
-	// A canary in the secret: the app serves it, nothing may log it.
-	const canary = "plumb-compose-canary-5c1e9"
+	// A canary in each secret: the app serves it, nothing may log it.
+	const canary, canary2 = "plumb-compose-canary-5c1e9", "plumb-compose-canary-b7d02"
 	compose := func(port int) string {
 		return fmt.Sprintf(`services:
   web:
@@ -340,19 +340,31 @@ func TestGuestStarterDockerCompose(t *testing.T) {
     restart: unless-stopped
 `, port)
 	}
+	// docker-engine once, two docker-compose projects on the same Target
+	// (review M1 of #197): whoami moves its port, blog stays.
 	uses := func(port int) []any {
-		return []any{map[string]any{"use": "docker-compose", "params": map[string]any{
-			"name": "whoami", "compose": compose(port), "env": map[string]any{"secret": "whoami-env"},
-			"distro": distro, "suite": suite,
-		}}}
+		project := func(name string, port int) map[string]any {
+			return map[string]any{"use": "docker-compose", "id": "compose-" + name, "params": map[string]any{
+				"name": name, "compose": compose(port), "env": map[string]any{"secret": name + "-env"},
+			}}
+		}
+		return []any{
+			map[string]any{"use": "docker-engine", "params": map[string]any{"distro": distro, "suite": suite}},
+			project("whoami", port),
+			project("blog", 18083),
+		}
 	}
-	secrets := map[string]string{"whoami-env": "GREETING=" + canary + "\n"}
+	secrets := map[string]string{"whoami-env": "GREETING=" + canary + "\n", "blog-env": "GREETING=" + canary2 + "\n"}
 	t.Cleanup(func() {
-		c := exec.Command("docker", "compose", "--project-name", "whoami", "down", "--rmi", "all")
-		c.Dir = "/opt/plumb-compose-whoami"
-		_ = c.Run()
-		_ = exec.Command("systemctl", "disable", "--now", "plumb-compose-whoami.service").Run()
-		for _, p := range []string{"/etc/systemd/system/plumb-compose-whoami.service", "/opt/plumb-compose-whoami", "/etc/apt/sources.list.d/plumb-docker.sources", "/etc/apt/keyrings/plumb-docker.asc", "/etc/sysctl.d/60-plumb-net.ipv4.ip_forward.conf"} {
+		for _, name := range []string{"whoami", "blog"} {
+			c := exec.Command("docker", "compose", "--project-name", name, "down", "--rmi", "all")
+			c.Dir = "/opt/plumb-compose-" + name
+			_ = c.Run()
+			_ = exec.Command("systemctl", "disable", "--now", "plumb-compose-"+name+".service").Run()
+			_ = os.RemoveAll("/etc/systemd/system/plumb-compose-" + name + ".service")
+			_ = os.RemoveAll("/opt/plumb-compose-" + name)
+		}
+		for _, p := range []string{"/etc/apt/sources.list.d/plumb-docker.sources", "/etc/apt/keyrings/plumb-docker.asc", "/etc/sysctl.d/60-plumb-net.ipv4.ip_forward.conf"} {
 			_ = os.RemoveAll(p)
 		}
 		_ = exec.Command("systemctl", "daemon-reload").Run()
@@ -380,6 +392,9 @@ func TestGuestStarterDockerCompose(t *testing.T) {
 	if got := get(18081); strings.TrimSpace(got) != canary {
 		t.Fatalf("app served %q", got)
 	}
+	if got := get(18083); strings.TrimSpace(got) != canary2 {
+		t.Fatalf("second project served %q", got)
+	}
 	if st, err := os.Stat("/opt/plumb-compose-whoami/.env"); err != nil || st.Mode().Perm() != 0o600 {
 		t.Fatalf(".env: %v %v", st, err)
 	}
@@ -395,19 +410,22 @@ func TestGuestStarterDockerCompose(t *testing.T) {
 	if it := items2["service:plumb-compose-whoami.service"]; it.Status != wire.StatusApplied {
 		t.Errorf("no restart of the compose unit: %+v", it)
 	}
+	// The other project is not touched and still serves.
+	if it := items2["service:plumb-compose-blog.service"]; it.Status != wire.StatusUnchanged {
+		t.Errorf("the unchanged project was touched: %+v", it)
+	}
+	if got := get(18083); strings.TrimSpace(got) != canary2 {
+		t.Fatalf("second project after the change served %q", got)
+	}
 
 	// The secret is in no report and not in the journal.
 	for _, set := range []map[string]wire.Item{items, items2} {
 		raw, _ := json.Marshal(set)
-		if strings.Contains(string(raw), canary) {
-			t.Errorf("a report holds the secret: %s", raw)
+		if strings.Contains(string(raw), canary) || strings.Contains(string(raw), canary2) {
+			t.Errorf("a report holds a secret: %s", raw)
 		}
 	}
-	journal := g.run("journalctl", "--no-pager", "-o", "cat", "-u", "plumb-compose-whoami.service", "-u", "docker.service", "-u", "containerd.service")
-	if strings.Contains(journal, canary) {
-		t.Error("the journal holds the secret")
-	}
-	if all := g.run("journalctl", "--no-pager", "-o", "cat", "--since", "-15min"); strings.Contains(all, canary) {
-		t.Error("the system journal holds the secret")
+	if all := g.run("journalctl", "--no-pager", "-o", "cat", "--since", "-15min"); strings.Contains(all, canary) || strings.Contains(all, canary2) {
+		t.Error("the journal holds a secret")
 	}
 }

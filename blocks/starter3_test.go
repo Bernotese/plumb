@@ -21,7 +21,7 @@ func starter3Docs(t *testing.T, kind string, uses []any) []state.Doc {
 	}
 	img, _ := json.Marshal(image)
 	docs := []state.Doc{{Kind: state.KindImage, Name: "img", Spec: img}}
-	for _, name := range []string{"ssh-hardening", "common-tools", "shell", "docker-compose", "deploy-user"} {
+	for _, name := range []string{"ssh-hardening", "common-tools", "shell", "docker-engine", "docker-compose", "deploy-user"} {
 		docs = append(docs, blockDoc(t, name+".yaml"))
 	}
 	spec, err := json.Marshal(map[string]any{"type": kind, "image": "img", "guest": guest, "blocks": uses})
@@ -31,17 +31,24 @@ func starter3Docs(t *testing.T, kind string, uses []any) []state.Doc {
 	return append(docs, state.Doc{Kind: state.KindTarget, Name: "t1", Spec: spec})
 }
 
-var composeUse = map[string]any{"use": "docker-compose", "params": map[string]any{
-	"name": "whoami", "compose": "services:\n  web:\n    image: busybox\n", "env": map[string]any{"secret": "whoami-env"},
-	"distro": "ubuntu", "suite": "resolute",
-}}
+var engineUse = map[string]any{"use": "docker-engine", "params": map[string]any{"distro": "ubuntu", "suite": "resolute"}}
+
+func composeOf(name string) map[string]any {
+	return map[string]any{"use": "docker-compose", "id": "compose-" + name, "params": map[string]any{
+		"name": name, "compose": "services:\n  web:\n    image: busybox\n", "env": map[string]any{"secret": name + "-env"},
+	}}
+}
+
+var composeUse = composeOf("whoami")
 
 func TestStarter3RenderOnVM(t *testing.T) {
 	uses := []any{
 		map[string]any{"use": "ssh-hardening"},
 		map[string]any{"use": "common-tools"},
 		map[string]any{"use": "shell"},
+		engineUse,
 		composeUse,
+		composeOf("blog"), // a second project on the same Target (review M1 of #197)
 	}
 	set, err := state.Validate(starter3Docs(t, "vm", uses))
 	if err != nil {
@@ -75,10 +82,13 @@ func TestStarter3RenderOnVM(t *testing.T) {
 			t.Errorf("compose unit lacks %q", want)
 		}
 	}
-	// No secret marker anywhere but the .env file.
+	if byID["unit:plumb-compose-blog.service"] == nil || byID["file:/opt/plumb-compose-blog/.env"]["content"] != state.Marker("blog-env") {
+		t.Fatal("second compose project missing")
+	}
+	// No secret marker anywhere but the .env files.
 	for id, attrs := range byID {
 		raw, _ := json.Marshal(attrs)
-		if id != "file:/opt/plumb-compose-whoami/.env" && strings.ContainsRune(string(raw), state.MarkStart) {
+		if !strings.HasSuffix(id, "/.env") && strings.ContainsRune(string(raw), state.MarkStart) {
 			t.Errorf("%s holds a secret marker", id)
 		}
 	}
@@ -104,8 +114,30 @@ func TestStarter3RenderOnVM(t *testing.T) {
 	}
 }
 
+func TestStarter3ComposeNeedsEngineAndAPair(t *testing.T) {
+	render := func(uses ...any) error {
+		set, err := state.Validate(starter3Docs(t, "vm", uses))
+		if err == nil {
+			_, err = set.Render("t1")
+		}
+		return err
+	}
+	if err := render(composeUse); err == nil || !strings.Contains(err.Error(), "service:docker") {
+		t.Fatalf("docker-compose without docker-engine: %v", err)
+	}
+	for _, pair := range [][2]string{{"ubuntu", "trixie"}, {"debian", "resolute"}} {
+		bad := map[string]any{"use": "docker-engine", "params": map[string]any{"distro": pair[0], "suite": pair[1]}}
+		if err := render(bad); err == nil {
+			t.Errorf("docker-engine accepted %s/%s", pair[0], pair[1])
+		}
+	}
+	if err := render(map[string]any{"use": "docker-engine"}, composeUse); err != nil {
+		t.Fatalf("defaults (debian/trixie): %v", err)
+	}
+}
+
 func TestStarter3ComposeRefusedOnLXC(t *testing.T) {
-	set, err := state.Validate(starter3Docs(t, "lxc", []any{composeUse}))
+	set, err := state.Validate(starter3Docs(t, "lxc", []any{engineUse, composeUse}))
 	if err == nil {
 		_, err = set.Render("t1")
 	}
