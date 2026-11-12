@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -72,5 +73,47 @@ func TestCommandRefusedWhenRenderingImage(t *testing.T) {
 	errAt(t, err, KindImage, "/spec/build/blocks", "cannot hold a command")
 	if rendered != nil {
 		t.Fatal("unsafe build recipe returned")
+	}
+}
+
+// T-094 review L1: a secret in argv is refused; a secret in a file that
+// the command reads is fine.
+func TestCommandArgvRefusesSecret(t *testing.T) {
+	block := func(argv string) Doc {
+		return doc(KindBlock, "app", `{"params":{"type":"object","required":["db_password"],"properties":{"db_password":{"type":"string","writeOnly":true}}},`+
+			`"resources":[{"file":{"path":"/etc/app.pw","content":"{{ .db_password }}","mode":"0600"}},`+
+			`{"command":{"name":"init","argv":`+argv+`,"creates":"/var/lib/init.done"}}]}`)
+	}
+	img := Doc{Kind: KindImage, Name: "ubuntu", Spec: json.RawMessage(secImage)}
+	tgt := secTarget(map[string]any{"db_password": ref("db")})
+	_, err := Validate([]Doc{img, block(`["/usr/local/bin/init","--password","{{ .db_password }}"]`), tgt})
+	errAt(t, err, KindTarget, "/spec/blocks", "argv cannot hold a secret")
+	if _, err := Validate([]Doc{img, block(`["/usr/local/bin/init","--password-file","/etc/app.pw"]`), tgt}); err != nil {
+		t.Fatalf("secret in a file: %v", err)
+	}
+}
+
+func TestCommandTime(t *testing.T) {
+	rs := []wire.Resource{
+		{Type: "file"},
+		{Type: "command", Attrs: map[string]any{}},
+		{Type: "command", Attrs: map[string]any{"timeout": json.Number("30")}},
+		{Type: "command", Attrs: map[string]any{"timeout": float64(5)}},
+	}
+	if got := CommandTime(rs); got != 635*time.Second {
+		t.Fatalf("CommandTime = %v", got)
+	}
+	// Through render: the number type that the Run sees.
+	set, err := Validate(append(fixture(target(`"blocks":[{"use":"c"}]`)),
+		doc(KindBlock, "c", `{"resources":[{"command":{"name":"c","argv":["/bin/true"],"creates":"/c","timeout":1200}}]}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := set.Render("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := CommandTime(r.Resources); got != 1200*time.Second {
+		t.Fatalf("rendered CommandTime = %v", got)
 	}
 }

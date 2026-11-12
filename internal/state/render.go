@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 
 	"github.com/Bernotese/plumb/internal/resource"
@@ -322,6 +323,15 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 			}
 			return nil, errf(u.blocksPath, "resource %s from %s: %s resolves to %q, a path of the Plumb agent; a Block cannot change the agent's files (D-207)",
 				c[0].ID, where[c[0].ID], c[0].Attr, c[0].Value)
+		}
+	}
+	// A secret in the argv of a command is readable by every user of the
+	// guest in /proc/<pid>/cmdline while it runs (T-094 review L1). Put it
+	// in a file with mode 0600 and let the command read the file.
+	for _, r := range out.Resources {
+		if r.Type == "command" && slices.Contains(r.Sensitive, "argv") {
+			return nil, errf(u.blocksPath, "resource %s from %s: argv cannot hold a secret; every user of the guest can read it while the command runs. Write the secret to a file with mode 0600 and let the command read it",
+				r.ID, where[r.ID])
 		}
 	}
 	// An Image build holds no secret (D-202). The use check refuses every

@@ -21,6 +21,12 @@ import (
 // So the only change is a create. A changed argv on a guest where creates
 // exists changes nothing.
 //
+// The program runs through ProgramRunner (ExecRunner in the agent): no
+// stdio, its own process group, the group is killed at the timeout. A
+// child that it leaves in the background keeps running, but it is in the
+// agent's systemd cgroup: an agent restart stops it. A long-running
+// process belongs in a unit and a service resource, not in a command.
+//
 // Output: a command can print anything that root reads in the guest, also
 // secrets that Plumb never knew. So no stdout or stderr of the program
 // leaves the guest; a failure says only the exit status or the timeout.
@@ -98,11 +104,16 @@ func (c *command) Apply(ctx context.Context, changes []wire.Change) error {
 	limit := time.Duration(c.a.Timeout) * time.Second
 	runCtx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	_, err := c.run(runCtx, c.a.Argv[0], c.a.Argv[1:]...)
+	var err error
+	if pr, ok := c.env.Run.(ProgramRunner); ok {
+		err = pr.RunProgram(runCtx, c.a.Argv)
+	} else {
+		_, err = c.run(runCtx, c.a.Argv[0], c.a.Argv[1:]...)
+	}
 	if err != nil {
 		var ee *ExitError
 		switch {
-		case runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil:
+		case errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil:
 			return fmt.Errorf("%s: killed after the timeout of %d s (output not shown)", c.a.Argv[0], c.a.Timeout)
 		case errors.As(err, &ee):
 			return fmt.Errorf("%s: exit status %d (output not shown)", c.a.Argv[0], ee.Code)
