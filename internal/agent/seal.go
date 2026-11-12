@@ -65,9 +65,20 @@ WantedBy=sysinit.target
 // "systemctl enable --now plumb-agent.service", so a clone without the
 // unit would never start its agent (review B1 of #174); until then the
 // unit fails and restarts every 10 s, as in a fresh container.
-var ctAgentFiles = []string{
+var ctAgentFiles = append([]string{
 	DefaultStateDir,
 	"/usr/local/bin/plumb-agent",
+}, updateFiles...)
+
+// updateFiles are left by a self-update (T-091, review L1 of #190): the
+// previous binary and the guard units with the enable link of the timer.
+// A build guest does not update, but both seals remove them, so no
+// template holds a guard.
+var updateFiles = []string{
+	DefaultBinaryPath + ".prev",
+	DefaultUnitDir + "/timers.target.wants/" + guardTimer,
+	DefaultUnitDir + "/" + guardTimer,
+	DefaultUnitDir + "/" + guardService,
 }
 
 // ContainerSealRemoves returns the paths that a container seal removes
@@ -85,6 +96,10 @@ var agentFiles = []string{
 	"/etc/systemd/system/plumb-agent.service",
 	"/usr/local/sbin/plumb-agent-install",
 	"/usr/local/bin/plumb-agent",
+	DefaultBinaryPath + ".prev",
+	DefaultUnitDir + "/timers.target.wants/" + guardTimer,
+	DefaultUnitDir + "/" + guardTimer,
+	DefaultUnitDir + "/" + guardService,
 }
 
 // accountBackups are the backup files of the account files (T-066 F3).

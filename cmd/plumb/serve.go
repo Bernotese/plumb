@@ -250,6 +250,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
 		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 		AddrStable: devAddrStable(f.devDemo), DiskLimitPercent: limit,
+		Agent: servedAgent(),
 	})
 	if err != nil {
 		return err

@@ -168,7 +168,7 @@ func TestValidateReferences(t *testing.T) {
 		wantErr(t, fixture(doc(KindTarget, "t1", `{"type":"vm","image":"img","guest":{"cores":0,"memory":512,"disk":4,"bridge":"vmbr0"}}`)), "/spec/guest/cores", "minimum")
 	})
 	t.Run("unknown resource type", func(t *testing.T) {
-		wantErr(t, fixture(doc(KindBlock, "bad", `{"resources":[{"command":{"run":"x"}}]}`)), "/spec/resources/0/command", "unknown resource type")
+		wantErr(t, fixture(doc(KindBlock, "bad", `{"resources":[{"shell":{"run":"x"}}]}`)), "/spec/resources/0/shell", "unknown resource type")
 	})
 	t.Run("bad default", func(t *testing.T) {
 		wantErr(t, fixture(doc(KindBlock, "bad", `{"params":{"type":"object","properties":{"n":{"type":"integer","default":"x"}}},"resources":[{"file":{"path":"/x"}}]}`)),

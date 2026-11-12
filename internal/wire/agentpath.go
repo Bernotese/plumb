@@ -20,7 +20,10 @@ var (
 	}
 	agentFiles = []string{
 		"/usr/local/bin/plumb-agent",
-		"/usr/local/bin/.plumb-agent.new", // temp name of the first-boot script (T-076)
+		"/usr/local/bin/.plumb-agent.new",      // temp name of the first-boot script (T-076)
+		"/usr/local/bin/plumb-agent.prev",      // the binary before the last update (T-091)
+		"/usr/local/bin/.plumb-agent.update",   // download of an update (T-091)
+		"/usr/local/bin/.plumb-agent.prev-new", // temp name of the next .prev (T-091)
 		"/usr/local/sbin/plumb-agent-install",
 	}
 	// Unit search paths of systemd (systemd.unit(5), system manager). A
@@ -52,9 +55,10 @@ var (
 	}
 )
 
-// The agent's units: the agent, and the first-boot installer of an LXC
-// template (T-076).
-var agentUnits = []string{"plumb-agent.service", "plumb-agent-install.service"}
+// The agent's units: the agent, the first-boot installer of an LXC
+// template (T-076), and the update guard with its timer (T-091, D-271).
+var agentUnits = []string{"plumb-agent.service", "plumb-agent-install.service",
+	"plumb-agent-guard.service", "plumb-agent-guard.timer"}
 
 // IsAgentPath reports whether p (absolute) is the agent's own path, or a
 // path inside one of its directories. p is cleaned first.
@@ -171,6 +175,8 @@ func AgentConflicts(rs []Resource) []AgentConflict {
 	}
 	var out []AgentConflict
 	for _, r := range rs {
+		// A service or a unit file (T-093) of an agent unit: it could stop,
+		// mask or replace the agent or its update guard (review of #190).
 		if r.Type == "service" || r.Type == "unit" {
 			if n, _ := r.Attrs["name"].(string); IsAgentUnit(n) {
 				out = append(out, AgentConflict{ID: r.ID, Attr: "name", Value: n})

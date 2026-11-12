@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,7 +146,38 @@ func apply(base *state.Set, p Proposal) (*state.Set, error) {
 	if err != nil {
 		return nil, &ProposalError{Msg: "the documents are not valid:\n" + err.Error(), Err: err}
 	}
+	// The resource attributes of a Block that this proposal adds or
+	// changes, also when nothing uses it yet (T-101). An unchanged Block
+	// is not checked again, so a stored one never blocks a proposal.
+	if errs := set.CheckBlockAttrs(changedBlocks(base, set, p.Put)); len(errs) > 0 {
+		return nil, &ProposalError{Msg: "the documents are not valid:\n" + errs.Error(), Err: errs}
+	}
 	return set, nil
+}
+
+// changedBlocks returns the names of the Blocks in put whose canonical
+// spec differs from the base, or that the base does not have.
+func changedBlocks(base, next *state.Set, put []state.Doc) []string {
+	spec := func(s *state.Set) map[string][]byte {
+		m := map[string][]byte{}
+		for _, d := range s.Docs() {
+			if d.Kind == state.KindBlock {
+				m[d.Name] = d.Spec
+			}
+		}
+		return m
+	}
+	before, after := spec(base), spec(next)
+	var out []string
+	for _, d := range put {
+		if d.Kind != state.KindBlock {
+			continue
+		}
+		if old, ok := before[d.Name]; !ok || !bytes.Equal(old, after[d.Name]) {
+			out = append(out, d.Name)
+		}
+	}
+	return out
 }
 
 // renderOrNil renders a target, or returns nil when the set has none.
@@ -211,6 +243,12 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	// A touched target that refers to a missing secret is 422 (D-089).
 	if err := e.checkSecretsPresent(ctx, next, names, in.Imported); err != nil {
 		return store.Plan{}, err
+	}
+	// The gate before the planning observe (D-259, D-268).
+	if gateOrigin(in.Origin) {
+		if err := e.checkGate(ctx, next, names); err != nil {
+			return store.Plan{}, err
+		}
 	}
 	plans := make([]TargetPlan, len(names))
 	errs := make([]error, len(names))
@@ -420,10 +458,11 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		// Nobody can observe a guest that does not exist (D-066). The
 		// first apply may restart services, so the risk is disruptive.
 		for _, res := range r.Resources {
-			rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: wire.RiskDisruptive, Unverified: true}
+			risk := state.PlanRisk(res.Type, wire.RiskDisruptive)
+			rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: risk, Unverified: true}
 			// A sensitive attribute shows as "set", never with its value (D-089).
 			for _, attr := range res.Sensitive {
-				rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: wire.RiskDisruptive})
+				rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: risk})
 			}
 			tp.Resources = append(tp.Resources, rc)
 		}
@@ -523,8 +562,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		switch it.Status {
 		case wire.StatusUnchanged:
 		case wire.StatusDiffers:
+			typ, _, _ := wire.SplitID(it.Resource)
 			tp.Resources = append(tp.Resources, ResourceChange{Resource: it.Resource,
-				Action: wire.ActionOf(it.Changes), Changes: it.Changes, Risk: wire.MaxRisk(it.Changes)})
+				Action: wire.ActionOf(it.Changes), Changes: it.Changes, Risk: state.PlanRisk(typ, wire.MaxRisk(it.Changes))})
 		default:
 			return tp, &ProposalError{Target: target, Msg: fmt.Sprintf("observe of %s failed: %s", it.Resource, it.Output)}
 		}
@@ -619,9 +659,10 @@ func (e *Engine) planUnobserved(ctx context.Context, tp *TargetPlan, r *state.Re
 	}
 	var add []string
 	for _, res := range left {
-		rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: wire.RiskDisruptive, Unverified: true}
+		risk := state.PlanRisk(res.Type, wire.RiskDisruptive)
+		rc := ResourceChange{Resource: res.ID, Action: wire.ActionCreate, Risk: risk, Unverified: true}
 		for _, attr := range res.Sensitive {
-			rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: wire.RiskDisruptive})
+			rc.Changes = append(rc.Changes, wire.Change{Attr: attr, Sensitive: true, Risk: risk})
 		}
 		tp.Resources = append(tp.Resources, rc)
 		for _, n := range state.ResourceSecrets(res) {

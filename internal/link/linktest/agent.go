@@ -41,16 +41,18 @@ type Agent struct {
 	watch     []wire.Resource
 	failing   map[string]string // resource id → apply error
 	commands  []wire.CommandType
-	addrs     []string // the address list of the Hello; nil: none (an old agent)
+	addrs     []string   // the address list of the Hello; nil: none (an old agent)
+	hello2    wire.Hello // binary_sha256, capabilities and reverted of the Hello (T-092)
 
 	// seal (D-205, D-207), simulated like the real agent (T-060).
-	build     bool   // the build mark of the enrollment
-	watched   bool   // a watch arrived once; never taken back
-	off       bool   // the guest powered off after seal: Run ends
-	onSeal    func() // see OnSeal
-	sealFail  string // a step that fails; "" for none
-	sealStuck bool   // the guest does not power off after seal
-	noMark    bool   // the agent does not take the build mark
+	build     bool                                           // the build mark of the enrollment
+	watched   bool                                           // a watch arrived once; never taken back
+	off       bool                                           // the guest powered off after seal: Run ends
+	onSeal    func()                                         // see OnSeal
+	onUpdate  func(wire.UpdateBody) (wire.Item, *wire.Hello) // see OnUpdate
+	sealFail  string                                         // a step that fails; "" for none
+	sealStuck bool                                           // the guest does not power off after seal
+	noMark    bool                                           // the agent does not take the build mark
 }
 
 // NoBuildMark makes the agent ignore the build mark, like an agent that
@@ -59,6 +61,17 @@ func (a *Agent) NoBuildMark(on bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.noMark = on
+}
+
+// OnUpdate makes the agent answer the update command (T-092): fn returns
+// the result Item and, when not nil, the Hello of the agent after its
+// restart (its BinarySHA256, Capabilities and Reverted become the agent's,
+// and a hello is sent after the result). Without a hook the agent answers
+// like an agent before slice 3: "unknown command type".
+func (a *Agent) OnUpdate(fn func(wire.UpdateBody) (wire.Item, *wire.Hello)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onUpdate = fn
 }
 
 // OnSeal sets a hook that runs after a seal result was taken, where the
@@ -106,11 +119,20 @@ func (a *Agent) SendAddrs(ctx context.Context, list []string) int {
 	return a.Report(ctx, wire.Report{Type: wire.ReportAddrs, Addrs: list})
 }
 
+// SetHello sets the slice 3 fields of the next Hellos: BinarySHA256,
+// Capabilities and Reverted of h (T-092). The rest of h is ignored.
+func (a *Agent) SetHello(h wire.Hello) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hello2 = h
+}
+
 // hello is the Hello of the agent.
 func (a *Agent) hello() *wire.Hello {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return &wire.Hello{Version: "test", Hostname: "fake", OS: "fake 1", Addrs: slices.Clone(a.addrs)}
+	return &wire.Hello{Version: "test", Hostname: "fake", OS: "fake 1", Addrs: slices.Clone(a.addrs),
+		BinarySHA256: a.hello2.BinarySHA256, Capabilities: a.hello2.Capabilities, Reverted: a.hello2.Reverted}
 }
 
 // New returns an agent that talks to h. token reads the token source, as
@@ -307,6 +329,24 @@ func (a *Agent) poll(ctx context.Context, cred string) (*wire.Command, int, erro
 }
 
 // report sends a report and retries on 503.
+func (a *Agent) update(ctx context.Context, cmd wire.Command) {
+	a.mu.Lock()
+	fn := a.onUpdate
+	a.mu.Unlock()
+	if fn == nil {
+		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Error: `unknown command type "update"`})
+		return
+	}
+	var body wire.UpdateBody
+	_ = json.Unmarshal(cmd.Body, &body)
+	item, after := fn(body)
+	a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: []wire.Item{item}})
+	if after != nil {
+		a.SetHello(*after)
+		a.report(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()})
+	}
+}
+
 func (a *Agent) report(ctx context.Context, rep wire.Report) error {
 	for ctx.Err() == nil {
 		a.mu.Lock()
@@ -343,6 +383,8 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 		return
 	}
 	switch cmd.Type {
+	case wire.CommandUpdate:
+		a.update(ctx, cmd)
 	case wire.CommandSeal:
 		a.seal(ctx, cmd)
 	case wire.CommandWatch:

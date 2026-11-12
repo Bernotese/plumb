@@ -65,6 +65,14 @@ func capName(s string) bool {
 	return true
 }
 
+// AgentCommands are the command types that the agent of this build runs,
+// sorted (T-092). The agent sends them in Capabilities.Commands; the
+// controller compares them with a Hello. A command type of a newer build
+// goes here with its handler in internal/agent.
+func AgentCommands() []CommandType {
+	return []CommandType{CommandApply, CommandObserve, CommandSeal, CommandUpdate, CommandWatch}
+}
+
 // BaselineCapabilities is what every agent before slice 3 can do: an agent
 // that sends no Capabilities (Hello.Capabilities == nil) has exactly these.
 // Never change this list: it describes agents that are already in guests.

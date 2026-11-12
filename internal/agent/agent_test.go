@@ -130,7 +130,7 @@ func TestObserveCommand(t *testing.T) {
 		fileRes("web", "/srv/conf", map[string]any{"content": "x"}),
 		fileRes("web", "/srv/ok", map[string]any{"content": "ok\n"}),
 		svc,
-		{ID: "command:x", Type: "command", Block: "web", Attrs: map[string]any{}},
+		{ID: "nosuch:x", Type: "nosuch", Block: "web", Attrs: map[string]any{}},
 	}})
 	rep := ctl.result(t, "c1")
 	if rep.Error != "" || len(rep.Items) != 4 {
@@ -274,7 +274,7 @@ func TestCommandErrors(t *testing.T) {
 	ca := newCA(t)
 	ctl := newController(t, ca, "tok-1")
 	startAgent(t, ctl, ca, "tok-1")
-	ctl.send(t, "x1", "update", map[string]any{})
+	ctl.send(t, "x1", "frobnicate", map[string]any{})
 	ctl.send(t, "x2", wire.CommandApply, wire.ApplyBody{MaxRisk: "huge"})
 	ctl.commands <- wire.Command{ID: "x3", Type: wire.CommandObserve, Body: json.RawMessage(`"no"`)}
 	for _, id := range []string{"x1", "x2", "x3"} {

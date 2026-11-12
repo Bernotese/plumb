@@ -88,6 +88,7 @@ type controller struct {
 	addrsCode   int            // when set, answer every addrs report with it
 	addrsTries  int            // addrs reports answered with addrsCode
 	build       bool           // the enrollment answer says build (image build guest)
+	binary      []byte         // served at wire.PathBinary
 	pollTimes   []time.Time
 	reports     []wire.Report
 	commands    chan wire.Command
@@ -110,6 +111,13 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	c.hits++
 	c.mu.Unlock()
+	if r.URL.Path == wire.PathBinary {
+		c.mu.Lock()
+		b := c.binary
+		c.mu.Unlock()
+		_, _ = w.Write(b)
+		return
+	}
 	if r.URL.Path == wire.PathEnroll {
 		var req wire.EnrollRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
@@ -334,6 +342,7 @@ type testAgent struct {
 	runner *runner
 	cancel context.CancelFunc
 	done   chan struct{}
+	err    error // of Run, after done
 }
 
 func startAgent(t *testing.T, ctl *controller, ca testCA, token string) *testAgent {
@@ -372,7 +381,7 @@ func startAgentWith(t *testing.T, ctl *controller, ca testCA, token string, chan
 	ta := &testAgent{a: a, root: root, cfg: a.cfg, runner: r, cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(ta.done)
-		_ = a.Run(ctx)
+		ta.err = a.Run(ctx)
 	}()
 	t.Cleanup(func() {
 		cancel()

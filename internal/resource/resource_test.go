@@ -30,7 +30,7 @@ func compile(t *testing.T, typ Type) *jsonschema.Schema {
 }
 
 func TestTypeTable(t *testing.T) {
-	want := []string{"apt_repository", "directory", "file", "package", "service", "symlink", "sysctl", "unit", "user"}
+	want := []string{"apt_repository", "command", "directory", "file", "package", "service", "symlink", "sysctl", "unit", "user"}
 	if got := Names(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
@@ -59,8 +59,11 @@ func TestTypeTable(t *testing.T) {
 		}
 		compile(t, typ)
 	}
-	if _, ok := Lookup("command"); ok {
-		t.Error("the command resource is not part of the first slice")
+	for _, name := range Names() {
+		typ, _ := Lookup(name)
+		if want := name == "command"; typ.NoDrift != want || typ.Destructive != want || typ.NotInImage != want {
+			t.Errorf("%s: NoDrift, Destructive, NotInImage = %v, %v, %v; only command has them", name, typ.NoDrift, typ.Destructive, typ.NotInImage)
+		}
 	}
 }
 

@@ -142,8 +142,8 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 	}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {
 		v.RunID, v.Revision = &run.ID, &run.RevisionID
-		if p.Origin == plan.OriginBuild {
-			v.Revision = nil // a build commits no revision (D-199)
+		if p.Origin == plan.OriginBuild || p.Origin == plan.OriginAgentUpdate {
+			v.Revision = nil // a build or an agent update commits no revision (D-199, D-267)
 		}
 	} else if err != store.ErrNotFound {
 		return v, err

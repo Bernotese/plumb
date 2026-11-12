@@ -51,6 +51,9 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if p.Origin == OriginBuild {
 		return e.approveBuild(ctx, p, principal, images)
 	}
+	if p.Origin == OriginAgentUpdate {
+		return e.approveAgentUpdate(ctx, p, principal)
+	}
 	var targets []TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return store.Run{}, err
@@ -116,6 +119,12 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	next, err := apply(base, prop)
 	if err != nil {
 		return store.Run{}, err
+	}
+	// The agents may have changed since the Plan (D-259, D-268).
+	if gateOrigin(p.Origin) {
+		if err := e.checkGate(ctx, next, names); err != nil {
+			return store.Run{}, err
+		}
 	}
 	rows, err := state.Rows(next)
 	if err != nil {
@@ -280,6 +289,9 @@ func (s *stepper) failRest(ctx context.Context, output string) {
 // runTarget runs the guest step, waits for the agent and applies the
 // resources. It returns whether every step succeeded.
 func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set *state.Set, tp TargetPlan) bool {
+	if p.Origin == OriginAgentUpdate {
+		return e.runAgentUpdate(ctx, p, run, set, tp)
+	}
 	s := &stepper{e: e, run: run, target: tp.Target, seq: map[string]int64{}, final: map[string]bool{}, ok: true}
 	r, err := renderOrNil(set, tp.Target)
 	if err != nil {
@@ -405,6 +417,15 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// only as far as the Plan shows it (D-075), and never above the
 	// approved risk of this target (D-022).
 	maxRisk := tp.risk()
+	// The gate, right before the first command to the agent and after an
+	// enrollment, so a new agent said hello (D-276): no command with a
+	// resource that the agent lacks.
+	if gateOrigin(p.Origin) {
+		if err := e.runGate(ctx, tp.Target, r.Resources); err != nil {
+			s.failRest(ctx, err.Error())
+			return false
+		}
+	}
 	// Exactly the planned secret versions, or no apply at all (D-089).
 	body, _, err := e.withSecrets(ctx, r.Resources, plannedOrEmpty(tp.Secrets))
 	if err != nil {
@@ -412,7 +433,10 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		return false
 	}
 	rep, err := e.command(ctx, tp.Target, wire.CommandApply,
-		wire.ApplyBody{PlanID: p.ID, Resources: body, Planned: planned(tp), MaxRisk: maxRisk}, e.cfg.ApplyTimeout,
+		wire.ApplyBody{PlanID: p.ID, Resources: body, Planned: planned(tp), MaxRisk: maxRisk},
+		// A command may run for its own timeout (T-094 review M2): the
+		// apply waits for it, so a Run never fails while one still runs.
+		e.cfg.ApplyTimeout+state.CommandTime(r.Resources),
 		func(pr wire.Report) {
 			for _, it := range pr.Items {
 				if it.Status == wire.StatusRunning {

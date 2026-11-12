@@ -205,7 +205,8 @@ func (s *Store) ApprovePlan(ctx context.Context, planID int64, approvedBy string
 // revision that the caller checked. The caller checks again.
 var ErrHeadMoved = errors.New("store: the head revision moved")
 
-// ApproveBuildPlan approves a pending Plan of origin build (D-199): it
+// ApproveBuildPlan approves a pending Plan of origin build (D-199) or
+// agent_update (D-267): it
 // commits no revision. The Run is pinned to the head revision, which must
 // be head: the revision whose recipe the caller compared with the Plan.
 func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy string, head int64) (Run, error) {
@@ -219,8 +220,8 @@ func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy s
 		if err != nil {
 			return err
 		}
-		if origin != "build" {
-			return fmt.Errorf("store: plan %d has origin %s, not build", planID, origin)
+		if origin != "build" && origin != "agent_update" {
+			return fmt.Errorf("store: plan %d has origin %s, not build or agent_update", planID, origin)
 		}
 		if status != PlanPending {
 			return ErrPlanNotPending
@@ -251,8 +252,18 @@ func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy s
 
 // PendingPlans returns the pending Plans of one origin, oldest first.
 func (s *Store) PendingPlans(ctx context.Context, origin string) ([]Plan, error) {
+	return s.plansOf(ctx, PlanPending, origin)
+}
+
+// StalePlans returns the stale Plans of one origin, oldest first. An
+// agent_update Plan is stale only after a discard (D-278).
+func (s *Store) StalePlans(ctx context.Context, origin string) ([]Plan, error) {
+	return s.plansOf(ctx, PlanStale, origin)
+}
+
+func (s *Store) plansOf(ctx context.Context, status, origin string) ([]Plan, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+planColumns+` FROM plan WHERE status = 'pending' AND origin = ? ORDER BY id`, origin)
+		`SELECT `+planColumns+` FROM plan WHERE status = ? AND origin = ? ORDER BY id`, status, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +285,7 @@ func (s *Store) PendingPlans(ctx context.Context, origin string) ([]Plan, error)
 func (s *Store) MarkStalePlans(ctx context.Context) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`UPDATE plan SET status = 'stale'
-		 WHERE status = 'pending' AND origin <> 'build' AND COALESCE(base_revision, 0) <> (SELECT COALESCE(MAX(id), 0) FROM revision)
+		 WHERE status = 'pending' AND origin NOT IN ('build', 'agent_update') AND COALESCE(base_revision, 0) <> (SELECT COALESCE(MAX(id), 0) FROM revision)
 		 RETURNING id`)
 	if err != nil {
 		return nil, err

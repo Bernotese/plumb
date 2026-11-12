@@ -757,7 +757,6 @@ paths:
     post:
       tags: [targets]
       operationId: updateTargetAgent
-      x-plumb-planned: T-092
       summary: Propose an agent update
       description: |
         Creates a Plan of origin `agent_update` with one step `agent:binary` (risk `disruptive`, a

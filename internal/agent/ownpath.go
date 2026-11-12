@@ -25,7 +25,8 @@ import (
 // root in the guest.
 func (a *Agent) ownPathRefusal(r wire.Resource) string {
 	if r.Type == "service" || r.Type == "unit" {
-		if n, _ := r.Attrs["name"].(string); wire.IsAgentUnit(n) {
+		// wire knows every unit of the agent: also the update guard (D-271).
+		if len(wire.AgentConflicts([]wire.Resource{r})) > 0 {
 			return "the agent does not manage its own unit"
 		}
 		return ""
