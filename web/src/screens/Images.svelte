@@ -81,6 +81,7 @@
                   tone="muted"
                   label="Stock"
                 />{/if}
+              {#if spec.type === "lxc"}<span class="sub">Container</span>{/if}
             </td>
             <td>
               {#if !spec.build}–{:else if newest}v{newest.version}{:else}<span class="muted"
