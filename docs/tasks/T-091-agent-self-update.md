@@ -9,7 +9,7 @@ A Plumb agent can update itself on command and comes back on the old binary when
 ## Context (read only these)
 - `docs/tasks/T-089-slice-3-plan.md` – the approved plan: "Risks" and the decisions D-256 … D-262 (also in `docs/DECISIONS.md`)
 - `docs/ARCHITECTURE.md` – only the sections you need
-- New decisions: `docs/decisions/T-091.md`; ask pl-lead for numbers (next free: D-263)
+- New decisions: `docs/decisions/T-091.md`; ask pl-lead for numbers (ask pl-lead)
 
 ## Acceptance criteria
 - [ ] Command `update`: fetch `wire.PathBinary` from the pinned controller, check SHA-256, self-test of the new binary, atomic swap, keep `.prev`, update marker, exit for a systemd restart (D-258)

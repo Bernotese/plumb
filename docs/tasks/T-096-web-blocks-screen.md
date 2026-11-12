@@ -9,7 +9,7 @@ The user can list, view, create and edit Blocks in the web UI.
 ## Context (read only these)
 - `docs/tasks/T-089-slice-3-plan.md` – the approved plan: "Risks" and the decisions D-256 … D-262 (also in `docs/DECISIONS.md`)
 - `docs/ARCHITECTURE.md` – only the sections you need
-- New decisions: `docs/decisions/T-096.md`; ask pl-lead for numbers (next free: D-263)
+- New decisions: `docs/decisions/T-096.md`; ask pl-lead for numbers (ask pl-lead)
 
 ## Acceptance criteria
 - [ ] List, view, new, edit; the Block is YAML text (D-261)

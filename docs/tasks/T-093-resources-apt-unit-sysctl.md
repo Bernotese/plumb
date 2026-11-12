@@ -9,7 +9,7 @@ Three new resource types with drift detection.
 ## Context (read only these)
 - `docs/tasks/T-089-slice-3-plan.md` – the approved plan: "Risks" and the decisions D-256 … D-262 (also in `docs/DECISIONS.md`)
 - `docs/ARCHITECTURE.md` – only the sections you need
-- New decisions: `docs/decisions/T-093.md`; ask pl-lead for numbers (next free: D-263)
+- New decisions: `docs/decisions/T-093.md`; ask pl-lead for numbers (ask pl-lead)
 
 ## Acceptance criteria
 - [ ] `apt_repository`: deb822 file, `Signed-By` names its own inline key file, never `trusted.gpg.d`, `Trusted: yes` refused; the key is inline text, never downloaded (D-260)
