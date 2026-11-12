@@ -13,6 +13,10 @@
   import type { BlockView, ImageView, Issue, TargetSpec, TargetView } from "../lib/types";
   import {
     ALLOW_RESTART_HELP,
+    ALLOW_RESTART_HELP_LXC,
+    KIND_NAME,
+    forKind,
+    type GuestKind,
     ALLOW_RESTART_LABEL,
     CREATE_ONLY,
     GUEST_ADDRESS,
@@ -96,7 +100,24 @@
       : "",
   );
 
-  const waitingFrom = $derived(waitingSince(existing?.status.waiting ?? []));
+  // The type follows the Image (T-038 §8); a stored Target keeps its own.
+  const kind = $derived<GuestKind>(
+    existing?.document.spec.type ??
+      images.find((i) => i.document.name === image)?.document.spec.type ??
+      "vm",
+  );
+  // A container has no bootstrap user; its SSH keys go to root (D-226).
+  const kindFields = $derived(
+    kind === "lxc"
+      ? guestFields
+          .filter((f) => f.name !== "user")
+          .map((f) => (f.name === "ssh_keys" ? { ...f, label: "SSH keys for root" } : f))
+      : guestFields,
+  );
+  // A container takes cores and memory live: no "Restart needed" (D-248).
+  const waitingFrom = $derived(
+    kind === "lxc" ? null : waitingSince(existing?.status.waiting ?? []),
+  );
   // The stored setting decides the re-enrollment, not the unsaved checkbox.
   const storedAllow = $derived(existing?.document.spec.allow_restart === true);
 
@@ -190,7 +211,7 @@
     }
     if (!image) e["image"] = "Choose an image.";
     if (!reason.trim()) e["reason"] = "Say why you make this change.";
-    guestErrors = validate(guestFields, guest);
+    guestErrors = validate(kindFields, guest);
     // D-202: the disk of a Target from a built image cannot be smaller than the template.
     const min = smallestDisk(images.find((i) => i.document.name === image)?.document.spec);
     if (!editing && min !== null && !guestErrors["disk"] && Number(guest["disk"]) < min)
@@ -225,15 +246,15 @@
       return;
     }
     const spec: TargetSpec = {
-      type: "vm",
+      type: kind,
       image,
       // On an existing target the create-only fields keep their stored
       // value: a schema default the form shows must not become a change.
       guest: mergeParams(
         existing?.document.spec.guest ?? {},
         editing
-          ? guestFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
-          : guestFields,
+          ? kindFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
+          : kindFields,
         guest,
       ) as TargetSpec["guest"],
       blocks: uses.map((u) => ({
@@ -379,7 +400,7 @@
         </div>
         <div class="field">
           <span class="label">Type</span>
-          <span>Virtual machine</span>
+          <span id="t-type">{KIND_NAME[kind]}</span>
         </div>
       </div>
     </fieldset>
@@ -387,7 +408,7 @@
     <fieldset>
       <legend>Guest settings</legend>
       <SchemaFields
-        fields={guestFields}
+        fields={kindFields}
         bind:values={guest}
         errors={guestErrors}
         prefix="guest"
@@ -403,9 +424,11 @@
             bind:checked={allowRestart}
             aria-describedby="t-allow-restart-hint"
           />
-          {ALLOW_RESTART_LABEL}
+          {forKind(ALLOW_RESTART_LABEL, kind)}
         </label>
-        <span class="hint" id="t-allow-restart-hint">{ALLOW_RESTART_HELP}</span>
+        <span class="hint" id="t-allow-restart-hint"
+          >{kind === "lxc" ? ALLOW_RESTART_HELP_LXC : ALLOW_RESTART_HELP}</span
+        >
       </div>
     </fieldset>
 
@@ -488,20 +511,27 @@
   <form class="card" onsubmit={reenroll} aria-labelledby="reenroll-title">
     <h2 id="reenroll-title">Re-enroll the agent</h2>
     <p>
-      A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it;
-      nothing happens until you approve the plan.
+      {forKind(
+        "A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it; nothing happens until you approve the plan.",
+        kind,
+      )}
     </p>
     {#if storedAllow}
       <p>
-        The Run restarts the VM (or starts it when it is stopped). '{ALLOW_RESTART_LABEL}' stays on
-        after it, until you switch it off.
+        {forKind(
+          `The Run restarts the VM (or starts it when it is stopped). '${ALLOW_RESTART_LABEL}' stays on after it, until you switch it off.`,
+          kind,
+        )}
       </p>
     {:else if existing.status.power === "running"}
       <p class="warn" id="reenroll-refused">
-        {REENROLL_REFUSED} (The VM ran when this page was loaded; the server checks again.)
+        {forKind(
+          `${REENROLL_REFUSED} (The VM ran when this page was loaded; the server checks again.)`,
+          kind,
+        )}
       </p>
     {:else}
-      <p>The VM is stopped: the Run starts it with the new token.</p>
+      <p>{forKind("The VM is stopped: the Run starts it with the new token.", kind)}</p>
     {/if}
     <div class="field">
       <label for="reenroll-reason">Reason (optional)</label>
