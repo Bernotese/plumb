@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
@@ -20,6 +21,9 @@ const (
 	DefaultFullCheck  = 15 * time.Minute
 )
 
+// envName is the pattern of Proxmox's `env` keys (\w+, host C2).
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+
 // Config is /etc/plumb-agent/agent.json. The installer's static snippet
 // writes it; it holds no secret.
 type Config struct {
@@ -29,6 +33,10 @@ type Config struct {
 	CA string `json:"ca"`
 	// TokenFile is where the enrollment token is read (default: SMBIOS serial).
 	TokenFile string `json:"token_file,omitempty"`
+	// TokenEnv names the variable in the environment of PID 1 that holds
+	// the enrollment token: an LXC container gets it through Proxmox's
+	// `env` option (D-231). It excludes TokenFile.
+	TokenEnv string `json:"token_env,omitempty"`
 	// StateDir holds the credential and the desired list (default /var/lib/plumb-agent).
 	StateDir string `json:"state_dir,omitempty"`
 	// FullCheck is the interval of the full drift check, for example "15m".
@@ -80,7 +88,14 @@ func (c *Config) check() error {
 	if !x509.NewCertPool().AppendCertsFromPEM([]byte(c.CA)) {
 		return errors.New("ca holds no PEM certificate")
 	}
-	if c.TokenFile == "" {
+	switch {
+	case c.TokenEnv != "" && c.TokenFile != "":
+		return errors.New("token_env and token_file exclude each other")
+	case c.TokenEnv != "":
+		if !envName.MatchString(c.TokenEnv) {
+			return fmt.Errorf("token_env must be a variable name, got %q", c.TokenEnv)
+		}
+	case c.TokenFile == "":
 		c.TokenFile = DefaultTokenFile
 	}
 	if c.StateDir == "" {
