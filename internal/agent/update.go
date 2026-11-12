@@ -35,6 +35,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Bernotese/plumb/internal/resource"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // Default paths of the update (wire.IsAgentPath knows all of them).
@@ -55,8 +56,6 @@ const (
 	maxBinaryBytes = 256 << 20
 	// downloadTimeout bounds the whole download.
 	downloadTimeout = 10 * time.Minute
-	// selfTestTimeout bounds the self-test of the new binary.
-	selfTestTimeout = 30 * time.Second
 	// maxSelfTestOutput bounds what the agent reads from a self-test.
 	maxSelfTestOutput = 64 << 10
 	// crashLoopRestarts restarts of the agent unit since the first guard
@@ -68,6 +67,9 @@ const (
 
 	markerVersion = 1
 )
+
+// selfTestTimeout bounds the self-test of the new binary (a var for tests).
+var selfTestTimeout = 30 * time.Second
 
 // ErrRestart ends Run after an update: the process must exit, so that
 // systemd starts the new binary.
@@ -94,6 +96,7 @@ type updateMarker struct {
 	State       updateState `json:"state"`
 	FromVersion string      `json:"from_version"`
 	FromSHA     string      `json:"from_sha"`
+	ToVersion   string      `json:"to_version"` // from the self-test
 	ToSHA       string      `json:"to_sha"`
 	// Ticks counts the guard runs (D-271: a count, not the wall clock).
 	Ticks int `json:"ticks"`
@@ -101,8 +104,15 @@ type updateMarker struct {
 	// guard tick of this boot.
 	BootID       string `json:"boot_id,omitempty"`
 	RestartsBase *int   `json:"restarts_base,omitempty"`
-	// Reason of a revert: "crash loop" or "no hello".
+	// Reason and At of a revert: wire.RevertCrashLoop or wire.RevertNoHello,
+	// RFC 3339 UTC.
 	Reason string `json:"reason,omitempty"`
+	At     string `json:"at,omitempty"`
+}
+
+// revert returns the wire form of a reverted marker.
+func (m updateMarker) revert() *wire.UpdateRevert {
+	return &wire.UpdateRevert{From: m.FromVersion, To: m.ToVersion, ToSHA256: m.ToSHA, Reason: m.Reason, At: m.At}
 }
 
 // binPaths names the agent binary and its update files. All are in one
@@ -227,6 +237,11 @@ func (u *updater) update(ctx context.Context, fetch fetchFunc, want, fromVersion
 		return false, err
 	} else if ok && m.State == updatePending {
 		return false, errors.New("an update is in progress; wait for its end")
+	} else if ok {
+		// A revert is reported until the next update command (wire.Hello.Reverted).
+		if err := u.dropMarker(); err != nil {
+			return false, err
+		}
 	}
 	cur, err := fileSHA256(u.bin.bin)
 	if err != nil {
@@ -246,7 +261,8 @@ func (u *updater) update(ctx context.Context, fetch fetchFunc, want, fromVersion
 	if err := download(ctx, fetch, tmp, want); err != nil {
 		return false, err
 	}
-	if err := selfTest(ctx, tmp, u.config); err != nil {
+	toVersion, err := selfTest(ctx, tmp, u.config)
+	if err != nil {
 		return false, err
 	}
 
@@ -255,7 +271,7 @@ func (u *updater) update(ctx context.Context, fetch fetchFunc, want, fromVersion
 	if err := linkOver(u.bin.bin, u.bin.prevTemp(), u.bin.prev()); err != nil {
 		return false, fmt.Errorf("keep the current binary: %w", err)
 	}
-	m := updateMarker{State: updatePending, FromVersion: fromVersion, FromSHA: cur, ToSHA: want}
+	m := updateMarker{State: updatePending, FromVersion: fromVersion, FromSHA: cur, ToVersion: toVersion, ToSHA: want}
 	if err := u.saveMarker(m); err != nil {
 		return false, fmt.Errorf("update marker: %w", err)
 	}
@@ -282,7 +298,8 @@ func (u *updater) update(ctx context.Context, fetch fetchFunc, want, fromVersion
 	return true, nil
 }
 
-// download writes the new binary to tmp (mode 0700) and checks its hash.
+// download writes the new binary to tmp (0700 while it is written, then
+// 0755) and checks its hash.
 func download(ctx context.Context, fetch fetchFunc, tmp, want string) error {
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -294,6 +311,9 @@ func download(ctx context.Context, fetch fetchFunc, tmp, want string) error {
 	h := sha256.New()
 	lw := &limitWriter{w: io.MultiWriter(f, h), n: maxBinaryBytes}
 	ferr := fetch(ctx, lw)
+	if ferr == nil {
+		ferr = f.Chmod(0o755) // as plumb-agent-install gives it
+	}
 	if ferr == nil {
 		ferr = f.Sync()
 	}
@@ -342,8 +362,9 @@ func SelfTest(configPath, version string, w io.Writer) error {
 	return json.NewEncoder(w).Encode(SelfTestReport{Version: version})
 }
 
-// selfTest runs "<bin> self-test" with an empty environment and a timeout.
-func selfTest(ctx context.Context, bin, config string) error {
+// selfTest runs "<bin> self-test" with an empty environment and a timeout,
+// and returns the version of the new binary.
+func selfTest(ctx context.Context, bin, config string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, selfTestTimeout)
 	defer cancel()
 	var out, errOut capBuffer
@@ -358,13 +379,13 @@ func selfTest(ctx context.Context, bin, config string) error {
 		if ctx.Err() != nil {
 			msg = "no answer within " + selfTestTimeout.String()
 		}
-		return fmt.Errorf("self-test of the new binary failed (%v): %s; nothing was changed", err, firstLine(msg))
+		return "", fmt.Errorf("self-test of the new binary failed (%v): %s; nothing was changed", err, firstLine(msg))
 	}
 	var rep SelfTestReport
 	if out.full || json.Unmarshal(out.Bytes(), &rep) != nil || rep.Version == "" {
-		return errors.New("self-test of the new binary gave no valid report; nothing was changed")
+		return "", errors.New("self-test of the new binary gave no valid report; nothing was changed")
 	}
-	return nil
+	return rep.Version, nil
 }
 
 // capBuffer keeps the first max bytes and drops the rest.
@@ -505,37 +526,71 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 }
 
 // confirm runs in the agent after an accepted hello. A pending update of
-// this binary is confirmed: the marker goes, then the guard. A marker of a
-// revert is returned once and removed. A pending marker of another binary
-// stays for the guard.
-func (u *updater) confirm(ctx context.Context, ownSHA func() (string, error)) (*updateMarker, error) {
+// this binary is confirmed: the marker goes, then the guard. A pending
+// marker of another binary stays for the guard. It returns nothing more:
+// a reverted marker stays until the next update command (reverted).
+func (u *updater) confirm(ctx context.Context, ownSHA string) error {
 	if _, err := os.Lstat(u.state.path(updateMarkerFile)); errors.Is(err, fs.ErrNotExist) {
-		return nil, nil // the usual case: no lock needed
+		return nil // the usual case: no lock needed
 	}
 	unlock, err := u.lock()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer unlock()
 	m, ok, err := u.marker()
-	if err != nil || !ok {
-		return nil, err
-	}
-	if m.State == updatePending {
-		own, err := ownSHA()
-		if err != nil {
-			return nil, fmt.Errorf("hash of the running binary: %w", err)
-		}
-		if own != m.ToSHA {
-			return nil, nil // not the new binary: the guard decides
-		}
+	if err != nil || !ok || m.State != updatePending || ownSHA != m.ToSHA {
+		return err
 	}
 	// The marker first: without it the guard removes itself.
 	if err := u.dropMarker(); err != nil {
-		return nil, err
+		return err
 	}
+	u.log.Info("agent update confirmed", "from", m.FromVersion, "to", m.ToVersion)
 	if err := u.removeGuard(ctx); err != nil {
 		u.log.Warn("remove update guard; it removes itself", "err", err)
 	}
-	return &m, nil
+	return nil
+}
+
+// reverted returns the revert to report in Hello, or nil.
+func (u *updater) reverted() *wire.UpdateRevert {
+	m, ok, err := u.marker()
+	if err != nil {
+		u.log.Warn("read update marker", "err", err)
+		return nil
+	}
+	if !ok || m.State != updateReverted {
+		return nil
+	}
+	return m.revert()
+}
+
+// Commands are the command types this agent runs (wire.Capabilities).
+var Commands = []wire.CommandType{wire.CommandApply, wire.CommandObserve, wire.CommandSeal, wire.CommandUpdate, wire.CommandWatch}
+
+// Capabilities is the capability list of this agent build (D-259).
+func Capabilities() wire.Capabilities {
+	return wire.Capabilities{Commands: Commands, Resources: resource.Capabilities()}
+}
+
+// selfUpdate runs an update command. The Item is applied after the swap
+// (the agent then exits), unchanged when it runs that binary already, and
+// failed when a step before the swap failed.
+func (a *Agent) selfUpdate(ctx context.Context, cmdID string, body wire.UpdateBody) wire.Item {
+	item := wire.Item{Resource: wire.AgentBinaryID}
+	id := wire.Resource{ID: wire.AgentBinaryID}
+	changed, err := a.upd.update(ctx, a.client.download, body.SHA256, a.opt.Version)
+	switch {
+	case err != nil:
+		item.Status, item.Output = wire.StatusFailed, resource.SafeOutput(id, err.Error())
+		a.log.Warn("agent update failed", "err", err)
+	case !changed:
+		item.Status = wire.StatusUnchanged
+	default:
+		item.Status = wire.StatusApplied
+		a.restartCmd, a.restartBy = cmdID, time.Now().Add(restartWait)
+		a.log.Info("agent binary swapped", "from", a.opt.Version)
+	}
+	return item
 }

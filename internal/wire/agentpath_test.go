@@ -95,6 +95,13 @@ func TestIsAgentPathInstallUnit(t *testing.T) {
 		"/etc/systemd/system/plumb-agent-install.service.d/x.conf",
 		"/etc/systemd/system/multi-user.target.wants/plumb-agent-install.service",
 		"/lib/systemd/system/plumb-agent-install.service",
+		"/usr/local/bin/plumb-agent.prev",
+		"/usr/bin/../local/bin/.plumb-agent.update",
+		"/usr/local/bin/.plumb-agent.prev-new",
+		"/etc/systemd/system/plumb-agent-guard.service",
+		"/etc/systemd/system/plumb-agent-guard.timer",
+		"/etc/systemd/system/timers.target.wants/plumb-agent-guard.timer",
+		"/etc/systemd/system/plumb-agent-guard.service.d/x.conf",
 	} {
 		if !IsAgentPath(p) {
 			t.Errorf("IsAgentPath(%q) = false", p)
@@ -105,7 +112,7 @@ func TestIsAgentPathInstallUnit(t *testing.T) {
 			t.Errorf("IsAgentPath(%q) = true", p)
 		}
 	}
-	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent"} {
+	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent", "plumb-agent-guard", "plumb-agent-guard.timer"} {
 		if !isAgentUnit(n) {
 			t.Errorf("isAgentUnit(%q) = false", n)
 		}
