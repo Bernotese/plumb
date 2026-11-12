@@ -37,8 +37,8 @@ The user wants to go on. Propose what slice 3 holds, as a plan the user can appr
 **Proposal: slice 3 = "Blocks for every day".** Today Plumb has 6 resource types, 5 starter Blocks and no Blocks screen. You cannot build a typical homelab guest (hardened SSH, tools, Docker Compose app) in the UI. That is the core promise of the brief (replace Ansible), so it goes first.
 
 Slice 3 holds, in this order:
-1. **Agent update by Plumb + version gate.** New resource types need a new agent on existing guests. Without this, old agents get resources they do not know (D-169 gap).
-2. **Four new resources:** `apt_repository`, `unit` (systemd unit, also timers), `sysctl` (VM only), `command` (escape hatch, no drift).
+1. **Agent update by Plumb + version gate.** New resource types need a new agent on existing guests. Without this, old agents get resources they do not know (D-169 gap). Today's agents do not know the update command: guests made before slice 3 need one manual step, once (Question 6). A failed update rolls back inside the guest by itself.
+2. **Four new resources:** `apt_repository`, `unit` (systemd unit, also timers), `sysctl` (VM only), `command` (escape hatch, no drift, always `destructive`).
 3. **Four new starter Blocks:** `ssh-hardening`, `common-tools`, `shell`, `docker-compose`.
 4. **Blocks screen:** list, view, new, edit (YAML with a schema check); save goes through a normal Plan.
 5. QA debt (web mutation audit, Content-Length boundary test) and one real-host acceptance run.
@@ -50,7 +50,8 @@ Slice 3 holds, in this order:
 2. Agent updates? (a) `system` proposes a Plan, a person or token approves **(recommended)** · (b) automatic after a controller upgrade · (c) by hand per Target only. *Same plan → approve path as everything else, nothing silent.*
 3. Docker source for `docker-compose`? (a) Docker's official apt repo, key pinned in the Block **(recommended)** · (b) distro packages. *Same package names on Debian 13 and Ubuntu 26.04 and a current Compose; (b) has different names per OS and needs a `when` feature.*
 4. If Docker needs `keyctl` in an unprivileged LXC: (a) `docker-compose` is VM-only in slice 3 **(recommended)** · (b) allow `keyctl` (changes D-227 and the token rights, D-081). *No new token rights without a separate decision.*
-5. `command` resource? (a) in slice 3, a Plan with it is always human-only **(recommended)** · (b) leave it out. *The brief asks for it; human-only keeps AI tokens away from arbitrary commands.*
+5. `command` resource? (a) in slice 3: always `destructive` (D-031, only a person approves), and an Image build with it is refused **(recommended)** · (b) leave it out. *The brief asks for it; builds start without a person, so they must not run it.*
+6. Guests made before slice 3 (their agent cannot update itself)? (a) one documented root command per guest, once: `pct exec <id> -- …` for an LXC, SSH or console for a VM **(recommended)** · (b) re-create those guests. *Keeps the guests; after that every update goes through Plumb.*
 
 ### Gap list: BRIEF §5/§6 vs. `main`
 | Item | State | Proof |
@@ -87,32 +88,35 @@ Slice 3 holds, in this order:
 | # | Title | Owner | Size | Depends on | Parallel |
 |---|---|---|---|---|---|
 | C1 | Contract: `update` command, agent version in Target status, version gate, schemas of the 4 resources | pl-architect | M | – | first |
-| C2 | Agent self-update (download over the pinned link, SHA-256, self-test, atomic swap, keep `.prev`, restart) | pl-backend | L | C1 | with C4, C6 |
+| C2 | Agent self-update (fetch `wire.PathBinary` from its pinned controller, SHA-256, self-test, atomic swap, keep `.prev`, restart, auto-revert to `.prev`); doc of the one-time manual step for older agents | pl-backend | L | C1 | with C4, C6 |
 | C3 | Controller: agent version status, "update agent" Plan step, version gate on Plans | pl-backend | M | C1, C2 | after C2 |
-| C4 | Agent resources `apt_repository`, `unit`, `sysctl`, `command` + guest tests | pl-reviewer as implementer, or pl-backend | L | C1 | with C2 |
-| C5 | Starter Blocks `ssh-hardening`, `common-tools`, `shell`, `docker-compose` + guest tests | pl-codex-fix (YAML, small) | M | C4 | – |
+| C4 | Agent resources `apt_repository`, `unit`, `sysctl` + guest tests | pl-reviewer as implementer, or pl-backend | M | C1 | with C2 |
+| C4b | Resource `command` (`creates` guard, always `destructive`, Image builds refuse it); own card for a focused review | pl-backend | S | C1 | with C4 |
+| C5 | Starter Blocks `ssh-hardening`, `common-tools`, `shell`, `docker-compose` + guest tests incl. Docker | pl-frontend or pl-backend (Claude; too big for Codex) | M | C4 | – |
 | C6 | Web: Blocks screen (list, view, new, edit as YAML, save as proposal) | pl-frontend | L | C1 (uses existing proposal API) | from the start |
 | C7 | Web: agent version and "update agent" on the Target view; gate message | pl-frontend | S | C3 | after C6 |
 | C8 | QA debt: web mutation audit; Content-Length == cap test | pl-codex-qa | S | – | now |
 | C9 | QA slice 3: tests against C2–C7; mutation audit of the gate and the update check | pl-codex-qa | M | each card | per card |
-| C10 | Real-host acceptance: update an old agent in a VM and an LXC; new resources and `docker-compose` in both; T-084 note in a build Plan | pl-backend | M | C2–C7 | last |
+| C10 | Real-host acceptance: the one-time manual step on a pre-C2 VM and LXC; then update a C2+ agent with a lower version (VM and LXC) incl. one forced auto-revert; new resources and `docker-compose` in both; T-084 note in a build Plan | pl-backend | M | C2–C7 | last |
 
 ### Risks and the real test host
-- **Agent update can lose a guest's agent.** An LXC has no exec API, so recovery is re-enroll or re-create. Mitigation: SHA-256 check, `plumb-agent self-test` before the swap, `.prev` kept, a failed restart fails the step. CI guest tests cover a broken binary; C10 proves it on the host.
+- **Today's agents cannot be updated by Plumb.** They answer `update` with `unknown command type` (`internal/agent/exec.go`), and the first-boot script exits when `plumb-agent.service` is active, so a reboot does not help. One manual step per older guest (Question 6).
+- **A failed update can lose a guest's agent.** The controller cannot reach a dead agent, and an LXC has no exec API. Mitigation inside the guest: SHA-256 check, self-test before the swap, an update marker; if the new binary crash-loops or has no successful `hello` within 5 min, the agent restores `.prev` and restarts. CI guest test: a binary that passes the self-test but cannot connect must come back as `.prev`.
 - **Docker in an unprivileged LXC with `nesting=1`** may need `keyctl`, which the token cannot set (H10). Only the host shows it (C10). Fallback: Question 4.
 - **`apt_repository` key trust:** the key is inline text in the Block, never downloaded at apply.
-- **`command`** has no drift and can do anything: human-only Plans, risk `disruptive`, a `creates` path so it runs once.
+- **`command`** has no drift and can do anything: always `destructive` (D-031, only a human session approves), a `creates` path so it runs once. Image builds start without a person (D-101, D-199), so an Image whose build Blocks hold a `command` is refused at save.
+- **Secrets in `docker-compose`:** secret values go into a separate `.env` `file` resource with secret markers, mode 0600 (as `app-env`, D-099); never as plain parameters in the compose YAML. `docker compose` output is not logged in clear.
 - **`sysctl` in an LXC** is not allowed: the resource declares `vm` only and the UI hides it.
 - Host needed only for C10. C2–C5 run in the CI guest tests (Debian 13, Ubuntu 26.04).
 
 ### New decisions (proposed)
 - D-256 · proposed · Slice 3 scope and order as above; slice 4 as above.
-- D-257 · proposed · Agent update is a Plan step per Target (risk `reversible`); `system` proposes it when the agent version differs from the controller's; a person or a token approves. Nothing updates silently.
-- D-258 · proposed · Update mechanism: command `update` with URL and SHA-256 over the pinned CA link; the agent checks the hash, runs the new binary's self-test, renames it over its own, keeps `.prev`, exits for a systemd restart. The step passes only when a `hello` with the new version arrives within 2 min.
-- D-259 · proposed · Version gate: a Plan that sends a resource type or attribute the Target's agent version does not know is refused with "update the agent first". Closes the D-169 gap.
-- D-260 · proposed · New resource types: `apt_repository` (deb822 file + inline key), `unit` (unit file + daemon-reload; timers are units), `sysctl` (vm only), `command` (no drift, `creates` guard, every Plan with it is human-only). `network` and `firewall` wait for slice 4 (need a safe apply with rollback).
+- D-257 · proposed · Agent update is a Plan step per Target, risk `disruptive` (a service restart, D-054); `system` proposes it when the agent's capabilities differ from the controller's; a person or a token approves. Nothing updates silently.
+- D-258 · proposed · Update mechanism: command `update` with the SHA-256 only (no URL field); the agent fetches `wire.PathBinary` from its pinned controller, checks the hash, runs the new binary's self-test, renames it over its own, keeps `.prev`, writes an update marker and exits for a systemd restart. The step passes when a `hello` with the new version arrives within 2 min. Inside the guest: a crash loop or no successful `hello` within 5 min restores `.prev`. Agents from before C2 do not know `update`: a one-time manual install per guest (root: stop the agent, run `plumb-agent-install`), or re-create.
+- D-259 · proposed · Gate: the agent sends a capability list (resource types and attributes) in `hello`. A Plan that needs a capability the Target's agent did not send is refused with "update the agent first"; the Run checks again at start (a guest can be restored from an old backup in between). Closes the D-169 gap.
+- D-260 · proposed · New resource types: `apt_repository` (deb822 file with `Signed-By` naming its own inline key file; never `trusted.gpg.d`; `Trusted: yes` refused), `unit` (unit file + daemon-reload; timers are units), `sysctl` (vm only), `command` (no drift, `creates` guard, always `destructive` by D-031; an Image whose build Blocks hold a `command` is refused). `network` and `firewall` wait for slice 4 (need a safe apply with rollback).
 - D-261 · proposed · Blocks screen edits the Block as YAML text, checked against `schema/block.json` in the browser and the server; save is a normal proposal, the Plan lists every Target the change touches.
-- D-262 · proposed · `docker-compose` Block: Docker's apt repo with the key pinned in the Block; compose file as a `file` resource; a `unit` runs `docker compose up -d`. Supports `vm`; `lxc` only if C10 passes without new rights.
+- D-262 · proposed · `docker-compose` Block: Docker's apt repo with the key pinned in the Block; compose file as a `file` resource; secrets only in a separate `.env` `file` resource with secret markers, mode 0600 (D-099); a `unit` runs `docker compose up -d`. Supports `vm`; `lxc` only if C10 passes without new rights.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
