@@ -513,8 +513,17 @@ func TestLXCOutsideAdditionsIndividually(t *testing.T) {
 				}
 				p, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin")
 				if tc.key != "" {
-					if !errors.Is(err, plan.ErrOutside) || !strings.Contains(err.Error(), "pct set "+string(id)+" --delete "+tc.key) {
+					// A raw lxc line has no --delete in the API: the text
+					// names the file and the line (review S2 of #169).
+					want := "pct set " + string(id) + " --delete " + tc.key
+					if tc.attr == driver.AttrRawLXC {
+						want = `remove the line "lxc.apparmor.profile: unconfined" from /etc/pve/lxc/` + string(id) + ".conf"
+					}
+					if !errors.Is(err, plan.ErrOutside) || !strings.Contains(err.Error(), want) {
 						t.Errorf("refusal must name exact key %s: %v", tc.key, err)
+					}
+					if pending && !strings.Contains(err.Error(), "(pending, active at the next start)") {
+						t.Errorf("pending addition not named: %v", err)
 					}
 					return
 				}

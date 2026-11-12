@@ -87,11 +87,13 @@ func DiffGuest(desired GuestSpec, observed GuestState) ([]wire.Change, error) {
 func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 	have, next := observed.Spec, observed.Next()
 	var out []wire.Change
-	add := func(attr string, r, p, d any, risk wire.Risk, createOnly bool) {
+	// keepRisk: a pending difference keeps the risk (create-only settings
+	// and container additions); otherwise it is reversible (D-191).
+	add := func(attr string, r, p, d any, risk wire.Risk, keepRisk bool) {
 		switch {
 		case equal(r, d) && equal(p, d):
 		case equal(r, d):
-			if !createOnly {
+			if !keepRisk {
 				risk = wire.RiskReversible
 			}
 			out = append(out, wire.Change{Attr: attr, From: p, To: d, Risk: risk, Pending: true})
@@ -115,7 +117,9 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 	// Container settings: Plumb writes only features; the rest is what a
 	// person added on the host. Both can give a container more power on
 	// the host, so the risk is destructive (T-038 §3, review S6).
-	add(AttrFeatures, have.Features, next.Features, desired.Features, wire.RiskDestructive, false)
+	// keepRisk for features too: a feature that only waits for the next
+	// start gives the container that power then (QA #170).
+	add(AttrFeatures, have.Features, next.Features, desired.Features, wire.RiskDestructive, true)
 	add(AttrMounts, list(have.Mounts), list(next.Mounts), list(desired.Mounts), wire.RiskDestructive, true)
 	add(AttrDevices, list(have.Devices), list(next.Devices), list(desired.Devices), wire.RiskDestructive, true)
 	add(AttrRawLXC, list(have.RawLXC), list(next.RawLXC), list(desired.RawLXC), wire.RiskDestructive, true)
