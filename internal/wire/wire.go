@@ -225,7 +225,7 @@ const GuestAddressID = "guest:address"
 // It must equal the type table of internal/resource (a test there checks
 // it). The type "guest" belongs to the controller.
 var agentTypes = map[string]bool{
-	"directory": true, "file": true, "package": true, "service": true, "symlink": true, "user": true,
+	"command": true, "directory": true, "file": true, "package": true, "service": true, "symlink": true, "user": true,
 }
 
 // AgentType reports whether an agent may report a resource of this type.
