@@ -1,4 +1,4 @@
-# T-038 – LXC targets   (test host ready; step 1: host questions, then the plan)
+# T-038 – LXC targets   (plan final; waits for review and the user's approval)
 
 - **Owner:** pl-backend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** L   · **Depends on:** test host (D-041), T-012 on `main`, T-039 (template with the agent)
@@ -17,7 +17,7 @@ A Target with `type: lxc` is created from a Plumb template, enrolls with the `en
 
 - (added by pl-lead, from the PR #73 review) The `symlink` resource uses `renameat2` flags (`RENAME_NOREPLACE`, `RENAME_EXCHANGE`). For LXC on ZFS they need ZFS ≥ 2.2 on the host. Check it on the test host and define the behaviour when the flags are not supported (clear error, no unsafe fallback).
 
-## Host questions (pl-architect, 2026-11-12; pl-backend answers them on `pve-dev`)
+## Host questions (pl-architect, 2026-11-12; answered by pl-backend on `pve-dev`: `docs/tasks/T-038.log.md`)
 The plan needs these facts. Write the answers to `docs/tasks/T-038.log.md`: one row per id (`PASS`/`FAIL`/value, time, exact error text). Redact addresses, MACs, token ids and the host name of the controller. No code change, no installer run.
 
 **Known, do not test again:** disk storage `local-lvm` (lvmthin), image storage `plumb-images` (dir, content exactly `import`, D-183), no ZFS on the host; rights of the token = the six roles of D-081 (`install/install.sh:252`); the agent reports every up interface when only a `veth` is left (D-216); `seal` knows that a container bind-mounts `/etc/hostname` and `/etc/hosts` (`internal/agent/sealfs.go:389`); image builds and full clones of VMs (T-039 log, T-066 log).
@@ -59,96 +59,103 @@ The plan needs these facts. Write the answers to `docs/tasks/T-038.log.md`: one 
 
 ### E. Space and time
 - **E1** Space: data use of the rootfs volume of a fresh Debian container (`lvs`), of the uploaded template file, of a container template (`base-…`) and of a full clone. Free space of `plumb-images` (it is a dir on the host root fs?) and of `local-lvm`.
-- **E2** Seconds: download in the controller, upload, `pct create` from archive, first start until `sshd` answers, full clone, template conversion.
-
-## Plan (pl-architect, 2026-11-12) — DRAFT; waits for the host facts (`docs/tasks/T-038.log.md`), then review and the user's approval
-Marks: **[H:Cn]** = this part depends on host answer Cn; the final plan replaces the mark with the fact or with the fallback named next to it.
+- **E2** Seconds: download in the controller, upload, `pct create` from archive, first start until `sshd` answers, full clon
+## Plan (pl-architect, 2026-11-12) — final; host facts: `docs/tasks/T-038.log.md` (A1 … E2); waits for the review and the user's approval
+Fact ids in brackets point to the log. Checked by pl-architect on the dev VM (2026-11-12): both stock templates (Debian 13.6-1, Ubuntu 26.04-1) hold `/usr/bin/wget` and `/usr/bin/python3`, and `./usr/local/sbin/`, `./etc/systemd/system/` and `…/multi-user.target.wants/` are plain directory entries; `/etc/plumb-agent` does not exist.
 
 ### 0. Shape in one paragraph
-An Image with `type: lxc` pins the URL and the SHA-256 of a Proxmox system template (like a VM Image, D-077). `FetchImage` downloads it into the controller, checks the checksum, appends the agent, its unit, the Plumb CA and `agent.json` to the tar stream, and uploads the result as `vztmpl` to `plumb-images`. `Create` makes an unprivileged container from that file (or a full clone of a built version) with the enrollment token in `env`. The agent reads the token from `/proc/1/environ`, enrolls, and the Run removes `env`. Then everything is the VM flow: Blocks, drift, Issues, delete with revoke.
+An Image with `type: lxc` names a Proxmox system template by URL and pins its SHA-512 from Proxmox's signed index (no https exists for these files, A2). `FetchImage` downloads it into the controller, checks the pin, appends a small first-boot installer for the agent (no agent binary), the Plumb CA and `agent.json` to the tar stream, and uploads the result as `vztmpl` to `plumb-images`. `Create` makes an unprivileged container with `nesting=1` from that file, with the enrollment token in `env`. At the first boot the installer fetches the current agent from the controller (as on a VM, D-082); the agent reads the token from `/proc/1/environ`, enrolls, and the Run removes `env`. Then everything is the VM flow: Blocks, drift, Issues, delete with revoke.
 
 ### 1. Contract and data model (no migration)
-- `Image.spec.type: lxc` exists. `url` must be `https://`; the docs and the UI help name the Proxmox URL and the SHA-256 of today's Debian 13 and Ubuntu templates (A1, A2). Plumb does not read the appliance index (D-224, question 1).
-- `Target.spec.type: lxc` exists, and the Image type must match (`state/validate.go:702`, exists). New rules for `lxc`: `user` is refused ("an LXC Target has no bootstrap user; use the `deploy-user` Block"); `ssh_keys` go to `root` through Proxmox (D-226, question 2). `disk` is the root fs size (GB, min 2). `allow_restart` is accepted and has no effect yet (cores and memory are live, **[H:C5]**).
-- `Image.spec.build` for `lxc`: allowed only with child card T-082 (question 3). Until then the validation refuses it with "LXC image builds come later".
-- Contract text changes (`api/openapi.yaml`): the two "LXC: T-038" notes; the Target `type` description; `reported_ips` in a container (D-216 holds).
+- **Image `type: lxc`** (D-224): `url` may be `http://` or `https://`; the pin is `sha512` (128 hex, from the `sha512sum` field of Proxmox's signed index); `sha256` is not allowed for `lxc`. `type: vm` is unchanged (`https://` + `sha256`). Schema: an `if type = lxc then … else …` block (note for T-075: Redocly closes sub-schemas; the `if/then/else` parts need `additionalProperties: true`, see the memory note of `check:api`). The docs list today's values for `debian-13-standard_13.6-1_amd64.tar.zst` and `ubuntu-26.04-standard_26.04-1_amd64.tar.zst` and the host command that prints the `sha512sum` of any template from the index cache that `pveam update` verified (`/var/lib/pve-manager/apl-info/download.proxmox.com`).
+- **Target `type: lxc`**: the Image type must match (exists, `state/validate.go:702`). `user` is refused ("an LXC Target has no bootstrap user; use the deploy-user Block"); `ssh_keys` go to `root` with `ssh-public-keys` (D-226). `disk` = root fs size in GB, min 2 (a fresh Ubuntu root fs uses about 0.7 GB, E1). `allow_restart` is accepted and has no effect: `cores` and `memory` are live on a container (C5).
+- `ip`, `gateway`, `name`, `disk`, `ssh_keys` stay create-only as on VMs (D-185 A). Reason for `ip`: a live `net0` change keeps the old DHCP address next to the new one until a restart (C5); a `name` change reaches `/etc/hostname` only at a restart (C5). Live changes of these come later.
+- `Image.spec.build` for `lxc` is refused ("LXC image builds come later") until T-082 (question 3).
+- `ImageStatus.unused_imports` also lists unused LXC template files of the Image, with the `pvesm free <storage>:vztmpl/<file>` line (D-233). The field is then present for an `lxc` Image without `build` too. Contract notes "LXC: T-038" are replaced.
 
 ### 2. Template repack (`internal/driver/proxmox/ctpack`, pure Go, no Proxmox)
-- Input: the downloaded file, already checked against the pinned SHA-256 (never parse before the check). Compression by magic bytes: zstd and gzip; anything else is refused with the name of the format **[H:A1]**. New dependency: `github.com/klauspost/compress/zstd`, decoder only (D-225).
-- Output: `.tar.gz` (stdlib `compress/gzip`, fixed header, no time stamp), so Plumb needs no zstd encoder **[H:B3]**.
-- **Byte-exact base:** the base entries are copied block by block up to the end of the last entry (the end is found with `archive/tar` over a counting reader); headers are never decoded and written again, so PAX, GNU long names, xattrs (`security.capability`), hard links, devices and sparse entries stay as they are **[H:A3]**. Then the Plumb entries are appended (USTAR, uid/gid 0, fixed mtime) and a new end-of-archive.
-- Plumb entries: `/usr/local/bin/plumb-agent` (0755), `/etc/plumb-agent/ca.pem` (0644), `/etc/plumb-agent/agent.json` (0644: `url`, `ca`, `token_env: PLUMB_ENROLL_TOKEN`), `/etc/systemd/system/plumb-agent.service` (0644, the same unit as the vendor snippet) and the link `multi-user.target.wants/plumb-agent.service`.
-- **Safety rules (refuse the base):** one of the Plumb paths exists in the base; a parent of a Plumb path is not a plain directory entry in the base (a symlink there would move our file on extraction); `..` or an absolute link target on a parent; more than 2 GiB unpacked tar or 200 000 entries (limits, so a wrong file cannot fill the disk); a truncated stream.
-- Name: `plumb-ct-<image>-<d12>.tar.gz`, `d` = SHA-256 over (base SHA-256, agent binary SHA-256, CA, agent URL, pack format version). Same inputs → same name and the same bytes. A new agent or a new CA gives a new file; containers that exist keep their agent (agent self-update is later).
+- Input: the downloaded file, checked against the pinned SHA-512 first; nothing is parsed before the check. Compression by magic: zstd (every Proxmox system template, A1) and gzip; others are refused with the format name. New dependency `github.com/klauspost/compress/zstd`, decoder only (D-225).
+- **Byte-exact base** (D-230): the 512-byte blocks of the base are copied unchanged up to the end of the last entry (found with `archive/tar` over a counting reader: after each entry the data end rounded up to 512). GNU headers and the 63 GNU long names of Ubuntu (A3) are never decoded and written again. Then the Plumb entries (USTAR, `./` prefix as the base, uid/gid 0, fixed mtime), then two zero blocks and padding to a 10 240-byte record (A3).
+- **Plumb entries — no agent binary** (D-230): `./etc/plumb-agent/` (0755 dir), `./etc/plumb-agent/ca.pem` (0644), `./etc/plumb-agent/agent.json` (0644: `url`, `ca` as PEM text (D3 note), `token_env: PLUMB_ENROLL_TOKEN`), `./usr/local/sbin/plumb-agent-install` (0755, the same script as the vendor snippet of D-082: curl, wget or python3, pinned CA, 10 min retries), `./etc/systemd/system/plumb-agent-install.service` (oneshot, `ConditionPathExists=!/usr/local/bin/plumb-agent`, `After=network-online.target`, then starts the agent), `./etc/systemd/system/plumb-agent.service` (as the snippet) and the two `multi-user.target.wants` links. So a template does not change with an agent release, as VM templates (D-206): no new file per controller upgrade, which matters because the token cannot delete one (B4).
+- **Refuse the base** when: a Plumb path exists in it; a parent of a Plumb path is not a plain directory entry (a symlink there would move our file at extraction); none of `usr/bin/curl`, `usr/bin/wget`, `usr/bin/python3` is in it; the tar is truncated; more than 4 GiB unpacked or 500 000 entries (Ubuntu: 0.63 GB, 27 135 entries, A3).
+- Output `.tar.gz` (stdlib, `BestSpeed`, fixed header; about 200 MB for Debian, B3, E1). Same inputs → same bytes. Name `plumb-ct-<image>-<d12>.tar.gz`, `d` = SHA-256 over (pinned SHA-512, CA, agent URL, pack format version).
 
 ### 3. Driver (`internal/driver/proxmox`)
-- The driver knows the type of a guest id from `GET /cluster/resources?type=vm` (`type: qemu|lxc`, needs `VM.Audit`); every method refuses a guest whose type differs from the spec. `GuestID` stays the VMID.
-- `FetchImage(lxc)`: under the image lock, list `vztmpl` of `plumb-images`; a file of the name with the right size is reused. Else: download into `/var/lib/plumb/tmp` (space check first, D-219 style, against the free space of the controller fs **[H:A4]**), check SHA-256, repack to a second temp file, upload with `checksum` + `checksum-algorithm=sha256` **[H:B1]**, remove the temp files (also on failure). The `ImageRef` is the volid `plumb-images:vztmpl/<file>`.
-- `Create(lxc)`: one `POST /nodes/<node>/lxc`: `ostemplate`, `vmid` (range), `pool`, `hostname`, `unprivileged=1`, `features=nesting=1` (systemd needs it **[H:D4]**), `rootfs=<disk storage>:<disk>`, `net0=name=eth0,bridge=…,ip=…,gw=…`, `nameserver`, `searchdomain` (D-187), `ssh-public-keys`, `cores`, `memory`, `swap=512`, `description` (image name and version, as VMs), `env=PLUMB_ENROLL_TOKEN=<token>` **[H:C1, C2]**; then start. A failure after the create removes the half-made container (D-078, T-073 rule).
-- `Observe(lxc)`: config + pending + status + `interfaces` **[H:C7]**; `TokenPending` = `env` holds a token. A privileged container (`unprivileged` missing or 0) is an error "Plumb manages only unprivileged containers", never a change.
-- `Update(lxc)`: `cores`, `memory`, the bridge of `net0` (live **[H:C5]**); a new token sets `env` (re-enrollment, then `Restart`). New `ClearBootstrap(id)`: `delete=env` with the digest; idempotent.
-- `Power`, `Delete` (`purge=1`, `destroy-unreferenced-disks=1` **[H:C8]**), `DiskSpace` (also the image storage for the upload). `ListImages`/`RemoveImage` see `vztmpl` files of the Image; removal needs B4 — if the token gets 403, the rule of D-209 holds (report and show the `pvesm free` line, no new right).
-- Create-only for `lxc` as for VMs (D-185 A): `ip`, `gateway`, `disk`, `ssh_keys`, `name`. A live `ip`/`disk` change of a container is a later card.
+- Type of a guest id from `GET /cluster/resources?type=vm` (`qemu|lxc`, `VM.Audit`); a method refuses a guest of the other type. `GuestID` stays the VMID.
+- `FetchImage(lxc)`: under the image lock, list `vztmpl` of `plumb-images` (works, B4); a file of the name is reused. Else: space check of the controller fs (6.7 GB free today, A4: need download size + 4 GiB) → download into `/var/lib/plumb/tmp` (0700; files 0600; plain `net/http`, no redirect to another host) → SHA-512 → repack to a second temp file → upload. Upload rules from B1: multipart with the field order `content`, `checksum-algorithm`, `checksum`, `file`; a `Content-Length` (no chunked body); `checksum-algorithm=sha256` of the output, so Proxmox checks the copy. Temp files are removed on every path; the start of `serve` removes old `ct-*` temp files. The `ImageRef` is the volid. An upload over an existing name overwrites (B2): the deterministic name makes that harmless.
+- `Create(lxc)`: `POST /nodes/<node>/lxc` with `ostemplate`, `vmid`, `pool`, `hostname`, `unprivileged=1`, `features=nesting=1` (Ubuntu needs it, D4), `rootfs=<disk storage>:<disk>`, `net0=name=eth0,bridge=…,ip=…[,gw=…]`, `nameserver`, `searchdomain` (D-187), `ssh-public-keys`, `cores`, `memory`, `swap=512`, `onboot=1` as VMs, `description` (image name, version), `env=PLUMB_ENROLL_TOKEN=<token>` (C1, C2: all with today's rights; encode `=` as `%3D`, or send JSON). Then start. A failure after the create removes the half-made container (D-078, T-073).
+- `Observe(lxc)`: `config`, `pending`, `status/current`, `interfaces` (addresses without the agent, C7). `TokenPending` = `env` in config or a pending `env` that is not a delete. A container without `unprivileged: 1` is an error "Plumb manages only unprivileged containers" (D-227).
+- `Update(lxc)`: `cores`, `memory` (live, C5); the bridge of `net0` (live; one bridge per install, D-184); a new token sets `env` (re-enrollment + `Restart`). New method `ClearBootstrap(id)`: `delete=env` with the digest. On a running container it is pending (C4): the config shows no `env` at once; `/proc/1/environ` keeps the used token until the next restart.
+- `Delete(lxc)`: `DELETE …/lxc/<id>?purge=1&destroy-unreferenced-disks=1` with the parameters in the query (a body gives 501, C6/C8).
+- `ListImages(lxc)`: the `vztmpl` files of the Image; `RemoveImage` is never called for a file (D-233).
+- Known host leftover (C8): Proxmox keeps `/var/lib/lxc/<id>/{passthrough,rules.seccomp}` of a deleted container. The token cannot remove them. Host check H11 proves that a new container with the same VMID still starts; if not, the final plan of T-079 adds a rule.
 
 ### 4. Engine (`internal/plan`)
-- Create step: `FetchImage` → disk gate (D-219, root fs size; plus the template upload on the image storage) → `Create` → wait for the hello (as VMs) → **new step `guest:bootstrap` = `ClearBootstrap`** for `lxc`. A failed clear fails the Run with the text; the token is used and dead already, so this is hygiene, not a hole.
-- Re-enrollment Plan for `lxc`: the same as VMs (new token in `env`, cold restart), then clear.
-- Restart: `restart_needed` stays false for `lxc` while C5 shows live changes; if a change is pending, the D-190 path covers it unchanged.
-- Delete: as VMs (D-211 revoke first).
+- Create of an `lxc` Target: `FetchImage` → disk gate (D-219, root fs on the disk storage; the template file on `plumb-images` is checked by free space of that storage) → `Create` → wait for the hello (as VMs) → new step `guest:bootstrap` = `ClearBootstrap`. A failed clear fails the Run with the text; the token is used and dead, so it is hygiene; the next Run of the Target clears it again (`TokenPending` and no open enrollment).
+- Re-enrollment Plan: the VM path (new token in `env`, cold restart), then the clear step.
+- Shutdown (PR #144): the fetch runs inside the Run's context; `Stop` cancels it, the download, repack and upload stop, the temp files go. A cancelled upload can leave `/var/tmp/pveupload-<hex>` on the host (B1); the token cannot remove it: known limit, shown in the docs. Repack time for 0.6 GB is far below the 2 min grace.
+- Retention (D-232): unchanged for VMs. For `lxc` Images Plumb has no template container before T-082, so retention only lists unused files (never an error and never a failed step because of a file).
+- The disk gate and `restart_needed`: `restart_needed` is always false for `lxc` (C5).
 
 ### 5. Agent (`internal/agent`)
-- `agent.json` gets `token_env`. With it the agent reads `/proc/1/environ` (NUL list, max 64 KiB, only the named key) instead of `token_file`; a missing key is "no token yet" (retry, as today). The value never reaches a log (existing rule).
-- `symlink` (card note): `renameat2` with `EINVAL` (flags not supported, ZFS < 2.2 or another file system) gives "the file system of <dir> does not support atomic rename (RENAME_NOREPLACE/RENAME_EXCHANGE); on ZFS it needs ZFS 2.2 or newer". No fallback to `rename(2)`. A test with a seam that returns `EINVAL` (D-228).
-- `seal` in a container (only with T-082): no cloud-init and no dracut steps; skip `fstrim` and what D5 shows as missing; machine-id and SSH host keys by the facts of D1.
-- Addresses (D-216) are done; D3 confirms `eth0` is `veth` inside.
+- `token_env` in `agent.json`: the agent reads `/proc/1/environ` (root only, 0400, C3; at most 64 KiB; only the named key; NUL list). A missing key is "no token yet" (retry, as today). The value never reaches a log. Only PID 1 has it; systemd does not pass it to services (C3), so the agent must read PID 1.
+- `symlink`: `renameat2` → `EINVAL` gives "the file system of <dir> does not support atomic rename (RENAME_NOREPLACE/RENAME_EXCHANGE); on ZFS it needs ZFS 2.2 or newer"; no fallback (D-228). ext4 in a container supports both flags (D3).
+- Addresses: `eth0` is `veth` inside (D3); D-216 covers it.
+- `seal` in a container: only with T-082 (§11, D-234).
 
 ### 6. Security
-- The template holds no secret: binary, public CA, URL. Anyone with `Datastore.Audit` on `plumb-images` can read it; that is fine.
-- The token: single use, 15 min, stored as a hash, bound to the Target (D-025). It is visible in the container config to `VM.Audit` holders and in `/proc/1/environ` to root in the container until the next cold start **[H:C2, C3, C4]**. The clear step removes it from the config; a reader after the enrollment gets a dead token. Plumb never puts it into the description, a Change, an event or a log.
-- Unprivileged only (D-227): create sets `unprivileged=1` and `nesting=1` only; no `lxc.*` raw keys, no mount points, no devices; Observe refuses a privileged container. Root in the container is uid 100000 on the host.
-- Repack: parse only a checked file; the limits and parent rules of §2; temp files 0600 in a 0700 directory, removed on every path.
-- The dependency: one module, decoder only, pinned in `go.sum`; `govulncheck` in CI covers it.
-- New token rights: none planned. C1, C2 and C9 decide it; if a step needs a new right, the final plan names it and asks the user (D-081 changes only with the user).
+- **Trust of the base** (D-224): the file comes over plain http (A2). Integrity = the SHA-512 pin in the revision, which a person copied from Proxmox's signed index (or from the Plumb docs). A changed file fails the check before any parse.
+- **The template holds no secret and no agent:** a public CA, the URL, a script and units. Readers with `Datastore.Audit` may read it.
+- **The token:** single use, 15 min, hash, bound to the Target (D-025). Proxmox shows `env` only to holders of `VM.Config.Options` (C2), not in task logs or the access log (C2). In the container only root can read it, only in PID 1 (C3); the clear step removes it from the config at once; the used value stays in PID 1 until the next restart (C4) and is dead. Plumb never puts it in a description, Change, event or log; the replay data leak scan covers `env`.
+- **Unprivileged only** (D-227): `unprivileged=1`, `nesting=1`, nothing else; no `lxc.*` keys, mount points or devices. Root in the container is uid 100000 on the host (D3); a `chown` outside the 65 536 map fails (D4): Blocks with such uids fail with the system's error.
+- **Repack:** parse only a checked file; limits and parent rules of §2; temp files 0600 in a 0700 directory.
+- **Rights:** no new right. The only missing one, `Datastore.Allocate` on `plumb-images` (B4), stays missing for the reason of D-209 (it lets the token change the storage).
+- **The dependency:** one module, decoder only, pinned in `go.sum`, `govulncheck` in CI.
 
-### 7. Installer
-- `plumb-images` gets content `import,vztmpl` on install and on a repair run (D-229); the start check of D-183 accepts exactly that set (and still `import` alone, with a warning that LXC Images need the repair run) **[H:G0]**.
+### 7. Installer and the upgrade (D-229)
+- A new install sets `plumb-images` content to `import,vztmpl`. The start check of D-183 accepts exactly `{import}` or exactly `{import, vztmpl}` (as sets; `pvesm set` reorders lists, G0). With `{import}` it logs a warning, and an LXC Image create fails with "plumb-images has no content vztmpl: run install.sh again (repair run)". VM Targets work either way.
+- **Upgrade of an installed Plumb:** run the new `install.sh` with the new `plumb` binary (the normal repair run). It shows the change "plumb-images content import → import,vztmpl" in its plan and asks (D-084), pushes the new binary first, then sets the content, then restarts the controller. The order matters: today's controller refuses the new content with exit 78 (G0). The release notes and `docs/` say this in one paragraph. Do not change the storage by hand before the new binary is in.
+- `install.sh --dry-run` prints the `pvesm set` line; the installer's own storage rule (D-084) accepts both sets.
 
 ### 8. Web
-- Target form: type follows the Image (`vm`/`lxc`); for `lxc` no `user` field, `ssh_keys` labelled "SSH keys for root", no "Restart needed" badge. Target detail shows "Container". Image form: type `lxc` with the help text of §1; build section hidden for `lxc` until T-082. Screenshots with `browser-shot` (light and dark, 390 px).
+- Image form: type `lxc` shows URL (http allowed) and SHA-512 with help text and the two known templates as a pick list that fills both fields; the build section is hidden for `lxc` until T-082. Image detail: the unused files list with the `pvesm free` line also for `lxc` (D-233).
+- Target form: the type follows the Image; for `lxc` no `user` field, `ssh_keys` labelled "SSH keys for root", no "Restart needed". Target detail shows "Container". Screenshots with `browser-shot` (light, dark, 390 px).
 
 ### 9. Tests
-- `ctpack`: fixture archives made in the test (zstd and gzip, with xattrs, hard link, device, long name, sparse); the base prefix of the output is byte-equal; GNU `tar -tv --xattrs` of the output lists base + Plumb entries (CI has GNU tar); refuse cases of §2 one by one; deterministic output.
-- Driver: `pvefake` for the LXC endpoints; replay data recorded on the host (leak scan includes `env`); the half-made cleanup; type mismatch refused.
-- Agent: `token_env` reader with a fake environ file (missing key, empty value, long value, NUL edge cases); symlink `EINVAL` seam.
-- Engine: `driver/fake` LXC create, clear step, failure of the clear, re-enrollment, delete; leak test: no token in events, Plans, logs.
-- Web: unit + e2e for the form rules.
-- Mutation audits by `pl-codex-qa` as for T-039.
+- `ctpack`: fixtures made in the test (zstd and gzip; GNU long names, hard links, setuid, non-root owners, a device, a PAX header); the base prefix of the output is byte-equal; GNU `tar -tv` of the output (CI has GNU tar) lists base + Plumb entries with modes; each refuse rule; the same inputs give the same bytes; the end is a whole 10 240-byte record. One optional test against the real Debian file when `PLUMB_CT_FIXTURE` points to it.
+- The first-boot script: a test that its text equals the vendor snippet's script of `install.sh` (one source of behaviour).
+- Driver: `pvefake` for the LXC endpoints (incl. the multipart field order, `Content-Length`, `DELETE` with a query, pending `env`); replay data recorded on the host in T-079, leak scan incl. `env`; half-made cleanup; type mismatch.
+- Agent: `token_env` reader on a fake environ file (missing key, empty, long, NUL edges, other keys); the `EINVAL` seam of `symlink`.
+- Engine: `driver/fake` LXC create, clear step (and its failure), re-enrollment, delete, cancel during fetch (temp files gone); leak test: no token in events, Plans, logs.
+- Installer: dry run and repair run with `{import}` → `{import,vztmpl}`, binary pushed before the storage change; start check with both sets and with a wrong set.
+- Web: unit + e2e for the form rules. Mutation audits by `pl-codex-qa` as for T-039.
 
 ### 10. Real-host acceptance (T-083)
-H1 Debian 13 container, static address, Block `nginx`: enrolled, first Run green, `env` gone from the config, Nginx answers. H2 the same with DHCP and with the Ubuntu template of A1. H3 drift: a file changed in the container → Issue in a few s; `pct set --memory` from outside → `guest:config` Issue. H4 live `cores`/`memory` change by a Plan, no restart. H5 re-enrollment. H6 delete: container gone, credential 401 (D-211). H7 second create reuses the template (no upload); a new agent build makes a new file; removal or the `pvesm free` line. H8 the `nginx-site` default link (renameat2 flags) in the container. H9 disk gate refuses an oversized root fs. H10 the token cannot create a privileged container or set `lxc.*` keys (exact 403 texts). End state clean.
+H1 Debian 13 container, static address, Block `nginx`: agent installed at first boot, enrolled, first Run green, `env` gone from the config, Nginx answers. H2 Ubuntu 26.04 with DHCP. H3 drift: a file in the container → Issue; `pct set --memory` from outside → `guest:config` Issue. H4 live `cores`/`memory` by a Plan, no restart. H5 re-enrollment. H6 delete: container gone, credential 401 (D-211). H7 a second create reuses the file (no upload); a controller upgrade does not make a new file; the Image shows the `pvesm free` line for an old file after a pin change. H8 `nginx-site` default link (renameat2) in the container. H9 the disk gate refuses an oversized root fs. H10 the token cannot set `lxc.*` keys or create `unprivileged=0` (exact texts). H11 delete, then a new container that gets the same VMID starts (C8 leftovers). H12 installer upgrade path of §7 on the running install. H13 a stop of `plumb.service` during a fetch: no temp file left in the controller. End state clean.
 
-### 11. Child cards (after the user's approval; numbers from T-075)
+### 11. Child cards (after the user's approval; from T-075)
 | Card | Owner | Size | Needs |
 |---|---|---|---|
-| T-075 contract + validation rules for `lxc` (§1), D-lines | pl-backend | S | plan |
-| T-076 `ctpack` + the zstd dependency (§2) | pl-backend | M | plan (no host) |
-| T-077 installer: `vztmpl` on `plumb-images`, start check (§7) | pl-codex-fix | S | plan |
+| T-075 contract + validation for `lxc` (§1) | pl-backend | S | approval |
+| T-076 `ctpack` + zstd dependency + first-boot units (§2) | pl-backend | M | approval (no host) |
+| T-077 installer + start check: `vztmpl`, upgrade order (§7) | pl-codex-fix (route rule) | S | approval |
 | T-078 agent: `token_env`, `symlink` EINVAL text (§5) | pl-frontend | S | T-075 |
 | T-079 driver LXC (§3) with host recordings | pl-backend | L | T-076, T-077 |
-| T-080 engine: create/clear/re-enroll/delete for `lxc` (§4) | pl-frontend | M | T-075, fake driver |
+| T-080 engine: create, clear, re-enroll, delete, cancel (§4) | pl-frontend | M | T-075 |
 | T-081 web (§8) | pl-frontend | S | T-075 |
-| T-082 LXC image builds (container `seal`, template, clone) | pl-backend | M | T-079, T-080, question 3 |
-| T-083 real-host acceptance (§10) + QA audits | pl-backend, pl-codex-qa | M | all |
-Parallel: T-075, T-076, T-077 at once; then T-078, T-079, T-080, T-081.
+| T-082 LXC image builds (D-234) | pl-backend | M | T-079, T-080, question 3 |
+| T-083 real-host acceptance (§10) + QA audits | pl-backend, pl-codex-qa | M | T-075 … T-081 |
+Parallel: T-075, T-076, T-077 at once; then T-078 … T-081; T-082 last.
 
 ### 12. Decisions (proposed; text in `docs/decisions/T-038.md`)
-D-224 checksum source · D-225 zstd dependency · D-226 LXC bootstrap user and SSH keys · D-227 unprivileged + nesting only · D-228 renameat2 without fallback · D-229 `vztmpl` on `plumb-images` · D-230 repack format and name · D-231 token clear step.
+D-224 trust of the base (http + SHA-512 pin) · D-225 zstd decoder dependency · D-226 no bootstrap user, keys to root · D-227 unprivileged + nesting only · D-228 renameat2 without fallback · D-229 `vztmpl` on `plumb-images`, start check, upgrade order · D-230 repack: byte-exact base, first-boot installer instead of the binary, name · D-231 `env` token and the clear step · D-233 Plumb never deletes a template file · D-234 LXC image builds (T-082). (D-232 is T-065.)
 
 ### 13. Questions for the user (each with one recommendation)
-1. **Checksum source of a base template.** Recommended: the Image pins URL + SHA-256 as for VMs; the docs list today's values. (Other: Plumb reads Proxmox's signed appliance index; needs an OpenPGP library and has only a SHA-512.)
-2. **Login to a container.** Recommended: SSH keys go to `root` (Proxmox writes them at create); a named user comes from the `deploy-user` Block. (Other: the agent makes the Target's `user` at the first Run.)
-3. **LXC image builds (Blocks baked into a container template).** Recommended: yes, as the last card T-082 after plain LXC Targets work. (Other: later slice.)
-4. **Where LXC templates live.** Recommended: the existing storage `plumb-images` also takes `vztmpl` (installer repair run). (Other: a new storage `plumb-ct` with its own role.)
+1. **How Plumb trusts a Proxmox container template.** Proxmox serves these files only over http; the file list is signed and holds SHA-512 sums. Recommended: the Image pins the SHA-512 from that signed list (the Plumb docs give the values for Debian 13 and Ubuntu 26.04, and the UI offers them as a pick list). Other: Plumb reads and checks the signed list itself (a new OpenPGP library in the controller).
+2. **Login to a container.** Proxmox has no cloud-init user for containers. Recommended: the Target's SSH keys go to `root`; a named user comes from the `deploy-user` Block. Other: the agent makes the Target's `user` at the first Run.
+3. **LXC image builds (Blocks baked into a container template).** Recommended: yes, as the last card (T-082), after plain LXC Targets work on the host. Other: a later slice.
+4. **Old template files.** The Plumb token cannot delete a template file (same as image files, D-209). Recommended: keep it so; Plumb shows the `pvesm free` line per unused file, and a template changes only with a new pinned base, the CA or the URL (not with a Plumb upgrade). Other: give the token `Datastore.Allocate` on `plumb-images` (it could then also change that storage).
+ct` with its own role.)
 
 ## Out of scope
 - Privileged containers. Nested Docker in LXC.
