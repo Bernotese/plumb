@@ -41,6 +41,7 @@ type env struct {
 	// of its guest (a real agent always does, D-061).
 	noBootHello bool
 
+	wg     sync.WaitGroup
 	mu     sync.Mutex
 	agents map[string]*linktest.Agent
 	stops  map[string]context.CancelFunc
@@ -73,6 +74,7 @@ func newEnv(t *testing.T, configure ...func(*plan.Config)) *env {
 	e.start(configure...)
 	t.Cleanup(func() {
 		cancel()
+		e.wg.Wait()
 		e.eng.Close()
 		st.Close()
 	})
@@ -117,7 +119,7 @@ func (e *env) start(configure ...func(*plan.Config)) {
 func (e *env) agent(target string) *linktest.Agent {
 	e.t.Helper()
 	tok := func() (string, bool) {
-		b, err := e.st.GetBinding(context.Background(), state.KindTarget, target)
+		b, err := e.st.GetBinding(e.ctx, state.KindTarget, target)
 		if err != nil {
 			return "", false
 		}
@@ -129,12 +131,17 @@ func (e *env) agent(target string) *linktest.Agent {
 	e.mu.Lock()
 	e.agents[target], e.stops[target] = a, cancel
 	e.mu.Unlock()
-	go a.Run(ctx)
+	e.wg.Add(2)
+	go func() {
+		defer e.wg.Done()
+		a.Run(ctx)
+	}()
 	// Like the real agent, a hello after each cold start of the guest.
 	go func() {
+		defer e.wg.Done()
 		seen := -1
 		for ctx.Err() == nil {
-			if b, err := e.st.GetBinding(context.Background(), state.KindTarget, target); err == nil {
+			if b, err := e.st.GetBinding(ctx, state.KindTarget, target); err == nil {
 				n := e.drv.Boots(driver.GuestID(b.Ref))
 				e.mu.Lock()
 				quiet := e.noBootHello
