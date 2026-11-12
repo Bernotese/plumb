@@ -77,7 +77,7 @@ func TestStarter3RenderOnVM(t *testing.T) {
 		t.Fatal("compose file")
 	}
 	unit := byID["unit:plumb-compose-whoami.service"]["content"].(string)
-	for _, want := range []string{"up --detach", "StandardOutput=null", "StandardError=null"} {
+	for _, want := range []string{"up --detach", "StandardOutput=null", "StandardError=null", "TimeoutStartSec=15min"} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("compose unit lacks %q", want)
 		}
