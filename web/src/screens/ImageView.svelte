@@ -8,6 +8,7 @@
     scheduleText,
     type Trigger,
     safeFreeCommand,
+    basePin,
   } from "../lib/images";
   import { liveSnapshot } from "../lib/live";
   import { go, href } from "../lib/router";
@@ -163,8 +164,10 @@
       <dd id="image-type">{KIND_NAME[spec.type]}</dd>
       <dt>Kind</dt>
       <dd>
-        {#if spec.type === "lxc"}<Badge tone="muted" label="Stock" /> Plumb adds the agent installer to
-          the Proxmox template.
+        {#if spec.type === "lxc" && spec.build}<Badge tone="info" label="Built" /> Plumb makes container
+          templates from the Proxmox template.
+        {:else if spec.type === "lxc"}<Badge tone="muted" label="Stock" /> Plumb adds the agent installer
+          to the Proxmox template.
         {:else if spec.build}<Badge tone="info" label="Built" /> Plumb makes templates from the base image.
         {:else}<Badge tone="muted" label="Stock" /> Plumb imports the base image as it is.{/if}
       </dd>
@@ -255,9 +258,13 @@
         </dd>
         <dt>Upgrade</dt>
         <dd>
-          {b.upgrade === false ? "no" : "yes: all packages are upgraded in the build"}
+          {b.upgrade === false
+            ? "no"
+            : lxc
+              ? "yes: apt-get dist-upgrade runs in the build container before the template is made"
+              : "yes: all packages are upgraded in the build"}
         </dd>
-        <dt>Build guest</dt>
+        <dt>{lxc ? "Build container" : "Build guest"}</dt>
         <dd>
           {b.guest.cores ?? 1} CPU · {b.guest.memory ?? 1024} MiB · {b.guest.disk} GiB disk ·
           <span class="mono">{b.guest.bridge}</span> · {b.guest.ip ?? "dhcp"}
@@ -309,6 +316,12 @@
                 <td>
                   {formatTime(v.finished_at ?? v.started_at)}
                   <span class="sub">{triggerText(v.trigger)} · revision {v.revision}</span>
+                  {#if basePin(v.base_sha256)}
+                    {@const p = basePin(v.base_sha256)}
+                    <span class="sub mono base-pin" title={v.base_sha256}
+                      >base {p?.algo} {p?.short}…</span
+                    >
+                  {/if}
                 </td>
                 <td><a href={href({ name: "run", id: v.run_id })}>Run {v.run_id}</a></td>
                 <td>
@@ -349,8 +362,9 @@
       {@render unusedFiles(st)}
     {/if}
     <p class="muted" id="lxc-no-versions">
-      A container image has no versions: each create uses the Proxmox template with the agent
-      installer added. Builds of container images come later.
+      A stock container image has no versions: each create uses the Proxmox template with the agent
+      installer added. Edit it and switch on "Build" to make container templates with Blocks and
+      fresh packages.
     </p>
   {:else if spec.build}
     <p class="muted">The server does not show builds yet.</p>

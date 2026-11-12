@@ -114,11 +114,26 @@
       images.find((i) => i.document.name === image)?.document.spec.type ??
       "vm",
   );
+  // A container from a built Image is a clone: Proxmox writes no SSH keys
+  // into it, so the Target has none; the Block deploy-user adds them (D-251).
+  const builtLxc = $derived(
+    kind === "lxc" &&
+      images.find((i) => i.document.name === image)?.document.spec.build !== undefined,
+  );
+  const deployUser = $derived(blocks.some((b) => b.document.name === "deploy-user"));
+  // N2 of the #176 review: keys typed for a stock Image are not sent for a
+  // built one; say it, do not drop them without a word.
+  const droppedKeys = $derived(
+    builtLxc && !editing && Array.isArray(guest["ssh_keys"])
+      ? (guest["ssh_keys"] as unknown[]).filter((k) => String(k).trim() !== "").length
+      : 0,
+  );
+  const usesDeployUser = $derived(uses.some((u) => u.use === "deploy-user"));
   // A container has no bootstrap user; its SSH keys go to root (D-226).
   const kindFields = $derived(
     kind === "lxc"
       ? guestFields
-          .filter((f) => f.name !== "user")
+          .filter((f) => f.name !== "user" && !(builtLxc && f.name === "ssh_keys"))
           .map((f) => {
             const description = LXC_FIELD_HELP[f.name];
             const label = f.name === "ssh_keys" ? "SSH keys for root" : f.label;
@@ -203,9 +218,9 @@
     );
   });
 
-  function addBlock() {
-    if (!addChoice) return;
-    uses = [...uses, makeUse(addChoice)];
+  function addBlock(use = addChoice) {
+    if (!use) return;
+    uses = [...uses, makeUse(use)];
     const key = uses[uses.length - 1]?.key;
     queueMicrotask(() => document.getElementById(`use-${key}-legend`)?.focus());
   }
@@ -428,6 +443,32 @@
         readonlyHint="Create-only: it cannot change on an existing target."
         notes={{ ...addressNote, ...diskNote }}
       />
+      {#if builtLxc}
+        <div class="banner info" id="t-lxc-keys">
+          <p>
+            A container from the built image <span class="mono">{image}</span> gets no SSH keys from
+            Proxmox. Add the keys with the Block <span class="mono">deploy-user</span> (D-251).
+          </p>
+          {#if droppedKeys}
+            <p class="warn" id="t-keys-dropped">
+              The {droppedKeys === 1 ? "SSH key" : `${droppedKeys} SSH keys`} you typed for the other
+              image {droppedKeys === 1 ? "is" : "are"} not sent. Put {droppedKeys === 1
+                ? "it"
+                : "them"} into the Block <span class="mono">deploy-user</span>.
+            </p>
+          {/if}
+          {#if deployUser && !usesDeployUser}
+            <button
+              type="button"
+              class="btn"
+              id="t-add-deploy-user"
+              onclick={() => addBlock("deploy-user")}>Add Block deploy-user</button
+            >
+          {:else if !deployUser}
+            <p class="muted">There is no Block <span class="mono">deploy-user</span> yet.</p>
+          {/if}
+        </div>
+      {/if}
       <div class="field">
         <label class="check">
           <input
@@ -494,7 +535,7 @@
           <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
         {/each}
       </select>
-      <button type="button" class="btn" id="add-block" onclick={addBlock}>Add Block</button>
+      <button type="button" class="btn" id="add-block" onclick={() => addBlock()}>Add Block</button>
     </div>
 
     <h2>Review</h2>
