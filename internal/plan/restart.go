@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
@@ -27,6 +28,8 @@ const (
 		"Stop the VM or set allow_restart, then plan again"
 	textStartedOutside = "the VM was started outside Plumb during the Run, so the new token was written while it ran: " +
 		"it stays pending in smbios1 and is not active. Plan the re-enrollment again"
+	textStartedOutsideCT = "the container was started outside Plumb during the Run, so the new token was written while it ran: " +
+		"it stays pending in env and is not active. Plan the re-enrollment again"
 	textRestartNotPlanned = "the guest runs now, and the change needs a restart that the Plan does not show; plan again"
 	textBridgeStuck       = "Proxmox did not apply the bridge change live; check the VM in Proxmox"
 	textWaitsOutput       = "%s: set in Proxmox, waits for a stop and start of the VM"
@@ -286,4 +289,12 @@ func (e *Engine) waitsOfRun(ctx context.Context, runID int64) int {
 		}
 	}
 	return n
+}
+
+// forKind says "container" for "VM" in a text about an LXC guest.
+func forKind(text string, kind wire.Kind) string {
+	if kind == wire.KindLXC {
+		return strings.ReplaceAll(text, "the VM", "the container")
+	}
+	return text
 }

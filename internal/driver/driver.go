@@ -108,10 +108,12 @@ type GuestState struct {
 	// TokenPending says that a new enrollment token is set but not active:
 	// the guest has not had a cold start since it was written.
 	TokenPending bool
-	// TokenInConfig says that an enrollment token is still in the guest
-	// config, active or not: the `env` option of a container (D-231).
-	// ClearBootstrap removes it. Always false for a VM, whose token is
-	// in the SMBIOS serial and is dead once used.
+	// TokenInConfig says that an enrollment token is still in the config
+	// of a container: `env` in the config view of pending values
+	// (Proxmox current=0), so active or a pending set; a pending delete
+	// counts as removed (host C4, review C1 of #159). ClearBootstrap
+	// removes it. Always false for a VM, whose token is in the SMBIOS
+	// serial and is dead once used.
 	TokenInConfig bool
 	Digest        string // changes whenever the guest config changes; covers both views
 	Power         Power

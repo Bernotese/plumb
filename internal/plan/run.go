@@ -296,7 +296,13 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// A container: its template is fetched in its own step (D-236), and
 	// the enrollment token leaves its config after the hello (D-231).
 	lxc := r != nil && r.Kind == wire.KindLXC
-	fetch := lxc && guestChange != nil && tp.Guest == "create"
+	// A built Image (T-082) clones its newest version: no fetch.
+	built := false
+	if lxc {
+		info, ok := set.ImageInfo(r.Image)
+		built = ok && info.Built
+	}
+	fetch := lxc && !built && guestChange != nil && tp.Guest == "create"
 	clear := lxc && (tp.Guest == "create" || reenroll || e.tokenInConfig(ctx, tp.Target))
 	if fetch {
 		s.add(ctx, StepImageFetch)
@@ -520,12 +526,16 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		if err != nil {
 			return res, err
 		}
+		// The guest exists: its record must too, also when Stop cancels
+		// the Run now (review S1 of #159). Without a binding no Run could
+		// delete it or clear a container's token.
+		keep := context.WithoutCancel(ctx)
 		digest := ""
-		if st, err := e.cfg.Driver.Observe(ctx, id); err == nil {
+		if st, err := e.cfg.Driver.Observe(keep, id); err == nil {
 			digest = st.Digest
 		}
 		res.changes = createChanges(spec)
-		return res, e.st.PutBinding(ctx, store.Binding{Kind: state.KindTarget, Name: tp.Target, Ref: string(id), Digest: digest})
+		return res, e.st.PutBinding(keep, store.Binding{Kind: state.KindTarget, Name: tp.Target, Ref: string(id), Digest: digest})
 
 	case "update", "reenroll":
 		return e.updateGuest(ctx, tp, r, planned)
@@ -559,7 +569,7 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	// B1: a guest that someone started after the Plan was made is not
 	// restarted. No token, no write, no power action.
 	if reenroll && running && !r.AllowRestart {
-		return res, errors.New(textReenrollRuns)
+		return res, errors.New(forKind(textReenrollRuns, desired.Kind))
 	}
 	recorded, restart, err := restartRule(desired.Kind, changes, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
 	if err != nil {
@@ -608,6 +618,9 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 			return res, err
 		}
 		if after.TokenPending {
+			if desired.Kind == wire.KindLXC {
+				return res, errors.New(textStartedOutsideCT)
+			}
 			return res, errors.New(textStartedOutside)
 		}
 	case restart:
@@ -624,7 +637,7 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 				return res, err
 			}
 			if w := driver.WaitingGuest(desired, after); len(w) > 0 || after.TokenPending {
-				return res, fmt.Errorf("after the restart a value still waits for a stop and start (%s); check the VM in Proxmox", waitingNames(w, after.TokenPending))
+				return res, fmt.Errorf("after the restart a value still waits for a stop and start (%s); %s", waitingNames(w, after.TokenPending), forKind("check the VM in Proxmox", desired.Kind))
 			}
 		} else {
 			// Proxmox applied it live: the planned restart is skipped.
@@ -699,7 +712,8 @@ func (e *Engine) clearStep(ctx context.Context, s *stepper, target string) {
 		fail(err)
 		return
 	}
-	s.set(ctx, StepGuestBootstrap, wire.StatusApplied, nil, "the used enrollment token was removed from the container config")
+	s.set(ctx, StepGuestBootstrap, wire.StatusApplied, nil,
+		"the used enrollment token is removed from the container config; on a running container Proxmox applies the removal at the next restart")
 }
 
 func waitingNames(w []wire.Change, token bool) string {
