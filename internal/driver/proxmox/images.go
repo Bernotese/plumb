@@ -746,7 +746,8 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 // DiskSpace reads the use of the disk storage (D-203): the storage status
 // gives the size and the real use (for lvmthin: the data of the thin
 // pool). When the token can read the thin pools of the node (it needs
-// Sys.Audit), the metadata use of the pool with the same size is added.
+// Sys.Audit on /, which the installer gives since D-240), the metadata use
+// of the pool with the same size is added. An older install gets 403.
 func (d *Driver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
 	var st struct {
 		Type  string `json:"type"`
@@ -772,7 +773,7 @@ func (d *Driver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
 	err := d.c.Get(ctx, d.node()+"/disks/lvmthin", nil, &pools)
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == 403 {
-		return out, nil // no Sys.Audit: the metadata use stays unknown
+		return out, nil // no Sys.Audit on /: the metadata use stays unknown
 	}
 	if err != nil {
 		return driver.DiskSpace{}, fmt.Errorf("proxmox: read the thin pools: %w", err)

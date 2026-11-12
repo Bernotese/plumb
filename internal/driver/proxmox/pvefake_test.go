@@ -455,7 +455,7 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == "GET" && path == "/nodes/"+fakeNode+"/disks/lvmthin":
 		if f.thinPools == nil {
-			fail(w, 403, "Permission check failed (/nodes/"+fakeNode+", Sys.Audit)", nil)
+			fail(w, 403, "Permission check failed (/, Sys.Audit)", nil) // the real path (D-240)
 			return
 		}
 		reply(w, 200, f.thinPools)
