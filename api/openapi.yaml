@@ -751,6 +751,75 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
 
+  /targets/{name}/agent-update:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [targets]
+      operationId: updateTargetAgent
+      x-plumb-planned: T-092
+      summary: Propose an agent update
+      description: |
+        Creates a Plan of origin `agent_update` with one step `agent:binary` (risk `disruptive`, a
+        service restart, D-257). The Plan changes no document; its approval commits no revision.
+        A human session or an `apply` token approves it. The Run sends the `update` command with
+        the SHA-256 of the agent binary that this controller serves (D-258). The step is `applied`
+        when the agent says hello with that binary within 2 minutes, else `failed`; when the agent
+        restored its old binary, the step output and `status.agent_reverted` say so.
+
+        `system` makes the same Plan by itself when the agent of a Target says hello with other
+        capabilities than the agent of this controller and the agent can update itself; at most
+        one pending `agent_update` Plan per Target.
+
+        409 `nothing-to-do` when `status.agent_update` is `none`. 422 when it is `manual` (the
+        agent is older than slice 3 and needs the one-time install by hand, D-258) or `unknown`
+        (the agent never said hello).
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+            example: { reason: New resource types after the upgrade. }
+      responses:
+        "201":
+          description: The Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 31
+                origin: agent_update
+                issue_id: null
+                status: pending
+                risk: disruptive
+                reason: New resource types after the upgrade.
+                author: "user:admin"
+                created_at: "2026-11-13T08:00:00Z"
+                base_revision: 9
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                targets:
+                  - target: web1
+                    resources:
+                      - resource: "agent:binary"
+                        action: update
+                        risk: disruptive
+                        changes:
+                          - { attr: version, from: v0.3.0, to: v0.4.0, risk: disruptive }
+                warnings: []
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
   /plans:
     get:
       tags: [plans]
@@ -2115,7 +2184,11 @@ components:
       description: |
         The object is in a state that does not allow the action: a stale Plan, a moved head
         revision, or an issue that is not open. Slice 2 codes: `secret-in-use`,
-        `secret-conflict`, `nothing-to-do`. Image builds: `build-running`.
+        `secret-conflict`, `nothing-to-do`. Image builds: `build-running`. Slice 3:
+        `agent-outdated` (D-259): the desired state of a Target needs a resource type or attribute
+        that its agent did not report; `detail` starts with "update the agent first", `targets`
+        names the Targets and `missing` what they lack. Plans of every origin that send resources
+        to an agent are checked at creation and at approval; the Run checks again at start.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -2217,8 +2290,16 @@ components:
               message: { type: string }
         targets:
           type: array
-          description: Targets that use the secret, for `secret-in-use`.
+          description: |
+            Targets that use the secret, for `secret-in-use`. Targets whose agent is too old, for
+            `agent-outdated`.
           items: { $ref: "#/components/schemas/Name" }
+        missing:
+          type: array
+          description: |
+            For `agent-outdated`: what the agents lack, `<type>` for a resource type or
+            `<type>.<attr>` for an attribute, sorted, over all Targets in `targets`.
+          items: { type: string, examples: ["unit", "file.acl"] }
         plans:
           type: array
           description: Pending Plans that use the secret, for `secret-in-use`.
@@ -2498,6 +2579,36 @@ components:
           description: "`online` when the agent polled in the last 90 s."
         power: { type: string, enum: [running, stopped, unknown] }
         last_seen: { $ref: "#/components/schemas/NullableTime" }
+        agent_version:
+          type: [string, "null"]
+          description: |
+            Version of the agent from its last hello, also when it is offline now. `null` before
+            the first hello. Missing on an older controller.
+          examples: ["v0.4.0"]
+        agent_update:
+          type: string
+          enum: [none, available, required, manual, unknown]
+          description: |
+            Compares the agent's binary with the one this controller serves (D-257 … D-259).
+            `none`: the same binary. `available`: another binary, and the agent can apply the
+            desired state; `POST /targets/{name}/agent-update` proposes the update. `required`: the
+            desired state needs something the agent lacks (`agent_missing`); every Plan for this
+            Target is refused with `agent-outdated` until the update ran. `manual`: the agent is
+            older than slice 3 and cannot update itself: run the one-time install in the guest by
+            hand (ARCHITECTURE §14). `unknown`: no hello yet. Missing on an older controller.
+        agent_missing:
+          type: array
+          description: |
+            What the desired state needs and the agent lacks: `<type>` or `<type>.<attr>`, sorted.
+            Empty when nothing is missing. Missing on an older controller.
+          items: { type: string }
+        agent_reverted:
+          oneOf:
+            - $ref: "#/components/schemas/AgentRevert"
+            - type: "null"
+          description: |
+            The last update failed in the guest and the agent went back to its old binary. `null`
+            or missing when not. It stays until the next update command.
         guest_id:
           type: [string, "null"]
           description: Proxmox VMID.
@@ -2555,6 +2666,19 @@ components:
             stopped and started (outside Plumb, or by a Run when `allow_restart` is on), or when
             the desired value goes back to `from`. Always empty for an LXC Target yet.
           items: { $ref: "#/components/schemas/WaitingValue" }
+    AgentRevert:
+      type: object
+      additionalProperties: false
+      description: An agent update that the guest rolled back (D-258). Reported by the guest; display only.
+      required: [from, to, reason, at]
+      properties:
+        from: { type: string, description: "Version that runs again." }
+        to: { type: string, description: "Version that failed." }
+        reason:
+          type: string
+          enum: [crash-loop, no-hello]
+          description: "`crash-loop`: the new binary did not stay up. `no-hello`: it ran but had no successful hello within 5 minutes."
+        at: { $ref: "#/components/schemas/Time" }
     WaitingValue:
       type: object
       additionalProperties: false
@@ -2700,10 +2824,11 @@ components:
         id: { $ref: "#/components/schemas/Id" }
         origin:
           type: string
-          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build]
+          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update]
           description: |
             What made the Plan. `build`: a manual or scheduled image build with no document
-            change (D-199).
+            change (D-199). `agent_update`: replaces the agent binary of one Target, no document
+            change (D-257).
         issue_id:
           $ref: "#/components/schemas/NullableId"
           description: The issue, for `revert`, `accept` and `ignore_rule`.
@@ -2728,7 +2853,9 @@ components:
         approved_at: { $ref: "#/components/schemas/NullableTime" }
         revision:
           type: [integer, "null"]
-          description: The committed revision, after approval. Always `null` for origin `build`.
+          description: |
+            The committed revision, after approval. Always `null` for origin `build` and
+            `agent_update`.
         run_id: { $ref: "#/components/schemas/NullableId" }
         targets:
           type: array
@@ -2839,8 +2966,10 @@ components:
       properties:
         resource:
           type: string
-          description: Resource id `type:key`. `guest:config` is the Proxmox settings.
-          examples: ["file:/etc/motd", "guest:config"]
+          description: |
+            Resource id `type:key`. `guest:config` is the Proxmox settings. `agent:binary` is the
+            agent update step (D-257): one change `{attr: version, from, to}`, risk `disruptive`.
+          examples: ["file:/etc/motd", "guest:config", "agent:binary"]
         action: { $ref: "#/components/schemas/Action" }
         risk: { $ref: "#/components/schemas/Risk" }
         changes:
@@ -2887,6 +3016,10 @@ components:
         resource of the same Block use, or a resource that it comes after (`ResourcePlan.after`),
         did not end `unchanged` or `applied`, or because the apply ended first. `output` names the
         cause (D-170).
+        `failed` with an `output` that starts with "update the agent first": the Run start found
+        that the Target's agent lacks a resource type or attribute (D-259); no command went to
+        that Target. An agent can change between approval and start (a guest restored from an old
+        backup).
     Run:
       type: object
       additionalProperties: false
