@@ -11,7 +11,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083 | plan approved by the user (D-238). **H10 done (PR #153): the token cannot make a privileged container, a dangerous feature, a host mount or a device, at create and at config change.** In review: T-075 contract (PR #154, QA #155), T-076 `ctpack` (PR #156). Running: T-077 installer (pl-reviewer), T-080 engine (pl-frontend). Then T-078, T-081, T-079 step 2, T-082, T-083. |
+| T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083 | plan approved by the user (D-238). **H10 done (PR #153): the token cannot make a privileged container, a dangerous feature, a host mount or a device, at create and at config change.** T-075 contract merged (PR #154). In review with fixes open: T-076 `ctpack` (PR #156), T-077 installer (PR #157, QA #158). Running: T-080 engine (pl-frontend). Then T-078, T-081, T-079 step 2, T-082, T-083. |
 | T-084 token gets `Sys.Audit` (D-239, user decision) | pl-backend | step 1 done: only the ACL path `/` works (Proxmox checks the fixed path `/`). **Waits for the user: yes or no to `Sys.Audit` on `/` without propagation.** |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
