@@ -35,7 +35,13 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	var pe *plan.ProposalError
 	var se state.Errors
 	var ms *plan.MissingSecretsError
+	var ao *plan.AgentOutdatedError
 	switch {
+	case errors.As(err, &ao):
+		writeProblem(w, problemBody{Type: "urn:plumb:problem:agent-outdated", Title: "Agent is outdated", Status: http.StatusConflict,
+			Detail: ao.Error(), Targets: ao.Targets, Missing: ao.Missing})
+	case errors.Is(err, plan.ErrAgentNoUpdate):
+		problem(w, http.StatusConflict, "nothing-to-do", "Nothing to do", strings.TrimPrefix(err.Error(), "plan: "))
 	case errors.As(err, &ms):
 		var fe []fieldError
 		for _, e := range ms.Errors {
@@ -110,6 +116,19 @@ type targetStatus struct {
 	// Waiting are values that wait for a stop and start (D-195); always
 	// present.
 	Waiting []waitingView `json:"waiting"`
+	// The agent (T-092, D-257 … D-259): version of the last hello, update
+	// state, what the desired state needs and the agent lacks, last revert.
+	AgentVersion  *string          `json:"agent_version"`
+	AgentUpdate   string           `json:"agent_update"`
+	AgentMissing  []string         `json:"agent_missing"`
+	AgentReverted *agentRevertView `json:"agent_reverted"`
+}
+
+type agentRevertView struct {
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 type waitingView struct {
@@ -189,6 +208,23 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 	st.ReportedIPs, st.ReportedIPsMore = []string{}, live.ReportedMore
 	if live.Reported != nil {
 		st.ReportedIPs, st.ReportedAt = live.Reported, utc(live.ReportedAt)
+	}
+	ag, err := s.cfg.Plans.AgentStatus(ctx, name)
+	if err != nil {
+		return st, err
+	}
+	if ag.Version != "" {
+		st.AgentVersion = &ag.Version
+	}
+	st.AgentUpdate, st.AgentMissing = ag.Update, ag.Missing
+	if rv := ag.Reverted; rv != nil {
+		// A guest time that did not parse is the time of the hello (the
+		// schema needs a time).
+		at, err := time.Parse(time.RFC3339, rv.At)
+		if err != nil {
+			at = ag.HelloAt
+		}
+		st.AgentReverted = &agentRevertView{From: rv.From, To: rv.To, Reason: rv.Reason, At: at.UTC()}
 	}
 	st.Waiting = []waitingView{}
 	for _, w := range live.Waiting {
@@ -357,6 +393,28 @@ func (s *Server) reenroll(w http.ResponseWriter, r *http.Request, p *principal) 
 	}
 	pl, err := s.cfg.Plans.Propose(r.Context(), plan.Input{Proposal: plan.Proposal{Reenroll: []string{name}},
 		Reason: req.Reason, Author: p.name, Origin: plan.OriginReenroll})
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.writePlan(w, r, http.StatusCreated, pl)
+}
+
+func (s *Server) agentUpdate(w http.ResponseWriter, r *http.Request, p *principal) {
+	var req reasonRequest
+	if !decode(w, r, &req, true) {
+		return
+	}
+	if len(req.Reason) > 2000 {
+		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "reason is longer than 2000 characters.")
+		return
+	}
+	name := r.PathValue("name")
+	if _, err := s.headTarget(r.Context(), name); err != nil {
+		s.fail(w, err)
+		return
+	}
+	pl, err := s.cfg.Plans.ProposeAgentUpdate(r.Context(), name, req.Reason, p.name)
 	if err != nil {
 		s.fail(w, err)
 		return

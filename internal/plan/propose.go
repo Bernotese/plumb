@@ -244,6 +244,12 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if err := e.checkSecretsPresent(ctx, next, names, in.Imported); err != nil {
 		return store.Plan{}, err
 	}
+	// The gate before the planning observe (D-259, D-268).
+	if gateOrigin(in.Origin) {
+		if err := e.checkGate(ctx, next, names); err != nil {
+			return store.Plan{}, err
+		}
+	}
 	plans := make([]TargetPlan, len(names))
 	errs := make([]error, len(names))
 	binding := make([]bool, len(names)) // a resource gets a new secret (D-099)

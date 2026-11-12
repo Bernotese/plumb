@@ -516,6 +516,17 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 		default:
 			return "", fmt.Errorf("link: seal needs a wire.SealBody, got %T", body)
 		}
+	case wire.CommandUpdate:
+		// A build guest runs the agent of this controller and never updates
+		// (T-092): its seal does not remove plumb-agent.prev.
+		if build {
+			return "", fmt.Errorf("link: no update for the build guest %q", target)
+		}
+		switch body.(type) {
+		case wire.UpdateBody, *wire.UpdateBody:
+		default:
+			return "", fmt.Errorf("link: update needs a wire.UpdateBody, got %T", body)
+		}
 	default:
 		return "", fmt.Errorf("link: unknown command type %q", typ)
 	}
@@ -866,7 +877,10 @@ func validateReport(rep wire.Report, build bool) error {
 		// agent would open or close their Issues (T-070 review B1). A seal
 		// step ("seal:<step>") only in a result; checkItemKinds then needs
 		// a seal command for it.
-		if !wire.AgentType(typ) && !(typ == wire.SealItemType && build && rep.Type == wire.ReportResult) {
+		// The Item agent:binary only in a result; checkItemKinds then needs
+		// an update command for it (T-092).
+		if !wire.AgentType(typ) && !(typ == wire.SealItemType && build && rep.Type == wire.ReportResult) &&
+			!(typ == wire.AgentItemType && !build && rep.Type == wire.ReportResult) {
 			return fmt.Errorf("item %d: resource type %q is not an agent resource", i, typ)
 		}
 		if !agentStatuses[it.Status] {
@@ -887,6 +901,26 @@ func validateReport(rep wire.Report, build bool) error {
 	return nil
 }
 
+// checkUpdateItems: the result of an update command has at most one Item,
+// agent:binary, applied, unchanged or failed, without changes; an update
+// has no progress (T-092, D-267). A result with an error and no Item is
+// allowed (a bad body).
+func checkUpdateItems(rep wire.Report) error {
+	if rep.Type != wire.ReportResult {
+		return errors.New("update has no progress reports")
+	}
+	if len(rep.Items) > 1 {
+		return errors.New("update has one item")
+	}
+	for _, it := range rep.Items {
+		if it.Resource != wire.AgentBinaryID || len(it.Changes) > 0 ||
+			(it.Status != wire.StatusApplied && it.Status != wire.StatusUnchanged && it.Status != wire.StatusFailed) {
+			return fmt.Errorf("bad update item %q %q", it.Resource, it.Status)
+		}
+	}
+	return nil
+}
+
 // sealItemStatuses are the states of a seal step (wire.SealSteps).
 var sealItemStatuses = map[wire.Status]bool{
 	wire.StatusApplied: true, wire.StatusSkipped: true, wire.StatusFailed: true, wire.StatusRefused: true,
@@ -897,10 +931,16 @@ var sealItemStatuses = map[wire.Status]bool{
 // step at most once and without changes, and no progress; every other
 // command has no seal step (review of #119).
 func checkItemKinds(rep wire.Report, cmd wire.CommandType) error {
+	if cmd == wire.CommandUpdate {
+		return checkUpdateItems(rep)
+	}
 	if cmd != wire.CommandSeal {
 		for i, it := range rep.Items {
-			if typ, _, _ := wire.SplitID(it.Resource); typ == wire.SealItemType {
+			switch typ, _, _ := wire.SplitID(it.Resource); typ {
+			case wire.SealItemType:
 				return fmt.Errorf("item %d: a seal step answers only a seal command", i)
+			case wire.AgentItemType:
+				return fmt.Errorf("item %d: %s answers only an update command", i, wire.AgentBinaryID)
 			}
 		}
 		return nil

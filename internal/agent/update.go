@@ -566,12 +566,9 @@ func (u *updater) reverted() *wire.UpdateRevert {
 	return m.revert()
 }
 
-// Commands are the command types this agent runs (wire.Capabilities).
-var Commands = []wire.CommandType{wire.CommandApply, wire.CommandObserve, wire.CommandSeal, wire.CommandUpdate, wire.CommandWatch}
-
 // Capabilities is the capability list of this agent build (D-259).
 func Capabilities() wire.Capabilities {
-	return wire.Capabilities{Commands: Commands, Resources: resource.Capabilities()}
+	return wire.Capabilities{Commands: wire.AgentCommands(), Resources: resource.Capabilities()}
 }
 
 // selfUpdate runs an update command. The Item is applied after the swap
