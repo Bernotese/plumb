@@ -112,12 +112,16 @@ var schemas embed.FS
 // types is the table of all resource types. Add a type here, add its
 // schema file and its Go file. Nothing else registers types.
 var types = map[string]Type{
-	"file":      {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFile},
-	"directory": {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newDirectory},
-	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
-	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
-	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
-	"symlink":   {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
+	"file":           {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFile},
+	"directory":      {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newDirectory},
+	"package":        {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
+	"service":        {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
+	"user":           {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
+	"symlink":        {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
+	"apt_repository": {Name: "apt_repository", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newAptRepo},
+	"unit":           {Name: "unit", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUnit},
+	// An LXC shares the host kernel (ARCHITECTURE §6).
+	"sysctl": {Name: "sysctl", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newSysctl},
 	"command": {Name: "command", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newCommand,
 		NoDrift: true, Destructive: true, NotInImage: true},
 }

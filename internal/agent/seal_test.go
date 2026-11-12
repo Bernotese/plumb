@@ -498,8 +498,11 @@ func TestOwnPathThroughGuestLinks(t *testing.T) {
 		{ID: "symlink:/opt/u/rel", Type: "symlink", Attrs: map[string]any{"path": "/opt/u/rel", "target": "plumb-agent.service"}},
 		{ID: "user:x", Type: "user", Attrs: map[string]any{"name": "x", "home": "/opt/x/plumb-agent"}},
 		{ID: "service:plumb-agent.service", Type: "service", Attrs: map[string]any{"name": "plumb-agent.service"}},
-		{ID: "service:plumb-agent-guard", Type: "service", Attrs: map[string]any{"name": "plumb-agent-guard"}},
+		{ID: "service:plumb-agent-install", Type: "service", Attrs: map[string]any{"name": "plumb-agent-install"}},
+		{ID: "unit:plumb-agent.service", Type: "unit", Attrs: map[string]any{"name": "plumb-agent.service"}},
+		{ID: "unit:plumb-agent.timer", Type: "unit", Attrs: map[string]any{"name": "plumb-agent.timer"}},
 		{ID: "unit:plumb-agent-guard.timer", Type: "unit", Attrs: map[string]any{"name": "plumb-agent-guard.timer"}},
+		{ID: "service:plumb-agent-guard", Type: "service", Attrs: map[string]any{"name": "plumb-agent-guard"}},
 	}
 	for _, r := range refused {
 		if why := ta.a.ownPathRefusal(r); why == "" {
@@ -511,6 +514,7 @@ func TestOwnPathThroughGuestLinks(t *testing.T) {
 		fileRes("b", "/etc/nginx/nginx.conf", nil),
 		{ID: "symlink:/srv/l", Type: "symlink", Attrs: map[string]any{"path": "/srv/l", "target": "/opt/x/other"}},
 		{ID: "service:nginx", Type: "service", Attrs: map[string]any{"name": "nginx"}},
+		{ID: "unit:app.timer", Type: "unit", Attrs: map[string]any{"name": "app.timer"}},
 		{ID: "unit:backup.timer", Type: "unit", Attrs: map[string]any{"name": "backup.timer"}},
 	}
 	for _, r := range allowed {

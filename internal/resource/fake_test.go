@@ -64,6 +64,7 @@ type fakeGuest struct {
 	shadowBusy int           // account-tool calls in flight
 	shadowMax  int
 	updated    bool // apt-get update ran
+	failUpdate bool // apt-get update fails
 	needUpdate bool // install fails until apt-get update ran
 }
 
@@ -142,6 +143,9 @@ func (g *fakeGuest) apt(args []string, operand string) ([]byte, error) {
 	g.aptBusy--
 	switch {
 	case slices.Contains(args, "update"):
+		if g.failUpdate {
+			return nil, &ExitError{Name: "apt-get", Code: 100, Stderr: "E: The repository does not have a Release file."}
+		}
 		g.updated = true
 		return nil, nil
 	case slices.Contains(args, "install"):

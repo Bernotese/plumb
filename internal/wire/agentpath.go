@@ -136,21 +136,25 @@ type AgentConflict struct {
 	Value string // the path as resolved, or the unit name
 }
 
-// isAgentUnit reports whether a service name is the agent's unit.
-func isAgentUnit(name string) bool {
-	for _, u := range agentUnits {
-		if name == u || name+".service" == u {
-			return true
-		}
-	}
-	return false
+// agentUnitPrefix starts the name of every unit of the agent, also of
+// units that later versions add (plumb-agent-guard.timer, T-091).
+const agentUnitPrefix = "plumb-agent"
+
+// IsAgentUnit reports whether a service or unit name belongs to the agent
+// (D-274): every name that starts with "plumb-agent", with any suffix
+// ("plumb-agent", "plumb-agent.timer", "plumb-agent-guard.service",
+// "plumb-agent@x.service"). A prefix rule, not a list: a timer, path or
+// socket unit can start the agent's service, and a list misses the units
+// that a newer agent adds.
+func IsAgentUnit(name string) bool {
+	return strings.HasPrefix(name, agentUnitPrefix)
 }
 
 // AgentConflicts lists the resources of one target that would change the
 // agent (D-207): a path of the agent, also through a symlink that the same
 // list makes (/opt/x → /var/lib, then file /opt/x/plumb-agent/credential),
-// and a service resource on the agent's unit (it could stop or mask the
-// agent). Links that already exist in the guest are not known here: the
+// and a service or unit resource on the agent's unit (it could stop, mask
+// or replace the agent). Links that already exist in the guest are not known here: the
 // agent resolves the real path before it writes (T-060).
 func AgentConflicts(rs []Resource) []AgentConflict {
 	// Symlinks of the list: link path → absolute target.
@@ -174,7 +178,7 @@ func AgentConflicts(rs []Resource) []AgentConflict {
 		// A service or a unit file (T-093) of an agent unit: it could stop,
 		// mask or replace the agent or its update guard (review of #190).
 		if r.Type == "service" || r.Type == "unit" {
-			if n, _ := r.Attrs["name"].(string); isAgentUnit(n) {
+			if n, _ := r.Attrs["name"].(string); IsAgentUnit(n) {
 				out = append(out, AgentConflict{ID: r.ID, Attr: "name", Value: n})
 			}
 			continue
