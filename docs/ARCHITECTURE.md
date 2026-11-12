@@ -255,3 +255,30 @@ pveam update && awk '/^Location:/{l=$2} /^sha512sum:/{s=$2} function p(){if(l)pr
 ```
 
 When Proxmox removes an old version from its mirror, the download fails with 404: run the command again and update the Image.
+
+## 14. Slice 3: agent update, version gate, new resources (D-257 … D-260, D-266 … D-270)
+Wire types: `internal/wire/protocol.go` (`CommandUpdate`, `UpdateBody`, `Hello`, `UpdateRevert`) and `internal/wire/capability.go`. API: `POST /targets/{name}/agent-update`, `TargetStatus.agent_*`, Problem `agent-outdated`.
+
+**Hello (D-266).** A slice 3 agent adds `binary_sha256` (of its running binary), `capabilities` (`commands`, and `resources`: type → the attribute names of its schema, sorted) and `reverted` (see below). An agent without `capabilities` has `wire.BaselineCapabilities`: the six types of slice 2 and no `update`. That list never changes.
+
+**Update (D-258, D-267).** The "update agent" step is the resource `agent:binary` with one change `{attr: version, from, to}`, risk `disruptive`, in a Plan of origin `agent_update` (no document change, no revision). A person or `system` proposes it; a human session or an `apply` token approves (D-257). `system` proposes when an agent says hello with other capabilities than the agent of this controller and lists `update`; at most one pending such Plan per Target. The Run sends `update` with `{plan_id, sha256}`; the sha is that of the binary that `GET /agent/v1/binary` serves. The agent:
+1. fetches the binary from its pinned controller to a temp file next to its own, checks the SHA-256, runs `<new> self-test` (exit 0);
+2. renames its binary to `.prev`, the new one over it, writes the update marker, sends the result Item `agent:binary` `applied` and exits; systemd restarts it. A failure before step 2 is Item `failed` with output; the old binary keeps running;
+3. after a crash loop, or with no successful hello within 300 s, a guard restores `.prev` and restarts. The restored agent sends `reverted {from, to, to_sha256, reason, at}` in every hello until the next `update` command. `reverted` is guest text: the controller drops it when `reason` is not `crash-loop` or `no-hello`, sets `at` to null when it is no RFC 3339 time, keeps `from`/`to` only as printable ASCII up to 64 bytes and `to_sha256` only as 64 lowercase hex digits.
+
+The controller passes the step only when a hello with `binary_sha256` equal to the sent sha arrives within 120 s; a hello with `reverted` or the old sha fails it. Agents from before slice 3 cannot update themselves (`agent_update: manual`): root in the guest stops `plumb-agent` and runs `plumb-agent-install` once (`pct exec <id> -- …` for an LXC, SSH or console for a VM), or re-create the guest.
+
+**Gate (D-259, D-268).** `capabilities` is guest data with limits (`wire.Capabilities.Valid`: ≤ 64 types, ≤ 64 attributes per type, ≤ 16 commands, names of `[a-z0-9_]`, ≤ 64 bytes); the controller treats a list that breaks them as the baseline, before it stores it. `wire.Capabilities.Missing(resources)` is the one rule: each resource needs its type and every attribute that its rendered attrs set; `guest:*` needs nothing. A Plan whose Targets need something that their agent lacks is refused with 409 `agent-outdated` ("update the agent first", `targets`, `missing`) at creation and at approval. Plans of origin `agent_update`, `reenroll` and `build` are not gated (they send no Target resources; a build guest runs the current agent). The Run checks again at start; a Target that fails it gets its steps `failed` with the same text and no command. A Target with no hello yet is gated at Run start only. Known limit: the gate sees type and attribute names, not values. So a later schema change never widens the values of an existing attribute (a new enum value, a looser pattern); it adds a new attribute instead. The controller never sends an agent a `watch` or `observe` list with a resource that it lacks: it leaves those resources out, and the status shows `required`. Target status: `agent_version`, `agent_update` (`none`, `available`, `required`, `manual`, `unknown`), `agent_missing`, `agent_reverted`.
+
+**New resource types (D-260, D-269).** Schemas in `internal/resource/schema/`; T-093 and T-094 add them to the type table with their code.
+
+| Type | Key | Kinds | Attributes | Risk |
+|---|---|---|---|---|
+| `apt_repository` | `name` | vm, lxc | `uris`, `suites`, `components`, `architectures`, `key` (inline armored public key), `state` | reversible |
+| `unit` | `name` (with unit suffix, not `plumb-agent.*`) | vm, lxc | `content`, `state` | create/change reversible, delete destructive |
+| `sysctl` | `name` (dotted) | vm | `value` (string or integer), `state` | create/change disruptive; absent reversible (file removed, running value kept) |
+| `command` | `name` | vm, lxc | `argv` (no shell; `argv[0]` absolute), `creates`, `timeout` | always destructive |
+
+- `apt_repository` writes `/etc/apt/sources.list.d/plumb-<name>.sources` and `/etc/apt/keyrings/plumb-<name>.asc`, `Signed-By` names that file; no free options, so `Trusted` and `trusted.gpg.d` cannot be expressed.
+- `unit` only writes the file and runs `daemon-reload`; enable and start go through `service` with `restart_on: [unit:<name>]`.
+- `command` (D-270) has no state and no drift: observe reports `state: absent` while `creates` is missing, so the only change is a create, risk `destructive` (D-031: only a human session approves). It runs as root with `timeout` (default 600 s). An Image whose build Blocks hold a `command` is refused at save, also when a Block gets a `command` after an Image uses it, and the build checks again at start. Its output follows `resource.SafeOutput` (hidden when the resource has a secret).
