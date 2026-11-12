@@ -110,7 +110,11 @@ func TestAptRepositoryInGuest(t *testing.T) {
 	if wire.ActionOf(changes) != wire.ActionCreate {
 		t.Fatalf("create = %+v", changes)
 	}
-	src := sh(t, "cat", "/etc/apt/sources.list.d/plumb-t093.sources")
+	srcBytes, err := os.ReadFile("/etc/apt/sources.list.d/plumb-t093.sources")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(srcBytes)
 	if !strings.Contains(src, "Signed-By: /etc/apt/keyrings/plumb-t093.asc\n") || strings.Contains(src, "Trusted") {
 		t.Fatalf("sources:\n%s", src)
 	}
@@ -135,7 +139,7 @@ func TestAptRepositoryInGuest(t *testing.T) {
 	// The key of another repository does not sign this one.
 	other := newTestRepo(t, "plumb-t093-other")
 	wrong := build(t, repoRes("t093-wrong", repo, other.key))
-	err := wrong.Apply(t.Context(), plan(t, wrong))
+	err = wrong.Apply(t.Context(), plan(t, wrong))
 	if err == nil {
 		t.Fatal("apt-get update passed with the wrong key")
 	}
@@ -169,7 +173,7 @@ func TestUnitInGuest(t *testing.T) {
 		_ = exec.Command("systemctl", "daemon-reload").Run()
 	})
 	svcUnit := "[Unit]\nDescription=Plumb T-093 test\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/touch /run/plumb-t093.ran\n"
-	timerUnit := "[Unit]\nDescription=Plumb T-093 timer\n\n[Timer]\nOnActiveSec=1s\nOnUnitActiveSec=1h\n\n[Install]\nWantedBy=timers.target\n"
+	timerUnit := "[Unit]\nDescription=Plumb T-093 timer\n\n[Timer]\nOnActiveSec=1s\nOnUnitActiveSec=1h\nAccuracySec=1ms\n\n[Install]\nWantedBy=timers.target\n"
 
 	converge(t, rsrc("unit", svc, map[string]any{"content": svcUnit}))
 	converge(t, rsrc("unit", timer, map[string]any{"content": timerUnit}))

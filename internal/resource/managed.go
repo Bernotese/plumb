@@ -51,19 +51,6 @@ func readManaged(root, p string) (managedFile, error) {
 	return managedFile{exists: true, content: string(data), mode: st.Mode & 0o7777, uid: int(st.Uid), gid: int(st.Gid)}, nil
 }
 
-// sameRootFile reports whether f holds content with mode and root
-// ownership. uid and gid of root come from the guest.
-func (f managedFile) sameRootFile(root, content string, mode uint32) (bool, error) {
-	if !f.exists || f.content != content || f.mode != mode {
-		return false, nil
-	}
-	uid, gid, err := ownerIDs(root, "root", "root")
-	if err != nil {
-		return false, err
-	}
-	return f.uid == uid && f.gid == gid, nil
-}
-
 // writeManaged writes the guest file p atomically, owned by root. The
 // parent directory must exist.
 func writeManaged(root, p string, data []byte, mode uint32) error {
