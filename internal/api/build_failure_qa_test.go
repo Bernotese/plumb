@@ -24,12 +24,12 @@ func TestBuildFailureCleanupQA(t *testing.T) {
 		enroll  bool
 	}{
 		{name: "create error", op: fake.OpCreateBuild, step: wire.GuestConfigID},
-		{name: "create timeout", op: fake.OpCreateBuild, step: wire.GuestConfigID},
+		{name: "create driver deadline response", op: fake.OpCreateBuild, step: wire.GuestConfigID},
 		{name: "enroll timeout", step: "file:/etc/motd", enroll: true},
 		{name: "apply timeout", command: wire.CommandApply, step: "file:/etc/motd"},
 		{name: "seal timeout", command: wire.CommandSeal, step: "image:seal"},
 		{name: "convert error", op: fake.OpMakeImage, step: "image:template"},
-		{name: "convert timeout", op: fake.OpMakeImage, step: "image:template"},
+		{name: "convert driver deadline response", op: fake.OpMakeImage, step: "image:template"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t, false, withBuilds, func(c *plan.Config) {
@@ -48,9 +48,10 @@ func TestBuildFailureCleanupQA(t *testing.T) {
 					})
 				})
 			}
+			// Driver deadline responses exercise cleanup, not a task finishing late.
 			if tc.op != "" {
 				err := errors.New("injected driver error")
-				if strings.Contains(tc.name, "timeout") {
+				if strings.Contains(tc.name, "deadline response") {
 					err = context.DeadlineExceeded
 				}
 				e.drv.Fail(tc.op, err)
