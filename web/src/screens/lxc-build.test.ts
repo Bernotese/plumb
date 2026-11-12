@@ -46,6 +46,35 @@ describe("lxc image build form", () => {
     expect(doc.spec.retention).toEqual({ keep: 3 });
   });
 
+  it("restores the container build section and accepts exactly 2 GiB with upgrade off", async () => {
+    const api = adminApi();
+    const createPlan = vi.spyOn(api, "createPlan");
+    show(ImageForm, { api });
+    await until(() => document.querySelector("#i-build"));
+    el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
+    flushSync();
+    expect(document.querySelector("#i-guest-disk")).toBeNull();
+    for (const enabled of [true, false, true]) {
+      el<HTMLInputElement>("#i-build").click();
+      flushSync();
+      expect(document.querySelector("#i-guest-disk") !== null).toBe(enabled);
+      expect(document.querySelector("#i-upgrade") !== null).toBe(enabled);
+    }
+    expect(text(el("#i-upgrade-hint"))).toContain("apt-get update");
+    expect(text(el("#i-upgrade-hint"))).toContain("Off: the packages of the Proxmox template.");
+    el<HTMLInputElement>("#i-upgrade").click();
+    flushSync();
+    type("#i-known", "Debian 13");
+    type("#i-name", "minimum-ct");
+    type("#i-guest-disk", "2");
+    type("#i-reason", "Build at the container disk minimum.");
+    el<HTMLFormElement>("form").requestSubmit();
+    await planOpened();
+    const doc = createPlan.mock.calls[0]?.[0].put?.[0] as ImageDoc;
+    expect(doc.spec.build?.guest.disk).toBe(2);
+    expect(doc.spec.build?.upgrade).toBe(false);
+  });
+
   it("refuses a build disk under 2 GiB for a container, not for a VM", async () => {
     const api = adminApi();
     const createPlan = vi.spyOn(api, "createPlan");
@@ -100,6 +129,29 @@ describe("target from a built lxc Image (D-251)", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "submits a Target after entering keys on a plain Image (built=%s)",
+    async (built) => {
+      const api = adminApi();
+      const createPlan = vi.spyOn(api, "createPlan");
+      show(TargetForm, { api });
+      await until(() => document.querySelector("#t-image"));
+      type("#t-image", "debian-ct");
+      el<HTMLButtonElement>("#guest-ssh_keys-add").click();
+      flushSync();
+      type("#guest-ssh_keys-0", KEY);
+      if (built) type("#t-image", "debian-ct-web");
+      type("#t-name", "ct-key-check");
+      type("#t-reason", "Check create-time SSH keys.");
+      el<HTMLFormElement>("form").requestSubmit();
+      await planOpened();
+      const doc = createPlan.mock.calls[0]?.[0].put?.[0] as TargetDoc;
+      expect(doc.spec.image).toBe(built ? "debian-ct-web" : "debian-ct");
+      if (built) expect(doc.spec.guest).not.toHaveProperty("ssh_keys");
+      else expect(doc.spec.guest.ssh_keys).toEqual([KEY]);
+    },
+  );
+
   it("says so when there is no Block deploy-user", async () => {
     const api = adminApi();
     const blocks = await api.listBlocks();
@@ -142,6 +194,7 @@ describe("built lxc image page", () => {
     expect(text()).not.toContain("A stock container image has no versions");
     const pin = el(".base-pin");
     expect(pin.textContent).toContain(`base sha512 ${debian.sha512.slice(0, 12)}…`);
+    expect(pin.getAttribute("title")).toMatch(/^[0-9a-f]{128}$/);
     expect(pin.getAttribute("title")).toBe(debian.sha512);
   });
 
