@@ -11,7 +11,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-038 LXC targets (slice 2 part B, second) | pl-architect planned | **plan reviewed and on main** (PR #152; D-224 … D-231, D-233 … D-237 proposed; child cards T-075 … T-083; host log `docs/tasks/T-038.log.md`). **Waits for the user's approval**: 4 questions. No new token right; containers are unprivileged with nesting=1; template trust = pinned SHA-512 from the signed Proxmox index; upgrade by the installer's repair run |
+| T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083 | **plan approved by the user (D-238, all 4 recommendations)**; D-224 … D-231, D-233 … D-237 accepted. Running: T-079 step 1 = host check H10 (pl-backend, result goes to the user before driver code), T-075 contract (pl-architect), T-076 `ctpack` (pl-frontend), T-077 installer `vztmpl` (pl-codex-fix). Then T-078, T-080, T-081, T-079 step 2, T-082, T-083. |
+| T-084 token gets `Sys.Audit` (D-239, user decision) | pl-backend | step 1: find the narrowest ACL path on the host and report it to the user (D-240); then installer + docs + repair run on `pve-dev` |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
@@ -77,6 +78,5 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- T-038 plan approval (LXC Targets), 4 questions (recommendation in brackets): template trust (the Image pins the SHA-512 of the signed Proxmox list); the user in a container (SSH keys to root, a named user by the deploy-user Block); LXC image builds (yes, last card); template files that the token cannot delete (keep it so, Plumb shows the command).
-- Optional, no hurry: grant `Sys.Audit` so Plumb can read the thin-pool metadata use (recommendation: no; the Plan says "unknown").
+- Coming: the result of host check H10 (can the token make a privileged container or a host mount) and the ACL path for `Sys.Audit`. Nothing to do now.
 - Known limit (D-192, D-220, D-223): a STOCK Ubuntu 26.04 image used directly can stay on DHCP until its first restart; an Ubuntu version built by Plumb does not have the limit.

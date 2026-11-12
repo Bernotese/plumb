@@ -1,4 +1,4 @@
-# T-038 – LXC targets   (plan final; waits for review and the user's approval)
+# T-038 – LXC targets   (plan approved by the user, D-238; child cards T-075 … T-083 run)
 
 - **Owner:** pl-backend   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
 - **Size:** L   · **Depends on:** test host (D-041), T-012 on `main`, T-039 (template with the agent)
@@ -166,7 +166,7 @@ H1 Debian 13 container, static address, Block `nginx`: agent installed at first 
 | T-083 real-host acceptance (§10) + QA audits | pl-backend, pl-codex-qa | M | T-075 … T-081 |
 Parallel: T-075, T-076, T-077 at once; then T-078 … T-081; T-082 last. Owners (review N7): the agent and engine cards go to pl-frontend on purpose (it wrote the agent `seal`, T-060, and engine parts before); pl-backend keeps the driver lane, which needs the host.
 
-### 12. Decisions (proposed; text in `docs/decisions/T-038.md`)
+### 12. Decisions (accepted, D-238; text in `docs/DECISIONS.md`)
 D-224 trust of the base (http + SHA-512 pin) · D-225 zstd decoder dependency · D-226 no bootstrap user, keys to root · D-227 unprivileged + nesting only · D-228 renameat2 without fallback · D-229 `vztmpl` on `plumb-images`, start check, upgrade order · D-230 repack: byte-exact base, first-boot installer instead of the binary, name · D-231 `env` token and the clear step · D-233 Plumb never deletes a template file · D-234 LXC image builds (T-082) · D-235 an `lxc` Image source change is human-only · D-236 fetch size caps and the 2 GiB reserve · D-237 fetch rules (no SSRF). (D-232 is T-065.)
 
 ### 13. Questions for the user (each with one recommendation)
