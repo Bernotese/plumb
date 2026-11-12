@@ -1,0 +1,28 @@
+{
+  "seq": 1,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9001/config",
+  "query": "current=1",
+  "status": 200,
+  "body": {
+    "data": {
+      "lxc": [
+        [
+          "lxc.apparmor.profile",
+          "unconfined"
+        ]
+      ],
+      "rootfs": "local-lvm:vm-9001-disk-0,size=2G",
+      "digest": "14902c4f45f2c32864f71be3b08053045e040706",
+      "arch": "amd64",
+      "dev0": "/dev/null",
+      "unprivileged": 1,
+      "memory": 512,
+      "hostname": "t079-outside",
+      "mp0": "/tmp,mp=/mnt/t079",
+      "swap": 512,
+      "ostype": "debian",
+      "features": "nesting=1,keyctl=1"
+    }
+  }
+}

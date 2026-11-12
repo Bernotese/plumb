@@ -469,3 +469,77 @@ func TestLXCOutsideAdditions(t *testing.T) {
 		t.Error("the waiting features became drift")
 	}
 }
+
+func TestLXCOutsideAdditionsIndividually(t *testing.T) {
+	for _, tc := range []struct {
+		attr, key string
+		change    func(*driver.GuestSpec)
+	}{
+		{driver.AttrFeatures, "", func(s *driver.GuestSpec) { s.Features = "nesting=1,fuse=1" }},
+		{driver.AttrMounts, "mp2", func(s *driver.GuestSpec) { s.Mounts = []string{"mp2=/srv/data,mp=/data"} }},
+		{driver.AttrDevices, "dev3", func(s *driver.GuestSpec) { s.Devices = []string{"dev3=/dev/fuse"} }},
+		{driver.AttrRawLXC, "lxc.apparmor.profile", func(s *driver.GuestSpec) { s.RawLXC = []string{"lxc.apparmor.profile: unconfined"} }},
+	} {
+		for _, pending := range []bool{false, true} {
+			name := tc.attr
+			if pending {
+				name += "/pending"
+			}
+			t.Run(name, func(t *testing.T) {
+				e, _ := newCTEnv(t)
+				e.agent("c1")
+				if run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))}).ID); run.Status != "succeeded" {
+					t.Fatal(run.Status)
+				}
+				id := e.guestID("c1")
+				tamper := e.drv.Tamper
+				if pending {
+					tamper = e.drv.TamperPending
+				}
+				if err := tamper(id, tc.change); err != nil {
+					t.Fatal(err)
+				}
+				if err := e.eng.CheckGuests(e.ctx); err != nil {
+					t.Fatal(err)
+				}
+				iss := e.openIssue("c1", wire.GuestConfigID)
+				for _, part := range []string{`"attr":"` + tc.attr + `"`, `"destructive"`} {
+					if !strings.Contains(string(iss.Changes), part) {
+						t.Errorf("changes %s miss %s", iss.Changes, part)
+					}
+				}
+				if _, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionAccept, "user:admin"); !errors.Is(err, issue.ErrAcceptOutside) {
+					t.Fatalf("accept: %v", err)
+				}
+				p, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin")
+				if tc.key != "" {
+					// A raw lxc line has no --delete in the API: the text
+					// names the file and the line (review S2 of #169).
+					want := "pct set " + string(id) + " --delete " + tc.key
+					if tc.attr == driver.AttrRawLXC {
+						want = `remove the line "lxc.apparmor.profile: unconfined" from /etc/pve/lxc/` + string(id) + ".conf"
+					}
+					if !errors.Is(err, plan.ErrOutside) || !strings.Contains(err.Error(), want) {
+						t.Errorf("refusal must name exact key %s: %v", tc.key, err)
+					}
+					if pending && !strings.Contains(err.Error(), "(pending, active at the next start)") {
+						t.Errorf("pending addition not named: %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if run := e.approve(p.ID); run.Status != "succeeded" {
+					t.Fatal(run.Status)
+				}
+				if err := e.eng.CheckGuests(e.ctx); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := e.st.OpenIssue(e.ctx, "c1", wire.GuestConfigID); err == nil {
+					t.Error("features revert left drift")
+				}
+			})
+		}
+	}
+}

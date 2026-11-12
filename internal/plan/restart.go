@@ -193,6 +193,11 @@ func waitingOutput(changes []wire.Change) string {
 			if out != "" {
 				out += "\n"
 			}
+			if c.Attr == driver.AttrFeatures {
+				// Review N2 of #169: the old features stay active.
+				out += "features: written; the running container keeps its old features until its next start"
+				continue
+			}
 			out += fmt.Sprintf(textWaitsOutput, c.Attr)
 		}
 	}

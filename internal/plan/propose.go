@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Bernotese/plumb/internal/driver"
@@ -49,9 +51,56 @@ var ErrCreateOnly = errors.New("create-only setting")
 // that a person added on the host; Plumb cannot remove it (T-038 §3).
 var ErrOutside = errors.New("addition outside Plumb")
 
-// textOutside: attribute, VMID, what the container has.
-const textOutside = "%[1]s of the container were added outside Plumb (%[3]v). The Plumb token cannot remove them (Proxmox allows it only to root@pam). " +
-	"Remove them on the Proxmox host (pct set %[2]s --delete <key>, or edit /etc/pve/lxc/%[2]s.conf), or ignore the Issue"
+// reOutsideKey is a mount point or device key that is safe to print in a
+// command.
+var reOutsideKey = regexp.MustCompile(`^(mp|dev)[0-9]{1,3}$`)
+
+// outsideText is the refusal of a Plan for a container with additions that
+// only root on the host can remove (D-250): every addition of both views
+// with its value quoted, the exact pct command for mount points and
+// devices, and the config file and lines for raw lxc lines (review S2 of
+// #169). Values are shown with %q, so none looks like a command.
+func outsideText(id string, observed driver.GuestState) string {
+	next := observed.Next()
+	var parts, keys, raw []string
+	seen := map[string]bool{}
+	note := func(item string, inRun bool) string {
+		if !inRun {
+			return item + " (pending, active at the next start)"
+		}
+		return item
+	}
+	for _, l := range [][2][]string{{observed.Spec.Mounts, next.Mounts}, {observed.Spec.Devices, next.Devices}} {
+		for _, v := range append(append([]string(nil), l[0]...), l[1]...) {
+			key, val, _ := strings.Cut(v, "=")
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
+			parts = append(parts, note(fmt.Sprintf("%s %q", key, val), slices.Contains(l[0], v)))
+			if reOutsideKey.MatchString(key) && !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+		}
+	}
+	for _, v := range append(append([]string(nil), observed.Spec.RawLXC...), next.RawLXC...) {
+		if seen["raw:"+v] {
+			continue
+		}
+		seen["raw:"+v] = true
+		parts = append(parts, note(fmt.Sprintf("raw line %q", v), slices.Contains(observed.Spec.RawLXC, v)))
+		raw = append(raw, fmt.Sprintf("%q", v))
+	}
+	var do []string
+	if len(keys) > 0 {
+		do = append(do, fmt.Sprintf("pct set %s --delete %s", id, strings.Join(keys, ",")))
+	}
+	if len(raw) > 0 {
+		do = append(do, fmt.Sprintf("remove the line %s from /etc/pve/lxc/%s.conf", strings.Join(raw, " and the line "), id))
+	}
+	return fmt.Sprintf("the container has additions that were made outside Plumb: %s. The Plumb token cannot remove them; only root on the Proxmox host can (D-250). "+
+		"On the host: %s. Then plan again, or ignore the Issue", strings.Join(parts, ", "), strings.Join(do, "; "))
+}
 
 // base returns the head revision id (0 for none) and its validated set.
 func (e *Engine) base(ctx context.Context) (int64, *state.Set, error) {
@@ -402,8 +451,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	gchanges, err := e.cfg.Driver.Diff(desired, observed)
 	var oe *driver.OutsideError
 	if errors.As(err, &oe) {
-		return tp, &ProposalError{Target: target, Err: ErrOutside, Msg: fmt.Sprintf(textOutside, oe.Attr, bind.Ref,
-			createOnlyField(observed.Spec, oe.Attr))}
+		return tp, &ProposalError{Target: target, Err: ErrOutside, Msg: outsideText(bind.Ref, observed)}
 	}
 	var co *driver.CreateOnlyError
 	if errors.As(err, &co) {
