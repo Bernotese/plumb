@@ -91,19 +91,23 @@ func RunGuard(ctx context.Context, opt GuardOptions) error {
 	}
 
 	opt.Log.Warn("agent update failed; restoring the previous binary", "reason", m.Reason, "from", m.FromVersion, "to", m.ToVersion)
-	// Idempotent: a failed restart keeps the marker pending, and the next
+	// Idempotent: a failed step keeps the marker pending, and the next
 	// tick tries again.
 	if err := linkOver(u.bin.prev(), u.bin.temp(), u.bin.bin); err != nil {
 		_ = u.saveMarker(m)
 		return fmt.Errorf("restore %s: %w", u.bin.prev(), err)
 	}
-	if _, err := u.run.Run(ctx, "systemctl", "restart", agentService); err != nil {
-		_ = u.saveMarker(m)
-		return fmt.Errorf("restart the agent: %w", err)
-	}
+	// The marker says reverted before the restart: the restored agent
+	// reads it at its start and reports the revert in its first hello
+	// (CI of #198: a marker written after the restart was too late).
+	pending := m
 	m.State, m.At = updateReverted, opt.Now().UTC().Format(time.RFC3339)
 	if err := u.saveMarker(m); err != nil {
 		return err
+	}
+	if _, err := u.run.Run(ctx, "systemctl", "restart", agentService); err != nil {
+		_ = u.saveMarker(pending)
+		return fmt.Errorf("restart the agent: %w", err)
 	}
 	return u.removeGuard(ctx)
 }

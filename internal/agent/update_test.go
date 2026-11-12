@@ -26,6 +26,7 @@ type sysRunner struct {
 	calls    []string
 	restarts int              // NRestarts of the agent unit
 	fail     map[string]error // by the joined arguments, e.g. "enable --now plumb-agent-guard.timer"
+	before   map[string]func() // runs before a call answers, by the joined arguments
 }
 
 func (r *sysRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -35,6 +36,9 @@ func (r *sysRunner) Run(_ context.Context, name string, args ...string) ([]byte,
 	r.calls = append(r.calls, call)
 	if name != "systemctl" {
 		return nil, errors.New("unexpected " + name)
+	}
+	if f := r.before[call]; f != nil {
+		f()
 	}
 	if err := r.fail[call]; err != nil {
 		return nil, err
