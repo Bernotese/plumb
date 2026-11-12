@@ -1131,6 +1131,12 @@ func (d *Driver) Power(ctx context.Context, gid driver.GuestID, action driver.Po
 	return fmt.Errorf("proxmox: unknown power action %q", action)
 }
 
+// ClearBootstrap removes the `env` token of a container. This version
+// manages only VMs; T-079 adds containers.
+func (d *Driver) ClearBootstrap(ctx context.Context, gid driver.GuestID) error {
+	return fmt.Errorf("proxmox: guest %s: only VMs in this version; a VM has no token to clear", gid)
+}
+
 // Delete stops the guest and removes it with its disks.
 func (d *Driver) Delete(ctx context.Context, gid driver.GuestID) error {
 	id, m, err := d.own(ctx, string(gid))

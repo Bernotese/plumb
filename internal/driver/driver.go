@@ -27,7 +27,8 @@ type ImageSpec struct {
 	Name   string
 	Kind   wire.Kind
 	URL    string
-	SHA256 string // pinned checksum; the driver must refuse any other file
+	SHA256 string // pinned checksum of a vm Image; the driver must refuse any other file
+	SHA512 string // pinned checksum of an lxc Image (D-224)
 }
 
 // GuestSpec holds the managed settings of a guest (resource guest:config).
@@ -107,9 +108,16 @@ type GuestState struct {
 	// TokenPending says that a new enrollment token is set but not active:
 	// the guest has not had a cold start since it was written.
 	TokenPending bool
-	Digest       string // changes whenever the guest config changes; covers both views
-	Power        Power
-	IPs          []string // addresses that the hypervisor reports
+	// TokenInConfig says that an enrollment token is still in the config
+	// of a container: `env` in the config view of pending values
+	// (Proxmox current=0), so active or a pending set; a pending delete
+	// counts as removed (host C4, review C1 of #159). ClearBootstrap
+	// removes it. Always false for a VM, whose token is in the SMBIOS
+	// serial and is dead once used.
+	TokenInConfig bool
+	Digest        string // changes whenever the guest config changes; covers both views
+	Power         Power
+	IPs           []string // addresses that the hypervisor reports
 }
 
 // Next returns the settings after the next stop and start.
@@ -144,6 +152,11 @@ type Driver interface {
 	Update(ctx context.Context, id GuestID, changes []wire.Change, boot *Bootstrap) error
 	// Power runs a power action.
 	Power(ctx context.Context, id GuestID, action PowerAction) error
+	// ClearBootstrap removes the enrollment token from the config of a
+	// container (D-231). On a running container the removal waits for the
+	// next stop and start; the config shows no token at once. A VM has
+	// nothing to clear: the call refuses it.
+	ClearBootstrap(ctx context.Context, id GuestID) error
 	// Delete stops and removes the guest and its disks. It never removes
 	// a template (D-077); only RemoveImage does.
 	Delete(ctx context.Context, id GuestID) error
