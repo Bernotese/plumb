@@ -18,12 +18,12 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-090 contract (C1) | pl-architect | merged (PR #187, D-266 … D-270) |
 | T-091 agent self-update (C2) · T-092 controller update + gate (C3) | pl-backend | T-091: PR #190 in review (guest tests ok on Debian 13 + Ubuntu 26.04, VM + LXC, both reverts). T-092 started, stacked on it. |
 | T-093 resources `apt_repository`, `unit`, `sysctl` (C4) | pl-reviewer (implements; pl-architect reviews) | PR #191 in review (guest tests ok on Debian 13 + Ubuntu 26.04) |
-| T-094 resource `command` (C4b) | pl-architect | PR #189, in review + QA |
+| T-094 resource `command` (C4b) | pl-architect | PR #189: review wants changes (timeout does not stop a background child; timeout cap vs Run limit); QA tests in PR #192 |
 | T-095 starter Blocks (C5) | pl-frontend | started (draft; builds on T-093) |
 | T-096 Blocks screen (C6) · T-097 agent version in the web (C7) | pl-frontend | T-096: PR #188, in review + QA; T-097 after T-092 |
 | T-098 QA debt (C8) · T-099 QA per card (C9) | pl-codex-qa | T-098 merged (PR #186: 9 web mutants, 3 gaps closed, Content-Length == cap test). T-099 runs per card. |
 | T-100 real-host acceptance (C10) | pl-backend | last |
-| T-101 server checks Block resource attributes at save (found in T-096) | pl-architect | started |
+| T-101 server checks Block resource attributes at save (found in T-096) | pl-architect | PR #193, waits for review |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
