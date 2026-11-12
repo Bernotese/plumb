@@ -135,9 +135,12 @@ func TestUpgradeRollback(t *testing.T) {
 				t.Fatalf("no failure: %s", out)
 			}
 			calls := h.calls()
-			set, back := exact(calls, setVztmpl), exact(calls, setImport)
-			if set < 0 || back < set {
-				t.Errorf("content %d, back %d: %v", set, back, calls)
+			mv, set, rs, back := exact(calls, renameBin), exact(calls, setVztmpl), exact(calls, restart), exact(calls, setImport)
+			if mv < 0 || set <= mv || rs <= set || back <= rs {
+				t.Errorf("binary %d, content %d, restart %d, rollback %d: %v", mv, set, rs, back, calls)
+			}
+			if n := strings.Count("\n"+strings.Join(calls, "\n")+"\n", "\n"+setImport+"\n"); n != 1 {
+				t.Errorf("rollback count = %d, want 1", n)
 			}
 			if c := h.content("plumb-images"); c != "import" {
 				t.Errorf("content after the rollback = %q", c)

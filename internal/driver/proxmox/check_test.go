@@ -298,10 +298,12 @@ func TestCheckEachStorageFailure(t *testing.T) {
 // {import, vztmpl}, compared as sets (pvesm set reorders, host G0).
 func TestCheckImageTemplateContent(t *testing.T) {
 	for content, templates := range map[string]bool{
-		"import":          false,
-		"import,vztmpl":   true,
-		"vztmpl,import":   true,
-		" vztmpl, import": true,
+		"import":               false,
+		"import,vztmpl":        true,
+		"vztmpl,import":        true,
+		" vztmpl, import":      true,
+		"import,import":        false,
+		"vztmpl,import,vztmpl": true,
 	} {
 		f := newFakePVE(t)
 		for _, s := range f.storages {
@@ -320,5 +322,39 @@ func TestCheckImageTemplateContent(t *testing.T) {
 		if err != nil && err.Error() != "local has no content vztmpl: run install.sh again (repair run)" {
 			t.Errorf("%q: text %q", content, err)
 		}
+	}
+}
+
+// Check every subset, including empty, to guard against permitting an
+// unrelated content type alongside either supported set.
+func TestCheckImageContentSets(t *testing.T) {
+	contents := []string{"import", "vztmpl", "images", "rootdir", "iso", "backup", "snippets"}
+	for mask := 0; mask < 1<<len(contents); mask++ {
+		var set []string
+		for i, content := range contents {
+			if mask&(1<<i) != 0 {
+				set = append(set, content)
+			}
+		}
+		content := strings.Join(set, ",")
+		t.Run(content, func(t *testing.T) {
+			f := newFakePVE(t)
+			for _, storage := range f.storages {
+				if storage["storage"] == "local" {
+					storage["content"] = content
+				}
+			}
+			_, err := checkDriver(t, f).Check(context.Background())
+			if mask == 1 || mask == 3 {
+				if err != nil {
+					t.Fatalf("accepted set rejected: %v", err)
+				}
+				return
+			}
+			p := problems(t, err)
+			if len(p) != 1 || p[0].Kind != ProblemStorageContent || p[0].ID != "local" {
+				t.Fatalf("want image storage content problem, got %+v", p)
+			}
+		})
 	}
 }
