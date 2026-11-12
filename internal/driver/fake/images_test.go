@@ -90,12 +90,12 @@ func TestImageBuildLifecycle(t *testing.T) {
 	}
 	wrong := objs[1]
 	wrong.Digest = sum
-	if err := d.RemoveImage(ctx, wrong); err == nil {
-		t.Error("removed with another digest")
+	if err := d.RemoveImage(ctx, wrong); err == nil || errors.Is(err, driver.ErrImageInUse) {
+		t.Errorf("another digest: %v", err)
 	}
 	d.LinkClone(ref)
-	if err := d.RemoveImage(ctx, objs[1]); err == nil {
-		t.Error("removed under a linked clone")
+	if err := d.RemoveImage(ctx, objs[1]); !errors.Is(err, driver.ErrImageInUse) {
+		t.Errorf("linked clone: %v, want ErrImageInUse (D-232)", err)
 	}
 	d.UnlinkClone(ref)
 	if err := d.RemoveImage(ctx, objs[1]); err != nil {

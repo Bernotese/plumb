@@ -751,7 +751,7 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 			return fmt.Errorf("fake: template %s is not %s of image %s with that digest; not removed", obj.Ref, obj.Name, obj.Image)
 		}
 		if t.linked > 0 {
-			return fmt.Errorf("fake: template %s has %d linked clones; not removed", obj.Name, t.linked)
+			return driver.InUse("fake: template %s has %d linked clones; not removed", obj.Name, t.linked)
 		}
 		delete(d.tpls, obj.Ref)
 		for k, r := range d.images {

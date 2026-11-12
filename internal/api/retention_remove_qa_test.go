@@ -9,8 +9,9 @@ import (
 	"testing"
 )
 
-// Current rule: a refused removal is named as left, and the Run succeeds.
-func TestRetentionRemoveErrorCurrentlySucceedsAndRetriesQA(t *testing.T) {
+// D-232: a removal error that is no "in use" refusal fails the retention
+// step and the Run; v3 stays ready and usable, and the next build retries.
+func TestRetentionRemoveErrorFailsRunAndRetriesQA(t *testing.T) {
 	e := newEnv(t, false, withBuilds)
 	e.buildAgents(nil)
 	adm := e.admin()
@@ -20,7 +21,7 @@ func TestRetentionRemoveErrorCurrentlySucceedsAndRetriesQA(t *testing.T) {
 	e.manualBuild(adm, "web", 3, nil)
 	v, _ := e.st.GetImageVersion(e.ctx, "web", 3)
 	run, err := e.st.GetRun(e.ctx, v.RunID)
-	if err != nil || run.Status != "succeeded" {
+	if err != nil || run.Status != "failed" {
 		t.Fatalf("run: %+v %v", run, err)
 	}
 	steps, err := e.st.Steps(e.ctx, v.RunID)
@@ -31,7 +32,8 @@ func TestRetentionRemoveErrorCurrentlySucceedsAndRetriesQA(t *testing.T) {
 	for _, s := range steps {
 		if s.Resource == "image:retention" {
 			found = true
-			if s.Status != "applied" || !strings.Contains(s.Output, "left plumb-img-web-v1: retention remove unavailable") {
+			want := "could not remove plumb-img-web-v1: retention remove unavailable; v3 is ready and usable; old templates stay until the next build"
+			if s.Status != "failed" || !strings.Contains(s.Output, want) {
 				t.Fatalf("retention: %+v", s)
 			}
 		}
@@ -50,6 +52,9 @@ func TestRetentionRemoveErrorCurrentlySucceedsAndRetriesQA(t *testing.T) {
 		t.Fatalf("target: %d %s", code, body)
 	}
 	e.manualBuild(adm, "web", 4, nil)
+	if status, s := e.retentionOf("web", 4); status != "succeeded" || s.Status != "applied" {
+		t.Fatalf("v4: run %s, retention %+v", status, s)
+	}
 	for n := 1; n <= 4; n++ {
 		v, err := e.st.GetImageVersion(e.ctx, "web", n)
 		want := store.ImageReady

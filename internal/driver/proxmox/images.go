@@ -703,7 +703,7 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 	case cfg["template"] != "1":
 		return fmt.Errorf("proxmox: VMID %d is no template; RemoveImage removes only templates", id)
 	case cfg["lock"] != "":
-		return fmt.Errorf("proxmox: template %d is locked (%s); try again later", id, cfg["lock"])
+		return driver.InUse("proxmox: template %d is locked (%s); try again later", id, cfg["lock"])
 	case cfg["name"] != want:
 		return fmt.Errorf("proxmox: VMID %d has the name %q, not %s; not removed", id, cfg["name"], want)
 	case obj.Kind == driver.ImageVersionTemplate && !isVersionOf(desc, obj.Image, obj.Version, obj.Digest):
@@ -712,7 +712,7 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 		return fmt.Errorf("proxmox: template %d does not name image %s with sha256=%s in its description; not removed", id, obj.Image, obj.Digest)
 	}
 	if linked := scan.linkedClones(id); len(linked) > 0 {
-		return fmt.Errorf("proxmox: template %s (VMID %d) has linked clones in the pool (VMIDs %v); Proxmox would delete it under them: remove them or make them full clones first", want, id, linked)
+		return driver.InUse("proxmox: template %s (VMID %d) has linked clones in the pool (VMIDs %v); Proxmox would delete it under them: remove them or make them full clones first", want, id, linked)
 	}
 	if err := d.c.Task(ctx, d.cfg.Node, "DELETE", vmPath(d, id), url.Values{"purge": {"1"}, "destroy-unreferenced-disks": {"1"}}); err != nil {
 		return fmt.Errorf("proxmox: delete template %s (VMID %d): %w", want, id, err)
