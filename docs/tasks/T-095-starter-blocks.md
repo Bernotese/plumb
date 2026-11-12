@@ -9,7 +9,7 @@ Four new starter Blocks so a typical homelab guest can be built.
 ## Context (read only these)
 - `docs/tasks/T-089-slice-3-plan.md` – the approved plan: "Risks" and the decisions D-256 … D-262 (also in `docs/DECISIONS.md`)
 - `docs/ARCHITECTURE.md` – only the sections you need
-- New decisions: `docs/decisions/T-095.md`; ask pl-lead for numbers (next free: D-263)
+- New decisions: `docs/decisions/T-095.md`; ask pl-lead for numbers (ask pl-lead)
 
 ## Acceptance criteria
 - [ ] `ssh-hardening`, `common-tools`, `shell`, `docker-compose` in `blocks/`, valid against `schema/block.json`

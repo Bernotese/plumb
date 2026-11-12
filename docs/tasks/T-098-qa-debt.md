@@ -9,7 +9,7 @@ Close the open QA points from slice 2 before new web work lands.
 ## Context (read only these)
 - `docs/tasks/T-089-slice-3-plan.md` – the approved plan: "Risks" and the decisions D-256 … D-262 (also in `docs/DECISIONS.md`)
 - `docs/ARCHITECTURE.md` – only the sections you need
-- New decisions: `docs/decisions/T-098.md`; ask pl-lead for numbers (next free: D-263)
+- New decisions: `docs/decisions/T-098.md`; ask pl-lead for numbers (ask pl-lead)
 
 ## Acceptance criteria
 - [ ] Web mutation audit: mutate the key web logic (stores, API client, form checks), list survivors, add tests for the ones that matter; report the rest in `docs/tasks/T-098.log.md`
