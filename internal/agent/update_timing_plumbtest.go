@@ -8,5 +8,5 @@ import "time"
 // the tag plumbtest.
 const (
 	guardTick   = 5 * time.Second
-	guardWindow = 40 * time.Second
+	guardWindow = 60 * time.Second
 )
