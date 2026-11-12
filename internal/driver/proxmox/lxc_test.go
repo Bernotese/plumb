@@ -519,3 +519,36 @@ func TestCTTemplateFiles(t *testing.T) {
 		t.Errorf("files %v", got)
 	}
 }
+
+// The token's view of a container with outside additions, recorded on
+// pve-dev (T-079 PR C host check, never started): mp0 with a host path,
+// dev0, features with keyctl, and a raw lxc.apparmor.profile line.
+func TestCTOutsideRecorded(t *testing.T) {
+	_, d := newReplay(t, "testdata/pve/ct-outside")
+	ctx := context.Background()
+	run, err := d.ctConfig(ctx, 9001, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := d.ctConfig(ctx, 9001, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := driver.GuestState{Spec: specOfCT(run)}
+	if p := specOfCT(next); !equalCTSpec(p, st.Spec) {
+		st.Pending = &p
+	}
+	s := st.Spec
+	if s.Features != "keyctl=1,nesting=1" || !reflect.DeepEqual(s.Mounts, []string{"mp0=/tmp,mp=/mnt/t079"}) ||
+		!reflect.DeepEqual(s.Devices, []string{"dev0=/dev/null"}) || !reflect.DeepEqual(s.RawLXC, []string{"lxc.apparmor.profile: unconfined"}) || st.Pending != nil {
+		t.Fatalf("spec %+v pending %+v", s, st.Pending)
+	}
+	want := driver.GuestSpec{Name: "t079-outside", Kind: wire.KindLXC, Cores: s.Cores, MemoryMB: 512, DiskGB: 2, Features: driver.CTFeatures}
+	var attrs []string
+	for _, c := range driver.DriftGuest(want, st) {
+		attrs = append(attrs, c.Attr)
+	}
+	if strings.Join(attrs, ",") != "features,mounts,devices,raw_lxc" {
+		t.Errorf("drift %v", attrs)
+	}
+}
