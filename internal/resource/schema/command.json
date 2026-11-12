@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/command.json",
+  "title": "command",
+  "description": "An escape hatch: runs a program once, as root, without a shell (D-260). Key: name. It runs only while the path in creates does not exist; the program must create it. No drift: a changed argv on a guest where creates exists changes nothing. Every run is destructive (D-031): only a human session approves it, and an Image whose build Blocks hold a command is refused. Output is shown like every resource output (hidden when the resource has a secret). Kinds: vm, lxc.",
+  "type": "object",
+  "required": [
+    "name",
+    "argv",
+    "creates"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$",
+      "description": "Short name for the id."
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "prefixItems": [
+        {
+          "type": "string",
+          "pattern": "^/",
+          "not": {
+            "pattern": "(^|/)\\.\\.(/|$)|\\x00"
+          }
+        }
+      ],
+      "items": {
+        "type": "string",
+        "maxLength": 65536,
+        "not": {
+          "pattern": "\\x00"
+        }
+      },
+      "description": "Program and arguments. The first entry is an absolute path. No shell: for one, write [/bin/sh, -c, \"...\"]."
+    },
+    "creates": {
+      "type": "string",
+      "pattern": "^/",
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)|\\x00"
+      },
+      "maxLength": 4096,
+      "description": "Absolute path. When it exists, the command is done and does not run."
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600,
+      "default": 600,
+      "description": "Seconds; the agent kills the program after this time and the step fails."
+    }
+  }
+}

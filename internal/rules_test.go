@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -243,12 +244,20 @@ func TestSharedSchemaPatterns(t *testing.T) {
 			"resource/schema/directory.json#/properties/path/pattern",
 			"resource/schema/user.json#/properties/shell/pattern",
 			"resource/schema/user.json#/properties/home/pattern",
+			"resource/schema/command.json#/properties/creates/pattern",
+			"resource/schema/command.json#/properties/argv/prefixItems/0/pattern",
 		},
 		"absolute path, forbidden parts": {
 			"resource/schema/file.json#/properties/path/not/pattern",
 			"resource/schema/directory.json#/properties/path/not/pattern",
 			"resource/schema/user.json#/properties/shell/not/pattern",
 			"resource/schema/user.json#/properties/home/not/pattern",
+			"resource/schema/command.json#/properties/creates/not/pattern",
+			"resource/schema/command.json#/properties/argv/prefixItems/0/not/pattern",
+		},
+		"short resource name": {
+			"resource/schema/apt_repository.json#/properties/name/pattern",
+			"resource/schema/command.json#/properties/name/pattern",
 		},
 		"resource id": {
 			"resource/schema/service.json#/properties/restart_on/items/pattern",
@@ -271,11 +280,18 @@ func TestSharedSchemaPatterns(t *testing.T) {
 		}
 		node := files[file]
 		for _, key := range strings.Split(pointer, "/") {
-			obj, ok := node.(map[string]any)
-			if !ok {
+			switch v := node.(type) {
+			case map[string]any:
+				node = v[key]
+			case []any:
+				i, err := strconv.Atoi(key)
+				if err != nil || i < 0 || i >= len(v) {
+					t.Fatalf("%s: nothing at %q", ref, key)
+				}
+				node = v[i]
+			default:
 				t.Fatalf("%s: nothing at %q", ref, key)
 			}
-			node = obj[key]
 		}
 		value, ok := node.(string)
 		if !ok || value == "" {
