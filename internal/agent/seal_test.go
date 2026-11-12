@@ -18,19 +18,20 @@ import (
 // sealRunner is the fake runner of seal: it records every call, and the
 // sync of the agent, in one list.
 type sealRunner struct {
-	mu      sync.Mutex
-	calls   []string
-	apt     string           // output of apt-get -s dist-upgrade
-	fail    map[string]error // command line → error
-	onSync  func()
-	onPower func()
+	mu       sync.Mutex
+	calls    []string
+	apt      string           // output of apt-get -s dist-upgrade
+	fail     map[string]error // command line → error
+	onSync   func()
+	onPower  func()
+	onDracut func() // runs when dracut is called
 }
 
 func (r *sealRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	line := strings.Join(append([]string{name}, args...), " ")
 	r.mu.Lock()
 	r.calls = append(r.calls, line)
-	err, apt, power := r.fail[line], r.apt, r.onPower
+	err, apt, power, dracut := r.fail[line], r.apt, r.onPower, r.onDracut
 	r.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -38,6 +39,8 @@ func (r *sealRunner) Run(_ context.Context, name string, args ...string) ([]byte
 	switch {
 	case line == "apt-get -s dist-upgrade":
 		return []byte(apt), nil
+	case strings.HasPrefix(line, "dracut ") && dracut != nil:
+		dracut()
 	case line == "systemctl poweroff" && power != nil:
 		power()
 	}
@@ -75,10 +78,11 @@ func buildGuest(t *testing.T, root string) (shadow string) {
 		"var/log/syslog": "build-host 10.0.0.9 plumb-build", "var/log/syslog.1": "old", "var/log/dpkg.log.2.gz": "old",
 		"var/log/apt/history.log": "x", "var/log/journal/0123/system.journal": "j",
 		"var/log/cloud-init-output.log": "upgrade log", "tmp/a/b": "x", "var/tmp/c": "x", "root/.bash_history": "ls",
-		"etc/shadow":   "root:secret",
-		"etc/hostname": "plumb-build-web-v3\n",
-		"etc/hosts":    "127.0.0.1\tlocalhost\n127.0.1.1\tplumb-build-web-v3.lan plumb-build-web-v3\n10.0.0.5 db plumb-build-web-v3 # build\n::1 localhost ip6-localhost\n",
-		"etc/passwd-":  "plumb-build:x:1000", "etc/shadow-": "plumb-build:!", "etc/group-": "plumb-build:x:1000:",
+		"etc/shadow":     "root:secret",
+		"etc/hostname":   "plumb-build-web-v3\n",
+		"etc/machine-id": "0123456789abcdef0123456789abcdef\n",
+		"etc/hosts":      "127.0.0.1\tlocalhost\n127.0.1.1\tplumb-build-web-v3.lan plumb-build-web-v3\n10.0.0.5 db plumb-build-web-v3 # build\n::1 localhost ip6-localhost\n",
+		"etc/passwd-":    "plumb-build:x:1000", "etc/shadow-": "plumb-build:!", "etc/group-": "plumb-build:x:1000:",
 		"etc/gshadow-": "plumb-build:!::", "etc/subuid-": "plumb-build:100000:65536", "etc/subgid-": "plumb-build:100000:65536",
 		"usr/lib/systemd/system/systemd-random-seed.service": "",
 		"etc/plumb-agent/agent.json":                         "{}", "etc/plumb-agent/ca.pem": "pem", "usr/local/bin/plumb-agent": "bin",
@@ -578,7 +582,9 @@ func TestSealHostnameLinkFails(t *testing.T) {
 			}
 			ctl.send(t, "s1", wire.CommandSeal, wire.SealBody{PlanID: 7})
 			rep := ctl.result(t, "s1")
-			if got := statuses(rep.Items); !strings.Contains(got, "cloud-init=failed host-keys=skipped") {
+			// The first step that touches the file fails: initramfs (the
+			// fixture has dracut, so the reset runs before it).
+			if got := statuses(rep.Items); !strings.Contains(got, "initramfs=failed upgrade=skipped") {
 				t.Fatalf("got %s", got)
 			}
 			if b, _ := os.ReadFile(canary); string(b) != "127.0.1.1 plumb-build-web-v3 # must stay\n" {
@@ -589,5 +595,37 @@ func TestSealHostnameLinkFails(t *testing.T) {
 				t.Fatal("powered off after a failed step")
 			}
 		})
+	}
+}
+
+// T-066 re-check: dracut copies /etc/hostname, /etc/hosts and
+// /etc/machine-id into the initrd, so seal resets them BEFORE it runs
+// dracut (a clone's first-boot journal held the build name). The order of
+// the step ids on the wire stays the same.
+func TestSealResetsIdentityBeforeDracut(t *testing.T) {
+	r := &sealRunner{apt: aptClean}
+	ta, ctl := startBuildAgent(t, true, r)
+	root := ta.root
+	type seen struct{ hostname, hosts, machineID string }
+	var at seen
+	r.onDracut = func() {
+		read := func(p string) string { b, _ := os.ReadFile(filepath.Join(root, p)); return string(b) }
+		at = seen{read("etc/hostname"), read("etc/hosts"), read("etc/machine-id")}
+	}
+	ctl.send(t, "s1", wire.CommandSeal, wire.SealBody{PlanID: 7})
+	rep := ctl.result(t, "s1")
+	if got := statuses(rep.Items); !strings.HasPrefix(got, "guard=applied initramfs=applied") {
+		t.Fatalf("got %s", got)
+	}
+	if at.hostname != "localhost\n" || strings.Contains(at.hosts, "plumb-build") || at.machineID != "uninitialized\n" {
+		t.Fatalf("when dracut ran: %+v", at)
+	}
+	// The wire order is unchanged: the engine and the Run view expect it.
+	var ids []string
+	for _, it := range rep.Items {
+		ids = append(ids, strings.TrimPrefix(it.Resource, "seal:"))
+	}
+	if !slices.Equal(ids, wire.SealSteps) {
+		t.Fatalf("step ids %v, want %v", ids, wire.SealSteps)
 	}
 }
