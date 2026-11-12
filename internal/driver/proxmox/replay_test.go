@@ -5,6 +5,7 @@ package proxmox
 // token; host, node, addresses, MACs and SSH keys are scrubbed.
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/pem"
 	"net/http"
@@ -137,4 +138,23 @@ func TestReplayLifecycle(t *testing.T) {
 		}
 	})
 	runLifecycle(t, d, replayImage, "vmbr0")
+}
+
+// TestReplayCTLifecycle runs the container lifecycle (T-079) against the
+// answers of the host: start check, reuse of the template file, create,
+// live update, clear, re-enrollment, delete, H11.
+func TestReplayCTLifecycle(t *testing.T) {
+	rs, d := newReplay(t, "testdata/pve/ct-lifecycle")
+	t.Cleanup(func() {
+		if len(rs.missed) > 0 {
+			t.Errorf("requests without a recording: %v", rs.missed)
+		}
+	})
+	if _, err := d.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetCTSource(testCTSource(t.TempDir())); err != nil {
+		t.Fatal(err)
+	}
+	runCTLifecycle(t, d, hostCTImage, "vmbr0", []string{"ssh-ed25519 AAAAtestkey t079", "ssh-ed25519 AAAAtestkey Jürgen's Schlüssel ✓"})
 }

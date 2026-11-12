@@ -112,6 +112,12 @@ type fakePVE struct {
 	lateConvert   string
 	lateID        int
 	contentStatus int // a status for the volume list of the disk storage
+
+	// Container templates (T-079): uploads holds each upload's file
+	// bytes by name; imagesAvail is the free space of the image storage.
+	uploads     map[string][]byte
+	uploadOrder []string // the field names of the last upload, in order
+	imagesAvail int64
 }
 
 type fakeVM struct {
@@ -202,6 +208,7 @@ func newFakePVE(t *testing.T) *fakePVE {
 	f := &fakePVE{t: t, auth: "PVEAPIToken=" + fakeToken + "=" + fakeSecret, node: fakeNode,
 		vms: map[int]*fakeVM{}, files: map[string]bool{}, tasks: map[string]*fakeTask{},
 		failNext: map[string]string{}, lockReads: map[int]int{}, taskPolls: 2,
+		imagesAvail: 30 << 30, uploads: map[string][]byte{},
 		version: "9.2.26", diskType: "lvmthin", diskTotal: 42 << 30, diskUsed: 1 << 30, linkInConfig: true, parentInContent: true,
 		storages: []map[string]any{
 			{"storage": "local-lvm", "content": "images,rootdir", "enabled": 1, "active": 1, "type": "lvmthin"},
@@ -321,7 +328,7 @@ func (f *fakePVE) task(key string) string {
 
 var (
 	reQemu    = regexp.MustCompile(`^/nodes/([^/]+)/qemu/(\d+)(/.*)?$`)
-	reStorage = regexp.MustCompile(`^/nodes/([^/]+)/storage/([^/]+)/(content|download-url|status)$`)
+	reStorage = regexp.MustCompile(`^/nodes/([^/]+)/storage/([^/]+)/(content|download-url|status|upload)$`)
 	reTask    = regexp.MustCompile(`^/nodes/([^/]+)/tasks/([^/]+)(?:/(status|log))?$`)
 )
 
@@ -460,6 +467,14 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	case reStorage.MatchString(path):
 		m := reStorage.FindStringSubmatch(path)
 		storage, op := m[2], m[3]
+		if op == "upload" && r.Method == "POST" {
+			f.upload(w, r, key, storage)
+			return
+		}
+		if op == "status" && r.Method == "GET" && storage == "local" {
+			reply(w, 200, map[string]any{"type": "dir", "total": 40 << 30, "avail": f.imagesAvail, "used": 1 << 30, "active": 1, "enabled": 1})
+			return
+		}
 		if op == "status" && r.Method == "GET" {
 			if storage != "local-lvm" {
 				fail(w, 501, "not modelled", nil)
@@ -501,8 +516,12 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		if op == "content" && r.Method == "GET" {
 			list := []map[string]any{}
 			for v := range f.files {
-				if strings.HasPrefix(v, storage+":") {
-					list = append(list, map[string]any{"volid": v, "content": "import", "size": 700 << 20})
+				typ := "import"
+				if strings.Contains(v, ":vztmpl/") {
+					typ = "vztmpl"
+				}
+				if strings.HasPrefix(v, storage+":") && (r.Form.Get("content") == "" || r.Form.Get("content") == typ) {
+					list = append(list, map[string]any{"volid": v, "content": typ, "size": 700 << 20})
 				}
 			}
 			reply(w, 200, list)

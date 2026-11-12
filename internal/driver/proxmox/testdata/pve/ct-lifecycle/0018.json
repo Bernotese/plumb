@@ -1,0 +1,9 @@
+{
+  "seq": 18,
+  "method": "POST",
+  "path": "/nodes/pve/lxc/9000/status/start",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:00046706:006B63F1:6AF5C46C:vzstart:9000:plumb@pve!plumb:"
+  }
+}

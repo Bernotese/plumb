@@ -158,6 +158,11 @@ func (c *Client) do(ctx context.Context, method, path string, params url.Values)
 		return nil, fmt.Errorf("proxmox: %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
+	return c.answer(resp, method, path)
+}
+
+// answer reads an API answer: the "data" member, or an APIError.
+func (c *Client) answer(resp *http.Response, method, path string) (json.RawMessage, error) {
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, err

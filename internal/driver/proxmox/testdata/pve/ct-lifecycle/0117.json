@@ -1,0 +1,20 @@
+{
+  "seq": 117,
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:00046A60:006B6913:6AF5C479:vzstop:9000:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "user": "plumb@pve",
+      "node": "pve",
+      "tokenid": "plumb",
+      "id": "9000",
+      "upid": "UPID:pve:00046A60:006B6913:6AF5C479:vzstop:9000:plumb@pve!plumb:",
+      "pid": 289376,
+      "starttime": 1794491513,
+      "type": "vzstop",
+      "pstart": 7039251,
+      "status": "running"
+    }
+  }
+}

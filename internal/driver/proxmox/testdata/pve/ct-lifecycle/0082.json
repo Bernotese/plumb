@@ -1,0 +1,38 @@
+{
+  "seq": 82,
+  "method": "GET",
+  "path": "/pools",
+  "query": "poolid=plumb",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "comment": "Plumb guests and templates",
+        "poolid": "plumb",
+        "members": [
+          {
+            "cpu": 0,
+            "type": "lxc",
+            "memhost": 0,
+            "id": "lxc/9000",
+            "name": "CT9000",
+            "disk": 0,
+            "node": "pve",
+            "netin": 0,
+            "status": "stopped",
+            "diskread": 0,
+            "diskwrite": 0,
+            "mem": 0,
+            "template": 0,
+            "netout": 0,
+            "maxdisk": 4294967296,
+            "maxcpu": 4,
+            "maxmem": 536870912,
+            "vmid": 9000,
+            "uptime": 0
+          }
+        ]
+      }
+    ]
+  }
+}

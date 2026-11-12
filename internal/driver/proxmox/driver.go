@@ -78,6 +78,9 @@ type Driver struct {
 	// templates: the start check saw the content "vztmpl" on the image
 	// storage (D-229). Check sets it once, before serve uses the driver.
 	templates bool
+
+	// ct: container templates (ctfetch.go).
+	ct ctState
 }
 
 // imageLock returns the lock of one template name.
@@ -362,8 +365,12 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // every create (D-188), so a template that someone destroyed or moved out
 // of the pool is made again.
 func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.ImageRef, error) {
-	if spec.Kind != wire.KindVM {
-		return "", fmt.Errorf("proxmox: only VM images in this version, not %q", spec.Kind)
+	switch spec.Kind {
+	case wire.KindLXC:
+		return d.fetchCT(ctx, spec, false)
+	case wire.KindVM:
+	default:
+		return "", fmt.Errorf("proxmox: unknown image type %q", spec.Kind)
 	}
 	if !sha256Hex.MatchString(spec.SHA256) || !strings.HasPrefix(spec.URL, "https://") {
 		return "", errors.New("proxmox: an image needs an https URL and a SHA-256")

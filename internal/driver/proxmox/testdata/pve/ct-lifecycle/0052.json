@@ -1,0 +1,10 @@
+{
+  "seq": 52,
+  "method": "PUT",
+  "path": "/nodes/pve/lxc/9000/config",
+  "form": "digest=e8b49ec69f1af468679f4920f676d3148c452aa8\u0026env=PLUMB_ENROLL_TOKEN%3Dscrubbed-2",
+  "status": 200,
+  "body": {
+    "data": null
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "seq": 77,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9000/interfaces",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "hardware-address": "BC:24:11:00:00:01",
+        "inet": "192.0.2.10/8",
+        "ip-addresses": [
+          {
+            "ip-address": "192.0.2.10",
+            "ip-address-type": "inet",
+            "prefix": "8"
+          },
+          {
+            "ip-address": "::1",
+            "prefix": "128",
+            "ip-address-type": "inet6"
+          }
+        ],
+        "hwaddr": "BC:24:11:00:00:01",
+        "name": "lo",
+        "inet6": "::1/128"
+      },
+      {
+        "hwaddr": "BC:24:11:00:00:01",
+        "name": "eth0",
+        "hardware-address": "BC:24:11:00:00:01",
+        "ip-addresses": []
+      }
+    ]
+  }
+}

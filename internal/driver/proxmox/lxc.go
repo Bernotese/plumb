@@ -207,7 +207,24 @@ func (d *Driver) createCT(ctx context.Context, spec driver.GuestSpec, boot drive
 	if len(spec.SSHKeys) > 0 {
 		params.Set("ssh-public-keys", strings.Join(spec.SSHKeys, "\n"))
 	}
-	if err := d.c.Task(ctx, d.cfg.Node, "POST", d.node()+"/lxc", params); err != nil {
+	err = d.c.Task(ctx, d.cfg.Node, "POST", d.node()+"/lxc", params)
+	if err != nil && archiveError(err) && ctx.Err() == nil {
+		// A reused file may be damaged (review S10): remove the half-made
+		// container, make the file once more, and try once again.
+		if cerr := d.removeHalfMadeCT(ctx, id, spec.Name, false); cerr != nil {
+			return "", scrub(halfMadeLeftCT(fmt.Errorf("proxmox: create container: %w", err), id, cerr), boot.Token)
+		}
+		d.ct.mu.Lock()
+		ispec, known := d.ct.specs[spec.Image]
+		d.ct.mu.Unlock()
+		if known {
+			if _, ferr := d.fetchCT(ctx, ispec, true); ferr != nil {
+				return "", scrub(fmt.Errorf("proxmox: create container: %w; making the template again failed: %v", err, ferr), boot.Token)
+			}
+			err = d.c.Task(ctx, d.cfg.Node, "POST", d.node()+"/lxc", params)
+		}
+	}
+	if err != nil {
 		err = fmt.Errorf("proxmox: create container: %w", err)
 		return "", scrub(halfMadeLeftCT(err, id, d.removeHalfMadeCT(ctx, id, spec.Name, false)), boot.Token)
 	}
