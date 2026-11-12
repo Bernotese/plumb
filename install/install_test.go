@@ -285,6 +285,17 @@ func TestRepairAddsSysAudit(t *testing.T) {
 	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
 		t.Fatalf("repair: %d %s %s", code, out, errOut)
 	}
+	var actual []string
+	for _, c := range h.changed() {
+		if strings.HasPrefix(c, "pveum ") {
+			actual = append(actual, c)
+		}
+	}
+	wantReal := strings.ReplaceAll(strings.TrimPrefix(strings.Join(want, "\n"), "+ "), "\n+ ", "\n")
+	wantReal = strings.ReplaceAll(wantReal, `\!`, "!")
+	if strings.Join(actual, "\n") != wantReal {
+		t.Errorf("repair pveum changes: %v; want %s", actual, wantReal)
+	}
 	now, _ := os.ReadFile(acl)
 	for _, w := range []string{"/ plumb@pve PlumbAudit user 0\n", "/ plumb@pve!plumb PlumbAudit token 0\n"} {
 		if !strings.Contains(string(now), w) {
@@ -310,6 +321,88 @@ func TestRepairAddsSysAudit(t *testing.T) {
 	now, _ = os.ReadFile(acl)
 	if !strings.Contains(string(now), "/ plumb@pve PlumbAudit user 0\n") {
 		t.Errorf("ACL on / still inherited:\n%s", now)
+	}
+}
+
+// Audit privileges must stay exact even when repairing an existing install.
+func TestAuditRoleRepair(t *testing.T) {
+	for _, appendRights := range []bool{false, true} {
+		t.Run(map[bool]string{false: "replace", true: "refuse-append"}[appendRights], func(t *testing.T) {
+			h := newHost(t)
+			root := h.installed()
+			role := filepath.Join(h.state, "role.PlumbAudit")
+			if err := os.WriteFile(role, []byte("Sys.Audit,Sys.Modify\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			code, out, errOut := h.run(root, "--dry-run", "--plumb-binary", h.plumb)
+			if code != 0 || !strings.Contains(out, "+ pveum role modify PlumbAudit --privs Sys.Audit") {
+				t.Fatalf("dry run: %d %s %s", code, out, errOut)
+			}
+			if c := h.changed(); len(c) != 0 {
+				t.Fatalf("dry run changed host: %v", c)
+			}
+			if appendRights {
+				root = append(root, "FAKE_ROLE_APPEND=1")
+			}
+			code, out, errOut = h.run(root, "--yes", "--plumb-binary", h.plumb)
+			if appendRights {
+				if code == 0 || !strings.Contains(errOut, "role PlumbAudit has the rights") {
+					t.Fatalf("unsafe role accepted: %d %s %s", code, out, errOut)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("repair: %d %s %s", code, out, errOut)
+			}
+			got, err := os.ReadFile(role)
+			if err != nil || strings.TrimSpace(string(got)) != "Sys.Audit" {
+				t.Fatalf("audit role: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestAuditACLRepairAndRemove(t *testing.T) {
+	h := newHost(t)
+	root := h.installed()
+	acl := filepath.Join(h.state, "acl")
+	got, err := os.ReadFile(acl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both principals have an inherited root ACL and an unwanted node ACL.
+	bad := strings.ReplaceAll(string(got), "PlumbAudit user 0", "PlumbAudit user 1")
+	bad = strings.ReplaceAll(bad, "PlumbAudit token 0", "PlumbAudit token 1")
+	bad += "/nodes/pve1 plumb@pve PlumbAudit user 1\n/nodes/pve1 plumb@pve!plumb PlumbAudit token 1\n"
+	if err := os.WriteFile(acl, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
+		t.Fatalf("repair: %d %s %s", code, out, errOut)
+	}
+	got, err = os.ReadFile(acl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audit []string
+	for _, line := range strings.Split(string(got), "\n") {
+		if strings.Contains(line, " PlumbAudit ") {
+			audit = append(audit, line)
+		}
+	}
+	want := "/ plumb@pve PlumbAudit user 0\n/ plumb@pve!plumb PlumbAudit token 0"
+	if strings.Join(audit, "\n") != want {
+		t.Fatalf("audit ACLs: %v", audit)
+	}
+	if code, out, errOut := h.run(root, "--remove", "--yes"); code != 0 {
+		t.Fatalf("remove: %d %s %s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(h.state, "role.PlumbAudit")); !os.IsNotExist(err) {
+		t.Errorf("audit role remains: %v", err)
+	}
+	got, err = os.ReadFile(acl)
+	if err != nil || strings.Contains(string(got), "PlumbAudit") {
+		t.Errorf("audit ACLs remain: %q, %v", got, err)
 	}
 }
 
