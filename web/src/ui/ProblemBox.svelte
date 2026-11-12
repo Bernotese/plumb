@@ -3,10 +3,19 @@
   import { ApiError, NetworkError } from "../lib/api";
   import { href } from "../lib/router";
 
-  /** `fields`: pointers that the form shows at its fields; they are not listed here. */
-  let { error, fields = [] }: { error: unknown; fields?: string[] } = $props();
+  /**
+   * `fields`: pointers that the form shows at its fields; `shown`: error
+   * entries that the form shows elsewhere. Neither is listed here.
+   */
+  let {
+    error,
+    fields = [],
+    shown = [],
+  }: { error: unknown; fields?: string[]; shown?: unknown[] } = $props();
   const p = $derived(error instanceof ApiError ? error.problem : undefined);
-  const rest = $derived(p?.errors?.filter((e) => !fields.includes(e.pointer)) ?? []);
+  const rest = $derived(
+    p?.errors?.filter((e) => !fields.includes(e.pointer) && !shown.includes(e)) ?? [],
+  );
   const atFields = $derived((p?.errors?.length ?? 0) > rest.length);
   // Only the HTTP client marks a failed fetch; any other error is a bug.
   const network = $derived(error instanceof NetworkError);

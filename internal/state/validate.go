@@ -103,7 +103,8 @@ func newCompiler() *jsonschema.Compiler {
 // compiled holds the schemas of the documents, of the guest settings and
 // of the resource types. They are compiled once.
 var compiled = sync.OnceValues(func() (*schemaSet, error) {
-	s := &schemaSet{docs: map[string]*jsonschema.Schema{}, resources: map[string]*jsonschema.Schema{}}
+	s := &schemaSet{docs: map[string]*jsonschema.Schema{}, resources: map[string]*jsonschema.Schema{},
+		props: map[string]map[string]*jsonschema.Schema{}}
 	c := newCompiler()
 	add := func(raw []byte) (string, error) {
 		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
@@ -135,6 +136,18 @@ var compiled = sync.OnceValues(func() (*schemaSet, error) {
 		}
 		if s.resources[name], err = c.Compile(id); err != nil {
 			return nil, fmt.Errorf("state: schema of resource %s: %w", name, err)
+		}
+		var head struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(typ.Schema(), &head); err != nil {
+			return nil, fmt.Errorf("state: schema of resource %s: %w", name, err)
+		}
+		s.props[name] = map[string]*jsonschema.Schema{}
+		for attr := range head.Properties {
+			if s.props[name][attr], err = c.Compile(id + "#" + ptr("/properties", attr)); err != nil {
+				return nil, fmt.Errorf("state: schema of resource %s attribute %s: %w", name, attr, err)
+			}
 		}
 	}
 	for kind, id := range ids {
@@ -193,8 +206,11 @@ var compiled = sync.OnceValues(func() (*schemaSet, error) {
 })
 
 type schemaSet struct {
-	docs          map[string]*jsonschema.Schema
-	resources     map[string]*jsonschema.Schema
+	docs      map[string]*jsonschema.Schema
+	resources map[string]*jsonschema.Schema
+	// props: per resource type, the schema of each attribute (its entry
+	// in properties), for the attribute check of a Block at save (T-101).
+	props         map[string]map[string]*jsonschema.Schema
 	guest         *jsonschema.Schema
 	guestDefaults map[string]any
 	// buildGuestDefaults: defaults of spec.build.guest of an Image.

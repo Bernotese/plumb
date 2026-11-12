@@ -130,7 +130,7 @@ func TestObserveCommand(t *testing.T) {
 		fileRes("web", "/srv/conf", map[string]any{"content": "x"}),
 		fileRes("web", "/srv/ok", map[string]any{"content": "ok\n"}),
 		svc,
-		{ID: "command:x", Type: "command", Block: "web", Attrs: map[string]any{}},
+		{ID: "nosuch:x", Type: "nosuch", Block: "web", Attrs: map[string]any{}},
 	}})
 	rep := ctl.result(t, "c1")
 	if rep.Error != "" || len(rep.Items) != 4 {

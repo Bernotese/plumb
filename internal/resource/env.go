@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -40,6 +42,53 @@ func New(r wire.Resource, env Env) (Resource, error) {
 // ExecRunner runs real commands. Output is stdout. A command that exits
 // non-zero returns an *ExitError with stderr (up to MaxStderr bytes).
 type ExecRunner struct{}
+
+// ProgramRunner runs a program of a command resource (T-094 review H1).
+// ExecRunner implements it: no stdin, stdout or stderr (nothing of the
+// output leaves the guest, and nothing is read into memory), its own
+// process group, and on timeout or cancel the whole group gets SIGKILL.
+// A Runner without it (a test fake) runs the program through Run.
+type ProgramRunner interface {
+	RunProgram(ctx context.Context, argv []string) error
+}
+
+// programWaitDelay bounds the wait for the I/O of a killed program.
+const programWaitDelay = 5 * time.Second
+
+// RunProgram implements ProgramRunner. It returns when argv[0] exits: a
+// child that it started in the background (a daemon) keeps running and
+// does not hold the call. A non-zero exit is an *ExitError without Stderr.
+func (ExecRunner) RunProgram(ctx context.Context, argv []string) error {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append([]string(nil), commandEnv...)
+	cmd.Dir = "/"
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = programWaitDelay
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s: %w", argv[0], err)
+	}
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		case <-done:
+		}
+	}()
+	err := cmd.Wait()
+	close(done)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return &ExitError{Name: argv[0], Code: ee.ExitCode()}
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", argv[0], err)
+	}
+	return nil
+}
 
 // MaxStderr bounds the stderr kept in an ExitError. It is not cut further
 // here: SafeOutput redacts first and cuts after, so a secret is never cut

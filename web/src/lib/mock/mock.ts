@@ -39,6 +39,7 @@ import type {
 import { CREATE_ONLY, maxRisk, REENROLL_REFUSED } from "../view";
 import { diskUse, nextSlot } from "../images";
 import { toYaml } from "../yaml";
+import { checkBlock } from "../blockCheck";
 import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
 import { buildRuns, diskRefusal, GIB, seedImages, seedLxc, seedTargets } from "./imageSeed";
@@ -225,6 +226,8 @@ export function planTarget(
   blocks: Map<string, BlockDoc>,
   /** The power state of the guest: only a running VM waits or restarts (D-194). */
   power: string = "running",
+  /** The Blocks of the base revision, when the proposal changes Blocks (T-096). */
+  oldBlocks: Map<string, BlockDoc> = blocks,
 ): ResourcePlan[] {
   const out: ResourcePlan[] = [];
   const g = next.guest as Record<string, unknown>;
@@ -267,7 +270,7 @@ export function planTarget(
     if (changes.length) out.push(resourcePlan("guest:config", "update", changes));
   }
 
-  const before = new Map((old ? render(old, blocks) : []).map((r) => [r.id, r]));
+  const before = new Map((old ? render(old, oldBlocks) : []).map((r) => [r.id, r]));
   const after = render(next, blocks);
   for (const r of after) {
     const prev = before.get(r.id);
@@ -1485,6 +1488,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       auth();
       return structuredClone(blockViews);
     },
+    async getBlock(name) {
+      auth();
+      const b = blockViews.find((v) => v.document.name === name);
+      if (!b) throw problem("not-found", "Not found", 404, `Block "${name}" does not exist.`);
+      return structuredClone(b);
+    },
     async listTargets() {
       auth();
       return structuredClone([...targets.values()]);
@@ -1507,6 +1516,21 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       const warnings: string[] = [];
       const imagePart = planImages(proposal);
       if (imagePart.recipe) humanOnly.add("image-recipe");
+      // Blocks: the schema check of the server (block.json), then the next set (T-096).
+      const nextBlocks = new Map(blocks);
+      for (const [at, doc] of (proposal.put ?? []).entries()) {
+        if (doc.kind !== "Block") continue;
+        const errs = checkBlock(doc);
+        if (errs.length) {
+          throw problem("validation", "Validation failed", 422, "The documents are not valid.", {
+            errors: errs.map((e) => ({
+              pointer: `/put/${at}${e.pointer}`,
+              message: `Block "${doc.name}": ${e.message}`,
+            })),
+          });
+        }
+        nextBlocks.set(doc.name, doc as BlockDoc);
+      }
       for (const [at, doc] of (proposal.put ?? []).entries()) {
         if (doc.kind !== "Target") continue;
         const t = doc as TargetDoc;
@@ -1523,7 +1547,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           );
         }
         const old = targets.get(t.name)?.document.spec;
-        let resources = planTarget(old, t.spec, blocks, targets.get(t.name)?.status.power);
+        let resources = planTarget(
+          old,
+          t.spec,
+          nextBlocks,
+          targets.get(t.name)?.status.power,
+          blocks,
+        );
         const used = plannedSecrets(t.spec);
         const before = bindings(old);
         const fresh = [...bindings(t.spec)].filter((b) => !before.has(b));
@@ -1550,21 +1580,19 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         }
         planTargets.push({ target: t.name, ...(used.length ? { secrets: used } : {}), resources });
       }
-      // The gate (D-259): a Target whose agent lacks what its state needs.
-      const outdated = planTargets
-        .map((p) => targets.get(p.target))
-        .filter((t): t is TargetView => t?.status.agent_update === "required");
-      if (outdated.length) {
-        throw problem(
-          "agent-outdated",
-          "Agent too old",
-          409,
-          "update the agent first: the desired state needs what the agent does not know.",
-          {
-            targets: outdated.map((t) => t.document.name),
-            missing: [...new Set(outdated.flatMap((t) => t.status.agent_missing ?? []))].sort(),
-          },
-        );
+      // Every other Target whose render changes with the Blocks is touched (T-096).
+      for (const t of targets.values()) {
+        if (planTargets.some((p) => p.target === t.document.name)) continue;
+        if ((proposal.delete ?? []).some((d) => d.kind === "Target" && d.name === t.document.name))
+          continue;
+        const spec = t.document.spec;
+        if (same(render(spec, blocks), render(spec, nextBlocks))) continue;
+        const used = plannedSecrets(spec);
+        planTargets.push({
+          target: t.document.name,
+          ...(used.length ? { secrets: used } : {}),
+          resources: planTarget(spec, spec, nextBlocks, t.status.power, blocks),
+        });
       }
       // Targets planned without a document change (a new secret value, D-090).
       for (const name of proposal.targets ?? []) {
@@ -1596,6 +1624,22 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
               ]),
             ];
         planTargets.push({ target: name, ...(used.length ? { secrets: used } : {}), resources });
+      }
+      // The gate (D-259): a Target whose agent lacks what its state needs.
+      const outdated = planTargets
+        .map((p) => targets.get(p.target))
+        .filter((t): t is TargetView => t?.status.agent_update === "required");
+      if (outdated.length) {
+        throw problem(
+          "agent-outdated",
+          "Agent too old",
+          409,
+          "update the agent first: the desired state needs what the agent does not know.",
+          {
+            targets: outdated.map((t) => t.document.name),
+            missing: [...new Set(outdated.flatMap((t) => t.status.agent_missing ?? []))].sort(),
+          },
+        );
       }
       for (const d of [...(proposal.put ?? []), ...(proposal.delete ?? [])])
         if (d.kind === "Rule") humanOnly.add("rule-change");

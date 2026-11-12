@@ -134,6 +134,7 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     buildImage: (name, reason) =>
       call<Plan>("POST", `/images/${encodeURIComponent(name)}/build`, reason ? { reason } : {}),
     listBlocks: () => all<BlockView>("/blocks"),
+    getBlock: (name) => call<BlockView>("GET", `/blocks/${encodeURIComponent(name)}`),
     listTargets: () => all<TargetView>("/targets"),
     getTarget: (name) => call<TargetView>("GET", `/targets/${encodeURIComponent(name)}`),
     createPlan: (proposal) => call<Plan>("POST", "/plans", proposal),

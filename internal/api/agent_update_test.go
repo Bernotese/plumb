@@ -9,6 +9,7 @@ import (
 
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
@@ -272,25 +273,23 @@ func TestAgentUpdateRevertedShownAndNotProposedAgain(t *testing.T) {
 	}
 	var p struct{ ID int64 }
 	json.Unmarshal(body, &p)
-	if _, err := e.st.MarkPlanStale(e.ctx, p.ID); err != nil {
-		t.Fatal(err)
-	}
 	// A reason outside the two drops the whole value.
 	e.hello(wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps,
 		Reverted: &wire.UpdateRevert{From: "test", To: "v2", ToSHA256: newSHA, Reason: "<script>", At: "2026-11-12T10:00:00Z"}})
 	if st := e.agentStatus(c, "web1"); st.AgentReverted != nil {
 		t.Errorf("bad reason kept: %+v", st.AgentReverted)
 	}
-	// Without the revert, system proposes again.
-	if ids := pendingUpdates(t, e); len(ids) != 1 {
-		t.Errorf("system Plans %v", ids)
+	// The person's Plan stays the one pending update Plan.
+	if ids := pendingUpdates(t, e); !slices.Equal(ids, []int64{p.ID}) {
+		t.Errorf("pending update Plans %v, want [%d]", ids, p.ID)
 	}
 }
 
 func TestAgentUpdateManualAndUnknown(t *testing.T) {
 	e := newUpdateEnv(t)
 	c := e.admin()
-	e.seed(c, "web1") // the fake agent sends no capabilities: before slice 3
+	e.seed(c, "web1")
+	e.hello(wire.Hello{}) // no capabilities: an agent from before slice 3
 	st := e.agentStatus(c, "web1")
 	if st.AgentUpdate != plan.AgentUpdateManual {
 		t.Fatalf("status %+v", st)
@@ -383,5 +382,51 @@ func TestAgentGateInRun(t *testing.T) {
 	}
 	if slices.Contains(a.Commands(), wire.CommandApply) {
 		t.Error("an apply reached the outdated agent")
+	}
+}
+
+// Review L1 of #196: a discarded update Plan stops system proposals of
+// that binary for the Target; a person can still propose it.
+func TestAgentUpdateDiscardStopsSystem(t *testing.T) {
+	e := newUpdateEnv(t)
+	c := e.admin()
+	caps := slice3Caps()
+	e.seedAgent(c, caps)
+	e.hello(wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps})
+	ids := pendingUpdates(t, e)
+	if len(ids) != 1 {
+		t.Fatalf("system Plans %v", ids)
+	}
+	if code, body := c.do("DELETE", "/api/v1/plans/"+itoa(ids[0]), nil); code != 204 {
+		t.Fatalf("discard: %d %s", code, body)
+	}
+	e.hello(wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps})
+	if ids := pendingUpdates(t, e); len(ids) != 0 {
+		t.Fatalf("system proposed a discarded update again: %v", ids)
+	}
+	if code, body := c.do("POST", "/api/v1/targets/web1/agent-update", nil); code != 201 {
+		t.Fatalf("person: %d %s", code, body)
+	}
+}
+
+// Review L2 of #196: an enrolled agent without a stored hello is gated at
+// planning with the baseline.
+func TestAgentGateNoHelloIsBaseline(t *testing.T) {
+	e := newUpdateEnv(t)
+	c := e.admin()
+	e.seed(c, "web1")
+	// A new agent row (a re-enrollment) that did not say hello yet.
+	if err := e.st.PutEnrollToken(e.ctx, "web1", "h-new", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.Enroll(e.ctx, "h-new", time.Now(), store.Agent{ID: "a-new", CredentialHash: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := doc(state.KindBlock, "init", `{"resources":[{"command":{"name":"init","argv":["/usr/local/bin/init"],"creates":"/var/lib/init.done"}}]}`)
+	web1 := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},`+
+		`"blocks":[{"use":"motd","params":{"text":"hello"}},{"use":"init"}]}`)
+	code, body := c.do("POST", "/api/v1/plans", map[string]any{"reason": "init", "put": []state.Doc{cmd, web1}})
+	if code != 409 || problemType(body) != "agent-outdated" || !strings.Contains(string(body), `"missing":["command"]`) {
+		t.Fatalf("propose: %d %s", code, body)
 	}
 }

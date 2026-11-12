@@ -252,8 +252,18 @@ func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy s
 
 // PendingPlans returns the pending Plans of one origin, oldest first.
 func (s *Store) PendingPlans(ctx context.Context, origin string) ([]Plan, error) {
+	return s.plansOf(ctx, PlanPending, origin)
+}
+
+// StalePlans returns the stale Plans of one origin, oldest first. An
+// agent_update Plan is stale only after a discard (D-278).
+func (s *Store) StalePlans(ctx context.Context, origin string) ([]Plan, error) {
+	return s.plansOf(ctx, PlanStale, origin)
+}
+
+func (s *Store) plansOf(ctx context.Context, status, origin string) ([]Plan, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+planColumns+` FROM plan WHERE status = 'pending' AND origin = ? ORDER BY id`, origin)
+		`SELECT `+planColumns+` FROM plan WHERE status = ? AND origin = ? ORDER BY id`, status, origin)
 	if err != nil {
 		return nil, err
 	}
