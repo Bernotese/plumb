@@ -175,3 +175,14 @@ func TestCTRemoveBuild(t *testing.T) {
 		t.Errorf("observe: %v", err)
 	}
 }
+
+// runCTBuild against pvefake (the host runs it as TestHostCTBuild).
+func TestCTBuildLifecycleFake(t *testing.T) {
+	e := newCTFetch(t)
+	t.Cleanup(func() { // registered first, so it runs after the cleanups of runCTBuild
+		if len(e.f.vms) != 0 {
+			t.Errorf("guests left: %d", len(e.f.vms))
+		}
+	})
+	runCTBuild(t, e.d, e.spec, "vmbr0")
+}
