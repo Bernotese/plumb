@@ -157,6 +157,14 @@ func checkWritten(recorded []wire.Change, desired driver.GuestSpec, after driver
 			if after.Next().Bridge != desired.Bridge {
 				return out, userText(fmt.Sprintf(textKeptPending, c.Attr, after.Next().Bridge, after.Spec.Bridge))
 			}
+		case c.Attr == driver.AttrFeatures:
+			// A container takes features at its next start (host D4).
+			switch {
+			case after.Next().Features != desired.Features:
+				return out, userText(fmt.Sprintf("Proxmox did not take the features of the container: after the next start %q, desired %q", after.Next().Features, desired.Features))
+			case after.Spec.Features != desired.Features:
+				out[i].WaitsForRestart = true
+			}
 		case driver.IsColdStart(c.Attr):
 			want, _ := driver.IntValue(c.To)
 			run, next := coldValue(after, c.Attr)

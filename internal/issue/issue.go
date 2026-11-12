@@ -37,6 +37,15 @@ var ErrNotOpen = store.ErrIssueNotOpen
 // cannot take another image or kind, so there is nothing to write.
 var ErrAcceptImage = errors.New("issue: accept is not possible for the image or the kind of a guest; revert it or create a new target")
 
+// containerAttrs are the container settings of guest:config that a Target
+// cannot hold (driver.AttrFeatures and driver.Outside).
+var containerAttrs = map[string]bool{"features": true, "mounts": true, "devices": true, "raw_lxc": true}
+
+// ErrAcceptOutside is returned for accept of the features, mount points,
+// devices or raw lxc lines of a container: a Target cannot hold them
+// (D-227, T-038 §3).
+var ErrAcceptOutside = errors.New("issue: accept is not possible for container features, mount points, devices or raw lxc lines; Plumb runs only unprivileged containers with nesting (D-227): revert the features, remove the rest on the Proxmox host, or ignore the Issue")
+
 // ErrAddressFix is returned for revert and accept of a guest:address
 // Issue: ip is create-only, and the Proxmox config is right; the guest
 // does not use it (D-185, D-215). Only the ignore actions apply.
@@ -293,6 +302,9 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 		}
 		if iss.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind") {
 			return state.Doc{}, ErrAcceptImage
+		}
+		if iss.Resource == wire.GuestConfigID && containerAttrs[c.Attr] {
+			return state.Doc{}, ErrAcceptOutside
 		}
 		if c.Attr == wire.AttrRestart {
 			continue

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
+	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -409,5 +410,62 @@ func TestLXCStopBeforeClear(t *testing.T) {
 	}
 	if e.observe("c1").TokenInConfig {
 		t.Error("token still in the config")
+	}
+}
+
+// T-038 §3 (review S6): a person adds a mount point and a feature on the
+// host. The guest poll opens a guest:config Issue (destructive). Revert
+// refuses with the host command while the mount point is there; accept is
+// refused; after the person removed the mount point, revert writes the
+// features back, and they wait for the next start (host D4).
+func TestLXCOutsideAdditions(t *testing.T) {
+	e, _ := newCTEnv(t)
+	e.agent("c1")
+	if run := e.approve(e.propose(plan.Proposal{Put: append(seedCT(), ctTarget("c1", "hi", 1, false))}).ID); run.Status != "succeeded" {
+		t.Fatalf("create %s", run.Status)
+	}
+	id := e.guestID("c1")
+	e.drv.Tamper(id, func(s *driver.GuestSpec) {
+		s.Features = "keyctl=1,nesting=1"
+		s.Mounts = []string{"mp0=/srv/data,mp=/data"}
+	})
+	if err := e.eng.CheckGuests(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	iss := e.openIssue("c1", wire.GuestConfigID)
+	for _, part := range []string{`"attr":"features"`, `"attr":"mounts"`, `"destructive"`, `mp0=/srv/data`} {
+		if !strings.Contains(string(iss.Changes), part) {
+			t.Errorf("issue changes %s miss %s", iss.Changes, part)
+		}
+	}
+	_, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin")
+	if !errors.Is(err, plan.ErrOutside) || !strings.Contains(err.Error(), "pct set "+string(id)+" --delete") {
+		t.Errorf("revert with a mount point: %v", err)
+	}
+	if _, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionAccept, "user:admin"); !errors.Is(err, issue.ErrAcceptOutside) {
+		t.Errorf("accept: %v", err)
+	}
+	// The person removes the mount point; the feature stays.
+	e.drv.Tamper(id, func(s *driver.GuestSpec) { s.Mounts = nil })
+	e.eng.CheckGuests(e.ctx)
+	iss = e.openIssue("c1", wire.GuestConfigID)
+	p, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run := e.approve(p.ID); run.Status != "succeeded" {
+		t.Fatalf("revert run %s: %s", run.Status, stepNames(e.steps(run)))
+	}
+	st := e.observe("c1")
+	if st.Spec.Features != "keyctl=1,nesting=1" || st.Next().Features != driver.CTFeatures {
+		t.Errorf("features now %q, next %q", st.Spec.Features, st.Next().Features)
+	}
+	if got, _ := e.st.GetIssue(e.ctx, iss.ID); got.Status != store.IssueResolved {
+		t.Errorf("issue %s", got.Status)
+	}
+	// Waiting for the start is no new drift.
+	e.eng.CheckGuests(e.ctx)
+	if _, err := e.st.OpenIssue(e.ctx, "c1", wire.GuestConfigID); err == nil {
+		t.Error("the waiting features became drift")
 	}
 }

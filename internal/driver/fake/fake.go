@@ -250,23 +250,6 @@ func (d *Driver) StartOutside(id driver.GuestID) error {
 	return nil
 }
 
-// ChangeOutside changes a guest outside Plumb, as a person on the host:
-// fn changes the running and the next settings alike (for a container:
-// features, mount points, devices, raw lxc lines).
-func (d *Driver) ChangeOutside(id driver.GuestID, fn func(*driver.GuestSpec)) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	g, ok := d.guests[id]
-	if !ok {
-		return driver.ErrNotFound
-	}
-	fn(&g.spec)
-	fn(&g.next)
-	g.gen++
-	g.frozen = ""
-	return nil
-}
-
 // TemplateRef gives the ref of an lxc Image that FetchImage made before;
 // ErrNotFound before the first fetch. A VM Image has none.
 func (d *Driver) TemplateRef(spec driver.ImageSpec) (driver.ImageRef, error) {

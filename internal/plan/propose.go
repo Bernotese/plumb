@@ -45,6 +45,14 @@ var ErrTargetBusy = errors.New("a Run is working on the target")
 // ErrCreateOnly is wrapped when a proposal changes a create-only setting.
 var ErrCreateOnly = errors.New("create-only setting")
 
+// ErrOutside: a container has a mount point, a device or a raw lxc line
+// that a person added on the host; Plumb cannot remove it (T-038 §3).
+var ErrOutside = errors.New("addition outside Plumb")
+
+// textOutside: attribute, VMID, what the container has.
+const textOutside = "%[1]s of the container were added outside Plumb (%[3]v). The Plumb token cannot remove them (Proxmox allows it only to root@pam). " +
+	"Remove them on the Proxmox host (pct set %[2]s --delete <key>, or edit /etc/pve/lxc/%[2]s.conf), or ignore the Issue"
+
 // base returns the head revision id (0 for none) and its validated set.
 func (e *Engine) base(ctx context.Context) (int64, *state.Set, error) {
 	head, err := e.st.Head(ctx)
@@ -392,6 +400,11 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		return tp, &ProposalError{Target: target, Msg: "cannot read the guest: " + err.Error(), Err: err}
 	}
 	gchanges, err := e.cfg.Driver.Diff(desired, observed)
+	var oe *driver.OutsideError
+	if errors.As(err, &oe) {
+		return tp, &ProposalError{Target: target, Err: ErrOutside, Msg: fmt.Sprintf(textOutside, oe.Attr, bind.Ref,
+			createOnlyField(observed.Spec, oe.Attr))}
+	}
 	var co *driver.CreateOnlyError
 	if errors.As(err, &co) {
 		if c := pendingChange(desired, observed, co.Attr); c != nil {
@@ -504,6 +517,12 @@ func createOnlyField(s driver.GuestSpec, attr string) any {
 		return s.ImageName
 	case driver.AttrKind:
 		return s.Kind
+	case driver.AttrMounts:
+		return s.Mounts
+	case driver.AttrDevices:
+		return s.Devices
+	case driver.AttrRawLXC:
+		return s.RawLXC
 	}
 	return nil
 }
@@ -535,6 +554,9 @@ func (e *Engine) guestSpec(target string, r *state.Rendered) (driver.GuestSpec, 
 	// The create-only attribute image is the Image name (D-189). The ref
 	// (spec.Image) is set only by the create step, from FetchImage (D-188).
 	spec.ImageName = r.Image
+	if spec.Kind == wire.KindLXC {
+		spec.Features = driver.CTFeatures // D-227: nesting only
+	}
 	return spec, nil
 }
 
