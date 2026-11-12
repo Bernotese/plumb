@@ -22,7 +22,19 @@ Four new starter Blocks so a typical homelab guest can be built.
 ## Out of scope
 - `lxc` for `docker-compose` (only after T-100 shows it works without new rights)
 
-## Plan (architect, optional)
+## Plan (owner, pl-frontend)
+Findings in real guest containers (Debian 13, Ubuntu 26.04):
+- Ubuntu starts sshd by `ssh.socket` (`ssh.service` disabled); Debian by `ssh.service`. A drop-in needs a restart of `ssh.service` on both. A `service: ssh` resource always sets `enabled`, so it would change the start mode of one distro (risk: no sshd after a reboot).
+- Docker's key is the same for Debian and Ubuntu (fingerprint `9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88`); `trixie` and `resolute` have `docker-ce` and `docker-compose-plugin`.
+- Docker in the privileged guest container fails on nested overlay; `/var/lib/{containerd,docker}` on tmpfs works (test harness only).
+
+Blocks:
+- `ssh-hardening`: drop-in `/etc/ssh/sshd_config.d/10-plumb-hardening.conf` (sorts before `50-cloud-init.conf`): pubkey yes, passwords and keyboard-interactive no, `PermitRootLogin` param (`prohibit-password` default, or `no`), `MaxAuthTries` param. No `AllowUsers`/`AllowGroups`, so every key login stays (bootstrap user, deploy-user). A `unit` path watcher runs `sshd -t` and then `systemctl try-restart ssh.service`; no resource on `ssh` itself.
+- `common-tools`: fixed package list, same names on both distros, no params.
+- `shell`: `bash-completion` + `/etc/profile.d/plumb-shell.sh` (EDITOR, history size and time stamps, aliases; bash only).
+- `docker-compose`: `sysctl net.ipv4.ip_forward=1` (makes the Block VM-only, D-260/D-262), `apt_repository docker` with the pinned key, params `distro`/`suite`, packages, `service docker`, compose file and `.env` (0600, required secret param) in `/opt/plumb-compose-<name>/`, unit `plumb-compose-<name>.service` (oneshot `up --detach`, output to null), service with `restart_on` both files and the unit.
+
+Tests: `blocks/` (schema, params, render on VM, refused on LXC, no marker outside `.env`, no `AllowUsers`, no `service:ssh`); agent guest tests `TestGuestStarter*` on both distros (tools + shell, ssh: password refused, key login of bootstrap user/deploy/root kept, start mode unchanged; compose: real busybox app serves the secret canary, port change restarts, canary in no report and no journal).
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes

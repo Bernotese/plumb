@@ -1,0 +1,70 @@
+kind: Block
+name: ssh-hardening
+spec:
+  title: SSH hardening
+  description: >-
+    Key-only SSH login: no passwords, no keyboard-interactive login, root only
+    with a key (or not at all). Login with SSH keys keeps working for every
+    user, so the Plumb bootstrap user and deploy-user stay reachable. The
+    settings are a drop-in that sorts before the cloud-init one. A path unit
+    checks the configuration with sshd -t and then restarts ssh.service only
+    when it is running; it does not enable or disable ssh.service or
+    ssh.socket, so Debian (ssh.service) and Ubuntu (ssh.socket) keep their
+    start mode.
+  params:
+    type: object
+    properties:
+      permit_root_login:
+        type: string
+        title: Root login
+        description: prohibit-password allows root only with a key; no refuses root.
+        enum: [prohibit-password, "no"]
+        default: prohibit-password
+      max_auth_tries:
+        type: string
+        title: Login attempts per connection
+        pattern: "^([3-9]|10)$"
+        default: "4"
+  resources:
+    # The path unit must watch before the drop-in is written.
+    - unit:
+        name: plumb-ssh-hardening-reload.service
+        content: |
+          [Unit]
+          Description=Check the SSH configuration and restart a running sshd (Plumb)
+
+          [Service]
+          Type=oneshot
+          # Socket-activated sshd (Ubuntu) makes /run/sshd only when it runs.
+          ExecStartPre=/usr/bin/mkdir -p -m 0755 /run/sshd
+          ExecStart=/usr/sbin/sshd -t
+          ExecStart=/usr/bin/systemctl try-restart ssh.service
+    - unit:
+        name: plumb-ssh-hardening.path
+        content: |
+          [Unit]
+          Description=Watch the Plumb SSH hardening drop-in
+
+          [Path]
+          PathChanged=/etc/ssh/sshd_config.d/10-plumb-hardening.conf
+          Unit=plumb-ssh-hardening-reload.service
+
+          [Install]
+          WantedBy=multi-user.target
+    - service:
+        name: plumb-ssh-hardening.path
+        restart_on: ["unit:plumb-ssh-hardening.path"]
+    - file:
+        path: /etc/ssh/sshd_config.d/10-plumb-hardening.conf
+        mode: "0644"
+        content: |
+          # Managed by Plumb (Block ssh-hardening). sshd uses the first value
+          # it reads, and this file sorts before 50-cloud-init.conf.
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitEmptyPasswords no
+          PermitRootLogin {{ .permit_root_login }}
+          MaxAuthTries {{ .max_auth_tries }}
+          LoginGraceTime 30
+          X11Forwarding no

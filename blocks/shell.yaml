@@ -1,0 +1,47 @@
+kind: Block
+name: shell
+spec:
+  title: Shell settings
+  description: >-
+    Settings for interactive bash login shells of every user (SSH, sudo -i,
+    tmux): editor, a long history with time stamps, and aliases. The file is
+    /etc/profile.d/plumb-shell.sh; users can still override it in their own
+    ~/.bashrc. Installs bash-completion.
+  params:
+    type: object
+    properties:
+      editor:
+        type: string
+        title: Editor (EDITOR, VISUAL)
+        pattern: "^[a-z][a-z0-9.+-]{0,31}$"
+        default: vim
+      history_size:
+        type: string
+        title: History size (lines)
+        pattern: "^[1-9][0-9]{0,5}$"
+        default: "10000"
+      aliases:
+        type: string
+        title: Aliases
+        description: Lines of bash, for example alias ll='ls -alF'.
+        contentMediaType: text/plain
+        maxLength: 4000
+        default: |
+          alias ll='ls -alF'
+          alias la='ls -A'
+  resources:
+    - package: {name: bash-completion}
+    - file:
+        path: /etc/profile.d/plumb-shell.sh
+        mode: "0644"
+        content: |
+          # Managed by Plumb (Block shell). A local change is drift.
+          [ -n "${BASH_VERSION:-}" ] || return 0
+          export EDITOR={{ .editor }}
+          export VISUAL={{ .editor }}
+          HISTSIZE={{ .history_size }}
+          HISTFILESIZE={{ .history_size }}
+          HISTTIMEFORMAT='%F %T '
+          HISTCONTROL=ignoreboth
+          shopt -s histappend checkwinsize
+          {{ .aliases }}

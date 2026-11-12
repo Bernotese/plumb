@@ -1,0 +1,23 @@
+kind: Block
+name: common-tools
+spec:
+  title: Common tools
+  description: >-
+    Tools for working on a guest: curl, git, htop, jq, less, lsof, rsync,
+    tmux, unzip, vim, dig (bind9-dnsutils) and ping. The package names are
+    the same on Debian 13 and Ubuntu 26.04. Removing the Block keeps the
+    packages (a resource that is no longer desired is not deleted).
+  resources:
+    - package: {name: ca-certificates}
+    - package: {name: curl}
+    - package: {name: git}
+    - package: {name: htop}
+    - package: {name: jq}
+    - package: {name: less}
+    - package: {name: lsof}
+    - package: {name: rsync}
+    - package: {name: tmux}
+    - package: {name: unzip}
+    - package: {name: vim}
+    - package: {name: bind9-dnsutils}
+    - package: {name: iputils-ping}
