@@ -1,6 +1,6 @@
 # T-077 – installer and start check: content `vztmpl`, upgrade order
 
-- **Owner:** pl-codex-fix   · **Reviewer:** pl-reviewer   · **QA:** pl-codex-qa
+- **Owner:** pl-reviewer (pl-codex-fix: not trivial)   · **Reviewer:** pl-architect   · **QA:** pl-codex-qa
 - **Size:** S   · **Depends on:** –
 - Child card of T-038 (plan approved, D-238). The plan is the spec: `docs/tasks/T-038-lxc-targets.md`.
 

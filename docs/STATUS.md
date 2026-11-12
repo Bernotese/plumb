@@ -11,7 +11,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083 | **plan approved by the user (D-238, all 4 recommendations)**; D-224 … D-231, D-233 … D-237 accepted. Running: T-079 step 1 = host check H10 (pl-backend, result goes to the user before driver code), T-075 contract (pl-architect), T-076 `ctpack` (pl-frontend), T-077 installer `vztmpl` (pl-codex-fix). Then T-078, T-080, T-081, T-079 step 2, T-082, T-083. |
+| T-038 LXC targets (slice 2 part B, second) | child cards T-075 … T-083 | **plan approved by the user (D-238, all 4 recommendations)**; D-224 … D-231, D-233 … D-237 accepted. Running: T-079 step 1 = host check H10 (pl-backend, result goes to the user before driver code), T-075 contract (pl-architect), T-076 `ctpack` (pl-frontend), T-077 installer `vztmpl` (pl-reviewer; not trivial for pl-codex-fix). Then T-078, T-080, T-081, T-079 step 2, T-082, T-083. |
 | T-084 token gets `Sys.Audit` (D-239, user decision) | pl-backend | step 1: find the narrowest ACL path on the host and report it to the user (D-240); then installer + docs + repair run on `pve-dev` |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
