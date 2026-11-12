@@ -94,6 +94,8 @@ type Agent struct {
 	addrErr   bool      // the last read failed (log once)
 
 	sealedCmd string // id of a seal that ended without a failed step (under mu)
+	// sealedContainer: that seal was of a container (D-253; under mu).
+	sealedContainer bool
 }
 
 // New builds an agent. It reads the stored credential and desired list.

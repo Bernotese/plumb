@@ -1,0 +1,30 @@
+{
+  "seq": 38,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9000/status/current",
+  "status": 200,
+  "body": {
+    "data": {
+      "swap": 0,
+      "name": "plumb-build-t082-debian-13-v1",
+      "cpus": 1,
+      "vmid": 9000,
+      "netin": 0,
+      "cpu": 0,
+      "maxswap": 536870912,
+      "maxmem": 536870912,
+      "ha": {
+        "managed": 0
+      },
+      "mem": 0,
+      "diskwrite": 0,
+      "uptime": 0,
+      "netout": 0,
+      "diskread": 0,
+      "type": "lxc",
+      "disk": 0,
+      "status": "stopped",
+      "maxdisk": 4294967296
+    }
+  }
+}

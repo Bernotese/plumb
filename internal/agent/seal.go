@@ -34,6 +34,47 @@ const (
 	cloudInitLog   = "/var/log/cloud-init-output.log"
 )
 
+// SSH host keys of a container clone (D-253): a first-boot unit makes the
+// missing keys before any SSH unit starts. Wanted by sysinit.target without
+// the default dependencies, so it has no ordering cycle with ssh.socket
+// (part of sockets.target).
+const (
+	hostKeyUnit     = "plumb-ssh-hostkeys.service"
+	hostKeyUnitPath = "/etc/systemd/system/" + hostKeyUnit
+	hostKeyUnitText = `[Unit]
+Description=Plumb: SSH host keys of a new container
+DefaultDependencies=no
+After=local-fs.target
+Before=ssh.service ssh.socket sshd-keygen.service sockets.target
+ConditionPathExists=/usr/bin/ssh-keygen
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+
+[Install]
+WantedBy=sysinit.target
+`
+)
+
+// ctAgentFiles are removed after the seal of a container (D-253): the
+// state dir (credential, desired list) and the agent binary. Everything
+// else is the state of the template file (D-230) and stays: agent.json,
+// ca.pem, plumb-agent-install with its unit, and plumb-agent.service with
+// its wants link. The installer only puts the binary in place and runs
+// "systemctl enable --now plumb-agent.service", so a clone without the
+// unit would never start its agent (review B1 of #174); until then the
+// unit fails and restarts every 10 s, as in a fresh container.
+var ctAgentFiles = []string{
+	DefaultStateDir,
+	"/usr/local/bin/plumb-agent",
+}
+
+// ContainerSealRemoves returns the paths that a container seal removes
+// after its result (D-253). The guest test of the clone's first boot uses
+// it.
+func ContainerSealRemoves() []string { return append([]string(nil), ctAgentFiles...) }
+
 // agentFiles are the agent's own files, removed after the result of seal
 // was taken (D-206: a VM template holds no agent). The state dir (the
 // credential and the desired list) goes first.
@@ -116,6 +157,7 @@ func (a *Agent) seal(ctx context.Context, cmdID string, body wire.SealBody) []wi
 	if failed == "" {
 		a.mu.Lock()
 		a.sealedCmd = cmdID
+		a.sealedContainer = body.Container
 		a.mu.Unlock()
 		a.log.Info("sealed; the agent removes itself and powers off when the controller took the result")
 	}
@@ -147,7 +189,13 @@ func (a *Agent) finishSeal(ctx context.Context) error {
 	if err := a.state.cleanStaleTemps(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		errs = errors.Join(errs, err)
 	}
-	for _, p := range agentFiles {
+	a.mu.Lock()
+	files := agentFiles
+	if a.sealedContainer {
+		files = ctAgentFiles
+	}
+	a.mu.Unlock()
+	for _, p := range files {
 		errs = errors.Join(errs, removeGuest(a.opt.Root, p))
 	}
 	if errs != nil {
@@ -183,7 +231,10 @@ func (a *Agent) unitIn(name string) bool {
 }
 
 // (2) D-192, only with dracut (Ubuntu 26.04; Debian 13 has none).
-func (a *Agent) sealInitramfs(ctx context.Context, _ wire.SealBody) (wire.Status, string) {
+func (a *Agent) sealInitramfs(ctx context.Context, body wire.SealBody) (wire.Status, string) {
+	if body.Container {
+		return skippedStep("a container has no initramfs (D-253)")
+	}
 	if !a.commandIn("dracut") {
 		return skippedStep("no dracut in this guest")
 	}
@@ -230,6 +281,26 @@ func (a *Agent) sealUpgrade(ctx context.Context, body wire.SealBody) (wire.Statu
 	if !body.Upgraded {
 		return skippedStep("the build ran without the upgrade")
 	}
+	var removed [][]string
+	if body.Container {
+		// No cloud-init in a container: seal upgrades itself (D-252).
+		// The runner's environment is noninteractive; old config files
+		// stay, as the package resource does.
+		if _, err := a.opt.Runner.Run(ctx, "apt-get", "-q", "-o", "DPkg::Lock::Timeout=300", "update"); err != nil {
+			return failedStep("apt-get update: %v", err)
+		}
+		// The simulation first: dist-upgrade may remove packages, and the
+		// build log names them (review N2 of #174).
+		sim, err := a.opt.Runner.Run(ctx, "apt-get", "-s", "dist-upgrade")
+		if err != nil {
+			return failedStep("apt-get -s dist-upgrade: %v", err)
+		}
+		removed = aptRemoved.FindAllStringSubmatch(string(sim), -1)
+		if _, err := a.opt.Runner.Run(ctx, "apt-get", "-q", "-y", "-o", "DPkg::Lock::Timeout=300",
+			"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "dist-upgrade"); err != nil {
+			return failedStep("apt-get dist-upgrade: %v", err)
+		}
+	}
 	out, err := a.opt.Runner.Run(ctx, "apt-get", "-s", "dist-upgrade")
 	if err != nil {
 		return failedStep("%v", err)
@@ -242,8 +313,21 @@ func (a *Agent) sealUpgrade(ctx context.Context, body wire.SealBody) (wire.Statu
 		return failedStep("the upgrade is not complete: %d packages left. End of %s:\n%s",
 			n, cloudInitLog, readGuestTail(a.opt.Root, cloudInitLog, 2048))
 	}
+	if body.Container {
+		var names []string
+		for _, m := range removed {
+			names = append(names, m[1])
+		}
+		if len(names) > 0 {
+			return applied("upgraded; nothing left to upgrade; removed by the upgrade: " + strings.Join(names, ", "))
+		}
+		return applied("upgraded; nothing left to upgrade; no package removed")
+	}
 	return applied("nothing left to upgrade")
 }
+
+// aptRemoved finds "Remv <package>" lines of apt-get -s.
+var aptRemoved = regexp.MustCompile(`(?m)^Remv (\S+)`)
 
 // (4) Stop the log writers for the rest of this boot.
 func (a *Agent) sealLogStop(ctx context.Context, _ wire.SealBody) (wire.Status, string) {
@@ -267,7 +351,15 @@ func (a *Agent) sealLogStop(ctx context.Context, _ wire.SealBody) (wire.Status, 
 }
 
 // (5) cloud-init runs again in every clone, with a new machine-id.
-func (a *Agent) sealCloudInit(ctx context.Context, _ wire.SealBody) (wire.Status, string) {
+func (a *Agent) sealCloudInit(ctx context.Context, body wire.SealBody) (wire.Status, string) {
+	if body.Container {
+		// No cloud-init in a container; Proxmox writes the hostname and
+		// a new machine-id at the clone's first start (host D1, D-253).
+		if err := a.resetIdentity(""); err != nil {
+			return failedStep("%v", err)
+		}
+		return applied("no cloud-init in a container; hostname " + neutralHostname + ", /etc/machine-id emptied")
+	}
 	if err := removeGuest(a.opt.Root, CloudInitFlag); err != nil {
 		return failedStep("%v", err)
 	}
@@ -286,7 +378,11 @@ func (a *Agent) sealCloudInit(ctx context.Context, _ wire.SealBody) (wire.Status
 // first boot), the build name leaves /etc/hosts, and /etc/machine-id gets
 // "uninitialized" (as "cloud-init clean --machine-id" writes it; systemd
 // makes a new id at the first boot). In place, never through a link.
-func (a *Agent) resetIdentityFiles() error {
+func (a *Agent) resetIdentityFiles() error { return a.resetIdentity("uninitialized\n") }
+
+// resetIdentity is resetIdentityFiles with the new text of /etc/machine-id
+// ("" for a container, D-253).
+func (a *Agent) resetIdentity(machineID string) error {
 	old, err := readGuestFile(a.opt.Root, "/etc/hostname", 4096)
 	if err != nil {
 		return err
@@ -312,7 +408,7 @@ func (a *Agent) resetIdentityFiles() error {
 		return err
 	}
 	if id != "" || guestRegular(a.opt.Root, "/etc/machine-id") {
-		return rewriteGuestFile(a.opt.Root, "/etc/machine-id", []byte("uninitialized\n"))
+		return rewriteGuestFile(a.opt.Root, "/etc/machine-id", []byte(machineID))
 	}
 	return nil
 }
@@ -356,7 +452,7 @@ func cleanHosts(text, host string) string {
 }
 
 // (6) D-185: every clone makes its own SSH host keys.
-func (a *Agent) sealHostKeys(_ context.Context, _ wire.SealBody) (wire.Status, string) {
+func (a *Agent) sealHostKeys(ctx context.Context, body wire.SealBody) (wire.Status, string) {
 	n := 0
 	for _, name := range guestEntries(a.opt.Root, "/etc/ssh") {
 		if !strings.HasPrefix(name, "ssh_host_") {
@@ -366,6 +462,17 @@ func (a *Agent) sealHostKeys(_ context.Context, _ wire.SealBody) (wire.Status, s
 			return failedStep("%v", err)
 		}
 		n++
+	}
+	if body.Container {
+		// Proxmox makes no host keys at a clone (host D1): the clone makes
+		// them at its first boot, before ssh (D-253).
+		if err := writeGuestFile(a.opt.Root, hostKeyUnitPath, []byte(hostKeyUnitText)); err != nil {
+			return failedStep("%v", err)
+		}
+		if _, err := a.opt.Runner.Run(ctx, "systemctl", "enable", hostKeyUnit); err != nil {
+			return failedStep("%v", err)
+		}
+		return applied(fmt.Sprintf("%d host key files removed; %s makes new ones at the first boot", n, hostKeyUnit))
 	}
 	return applied(fmt.Sprintf("%d host key files removed", n))
 }
@@ -453,7 +560,10 @@ func (a *Agent) sealLogs(ctx context.Context, _ wire.SealBody) (wire.Status, str
 
 // (10) Give the free blocks back to the thin pool. A disk without discard
 // support only makes a larger template: not a failure.
-func (a *Agent) sealTrim(ctx context.Context, _ wire.SealBody) (wire.Status, string) {
+func (a *Agent) sealTrim(ctx context.Context, body wire.SealBody) (wire.Status, string) {
+	if body.Container {
+		return skippedStep("FITRIM is not permitted in a container (host D5)")
+	}
 	if _, err := a.opt.Runner.Run(ctx, "fstrim", "--all"); err != nil {
 		return skippedStep("fstrim did not run: " + err.Error())
 	}

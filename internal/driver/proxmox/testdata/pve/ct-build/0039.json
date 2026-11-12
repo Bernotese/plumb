@@ -1,0 +1,38 @@
+{
+  "seq": 39,
+  "method": "GET",
+  "path": "/pools",
+  "query": "poolid=plumb",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "comment": "Plumb guests and templates",
+        "poolid": "plumb",
+        "members": [
+          {
+            "disk": 0,
+            "node": "pve",
+            "diskread": 0,
+            "netin": 0,
+            "status": "stopped",
+            "cpu": 0,
+            "type": "lxc",
+            "memhost": 0,
+            "id": "lxc/9000",
+            "name": "plumb-img-t082-debian-13-v1",
+            "maxmem": 536870912,
+            "vmid": 9000,
+            "uptime": 0,
+            "mem": 0,
+            "diskwrite": 0,
+            "template": 1,
+            "maxcpu": 1,
+            "maxdisk": 4294967296,
+            "netout": 0
+          }
+        ]
+      }
+    ]
+  }
+}

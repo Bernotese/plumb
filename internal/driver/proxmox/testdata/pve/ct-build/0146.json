@@ -1,0 +1,10 @@
+{
+  "seq": 146,
+  "method": "GET",
+  "path": "/nodes/pve/storage/local-lvm/content",
+  "query": "content=images",
+  "status": 200,
+  "body": {
+    "data": []
+  }
+}

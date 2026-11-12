@@ -727,6 +727,13 @@ func (s *Set) checkTarget(name string) Errors {
 		if have, ok := intOf(t.Guest["disk"]); ok && have < minLXCDisk {
 			errs = append(errs, errf("/spec/guest/disk", "the root file system of an LXC Target needs at least %d GiB", minLXCDisk))
 		}
+		// Proxmox writes ssh-public-keys only at a create from a template
+		// file, never at a clone of a version (D-251).
+		if img, ok := s.images[t.Image]; ok && img.Build != nil {
+			if keys, _ := t.Guest["ssh_keys"].([]any); len(keys) > 0 {
+				errs = append(errs, errf("/spec/guest/ssh_keys", "a container from the built Image %q gets no SSH keys from Proxmox; add them with a Block such as deploy-user (D-251)", t.Image))
+			}
+		}
 		// Proxmox keeps no copy of a container's keys; the driver writes
 		// one description line per key, and the description holds 8 KiB
 		// (D-249).
@@ -780,7 +787,8 @@ const minLXCDisk = 2
 // checkImageSpec checks the rules of an Image that depend on its type; the
 // schema checks the shape only, so that each rule has a clear text. vm: an
 // https:// url and a sha256 pin. lxc: an http(s) url and a sha512 pin from
-// the signed Proxmox index (D-224), no build yet (T-082).
+// the signed Proxmox index (D-224); a build guest of at least 2 GiB
+// without a user (T-082).
 func checkImageSpec(name string, img imageSpec) Errors {
 	errf := func(path, format string, args ...any) *Error {
 		return &Error{Kind: KindImage, Name: name, Path: path, Msg: fmt.Sprintf(format, args...)}
@@ -794,7 +802,12 @@ func checkImageSpec(name string, img imageSpec) Errors {
 			errs = append(errs, errf("/spec", "an LXC Image needs sha512: the sha512sum of the template in the signed Proxmox index (D-224)"))
 		}
 		if img.Build != nil {
-			errs = append(errs, errf("/spec/build", "LXC image builds come later; use a stock LXC Image"))
+			if have, ok := intOf(img.Build.Guest["disk"]); ok && have < minLXCDisk {
+				errs = append(errs, errf("/spec/build/guest/disk", "the root file system of an LXC build needs at least %d GiB", minLXCDisk))
+			}
+			if _, ok := img.Build.Guest["user"]; ok {
+				errs = append(errs, errf("/spec/build/guest/user", "an LXC build has no bootstrap user (D-226)"))
+			}
 		}
 		return errs
 	}

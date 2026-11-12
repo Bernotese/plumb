@@ -58,3 +58,8 @@ func TestHostCTFetch(t *testing.T) {
 func TestHostCTLifecycle(t *testing.T) {
 	runCTLifecycle(t, hostCTDriver(t), hostCTImage, os.Getenv("PLUMB_PVE_BRIDGE"), hostCTKeys)
 }
+
+// TestHostCTBuild runs runCTBuild on the host (recorded, T-082 H-B1).
+func TestHostCTBuild(t *testing.T) {
+	runCTBuild(t, hostCTDriver(t), hostCTImage, os.Getenv("PLUMB_PVE_BRIDGE"))
+}

@@ -37,7 +37,7 @@ func TestImageTypeRules(t *testing.T) {
 		{"lxc with sha256", `{"type":"lxc","url":"` + ctURL + `","sha512":"` + sha512 + `","sha256":"` + sha + `"}`, "/spec/sha256", "pins sha512, not sha256"},
 		{"lxc with sha256 only", `{"type":"lxc","url":"` + ctURL + `","sha256":"` + sha + `"}`, "/spec", "needs sha512"},
 		{"lxc without pin", `{"type":"lxc","url":"` + ctURL + `"}`, "/spec", "needs sha512"},
-		{"lxc with build", `{"type":"lxc","url":"` + ctURL + `","sha512":"` + sha512 + `"` + build + `}`, "/spec/build", "LXC image builds come later"},
+		{"lxc build disk", `{"type":"lxc","url":"` + ctURL + `","sha512":"` + sha512 + `"` + strings.Replace(build, `"disk":10`, `"disk":1`, 1) + `}`, "/spec/build/guest/disk", "at least 2 GiB"},
 		{"vm over http", `{"type":"vm","url":"http://example.org/x.img","sha256":"` + sha + `"}`, "/spec/url", "needs an https:// url"},
 		{"vm with sha512", `{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","sha512":"` + sha512 + `"}`, "/spec/sha512", "pins sha256, not sha512"},
 		{"vm without pin", `{"type":"vm","url":"https://example.org/x.img"}`, "/spec", "needs sha256"},
@@ -109,4 +109,19 @@ func TestLXCTargetRules(t *testing.T) {
 			t.Errorf("user = %v, want plumb", r.Guest.Attrs["user"])
 		}
 	})
+}
+
+// T-082: an lxc Image may have a build; its Targets get no ssh_keys (D-251).
+func TestLXCBuild(t *testing.T) {
+	built := lxcImage(`,"build":{"blocks":[],"guest":{"disk":4,"bridge":"vmbr0"}}`)
+	if _, err := Validate([]Doc{built, lxcTarget(`"disk":4`)}); err != nil {
+		t.Fatalf("lxc build: %v", err)
+	}
+	_, err := Validate([]Doc{built, lxcTarget(`"disk":4,"ssh_keys":["ssh-ed25519 AAAAC3Nza k"]`)})
+	errAt(t, err, KindTarget, "/spec/guest/ssh_keys", "deploy-user (D-251)")
+	if _, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":4,"ssh_keys":["ssh-ed25519 AAAAC3Nza k"]`)}); err != nil {
+		t.Errorf("stock lxc Image with keys: %v", err)
+	}
+	_, err = Validate([]Doc{built, lxcTarget(`"disk":3`)})
+	errAt(t, err, KindTarget, "/spec/guest/disk", "cannot shrink")
 }

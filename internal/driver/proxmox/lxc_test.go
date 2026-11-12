@@ -188,7 +188,8 @@ func TestCTTypeChecks(t *testing.T) {
 	if _, err := d.Observe(ctx, "9050"); err == nil || !strings.Contains(err.Error(), "only unprivileged containers") {
 		t.Errorf("privileged: %v", err)
 	}
-	if err := d.RemoveBuild(ctx, id, "img", 1); err == nil || !strings.Contains(err.Error(), "is a container") {
+	// T-082: RemoveBuild knows build containers; this one is a Target.
+	if err := d.RemoveBuild(ctx, id, "img", 1); err == nil || !strings.Contains(err.Error(), "not the build guest") {
 		t.Errorf("RemoveBuild on a container: %v", err)
 	}
 	if _, err := d.MakeImage(ctx, id, driver.BuiltImage{Image: "img", Version: 1, Digest: strings.Repeat("a", 64)}); err == nil {

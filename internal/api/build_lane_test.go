@@ -353,3 +353,39 @@ func TestLeftTemplateShown(t *testing.T) {
 		t.Fatalf("the rest was touched: %v", err)
 	}
 }
+
+// T-082: an lxc Image with a build: the build container comes from the
+// repacked file, seal runs as a container seal, the version is a
+// container template, and a Target of it is a container without the token.
+func TestLXCBuildThenTarget(t *testing.T) {
+	e := newEnv(t, false, withBuilds)
+	e.buildAgents(nil)
+	adm := e.admin()
+	sha512 := strings.Repeat("c", 128)
+	docs := []state.Doc{
+		doc(state.KindBlock, "banner", `{"resources":[{"file":{"path":"/etc/motd","content":"ct"}}]}`),
+		doc(state.KindImage, "ct", `{"type":"lxc","url":"http://download.proxmox.com/images/system/debian-13.tar.zst","sha512":"`+sha512+
+			`","build":{"blocks":[{"use":"banner"}],"guest":{"disk":4,"bridge":"vmbr0"}}}`),
+	}
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "image", "put": docs})
+	if v, err := e.st.GetImageVersion(e.ctx, "ct", 1); err != nil || v.Status != store.ImageReady || v.BaseSHA256 != sha512 {
+		t.Fatalf("v1 = %+v %v", v, err)
+	}
+	e.noBuildLeft("ct")
+	// D-251: no keys for a Target of a built lxc Image.
+	withKeys := doc(state.KindTarget, "c1", `{"type":"lxc","image":"ct","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","ssh_keys":["ssh-ed25519 AAAAC3Nza k"]}}`)
+	if code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "keys", "put": []state.Doc{withKeys}}); code < 400 || !strings.Contains(string(body), "D-251") {
+		t.Fatalf("keys on a built lxc Target: %d %s", code, body)
+	}
+	e.agent("c1")
+	target := doc(state.KindTarget, "c1", `{"type":"lxc","image":"ct","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0"}}`)
+	e.runPlan(adm, map[string]any{"reason": "target", "put": []state.Doc{target}})
+	b, err := e.st.GetBinding(e.ctx, state.KindTarget, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := e.drv.Observe(e.ctx, driver.GuestID(b.Ref))
+	if err != nil || st.Spec.Kind != "lxc" || st.Spec.ImageVersion != 1 || st.TokenInConfig {
+		t.Fatalf("c1 = %+v %v", st, err)
+	}
+}

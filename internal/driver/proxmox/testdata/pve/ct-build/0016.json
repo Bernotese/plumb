@@ -1,0 +1,20 @@
+{
+  "seq": 16,
+  "method": "GET",
+  "path": "/nodes/pve/tasks/UPID:pve:00049423:006F6AF2:6AF5CEBB:vzcreate:9000:plumb@pve!plumb:/status",
+  "status": 200,
+  "body": {
+    "data": {
+      "node": "pve",
+      "user": "plumb@pve",
+      "type": "vzcreate",
+      "pstart": 7301874,
+      "status": "running",
+      "id": "9000",
+      "tokenid": "plumb",
+      "pid": 300067,
+      "upid": "UPID:pve:00049423:006F6AF2:6AF5CEBB:vzcreate:9000:plumb@pve!plumb:",
+      "starttime": 1794494139
+    }
+  }
+}

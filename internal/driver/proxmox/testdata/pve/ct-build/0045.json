@@ -1,0 +1,70 @@
+{
+  "seq": 45,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9000/pending",
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "key": "description",
+        "value": "plumb-build: t082-debian-13 v1\nPlumb image build. Do not change it here.\n"
+      },
+      {
+        "value": 512,
+        "key": "memory"
+      },
+      {
+        "key": "cores",
+        "value": 1
+      },
+      {
+        "value": "plumb.test",
+        "key": "searchdomain"
+      },
+      {
+        "key": "hostname",
+        "value": "plumb-build-t082-debian-13-v1"
+      },
+      {
+        "value": "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:00:01,ip=dhcp,type=veth",
+        "key": "net0"
+      },
+      {
+        "key": "nameserver",
+        "value": "192.0.2.10"
+      },
+      {
+        "value": "ea606090c4f139011f81a516e6feb48ce736b999",
+        "key": "digest"
+      },
+      {
+        "value": "amd64",
+        "key": "arch"
+      },
+      {
+        "value": "local-lvm:vm-9000-disk-0,size=4G",
+        "key": "rootfs"
+      },
+      {
+        "value": 1,
+        "key": "unprivileged"
+      },
+      {
+        "key": "ostype",
+        "value": "debian"
+      },
+      {
+        "value": 0,
+        "key": "onboot"
+      },
+      {
+        "value": "nesting=1",
+        "key": "features"
+      },
+      {
+        "key": "swap",
+        "value": 512
+      }
+    ]
+  }
+}

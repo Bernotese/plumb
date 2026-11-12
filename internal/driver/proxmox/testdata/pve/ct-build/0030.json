@@ -1,0 +1,10 @@
+{
+  "seq": 30,
+  "method": "POST",
+  "path": "/nodes/pve/lxc/9000/status/shutdown",
+  "form": "forceStop=1\u0026timeout=120",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:000494E3:006F6DEA:6AF5CEC3:vzshutdown:9000:plumb@pve!plumb:"
+  }
+}
