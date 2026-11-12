@@ -52,7 +52,7 @@
         "sha512": {
           "type": "string",
           "pattern": "^[0-9a-f]{128}$",
-          "description": "Pinned SHA-512 of the template: the sha512sum field of the signed Proxmox appliance index. Required for type lxc, refused for type vm (D-224). Creating an lxc Image or changing its url or sha512 needs a human approval (image-recipe, D-235)."
+          "description": "Pinned SHA-512 of the template: the sha512sum field of the signed Proxmox appliance index. Required for type lxc, refused for type vm (D-224). Creating an lxc Image or changing its url or sha512 needs a human approval (image-recipe, D-235). Values and the host command: docs/ARCHITECTURE.md §13."
         },
         "build": {
           "type": "object",
@@ -323,7 +323,7 @@
         "title": "Debian 13 container",
         "type": "lxc",
         "url": "http://download.proxmox.com/images/system/debian-13-standard_13.6-1_amd64.tar.zst",
-        "sha512": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+        "sha512": "4c0c27ca6ceab5ef0b84db57825a00f26157ef1854bafe97297813e1cbe8ecb8cc9c453cab6b3b0efe1ba193a50c47ece1e41d950e411b8730b835b71e9e754b"
       }
     }
   ]

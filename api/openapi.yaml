@@ -2310,8 +2310,9 @@ components:
         status:
           $ref: "#/components/schemas/ImageStatus"
           description: |
-            Builds and versions of a built Image (D-198). Missing for a stock VM Image. Present for
-            every `lxc` Image, also without `build`, for its `unused_imports` (D-233).
+            Builds and versions of a built Image (D-198). Missing for a stock Image. Planned (T-079,
+            T-080, not yet served): present for every `lxc` Image, also without `build`, for its
+            `unused_imports` (D-233).
     ImageStatus:
       type: object
       additionalProperties: false
@@ -2339,8 +2340,8 @@ components:
             Downloaded base images in the image storage that no checksum needs: not the checksum of
             the document and not the base of a running build. Safe to remove: no version needs it,
             because a version template is a full copy; a rollback to that checksum downloads it
-            again (D-209). For an `lxc` Image: the repacked template files (`vztmpl`) whose name
-            does not match the current pin, CA and URL (D-233). Plumb never deletes them; a person
+            again (D-209). For an `lxc` Image (planned, T-079/T-080): the repacked template files
+            (`vztmpl`) whose name does not match the current pin, CA and URL (D-233). Plumb never deletes them; a person
             runs `command` on the host.
           items: { $ref: "#/components/schemas/UnusedImport" }
         disk:
