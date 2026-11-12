@@ -70,6 +70,57 @@ describe("lxc image form", () => {
     expect(createPlan).not.toHaveBeenCalled();
   });
 
+  it("switches a configured VM build to an lxc recipe without build fields", async () => {
+    const api = adminApi();
+    const createPlan = vi.spyOn(api, "createPlan");
+    show(ImageForm, { api });
+    await until(() => document.querySelector("#i-build"));
+    el<HTMLInputElement>("#i-build").click();
+    flushSync();
+    el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
+    flushSync();
+    expect(document.querySelector("#i-build")).toBeNull();
+    el<HTMLInputElement>('input[name="i-type"][value="vm"]').click();
+    flushSync();
+    expect(document.querySelector("#i-known")).toBeNull();
+    expect(document.querySelector("#i-build")).not.toBeNull();
+    expect(text()).toContain("SHA-256 checksum");
+    el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
+    flushSync();
+    type("#i-known", "Ubuntu 26.04");
+    const ubuntu = KNOWN_LXC_TEMPLATES.find((t) => t.label === "Ubuntu 26.04");
+    if (!ubuntu) throw new Error("missing Ubuntu template");
+    expect(el<HTMLInputElement>("#i-url").value).toBe(ubuntu.url);
+    expect(el<HTMLInputElement>("#i-sha").value).toBe(ubuntu.sha512);
+    type("#i-name", "ubuntu-ct2");
+    type("#i-reason", "Use a container.");
+    el<HTMLFormElement>("form").requestSubmit();
+    await planOpened();
+    const doc = createPlan.mock.calls[0]?.[0].put?.[0] as ImageDoc;
+    expect(doc.spec).toEqual({ type: "lxc", url: ubuntu.url, sha512: ubuntu.sha512 });
+  });
+
+  it.each(["a".repeat(127), "a".repeat(129), "g".repeat(128)])(
+    "rejects an invalid SHA-512 pin (%s)",
+    async (pin) => {
+      const api = adminApi();
+      const createPlan = vi.spyOn(api, "createPlan");
+      show(ImageForm, { api });
+      await until(() => document.querySelector("#i-build"));
+      el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
+      flushSync();
+      type("#i-name", "ct");
+      type("#i-url", debian.url);
+      type("#i-sha", pin);
+      type("#i-reason", "Check pin.");
+      el<HTMLFormElement>("form").requestSubmit();
+      flushSync();
+      expect(createPlan).not.toHaveBeenCalled();
+      expect(el("#i-sha").getAttribute("aria-invalid")).toBe("true");
+      expect(el("#i-sha-error").textContent).toContain("SHA-512 checksum: 128");
+    },
+  );
+
   it("edits an lxc Image: type fixed, SHA-512 filled", async () => {
     show(ImageForm, { api: adminApi(), name: "debian-ct" });
     await until(() => document.querySelector("#i-sha"));
@@ -95,6 +146,23 @@ describe("lxc image page", () => {
     expect(text()).toContain("A container image has no versions");
   });
 
+  it.each([false, true])("handles unused template files safely (empty=%s)", async (empty) => {
+    const api = adminApi();
+    const image = await api.getImage("debian-ct");
+    const unsafe = "pvesm free plumb-images:vztmpl/foreign.tar.gz; echo bad";
+    if (!image.status) throw new Error("missing image status");
+    image.status.unused_imports = empty
+      ? []
+      : [{ volume: "plumb-images:vztmpl/foreign.tar.gz", size_bytes: 1024, command: unsafe }];
+    vi.spyOn(api, "getImage").mockResolvedValue(image);
+    show(ImageScreen, { api, name: "debian-ct" });
+    await until(() => text().includes("Unused template files"));
+    expect(button(/^Copy/)).toBeUndefined();
+    expect(text()).not.toContain(unsafe);
+    expect(text()).toContain(empty ? "Every template file is in use." : "Check it by hand");
+    if (!empty) expect(text()).toContain("plumb-images:vztmpl/foreign.tar.gz");
+  });
+
   it("offers Copy only for Plumb's own template name", () => {
     const ok = "pvesm free plumb-images:vztmpl/plumb-ct-debian-ct-0a1b2c3d4e5f.tar.gz";
     expect(safeFreeCommand(ok)).toBe(ok);
@@ -117,11 +185,16 @@ describe("container target form", () => {
     await until(() => document.querySelector("#t-image"));
     expect(el("#t-type").textContent).toBe("Virtual machine");
     expect(document.querySelector("#guest-user")).not.toBeNull();
+    type("#guest-user", "vm-bootstrap");
     type("#t-image", "debian-ct");
     expect(el("#t-type").textContent).toBe("Container (LXC)");
     expect(document.querySelector("#guest-user")).toBeNull();
     expect(text()).toContain("SSH keys for root");
     expect(text()).toContain("takes cores and memory at once");
+    el<HTMLButtonElement>("#guest-ssh_keys-add").click();
+    flushSync();
+    const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJT081testkey root-test";
+    type("#guest-ssh_keys-0", key);
     type("#t-name", "ct2");
     type("#guest-disk", "4");
     type("#t-reason", "A container.");
@@ -131,6 +204,7 @@ describe("container target form", () => {
     expect(doc.spec.type).toBe("lxc");
     expect(doc.spec.image).toBe("debian-ct");
     expect(doc.spec.guest).not.toHaveProperty("user");
+    expect(doc.spec.guest.ssh_keys).toEqual([key]);
   });
 
   it("an existing container: Container, no Restart needed, container wording", async () => {
