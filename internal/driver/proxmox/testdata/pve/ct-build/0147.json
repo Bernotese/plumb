@@ -1,0 +1,10 @@
+{
+  "seq": 147,
+  "method": "GET",
+  "path": "/nodes/pve/storage/plumb-images/content",
+  "query": "content=import",
+  "status": 200,
+  "body": {
+    "data": []
+  }
+}

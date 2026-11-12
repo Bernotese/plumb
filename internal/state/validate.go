@@ -302,6 +302,7 @@ type imageSpec struct {
 	Type      string      `json:"type"`
 	URL       string      `json:"url"`
 	SHA256    string      `json:"sha256"`
+	SHA512    string      `json:"sha512"` // lxc only (D-224)
 	Build     *imageBuild `json:"build"`
 	Retention *struct {
 		Keep int `json:"keep"`
@@ -470,6 +471,14 @@ func validate(docs []Doc, lim Limits, stored bool) (*Set, error) {
 		}
 		var canon Doc
 		_ = json.Unmarshal(body, &canon)
+		if d.Kind == KindImage {
+			var spec imageSpec
+			_ = decode(canon.Spec, &spec)
+			if ierrs := checkImageSpec(d.Name, spec); len(ierrs) > 0 {
+				errs = append(errs, ierrs...)
+				continue
+			}
+		}
 		if d.Kind == KindBlock {
 			b, berrs := parseBlock(d.Name, canon.Spec)
 			if len(berrs) > 0 {
@@ -710,6 +719,41 @@ func (s *Set) checkTarget(name string) Errors {
 				"disk %d GiB is smaller than the disk of Image %q (%d GiB); a disk cannot shrink (D-202)", have, t.Image, want))
 		}
 	}
+	if t.Type == string(wire.KindLXC) {
+		// Proxmox has no cloud-init for containers: keys go to root (D-226).
+		if _, ok := t.Guest["user"]; ok {
+			errs = append(errs, errf("/spec/guest/user", "an LXC Target has no bootstrap user; use a Block such as deploy-user (D-226)"))
+		}
+		if have, ok := intOf(t.Guest["disk"]); ok && have < minLXCDisk {
+			errs = append(errs, errf("/spec/guest/disk", "the root file system of an LXC Target needs at least %d GiB", minLXCDisk))
+		}
+		// Proxmox writes ssh-public-keys only at a create from a template
+		// file, never at a clone of a version (D-251).
+		if img, ok := s.images[t.Image]; ok && img.Build != nil {
+			if keys, _ := t.Guest["ssh_keys"].([]any); len(keys) > 0 {
+				errs = append(errs, errf("/spec/guest/ssh_keys", "a container from the built Image %q gets no SSH keys from Proxmox; add them with a Block such as deploy-user (D-251)", t.Image))
+			}
+		}
+		// Proxmox keeps no copy of a container's keys; the driver writes
+		// one description line per key, and the description holds 8 KiB
+		// (D-249).
+		if keys, ok := t.Guest["ssh_keys"].([]any); ok {
+			n := 0
+			for i, k := range keys {
+				if s, ok := k.(string); ok {
+					n += len(lxcKeyLine) + len(s) + 1
+					// The line must come back byte-equal from the
+					// description (review S1 of #162).
+					if strings.TrimSpace(s) != s || strings.IndexFunc(s, isControl) >= 0 {
+						errs = append(errs, errf(fmt.Sprintf("/spec/guest/ssh_keys/%d", i), "an SSH key of an LXC Target must not start or end with white space or hold a control character (D-249)"))
+					}
+				}
+			}
+			if n > maxLXCKeyBytes {
+				errs = append(errs, errf("/spec/guest/ssh_keys", "the SSH keys of an LXC Target take %d bytes; at most %d fit (Plumb keeps them in the container description, D-249)", n, maxLXCKeyBytes))
+			}
+		}
+	}
 	// guest and overrides never hold a reference, at any depth (D-088).
 	if at := findRef(t.Guest, "/spec/guest"); at != "" {
 		errs = append(errs, errf(at, "guest settings cannot hold a secret reference (D-088)"))
@@ -723,6 +767,60 @@ func (s *Set) checkTarget(name string) Errors {
 	}
 	u, _ := s.targetUnit(name)
 	return append(errs, s.checkUses(u)...)
+}
+
+// lxcKeyLine and maxLXCKeyBytes: the description lines of the SSH keys
+// of a container (proxmox driver, D-249). Proxmox allows 8192 bytes; the
+// rest holds the image marker, the version and the footer.
+const (
+	lxcKeyLine     = "plumb-ssh-key: "
+	maxLXCKeyBytes = 7168
+)
+
+// isControl is a control character of ASCII (with tab and NUL).
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+// minLXCDisk is the smallest root file system of an LXC Target in GiB
+// (a fresh Ubuntu root fs uses about 0.7 GB, T-038 host E1).
+const minLXCDisk = 2
+
+// checkImageSpec checks the rules of an Image that depend on its type; the
+// schema checks the shape only, so that each rule has a clear text. vm: an
+// https:// url and a sha256 pin. lxc: an http(s) url and a sha512 pin from
+// the signed Proxmox index (D-224); a build guest of at least 2 GiB
+// without a user (T-082).
+func checkImageSpec(name string, img imageSpec) Errors {
+	errf := func(path, format string, args ...any) *Error {
+		return &Error{Kind: KindImage, Name: name, Path: path, Msg: fmt.Sprintf(format, args...)}
+	}
+	var errs Errors
+	if img.Type == string(wire.KindLXC) {
+		if img.SHA256 != "" {
+			errs = append(errs, errf("/spec/sha256", "an LXC Image pins sha512, not sha256 (D-224)"))
+		}
+		if img.SHA512 == "" {
+			errs = append(errs, errf("/spec", "an LXC Image needs sha512: the sha512sum of the template in the signed Proxmox index (D-224)"))
+		}
+		if img.Build != nil {
+			if have, ok := intOf(img.Build.Guest["disk"]); ok && have < minLXCDisk {
+				errs = append(errs, errf("/spec/build/guest/disk", "the root file system of an LXC build needs at least %d GiB", minLXCDisk))
+			}
+			if _, ok := img.Build.Guest["user"]; ok {
+				errs = append(errs, errf("/spec/build/guest/user", "an LXC build has no bootstrap user (D-226)"))
+			}
+		}
+		return errs
+	}
+	if !strings.HasPrefix(img.URL, "https://") {
+		errs = append(errs, errf("/spec/url", "a VM Image needs an https:// url"))
+	}
+	if img.SHA512 != "" {
+		errs = append(errs, errf("/spec/sha512", "a VM Image pins sha256, not sha512"))
+	}
+	if img.SHA256 == "" {
+		errs = append(errs, errf("/spec", "a VM Image needs sha256"))
+	}
+	return errs
 }
 
 // checkUses checks the Block uses of a unit: ids, Blocks, parameters and

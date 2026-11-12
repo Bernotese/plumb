@@ -13,6 +13,10 @@
   import type { BlockView, ImageView, Issue, TargetSpec, TargetView } from "../lib/types";
   import {
     ALLOW_RESTART_HELP,
+    ALLOW_RESTART_HELP_LXC,
+    KIND_NAME,
+    forKind,
+    type GuestKind,
     ALLOW_RESTART_LABEL,
     CREATE_ONLY,
     GUEST_ADDRESS,
@@ -96,7 +100,51 @@
       : "",
   );
 
-  const waitingFrom = $derived(waitingSince(existing?.status.waiting ?? []));
+  // The schema texts speak of VMs and cloud-init; a container field gets
+  // its own help (review N1 of #165).
+  const LXC_FIELD_HELP: Record<string, string> = {
+    disk: "GiB: the size of the root file system, at least 2. Create-only.",
+    ip: "dhcp or an IPv4 address in CIDR form. Create-only. Proxmox writes it into the container at every start.",
+    ssh_keys: "Public keys for root; a container has no bootstrap user (D-226). Create-only.",
+  };
+
+  // The type follows the Image (T-038 §8); a stored Target keeps its own.
+  const kind = $derived<GuestKind>(
+    existing?.document.spec.type ??
+      images.find((i) => i.document.name === image)?.document.spec.type ??
+      "vm",
+  );
+  // A container from a built Image is a clone: Proxmox writes no SSH keys
+  // into it, so the Target has none; the Block deploy-user adds them (D-251).
+  const builtLxc = $derived(
+    kind === "lxc" &&
+      images.find((i) => i.document.name === image)?.document.spec.build !== undefined,
+  );
+  const deployUser = $derived(blocks.some((b) => b.document.name === "deploy-user"));
+  // N2 of the #176 review: keys typed for a stock Image are not sent for a
+  // built one; say it, do not drop them without a word.
+  const droppedKeys = $derived(
+    builtLxc && !editing && Array.isArray(guest["ssh_keys"])
+      ? (guest["ssh_keys"] as unknown[]).filter((k) => String(k).trim() !== "").length
+      : 0,
+  );
+  const usesDeployUser = $derived(uses.some((u) => u.use === "deploy-user"));
+  // A container has no bootstrap user; its SSH keys go to root (D-226).
+  const kindFields = $derived(
+    kind === "lxc"
+      ? guestFields
+          .filter((f) => f.name !== "user" && !(builtLxc && f.name === "ssh_keys"))
+          .map((f) => {
+            const description = LXC_FIELD_HELP[f.name];
+            const label = f.name === "ssh_keys" ? "SSH keys for root" : f.label;
+            return description ? { ...f, label, description } : { ...f, label };
+          })
+      : guestFields,
+  );
+  // A container takes cores and memory live: no "Restart needed" (D-248).
+  const waitingFrom = $derived(
+    kind === "lxc" ? null : waitingSince(existing?.status.waiting ?? []),
+  );
   // The stored setting decides the re-enrollment, not the unsaved checkbox.
   const storedAllow = $derived(existing?.document.spec.allow_restart === true);
 
@@ -170,9 +218,9 @@
     );
   });
 
-  function addBlock() {
-    if (!addChoice) return;
-    uses = [...uses, makeUse(addChoice)];
+  function addBlock(use = addChoice) {
+    if (!use) return;
+    uses = [...uses, makeUse(use)];
     const key = uses[uses.length - 1]?.key;
     queueMicrotask(() => document.getElementById(`use-${key}-legend`)?.focus());
   }
@@ -190,7 +238,7 @@
     }
     if (!image) e["image"] = "Choose an image.";
     if (!reason.trim()) e["reason"] = "Say why you make this change.";
-    guestErrors = validate(guestFields, guest);
+    guestErrors = validate(kindFields, guest);
     // D-202: the disk of a Target from a built image cannot be smaller than the template.
     const min = smallestDisk(images.find((i) => i.document.name === image)?.document.spec);
     if (!editing && min !== null && !guestErrors["disk"] && Number(guest["disk"]) < min)
@@ -225,15 +273,15 @@
       return;
     }
     const spec: TargetSpec = {
-      type: "vm",
+      type: kind,
       image,
       // On an existing target the create-only fields keep their stored
       // value: a schema default the form shows must not become a change.
       guest: mergeParams(
         existing?.document.spec.guest ?? {},
         editing
-          ? guestFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
-          : guestFields,
+          ? kindFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
+          : kindFields,
         guest,
       ) as TargetSpec["guest"],
       blocks: uses.map((u) => ({
@@ -379,7 +427,7 @@
         </div>
         <div class="field">
           <span class="label">Type</span>
-          <span>Virtual machine</span>
+          <span id="t-type">{KIND_NAME[kind]}</span>
         </div>
       </div>
     </fieldset>
@@ -387,7 +435,7 @@
     <fieldset>
       <legend>Guest settings</legend>
       <SchemaFields
-        fields={guestFields}
+        fields={kindFields}
         bind:values={guest}
         errors={guestErrors}
         prefix="guest"
@@ -395,6 +443,32 @@
         readonlyHint="Create-only: it cannot change on an existing target."
         notes={{ ...addressNote, ...diskNote }}
       />
+      {#if builtLxc}
+        <div class="banner info" id="t-lxc-keys">
+          <p>
+            A container from the built image <span class="mono">{image}</span> gets no SSH keys from
+            Proxmox. Add the keys with the Block <span class="mono">deploy-user</span> (D-251).
+          </p>
+          {#if droppedKeys}
+            <p class="warn" id="t-keys-dropped">
+              The {droppedKeys === 1 ? "SSH key" : `${droppedKeys} SSH keys`} you typed for the other
+              image {droppedKeys === 1 ? "is" : "are"} not sent. Put {droppedKeys === 1
+                ? "it"
+                : "them"} into the Block <span class="mono">deploy-user</span>.
+            </p>
+          {/if}
+          {#if deployUser && !usesDeployUser}
+            <button
+              type="button"
+              class="btn"
+              id="t-add-deploy-user"
+              onclick={() => addBlock("deploy-user")}>Add Block deploy-user</button
+            >
+          {:else if !deployUser}
+            <p class="muted">There is no Block <span class="mono">deploy-user</span> yet.</p>
+          {/if}
+        </div>
+      {/if}
       <div class="field">
         <label class="check">
           <input
@@ -403,9 +477,11 @@
             bind:checked={allowRestart}
             aria-describedby="t-allow-restart-hint"
           />
-          {ALLOW_RESTART_LABEL}
+          {forKind(ALLOW_RESTART_LABEL, kind)}
         </label>
-        <span class="hint" id="t-allow-restart-hint">{ALLOW_RESTART_HELP}</span>
+        <span class="hint" id="t-allow-restart-hint"
+          >{kind === "lxc" ? ALLOW_RESTART_HELP_LXC : ALLOW_RESTART_HELP}</span
+        >
       </div>
     </fieldset>
 
@@ -459,7 +535,7 @@
           <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
         {/each}
       </select>
-      <button type="button" class="btn" id="add-block" onclick={addBlock}>Add Block</button>
+      <button type="button" class="btn" id="add-block" onclick={() => addBlock()}>Add Block</button>
     </div>
 
     <h2>Review</h2>
@@ -488,20 +564,27 @@
   <form class="card" onsubmit={reenroll} aria-labelledby="reenroll-title">
     <h2 id="reenroll-title">Re-enroll the agent</h2>
     <p>
-      A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it;
-      nothing happens until you approve the plan.
+      {forKind(
+        "A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it; nothing happens until you approve the plan.",
+        kind,
+      )}
     </p>
     {#if storedAllow}
       <p>
-        The Run restarts the VM (or starts it when it is stopped). '{ALLOW_RESTART_LABEL}' stays on
-        after it, until you switch it off.
+        {forKind(
+          `The Run restarts the VM (or starts it when it is stopped). '${ALLOW_RESTART_LABEL}' stays on after it, until you switch it off.`,
+          kind,
+        )}
       </p>
     {:else if existing.status.power === "running"}
       <p class="warn" id="reenroll-refused">
-        {REENROLL_REFUSED} (The VM ran when this page was loaded; the server checks again.)
+        {forKind(
+          `${REENROLL_REFUSED} (The VM ran when this page was loaded; the server checks again.)`,
+          kind,
+        )}
       </p>
     {:else}
-      <p>The VM is stopped: the Run starts it with the new token.</p>
+      <p>{forKind("The VM is stopped: the Run starts it with the new token.", kind)}</p>
     {/if}
     <div class="field">
       <label for="reenroll-reason">Reason (optional)</label>

@@ -22,4 +22,8 @@ A pure-Go package repacks a Proxmox system template with the agent, its config a
 - The fetch (D-237) if the plan puts it in the driver card; the driver; Proxmox calls.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-frontend/T-076-ctpack` · `make lint test build` → ok; `go test -fuzz FuzzPack` 45 s clean; real Debian 13.6-1 (`PLUMB_CT_FIXTURE`): 208 MB `.tar.gz` in 4.2 s, base byte-equal.
+- API: `ctpack.Pack(ctx, src io.ReadSeeker, dst io.Writer, Options{SHA512, CA, AgentURL})` (pin check first), `ctpack.Name(image, o)`, `ctpack.TokenEnv`. The fetch, temp files and upload stay in T-079.
+- install.sh snippet: binary goes to `/usr/local/bin/.plumb-agent.new`, then `mv` (S4); `install_test` keeps snippet script/unit equal to `ctpack`.
+- `make vuln` (govulncheck v1.9.0) + CI step. Findings today are not from the new module: net/http GO-2026-6859 (fixed in go1.27.4; local Go is 1.27.3), x/crypto openpgp (not called).
+- For T-078/T-082: `wire.IsAgentPath` does not cover `plumb-agent-install.service` and its wants link; seal must remove them in a container.

@@ -16,7 +16,8 @@ import (
 )
 
 // HumanOnlyImageRecipe: the Plan makes or deletes a built Image, or changes
-// its recipe, schedule or retention (D-201).
+// its recipe, schedule or retention (D-201); or it makes an lxc Image or
+// changes its url or sha512 (D-235).
 const HumanOnlyImageRecipe = "image-recipe"
 
 // ErrStockImage is wrapped when a build is asked for an Image without
@@ -96,7 +97,8 @@ func factsOf(set *state.Set, name string) (imageFacts, bool, error) {
 
 // imagesHumanOnly reports whether a Plan from base to next needs a human
 // approver for an Image (D-201): a built Image is made or deleted, turns
-// built or stock, or changes its recipe, schedule or retention. The rule
+// built or stock, or changes its recipe, schedule or retention; or an lxc
+// Image is made or changes its url or sha512 (D-235). The rule
 // reads the content, for every origin; a Block change that reaches a
 // built Image changes its recipe.
 func imagesHumanOnly(base, next *state.Set) (bool, error) {
@@ -108,6 +110,12 @@ func imagesHumanOnly(base, next *state.Set) (bool, error) {
 		n, okn, err := factsOf(next, name)
 		if err != nil {
 			return false, err
+		}
+		// The controller fetches an LXC template itself and the pin is its
+		// only trust: a new lxc Image or a new url or sha512 (D-235).
+		if okn && n.info.Type == wire.KindLXC && (!okb || b.info.Type != wire.KindLXC ||
+			b.info.URL != n.info.URL || b.info.SHA512 != n.info.SHA512) {
+			return true, nil
 		}
 		wasBuilt, isBuilt := okb && b.info.Built, okn && n.info.Built
 		if !wasBuilt && !isBuilt {
@@ -503,6 +511,58 @@ func (e *Engine) UnusedImports(ctx context.Context, image, sha256 string) ([]Unu
 	return out, nil
 }
 
+// UnusedTemplateFiles lists the container template files (vztmpl) of an
+// lxc Image that nothing uses (D-233, T-085): not the current file of any
+// lxc Image of the head revision (pin, CA and agent URL; Driver.TemplateRef)
+// and not a file that a pool container names in its description (D-250).
+// Every lxc Image counts, not only this one: two names that differ only by
+// "." and "-" share one file prefix (review S1 of PR #171). Plumb never
+// deletes the files; a person runs Command. A driver without such files
+// gives none. When a current file is not known, it lists nothing: a file
+// in use must never get a free line. url and sha512 are those of the
+// document of image.
+func (e *Engine) UnusedTemplateFiles(ctx context.Context, image, url, sha512 string) ([]UnusedImport, error) {
+	specs := []driver.ImageSpec{{Name: image, Kind: wire.KindLXC, URL: url, SHA512: sha512}}
+	c, err := e.headCache(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if c != nil {
+		for _, name := range c.set.Images() {
+			if info, ok := c.set.ImageInfo(name); ok && info.Type == wire.KindLXC {
+				specs = append(specs, driver.ImageSpec{Name: name, Kind: wire.KindLXC, URL: info.URL, SHA512: info.SHA512})
+			}
+		}
+	}
+	current := map[string]bool{}
+	for _, spec := range specs {
+		ref, err := e.cfg.Driver.TemplateRef(spec)
+		if errors.Is(err, driver.ErrNotImplemented) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("the current template file of %s: %w", spec.Name, err)
+		}
+		current[string(ref)] = true
+	}
+	objs, err := e.cfg.Driver.ListImages(ctx, image)
+	if errors.Is(err, driver.ErrNotImplemented) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []UnusedImport
+	for _, o := range objs {
+		if o.Kind != driver.ImageTemplateFile || current[o.Name] || current[string(o.Ref)] || o.Containers > 0 {
+			continue
+		}
+		out = append(out, UnusedImport{Volume: o.Name, SizeBytes: o.SizeBytes, Command: TemplateFreeCommand(o.Name)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Volume < out[j].Volume })
+	return out, nil
+}
+
 // usesImport reports whether an import file is the download of a needed
 // checksum: by the checksum that the driver read, or by the name, which
 // holds the first 12 hex digits (D-077).
@@ -524,7 +584,23 @@ func usesImport(o driver.ImageObject, needed map[string]bool) bool {
 var (
 	storageID  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]*$`)
 	importFile = regexp.MustCompile(`^plumb-[a-z0-9][a-z0-9.-]*-[0-9a-f]{12}\.qcow2$`)
+	// tmplFile is a container template file that Plumb made,
+	// plumb-ct-<image>-<12 hex>.tar.gz (ctpack.Name, D-250).
+	tmplFile = regexp.MustCompile(`^plumb-ct-[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{12}\.tar\.gz$`)
 )
+
+// TemplateFreeCommand returns the command that removes a container
+// template file on the Proxmox host, exactly "pvesm free
+// <storage>:vztmpl/plumb-ct-<image>-<12 hex>.tar.gz" with no quotes, or ""
+// when the volume does not have the name form of Plumb (D-233). The driver
+// lists only the files of the Image.
+func TemplateFreeCommand(volume string) string {
+	storage, file, ok := strings.Cut(volume, ":vztmpl/")
+	if !ok || !storageID.MatchString(storage) || !tmplFile.MatchString(file) {
+		return ""
+	}
+	return "pvesm free " + storage + ":vztmpl/" + file
+}
 
 // FreeCommand returns the command that removes an import file on the
 // Proxmox host, exactly "pvesm free <storage>:import/plumb-<image>-<12

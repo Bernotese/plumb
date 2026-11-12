@@ -282,6 +282,10 @@ func TestServeWithProxmox(t *testing.T) {
 			t.Errorf("start line without %q:\n%s", want, logs)
 		}
 	}
+	// The fake host has an image storage from before D-229: a warning, no stop.
+	if !strings.Contains(logs, "plumb-images has no content vztmpl: run install.sh again (repair run)") {
+		t.Errorf("no vztmpl warning:\n%s", logs)
+	}
 	if strings.Count(logs, "Proxmox host checked") != 1 || strings.Count(out.String(), "Password:") != 1 {
 		t.Errorf("expected one host line and one admin password: %s %s", out, logs)
 	}

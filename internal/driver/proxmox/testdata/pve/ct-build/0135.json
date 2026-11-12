@@ -1,0 +1,37 @@
+{
+  "seq": 135,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9001/status/current",
+  "status": 200,
+  "body": {
+    "data": {
+      "name": "plumb-ctb-test",
+      "pressurememorysome": "0.00",
+      "cpus": 1,
+      "maxmem": 536870912,
+      "netin": 0,
+      "cpu": 0,
+      "ha": {
+        "managed": 0
+      },
+      "pressureiosome": "0.00",
+      "diskwrite": 16384,
+      "pressureiofull": "0.00",
+      "netout": 0,
+      "uptime": 0,
+      "pressurecpufull": "0.00",
+      "status": "running",
+      "maxdisk": 5200576512,
+      "type": "lxc",
+      "disk": 589864960,
+      "swap": 0,
+      "vmid": 9001,
+      "pressurecpusome": "0.00",
+      "maxswap": 536870912,
+      "mem": 3264512,
+      "pressurememoryfull": "0.00",
+      "pid": 300601,
+      "diskread": 91553792
+    }
+  }
+}

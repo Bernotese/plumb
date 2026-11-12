@@ -50,19 +50,22 @@ func TestDocumentSchemas(t *testing.T) {
 		valid bool
 	}{
 		{"image", KindImage, `{"kind":"Image","name":"ubuntu-26.04","spec":{"type":"vm","url":"https://cloud-images.ubuntu.com/x.img","sha256":"` + sha + `"}}`, true},
-		{"image without checksum", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"https://example.org/x.img"}}`, false},
-		{"image over http", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"http://example.org/x.img","sha256":"` + sha + `"}}`, false},
+		{"image without checksum", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"https://example.org/x.img"}}`, true},                // the type rules are in checkImageSpec (lxc_test.go)
+		{"image over http", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"http://example.org/x.img","sha256":"` + sha + `"}}`, true}, // the type rules are in checkImageSpec (lxc_test.go)
 		{"image with short checksum", KindImage, `{"kind":"Image","name":"ubuntu","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"abc"}}`, false},
 		{"built image", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"retention":{"keep":3},"schedule":{"every":"week","weekday":"sun","at":"03:00"}}}`, true},
 		{"built image, monthly", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"month","day":28,"at":"23:59"}}}`, true},
 		{"retention without build", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","retention":{"keep":3}}}`, false},
 		{"schedule without build", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","schedule":{"every":"day","at":"03:00"}}}`, false},
-		{"build for lxc", KindImage, `{"kind":"Image","name":"web","spec":{"type":"lxc","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}}}}`, false},
+		{"build for lxc", KindImage, `{"kind":"Image","name":"web","spec":{"type":"lxc","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}}}}`, true}, // the type rules are in checkImageSpec (lxc_test.go)
 		{"build without guest", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[]}}}`, false},
 		{"keep above 20", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"retention":{"keep":21}}}`, false},
 		{"weekly without weekday", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"week","at":"03:00"}}}`, false},
 		{"daily with weekday", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"day","weekday":"sun","at":"03:00"}}}`, false},
 		{"monthly day 29", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"month","day":29,"at":"03:00"}}}`, false},
+		{"lxc image", KindImage, `{"kind":"Image","name":"debian-13-ct","spec":{"type":"lxc","url":"http://download.proxmox.com/images/system/debian-13-standard_13.6-1_amd64.tar.zst","sha512":"` + sha + sha + `"}}`, true},
+		{"lxc image with short sha512", KindImage, `{"kind":"Image","name":"ct","spec":{"type":"lxc","url":"http://example.org/x.tar.zst","sha512":"` + sha + `"}}`, false},
+		{"image over ftp", KindImage, `{"kind":"Image","name":"ct","spec":{"type":"lxc","url":"ftp://example.org/x.tar.zst","sha512":"` + sha + sha + `"}}`, false},
 		{"bad time", KindImage, `{"kind":"Image","name":"web","spec":{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","build":{"blocks":[{"use":"nginx"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"day","at":"24:00"}}}`, false},
 
 		// The Block of docs/ARCHITECTURE.md §3.

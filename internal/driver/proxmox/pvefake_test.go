@@ -81,7 +81,8 @@ type fakePVE struct {
 	dropPath      string // a request to this path loses its connection
 	// writeDuringRead: this many reads of the config without current=1
 	// change the config first (a write between the reads of Observe).
-	writeDuringRead int
+	writeDuringRead     int
+	ctWriteBeforeConfig bool // concurrent CT edit before the next config PUT
 	// noDigest: config answers have no digest (a proxy or a broken API).
 	noDigest bool
 	// keepPending: a write of the running value on a running VM keeps
@@ -111,9 +112,26 @@ type fakePVE struct {
 	lateConvert   string
 	lateID        int
 	contentStatus int // a status for the volume list of the disk storage
+
+	// Container templates (T-079): uploads holds each upload's file
+	// bytes by name; imagesAvail is the free space of the image storage.
+	uploads     map[string][]byte
+	uploadOrder []string // the field names of the last upload, in order
+	imagesAvail int64
+	// failNextPUT: the next container config write ignores a delete of
+	// this key (a write that Proxmox did not take, T-082 S8 guard).
+	failNextPUT string
+	// ctTemplateReads: a container template call converts only at this
+	// many config reads later (default 2, as the host); lateCT counts.
+	ctTemplateReads int
+	lateCT          map[int]int
 }
 
 type fakeVM struct {
+	// ct: a container (T-079); pvefake_lxc_test.go models it. pending
+	// then holds its pending values, and delete its pending deletes.
+	ct       bool
+	delete   map[string]bool
 	cfg      map[string]string
 	template bool
 	running  bool
@@ -197,6 +215,7 @@ func newFakePVE(t *testing.T) *fakePVE {
 	f := &fakePVE{t: t, auth: "PVEAPIToken=" + fakeToken + "=" + fakeSecret, node: fakeNode,
 		vms: map[int]*fakeVM{}, files: map[string]bool{}, tasks: map[string]*fakeTask{},
 		failNext: map[string]string{}, lockReads: map[int]int{}, taskPolls: 2,
+		imagesAvail: 30 << 30, uploads: map[string][]byte{}, ctTemplateReads: 2, lateCT: map[int]int{},
 		version: "9.2.26", diskType: "lvmthin", diskTotal: 42 << 30, diskUsed: 1 << 30, linkInConfig: true, parentInContent: true,
 		storages: []map[string]any{
 			{"storage": "local-lvm", "content": "images,rootdir", "enabled": 1, "active": 1, "type": "lvmthin"},
@@ -316,7 +335,7 @@ func (f *fakePVE) task(key string) string {
 
 var (
 	reQemu    = regexp.MustCompile(`^/nodes/([^/]+)/qemu/(\d+)(/.*)?$`)
-	reStorage = regexp.MustCompile(`^/nodes/([^/]+)/storage/([^/]+)/(content|download-url|status)$`)
+	reStorage = regexp.MustCompile(`^/nodes/([^/]+)/storage/([^/]+)/(content|download-url|status|upload)$`)
 	reTask    = regexp.MustCompile(`^/nodes/([^/]+)/tasks/([^/]+)(?:/(status|log))?$`)
 )
 
@@ -409,11 +428,14 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 				if vm.template && !f.staleTemplate {
 					t = 1
 				}
-				name := vm.cfg["name"]
+				name, typ := vm.cfg["name"], "qemu"
+				if vm.ct {
+					name, typ = vm.cfg["hostname"], "lxc"
+				}
 				if f.staleNames {
 					name = ""
 				}
-				members = append(members, map[string]any{"vmid": id, "type": "qemu", "name": name, "template": t, "id": "qemu/" + strconv.Itoa(id)})
+				members = append(members, map[string]any{"vmid": id, "type": typ, "name": name, "template": t, "id": typ + "/" + strconv.Itoa(id)})
 			}
 		}
 		if f.allPools { // a server that ignores the filter: one entry per pool
@@ -452,6 +474,14 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	case reStorage.MatchString(path):
 		m := reStorage.FindStringSubmatch(path)
 		storage, op := m[2], m[3]
+		if op == "upload" && r.Method == "POST" {
+			f.upload(w, r, key, storage)
+			return
+		}
+		if op == "status" && r.Method == "GET" && storage == "local" {
+			reply(w, 200, map[string]any{"type": "dir", "total": 40 << 30, "avail": f.imagesAvail, "used": 1 << 30, "active": 1, "enabled": 1})
+			return
+		}
 		if op == "status" && r.Method == "GET" {
 			if storage != "local-lvm" {
 				fail(w, 501, "not modelled", nil)
@@ -493,8 +523,12 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		if op == "content" && r.Method == "GET" {
 			list := []map[string]any{}
 			for v := range f.files {
-				if strings.HasPrefix(v, storage+":") {
-					list = append(list, map[string]any{"volid": v, "content": "import", "size": 700 << 20})
+				typ := "import"
+				if strings.Contains(v, ":vztmpl/") {
+					typ = "vztmpl"
+				}
+				if strings.HasPrefix(v, storage+":") && (r.Form.Get("content") == "" || r.Form.Get("content") == typ) {
+					list = append(list, map[string]any{"volid": v, "content": typ, "size": 700 << 20})
 				}
 			}
 			reply(w, 200, list)
@@ -543,11 +577,24 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		m := reQemu.FindStringSubmatch(path)
 		id, _ := strconv.Atoi(m[2])
 		vm, ok := f.vms[id]
-		if !ok {
+		if !ok || vm.ct {
 			fail(w, 500, fmt.Sprintf("Configuration file 'nodes/%s/qemu-server/%d.conf' does not exist", f.node, id), nil)
 			return
 		}
 		f.qemu(w, r, key, id, vm, m[3])
+
+	case r.Method == "POST" && path == "/nodes/"+f.node+"/lxc":
+		f.createCT(w, r, key)
+
+	case reLxc.MatchString(path):
+		m := reLxc.FindStringSubmatch(path)
+		id, _ := strconv.Atoi(m[2])
+		vm, ok := f.vms[id]
+		if !ok || !vm.ct {
+			fail(w, 500, fmt.Sprintf("Configuration file 'nodes/%s/lxc/%d.conf' does not exist", f.node, id), nil)
+			return
+		}
+		f.lxc(w, r, key, id, vm, m[3])
 
 	case reTask.MatchString(path):
 		m := reTask.FindStringSubmatch(path)

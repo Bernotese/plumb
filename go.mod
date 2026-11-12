@@ -2,7 +2,10 @@ module github.com/Bernotese/plumb
 
 go 1.27
 
+toolchain go1.27.4
+
 require (
+	github.com/klauspost/compress v1.20.4
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/crypto v0.58.0

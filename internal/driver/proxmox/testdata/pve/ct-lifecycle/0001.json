@@ -1,0 +1,13 @@
+{
+  "seq": 1,
+  "method": "GET",
+  "path": "/version",
+  "status": 200,
+  "body": {
+    "data": {
+      "version": "9.2.26",
+      "release": "9.2",
+      "repoid": "41a0e2e09b9e6f9d"
+    }
+  }
+}

@@ -26,7 +26,16 @@ describe("mock api", () => {
   it("serves the examples of the contract", async () => {
     const api = createMockApi({ signedIn: true });
     const names = (await api.listTargets()).map((t) => t.document.name).sort();
-    expect(names).toEqual(["backup1", "cache1", "db1", "web1", "web3", "worker1"]);
+    expect(names).toEqual([
+      "backup1",
+      "cache1",
+      "ct-web1",
+      "ct1",
+      "db1",
+      "web1",
+      "web3",
+      "worker1",
+    ]);
     // T-056: one Target per state of "restart needed" (D-195).
     const byName = new Map((await api.listTargets()).map((t) => [t.document.name, t]));
     expect(byName.get("worker1")?.status?.phase).toBe("restart_needed");

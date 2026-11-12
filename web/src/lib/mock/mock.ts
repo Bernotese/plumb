@@ -41,7 +41,7 @@ import { diskUse, nextSlot } from "../images";
 import { toYaml } from "../yaml";
 import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
-import { buildRuns, diskRefusal, GIB, seedImages, seedTargets } from "./imageSeed";
+import { buildRuns, diskRefusal, GIB, seedImages, seedLxc, seedTargets } from "./imageSeed";
 
 /** Banner of a mock build. */
 export const MOCK_BANNER = "Demo data: this build uses a mock of the Plumb API.";
@@ -355,6 +355,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]),
   );
   seedTargets(targets);
+  seedLxc(images, targets);
 
   // Slice 2 demo data that the examples of the list operations do not show
   // (D-140): the Block "app" with a secret parameter, as in the
@@ -888,7 +889,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     if (old && next && old.sha256 !== next.sha256)
       out.push({
         kind: "base",
-        name: `plumb-img-${name}-${old.sha256.slice(0, 12)}`,
+        name: `plumb-img-${name}-${(old.sha256 ?? "").slice(0, 12)}`,
         version: null,
       });
     return out;
@@ -935,6 +936,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       checkImageDoc(img, at);
       const view = findImage(img.name);
       const old = view?.document.spec;
+      // D-235: a new lxc Image, or a new url or sha512 of one, is human-only.
+      if (
+        img.spec.type === "lxc" &&
+        (old?.type !== "lxc" || old.url !== img.spec.url || old.sha512 !== img.spec.sha512)
+      )
+        recipe = true;
       if (!img.spec.build) {
         if (old?.build) {
           recipe = true;
@@ -984,6 +991,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   /** The Target part of D-202: a smaller disk than the template, or no ready version yet. */
   function checkTargetImage(t: TargetDoc, at: number, isNew: boolean) {
     const view = findImage(t.spec.image);
+    if (
+      view?.document.spec.type === "lxc" &&
+      view.document.spec.build &&
+      t.spec.guest.ssh_keys?.length
+    ) {
+      const message = `a container from the built Image "${t.spec.image}" gets no SSH keys from Proxmox; add them with a Block such as deploy-user (D-251)`;
+      throw problem("validation", "Validation failed", 422, message, {
+        errors: [{ pointer: `/put/${at}/spec/guest/ssh_keys`, message }],
+      });
+    }
     const min = view?.document.spec.build?.guest.disk;
     if (min !== undefined && t.spec.guest.disk < min) {
       const message = `The disk must be at least ${min} GiB: the template of image ${t.spec.image} has ${min} GiB, and a disk cannot shrink.`;
@@ -1074,7 +1091,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       run_id: run.id,
       revision: run.revision,
       recipe_sha256: recipeHash(spec),
-      base_sha256: spec.sha256,
+      // D-254: the SHA-512 pin of an lxc base, the SHA-256 of a vm base.
+      base_sha256: (spec.type === "lxc" ? spec.sha512 : spec.sha256) ?? "",
       disk_gb: spec.build.guest.disk,
       started_at: now(),
       finished_at: null,
@@ -1154,7 +1172,9 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       view.revision = head;
       view.document = img;
-      if (!img.spec.build) {
+      // A stock vm Image has no status; an lxc Image has one for its
+      // unused template files (D-233).
+      if (!img.spec.build && img.spec.type !== "lxc") {
         delete view.status;
         continue;
       }

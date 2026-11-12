@@ -34,6 +34,8 @@ const (
 	OpUpdate     Op = "Update"
 	OpPower      Op = "Power"
 	OpDelete     Op = "Delete"
+	// OpClearBootstrap is ClearBootstrap of a container (T-080).
+	OpClearBootstrap Op = "ClearBootstrap"
 
 	OpCreateBuild Op = "CreateBuild"
 	OpMakeImage   Op = "MakeImage"
@@ -53,7 +55,8 @@ type template struct {
 	version int
 	digest  string // build digest of a version, checksum of a base template
 	size    int64
-	linked  int // linked clones that a person made (review S3)
+	linked  int  // linked clones that a person made (review S3)
+	lxc     bool // a container template (T-080)
 }
 
 // importFile is a downloaded base image. Plumb never deletes one (D-209).
@@ -77,7 +80,16 @@ type guest struct {
 	build *driver.BuiltImage
 	// template: a build guest that a late conversion left (LeftTemplate).
 	template bool
+	// env: a container has its enrollment token in the config (the `env`
+	// option, D-231) until ClearBootstrap. Without env, the next cold
+	// start has no token.
+	env bool
+	// tplFile is the container template file that a container was made
+	// from: the plumb-template line of its description (D-250).
+	tplFile driver.ImageRef
 }
+
+func (g *guest) lxc() bool { return g.spec.Kind == wire.KindLXC }
 
 // Driver is the fake driver. The zero value is not usable; call New.
 type Driver struct {
@@ -241,6 +253,28 @@ func (d *Driver) StartOutside(id driver.GuestID) error {
 	return nil
 }
 
+// TemplateRef gives the ref that FetchImage makes for an lxc Image, with
+// no fetch, like Proxmox (T-085). A VM Image has none.
+func (d *Driver) TemplateRef(spec driver.ImageSpec) (driver.ImageRef, error) {
+	if spec.Kind != wire.KindLXC {
+		return "", driver.ErrNotImplemented
+	}
+	if !sha512Hex.MatchString(spec.SHA512) {
+		return "", errors.New("fake: an lxc image needs a SHA-512 of 128 hex digits")
+	}
+	return templateFile(spec), nil
+}
+
+// templateFile is the volume id of the container template file of an lxc
+// Image, in the name form of the Proxmox driver (D-250). The fake hashes
+// only the pin into the name.
+func templateFile(spec driver.ImageSpec) driver.ImageRef {
+	return driver.ImageRef("plumb-images:vztmpl/plumb-ct-" + ctName(spec.Name) + "-" + spec.SHA512[:12] + ".tar.gz")
+}
+
+// ctName is the Image part of a template file name: lower case, "." is "-".
+func ctName(image string) string { return strings.ReplaceAll(strings.ToLower(image), ".", "-") }
+
 // StopOutside stops a guest outside Plumb. Pending values stay pending.
 func (d *Driver) StopOutside(id driver.GuestID) error {
 	d.mu.Lock()
@@ -278,6 +312,8 @@ func (g *guest) coldStart() {
 	g.spec.SSHKeys = append([]string(nil), g.next.SSHKeys...)
 	if g.pending != "" {
 		g.token, g.pending = g.pending, ""
+	} else if g.lxc() && !g.env {
+		g.token = "" // PID 1 starts without the env token (host C4)
 	}
 	if changed {
 		g.gen++
@@ -381,12 +417,33 @@ func (d *Driver) do(ctx context.Context, op Op, fn func() error) error {
 	return err
 }
 
-var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var (
+	sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	sha512Hex = regexp.MustCompile(`^[0-9a-f]{128}$`)
+)
 
 // FetchImage records the image. It refuses a bad checksum or a non-HTTPS
-// URL. The same name and checksum give the same ref.
+// URL (an lxc Image: a SHA-512 and http or https, D-224). The same name
+// and checksum give the same ref.
 func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.ImageRef, error) {
 	return task(ctx, d, OpFetchImage, func() (driver.ImageRef, error) {
+		if spec.Kind == wire.KindLXC {
+			if !sha512Hex.MatchString(spec.SHA512) || spec.SHA256 != "" {
+				return "", errors.New("fake: an lxc image needs a SHA-512 of 128 hex digits and no SHA-256")
+			}
+			if !strings.HasPrefix(spec.URL, "https://") && !strings.HasPrefix(spec.URL, "http://") {
+				return "", errors.New("fake: image URL must use http or https")
+			}
+			key := spec.Name + "@" + spec.SHA512
+			if r, ok := d.images[key]; ok {
+				return r, nil
+			}
+			ref := templateFile(spec)
+			d.nextTpl++ // keeps the VM refs of the tests
+			d.images[key] = ref
+			d.tpls[ref] = &template{kind: driver.ImageTemplateFile, image: spec.Name, digest: spec.SHA512, size: GiB / 4, lxc: true}
+			return ref, nil
+		}
 		if !sha256Hex.MatchString(spec.SHA256) {
 			return "", errors.New("fake: image checksum must be 64 hex digits")
 		}
@@ -442,6 +499,12 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		if !d.hasImage(spec.Image) {
 			return "", fmt.Errorf("fake: image %s: %w", spec.Image, driver.ErrNotFound)
 		}
+		if lxc := spec.Kind == wire.KindLXC; lxc != d.tpls[spec.Image].lxc {
+			return "", fmt.Errorf("fake: guest type %s does not match image %s", spec.Kind, spec.Image)
+		}
+		if spec.Kind == wire.KindLXC && spec.User != "" {
+			return "", errors.New("fake: a container has no bootstrap user (D-226)")
+		}
 		if spec.Name == "" || spec.ImageName == "" || spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
 			return "", errors.New("fake: incomplete guest spec")
 		}
@@ -457,10 +520,16 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		}
 		d.nextID++
 		spec.SSHKeys = append([]string(nil), spec.SSHKeys...)
+		ref := spec.Image
 		spec.Image = "" // like Proxmox: the guest keeps the Image name, not the ref (D-189)
 		next := spec
 		next.SSHKeys = append([]string(nil), spec.SSHKeys...)
-		d.guests[id] = &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1}
+		g := &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
+			env: spec.Kind == wire.KindLXC}
+		if g.env {
+			g.tplFile = ref
+		}
+		d.guests[id] = g
 		return id, nil
 	})
 }
@@ -474,7 +543,7 @@ func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestSt
 		}
 		spec := g.spec
 		spec.SSHKeys = append([]string(nil), g.spec.SSHKeys...)
-		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != ""}
+		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != "", TokenInConfig: g.env}
 		if !equalSpec(g.spec, g.next) {
 			next := g.next
 			next.SSHKeys = append([]string(nil), g.next.SSHKeys...)
@@ -496,7 +565,8 @@ func digest(g *guest) string {
 		Spec, Next driver.GuestSpec
 		Gen        int
 		Pending    bool
-	}{g.spec, g.next, g.gen, g.pending != ""})
+		Env        bool
+	}{g.spec, g.next, g.gen, g.pending != "", g.env})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:20])
 }
@@ -515,8 +585,10 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 			return driver.ErrNotFound
 		}
 		// A running guest takes cores and memory only at the next cold
-		// start (unless hotplug), and the bridge live (unless stuck).
+		// start (unless hotplug), and the bridge live (unless stuck). A
+		// container takes all of them live (host C5).
 		running := g.power == driver.PowerRunning
+		hotplug := d.hotplug || g.lxc()
 		run, next := g.spec, g.next
 		for _, c := range changes {
 			if driver.IsCreateOnly(c.Attr) {
@@ -530,7 +602,7 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				if !(running && d.keepPending && v == run.Cores) {
 					next.Cores = v
 				}
-				if !running || d.hotplug {
+				if !running || hotplug {
 					run.Cores = v
 				}
 			case driver.AttrMemory:
@@ -539,7 +611,7 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				if !(running && d.keepPending && v == run.MemoryMB) {
 					next.MemoryMB = v
 				}
-				if !running || d.hotplug {
+				if !running || hotplug {
 					run.MemoryMB = v
 				}
 			case driver.AttrBridge:
@@ -553,6 +625,17 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				if !running || !d.bridgeStuck {
 					run.Bridge = s
 				}
+			case driver.AttrFeatures:
+				// A container takes its features at the next start (host D4).
+				if v, _ := c.To.(string); !g.lxc() || v != driver.CTFeatures {
+					err = fmt.Errorf("fake: features %v", c.To)
+				}
+				next.Features = driver.CTFeatures
+				if !running {
+					run.Features = driver.CTFeatures
+				}
+			case driver.AttrMounts, driver.AttrDevices, driver.AttrRawLXC:
+				err = &driver.OutsideError{Attr: c.Attr}
 			case driver.AttrEnrollToken:
 				if !c.Sensitive || c.From != nil || c.To != nil {
 					err = errors.New("fake: enroll_token change must be sensitive and carry no value")
@@ -570,6 +653,7 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 		g.spec, g.next = run, next
 		if boot != nil {
 			g.pending = boot.Token
+			g.env = g.lxc()
 		}
 		g.gen++
 		g.frozen = ""
@@ -609,6 +693,26 @@ func (d *Driver) Power(ctx context.Context, id driver.GuestID, action driver.Pow
 	})
 }
 
+// ClearBootstrap removes the env token of a container. The running PID 1
+// keeps the used token until the next cold start (host C4).
+func (d *Driver) ClearBootstrap(ctx context.Context, id driver.GuestID) error {
+	return d.do(ctx, OpClearBootstrap, func() error {
+		g, ok := d.guests[id]
+		if !ok {
+			return driver.ErrNotFound
+		}
+		if !g.lxc() {
+			return fmt.Errorf("fake: guest %s is a VM; it has no token to clear", id)
+		}
+		if g.env || g.pending != "" {
+			g.env, g.pending = false, ""
+			g.gen++
+			g.frozen = ""
+		}
+		return nil
+	})
+}
+
 // Delete removes a guest.
 func (d *Driver) Delete(ctx context.Context, id driver.GuestID) error {
 	return d.do(ctx, OpDelete, func() error {
@@ -630,7 +734,9 @@ func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot dr
 			return "", errors.New("fake: a build needs an image, a version and a token")
 		}
 		tpl, ok := d.tpls[spec.Base]
-		if !ok || tpl.kind != driver.ImageBaseTemplate {
+		// A VM build clones a base template; an lxc build starts from the
+		// template file (T-082).
+		if !ok || (tpl.kind != driver.ImageBaseTemplate && !(tpl.lxc && tpl.kind == driver.ImageTemplateFile)) {
 			return "", fmt.Errorf("fake: base image %s: %w", spec.Base, driver.ErrNotFound)
 		}
 		if spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
@@ -646,12 +752,15 @@ func (d *Driver) CreateBuild(ctx context.Context, spec driver.BuildSpec, boot dr
 		d.nextID++
 		gs := driver.GuestSpec{Name: name, Kind: wire.KindVM, ImageName: spec.Image, Cores: spec.Cores, MemoryMB: spec.MemoryMB,
 			DiskGB: spec.DiskGB, Bridge: spec.Bridge, IP: spec.IP, Gateway: spec.Gateway, User: "plumb-build"}
+		if tpl.lxc { // a build container from a template file (T-082)
+			gs.Kind, gs.User, gs.Features = wire.KindLXC, "", driver.CTFeatures
+		}
 		ip := strings.SplitN(spec.IP, "/", 2)[0]
 		if spec.IP == "" || spec.IP == "dhcp" {
 			ip = fmt.Sprintf("10.98.%d.%d", d.nextID/250, d.nextID%250+2)
 		}
 		d.guests[id] = &guest{spec: gs, next: gs, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
-			build: &driver.BuiltImage{Image: spec.Image, Version: spec.Version}}
+			build: &driver.BuiltImage{Image: spec.Image, Version: spec.Version}, env: tpl.lxc}
 		return id, nil
 	})
 }
@@ -673,11 +782,14 @@ func (d *Driver) MakeImage(ctx context.Context, id driver.GuestID, img driver.Bu
 		if g.power != driver.PowerStopped {
 			return "", fmt.Errorf("fake: build guest %s is not stopped", id)
 		}
+		// A container template holds no env token (D-234): MakeImage
+		// clears it first, as the Proxmox driver does.
+		g.env = false
 		delete(d.guests, id)
 		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
 		d.nextTpl++
 		d.tpls[ref] = &template{kind: driver.ImageVersionTemplate, image: img.Image, version: img.Version,
-			digest: img.Digest, size: int64(g.spec.DiskGB) * GiB}
+			digest: img.Digest, size: int64(g.spec.DiskGB) * GiB, lxc: g.lxc()}
 		return ref, nil
 	})
 }
@@ -697,27 +809,40 @@ func (d *Driver) FindImage(ctx context.Context, image string, version int, diges
 func (d *Driver) object(ref driver.ImageRef, t *template) driver.ImageObject {
 	o := driver.ImageObject{Kind: t.kind, Image: t.image, Ref: ref, Version: t.version, Digest: t.digest,
 		SizeBytes: t.size, LinkedClones: t.linked}
-	if t.kind == driver.ImageVersionTemplate {
+	switch t.kind {
+	case driver.ImageTemplateFile:
+		o.Name, o.LinkedClones = string(ref), 0
+		for _, g := range d.guests {
+			if g.tplFile == ref {
+				o.Containers++
+			}
+		}
+	case driver.ImageVersionTemplate:
 		o.Name = fmt.Sprintf("plumb-img-%s-v%d", t.image, t.version)
-	} else {
+	default:
 		o.Name = fmt.Sprintf("plumb-img-%s-%s", t.image, t.digest[:12])
 	}
 	return o
 }
 
-// ListImages lists the templates and import files of an Image: base
-// templates, then versions (oldest first), then import files.
+var kindRank = map[driver.ImageObjectKind]int{driver.ImageBaseTemplate: 0, driver.ImageVersionTemplate: 1, driver.ImageTemplateFile: 2}
+
+// ListImages lists the templates, container template files and import
+// files of an Image: base templates, then versions (oldest first),
+// then container template files, then import files.
 func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageObject, error) {
 	return task(ctx, d, OpListImages, func() ([]driver.ImageObject, error) {
 		var out []driver.ImageObject
 		for ref, t := range d.tpls {
-			if t.image == image {
+			// Like Proxmox, a template file matches by its file prefix:
+			// two names that differ only by "." and "-" share it.
+			if t.image == image || t.kind == driver.ImageTemplateFile && ctName(t.image) == ctName(image) {
 				out = append(out, d.object(ref, t))
 			}
 		}
 		sort.Slice(out, func(i, j int) bool {
-			if out[i].Kind != out[j].Kind {
-				return out[i].Kind == driver.ImageBaseTemplate
+			if ri, rj := kindRank[out[i].Kind], kindRank[out[j].Kind]; ri != rj {
+				return ri < rj
 			}
 			if out[i].Version != out[j].Version {
 				return out[i].Version < out[j].Version
@@ -741,6 +866,9 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 	return d.do(ctx, OpRemoveImage, func() error {
 		if obj.Kind == driver.ImageImportFile {
 			return fmt.Errorf("fake: %s is an import file; Plumb never deletes one (D-209)", obj.Name)
+		}
+		if obj.Kind == driver.ImageTemplateFile {
+			return fmt.Errorf("fake: %s is a container template file; Plumb never deletes one (D-233)", obj.Name)
 		}
 		t, ok := d.tpls[obj.Ref]
 		if !ok {

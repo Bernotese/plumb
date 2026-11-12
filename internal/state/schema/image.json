@@ -23,8 +23,7 @@
       "type": "object",
       "required": [
         "type",
-        "url",
-        "sha256"
+        "url"
       ],
       "additionalProperties": false,
       "properties": {
@@ -41,14 +40,19 @@
         },
         "url": {
           "type": "string",
-          "pattern": "^https://",
+          "pattern": "^https?://",
           "maxLength": 2048,
-          "description": "Download address of the official cloud image."
+          "description": "Download address. vm: https:// only, the official cloud image. lxc: http:// or https://, a Proxmox system template (Proxmox serves them over http only; the sha512 pin is the trust, D-224)."
         },
         "sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
-          "description": "Pinned checksum of the download. Plumb refuses any other file."
+          "description": "Pinned SHA-256 of the download. Required for type vm, refused for type lxc. Plumb refuses any other file."
+        },
+        "sha512": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{128}$",
+          "description": "Pinned SHA-512 of the template: the sha512sum field of the signed Proxmox appliance index. Required for type lxc, refused for type vm (D-224). Creating an lxc Image or changing its url or sha512 needs a human approval (image-recipe, D-235). Values and the host command: docs/ARCHITECTURE.md §13."
         },
         "build": {
           "type": "object",
@@ -56,7 +60,7 @@
             "guest"
           ],
           "additionalProperties": false,
-          "description": "Present: Plumb builds templates from the base image (url, sha256) plus Blocks, then runs seal (D-197, D-205). Only for type vm (LXC: T-038).",
+          "description": "Present: Plumb builds templates from the base image (url, sha256) plus Blocks, then runs seal (D-197, D-205). For type lxc (T-082): the build container comes from the repacked template file; no user; upgrade runs in seal (D-252); Targets of a built lxc Image get no ssh_keys (D-251).",
           "properties": {
             "blocks": {
               "type": "array",
@@ -89,7 +93,7 @@
             "upgrade": {
               "type": "boolean",
               "default": true,
-              "description": "Upgrade all packages in the build (cloud-init, D-204). seal fails when packages are left to upgrade."
+              "description": "Upgrade all packages in the build (vm: cloud-init at the first boot, D-204; lxc: apt-get dist-upgrade in seal, D-252). seal fails when packages are left to upgrade."
             },
             "guest": {
               "type": "object",
@@ -258,7 +262,7 @@
           }
         }
       },
-      "description": "A stock image (no build) is imported as is. With build, Plumb makes versioned templates from it (D-197).",
+      "description": "A stock image (no build) is imported as is. With build, Plumb makes versioned templates from it (D-197). The rules that depend on type (pin, url scheme, build) are checked by the server with a clear text, not by this schema.",
       "dependentRequired": {
         "retention": [
           "build"
@@ -266,17 +270,6 @@
         "schedule": [
           "build"
         ]
-      },
-      "dependentSchemas": {
-        "build": {
-          "$comment": "additionalProperties: true in the sub-schemas is a no-op for JSON Schema; it keeps Redocly's example check (recommended-strict) from closing them.",
-          "properties": {
-            "type": {
-              "const": "vm"
-            }
-          },
-          "additionalProperties": true
-        }
       }
     }
   },
@@ -321,6 +314,16 @@
           "weekday": "sun",
           "at": "03:00"
         }
+      }
+    },
+    {
+      "kind": "Image",
+      "name": "debian-13-ct",
+      "spec": {
+        "title": "Debian 13 container",
+        "type": "lxc",
+        "url": "http://download.proxmox.com/images/system/debian-13-standard_13.6-1_amd64.tar.zst",
+        "sha512": "4c0c27ca6ceab5ef0b84db57825a00f26157ef1854bafe97297813e1cbe8ecb8cc9c453cab6b3b0efe1ba193a50c47ece1e41d950e411b8730b835b71e9e754b"
       }
     }
   ]

@@ -16,7 +16,7 @@ import (
 // plumb-build-<image>-v<N>; a converted one has Template set. Name and template come from the config, as in
 // own. A guest whose name and marker do not match is not listed.
 func (d *Driver) ListBuilds(ctx context.Context) ([]driver.BuildGuest, error) {
-	ms, err := d.members(ctx)
+	ms, err := d.guests(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +25,7 @@ func (d *Driver) ListBuilds(ctx context.Context) ([]driver.BuildGuest, error) {
 		if m.VMID < d.cfg.VMIDMin || m.VMID > d.cfg.VMIDMax {
 			continue
 		}
-		cfg, err := d.config(ctx, m.VMID)
+		cfg, err := d.guestConfig(ctx, m)
 		if errors.Is(err, driver.ErrNotFound) {
 			continue // gone meanwhile
 		}
@@ -69,14 +69,18 @@ func (d *Driver) RemoveBuild(ctx context.Context, gid driver.GuestID, image stri
 	if err != nil {
 		return err
 	}
-	cfg, err := d.config(ctx, id)
+	cfg, err := d.guestConfig(ctx, m)
 	if err != nil {
 		return err
 	}
 	if m.Name != name || m.Template == 1 || !hasLine(cfg["description"], buildLine(image, version)) {
 		return fmt.Errorf("proxmox: VMID %d is not the build guest %s (name %q, template %d): not removed", id, name, m.Name, m.Template)
 	}
-	if err := d.removeHalfMade(ctx, id, name, true); err != nil {
+	remove := d.removeHalfMade
+	if m.Type == typeCT {
+		remove = d.removeHalfMadeCT // a build container (T-082)
+	}
+	if err := remove(ctx, id, name, true); err != nil {
 		return fmt.Errorf("proxmox: remove build guest %s (VMID %d): %w", name, id, err)
 	}
 	return nil

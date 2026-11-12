@@ -8,11 +8,12 @@
     scheduleText,
     type Trigger,
     safeFreeCommand,
+    basePin,
   } from "../lib/images";
   import { liveSnapshot } from "../lib/live";
   import { go, href } from "../lib/router";
-  import type { ImageVersion, ImageView } from "../lib/types";
-  import { formatTime, type Tone } from "../lib/view";
+  import type { ImageStatus, ImageVersion, ImageView } from "../lib/types";
+  import { KIND_NAME, formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
@@ -60,6 +61,7 @@
   });
 
   const spec = $derived(image?.document.spec);
+  const lxc = $derived(spec?.type === "lxc");
   const st = $derived(image?.status);
   const newest = $derived(newestReady(st));
   const use = $derived(st?.disk ? diskUse(st.disk) : null);
@@ -96,6 +98,58 @@
   }
 </script>
 
+{#snippet unusedFiles(st: ImageStatus)}
+  <section class="card" aria-labelledby="imports-title">
+    {#if lxc}
+      <h2 id="imports-title">Unused template files</h2>
+    {:else}
+      <h2 id="imports-title">Unused import files</h2>
+    {/if}
+    {#if st.unused_imports.length === 0}
+      <p class="muted">
+        None. {lxc ? "Every template file is in use." : "Every downloaded base image is in use."}
+      </p>
+    {:else}
+      <p>
+        {#if lxc}
+          These template files of an old checksum or controller address are not needed any more: a
+          container keeps no link to its template. Plumb never deletes a template file (D-233): its
+          API token has no right to delete files on the image storage, and that right would also let
+          it change the storage itself. To free the space, run the command on the Proxmox host.
+        {:else}
+          These downloads of an old base image are not needed any more. Safe to remove: no version
+          needs it, because a version template is a full copy. Plumb does not delete them: its API
+          token has no right to delete files on the image storage, and that right would also let it
+          change the storage itself. To free the space, run the command on the Proxmox host.
+        {/if}
+      </p>
+      <ul class="plain imports">
+        {#each st.unused_imports as f (f.volume)}
+          {@const cmd = safeFreeCommand(f.command)}
+          <li>
+            <span class="mono wrap">{f.volume}</span>
+            <span class="muted">({bytesText(f.size_bytes)})</span>
+            {#if cmd}
+              <div class="cmd">
+                <code class="mono">{cmd}</code>
+                <button class="btn" type="button" onclick={() => copy(cmd)}
+                  >Copy<span class="sr-only"> the command for {f.volume}</span></button
+                >
+              </div>
+            {:else}
+              <p class="warn">
+                This file does not have the name form of Plumb. Check it by hand on the Proxmox host
+                before you remove it.
+              </p>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+      <p class="sr-only" aria-live="polite">{copied ? "Command copied." : ""}</p>
+    {/if}
+  </section>
+{/snippet}
+
 <div class="spread">
   <h1 id="page-title" tabindex="-1">Image {name}</h1>
   {#if image}<a class="btn" href={href({ name: "image-edit", image: name })}>Edit</a>{/if}
@@ -106,15 +160,23 @@
     <dl class="facts">
       {#if spec.title}<dt>Title</dt>
         <dd>{spec.title}</dd>{/if}
+      <dt>Type</dt>
+      <dd id="image-type">{KIND_NAME[spec.type]}</dd>
       <dt>Kind</dt>
       <dd>
-        {#if spec.build}<Badge tone="info" label="Built" /> Plumb makes templates from the base image.
+        {#if spec.type === "lxc" && spec.build}<Badge tone="info" label="Built" /> Plumb makes container
+          templates from the Proxmox template.
+        {:else if spec.type === "lxc"}<Badge tone="muted" label="Stock" /> Plumb adds the agent installer
+          to the Proxmox template.
+        {:else if spec.build}<Badge tone="info" label="Built" /> Plumb makes templates from the base image.
         {:else}<Badge tone="muted" label="Stock" /> Plumb imports the base image as it is.{/if}
       </dd>
       <dt>Base image</dt>
       <dd class="mono wrap">{spec.url}</dd>
       <dt>Checksum</dt>
-      <dd class="mono wrap">sha256 {spec.sha256}</dd>
+      <dd class="mono wrap" id="image-sum">
+        {spec.type === "lxc" ? `sha512 ${spec.sha512 ?? "–"}` : `sha256 ${spec.sha256 ?? "–"}`}
+      </dd>
     </dl>
   </div>
 
@@ -196,9 +258,13 @@
         </dd>
         <dt>Upgrade</dt>
         <dd>
-          {b.upgrade === false ? "no" : "yes: all packages are upgraded in the build"}
+          {b.upgrade === false
+            ? "no"
+            : lxc
+              ? "yes: apt-get dist-upgrade runs in the build container before the template is made"
+              : "yes: all packages are upgraded in the build"}
         </dd>
-        <dt>Build guest</dt>
+        <dt>{lxc ? "Build container" : "Build guest"}</dt>
         <dd>
           {b.guest.cores ?? 1} CPU · {b.guest.memory ?? 1024} MiB · {b.guest.disk} GiB disk ·
           <span class="mono">{b.guest.bridge}</span> · {b.guest.ip ?? "dhcp"}
@@ -250,6 +316,12 @@
                 <td>
                   {formatTime(v.finished_at ?? v.started_at)}
                   <span class="sub">{triggerText(v.trigger)} · revision {v.revision}</span>
+                  {#if basePin(v.base_sha256)}
+                    {@const p = basePin(v.base_sha256)}
+                    <span class="sub mono base-pin" title={v.base_sha256}
+                      >base {p?.algo} {p?.short}…</span
+                    >
+                  {/if}
                 </td>
                 <td><a href={href({ name: "run", id: v.run_id })}>Run {v.run_id}</a></td>
                 <td>
@@ -284,42 +356,16 @@
       </section>
     {/if}
 
-    <section class="card" aria-labelledby="imports-title">
-      <h2 id="imports-title">Unused import files</h2>
-      {#if st.unused_imports.length === 0}
-        <p class="muted">None. Every downloaded base image is in use.</p>
-      {:else}
-        <p>
-          These downloads of an old base image are not needed any more. Safe to remove: no version
-          needs it, because a version template is a full copy. Plumb does not delete them: its API
-          token has no right to delete files on the image storage, and that right would also let it
-          change the storage itself. To free the space, run the command on the Proxmox host.
-        </p>
-        <ul class="plain imports">
-          {#each st.unused_imports as f (f.volume)}
-            {@const cmd = safeFreeCommand(f.command)}
-            <li>
-              <span class="mono wrap">{f.volume}</span>
-              <span class="muted">({bytesText(f.size_bytes)})</span>
-              {#if cmd}
-                <div class="cmd">
-                  <code class="mono">{cmd}</code>
-                  <button class="btn" type="button" onclick={() => copy(cmd)}
-                    >Copy<span class="sr-only"> the command for {f.volume}</span></button
-                  >
-                </div>
-              {:else}
-                <p class="warn">
-                  This file does not have the name form of Plumb. Check it by hand on the Proxmox
-                  host before you remove it.
-                </p>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-        <p class="sr-only" aria-live="polite">{copied ? "Command copied." : ""}</p>
-      {/if}
-    </section>
+    {@render unusedFiles(st)}
+  {:else if spec.type === "lxc"}
+    {#if st}
+      {@render unusedFiles(st)}
+    {/if}
+    <p class="muted" id="lxc-no-versions">
+      A stock container image has no versions: each create uses the Proxmox template with the agent
+      installer added. Edit it and switch on "Build" to make container templates with Blocks and
+      fresh packages.
+    </p>
   {:else if spec.build}
     <p class="muted">The server does not show builds yet.</p>
   {:else}

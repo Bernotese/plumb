@@ -46,10 +46,11 @@ disk=$(setting PLUMB_PVE_DISK)
 [[ $range =~ ^([0-9]+)-([0-9]+)$ ]] || { echo "test-pve: cannot read PLUMB_PVE_VMID_RANGE from plumb.env"; exit 1; }
 lo=${BASH_REMATCH[1]} hi=${BASH_REMATCH[2]}
 
-# snapshot prints the guests and the disks of the range, one per line.
+# snapshot prints the guests (VMs and containers) and the disks of the
+# range, one per line.
 snapshot() {
 	# shellcheck disable=SC2029 # lo, hi and disk are checked above
-	"${ssh[@]}" "qm list | awk 'NR > 1 && \$1 >= $lo && \$1 <= $hi {print \"guest \" \$1}';
+	"${ssh[@]}" "{ qm list; pct list; } | awk '\$1 ~ /^[0-9]+\$/ && \$1 >= $lo && \$1 <= $hi {print \"guest \" \$1}';
 		pvesm list $disk | awk 'NR > 1 {print \$1}' | sed -n 's/^\(.*:\(vm\|base\)-\([0-9]*\)-.*\)$/\3 \1/p' |
 			awk '\$1 >= $lo && \$1 <= $hi {print \"disk \" \$2}'" | sort
 }

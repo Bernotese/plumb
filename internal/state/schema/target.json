@@ -63,7 +63,7 @@
             "disk": {
               "type": "integer",
               "minimum": 1,
-              "description": "GiB. Create-only in the first slice."
+              "description": "GiB. Create-only in the first slice. lxc: size of the root file system, at least 2."
             },
             "bridge": {
               "type": "string",
@@ -85,7 +85,7 @@
               "type": "string",
               "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
               "default": "plumb",
-              "description": "Bootstrap user that cloud-init creates. Create-only."
+              "description": "Bootstrap user that cloud-init creates. Create-only. vm only: an LXC Target has no bootstrap user (refused; use a Block such as deploy-user, D-226)."
             },
             "ssh_keys": {
               "type": "array",
@@ -94,7 +94,7 @@
                 "type": "string",
                 "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$"
               },
-              "description": "Public keys of the bootstrap user, without options. Create-only."
+              "description": "Public keys of the bootstrap user, without options. Create-only. lxc: the keys go to root (D-226)."
             }
           },
           "dependentSchemas": {
@@ -115,7 +115,7 @@
         "allow_restart": {
           "type": "boolean",
           "default": false,
-          "description": "Plumb may restart this VM (D-194). false: no Run stops or restarts the VM while it runs; a change of cores or memory waits until you stop and start the VM, and a re-enrollment of a running VM is refused. true: a Run may restart the VM (clean shutdown, hard power-off after 2 minutes, then start); the Plan shows the restart before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. No effect on an LXC Target yet."
+          "description": "Plumb may restart this VM (D-194). false: no Run stops or restarts the VM while it runs; a change of cores or memory waits until you stop and start the VM, and a re-enrollment of a running VM is refused. true: a Run may restart the VM (clean shutdown, hard power-off after 2 minutes, then start); the Plan shows the restart before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. Accepted and without effect on an LXC Target: cores and memory change live on a container."
         },
         "blocks": {
           "type": "array",
@@ -154,7 +154,7 @@
           "additionalProperties": {
             "type": "object"
           },
-          "description": "Resource id \u2192 attributes that replace the rendered ones. Written by Accept and by raw mode."
+          "description": "Resource id → attributes that replace the rendered ones. Written by Accept and by raw mode."
         }
       }
     }

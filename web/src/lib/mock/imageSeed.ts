@@ -2,6 +2,7 @@
 // examples of api/openapi.yaml do not show: the Runs of the versions of
 // ubuntu-web, a build that runs now (review N1 of T-058), a build that the
 // disk check stopped (user answer 7, D-203) and a Target from a built version.
+import { KNOWN_LXC_TEMPLATES } from "../images";
 import type { ImageView, Run, RunStep, TargetView } from "../types";
 
 export const GIB = 2 ** 30;
@@ -151,7 +152,7 @@ export function seedImages(images: ImageView[]): void {
           run_id: 18,
           revision: 7,
           recipe_sha256: "7d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e",
-          base_sha256: debian.document.spec.sha256,
+          base_sha256: debian.document.spec.sha256 ?? "",
           disk_gb: 8,
           started_at: "2026-11-10T09:10:00Z",
           finished_at: null,
@@ -194,6 +195,141 @@ export function seedTargets(targets: Map<string, TargetView>): void {
       open_issues: 0,
       waiting: [],
       image_version: 3,
+      last_run_id: 3,
+    },
+  });
+}
+
+/**
+ * An lxc Image (T-038, D-224) with one unused template file (D-233), and a
+ * container Target from it (D-226: no bootstrap user, keys for root).
+ */
+export function seedLxc(images: ImageView[], targets: Map<string, TargetView>): void {
+  if (images.some((i) => i.document.name === "debian-ct")) return;
+  const debian = KNOWN_LXC_TEMPLATES[0];
+  if (!debian) return;
+  const old = "plumb-images:vztmpl/plumb-ct-debian-ct-0a1b2c3d4e5f.tar.gz";
+  images.push({
+    revision: 7,
+    document: {
+      kind: "Image",
+      name: "debian-ct",
+      spec: { title: "Debian 13 container", type: "lxc", url: debian.url, sha512: debian.sha512 },
+    },
+    status: {
+      versions: [],
+      building: null,
+      last_build: null,
+      next_build_at: null,
+      unused_imports: [{ volume: old, size_bytes: 207696168, command: `pvesm free ${old}` }],
+    },
+  });
+  // A built lxc Image (T-082): its versions pin the SHA-512 of the base (D-254).
+  images.push({
+    revision: 7,
+    document: {
+      kind: "Image",
+      name: "debian-ct-web",
+      spec: {
+        title: "Debian 13 container with nginx",
+        type: "lxc",
+        url: debian.url,
+        sha512: debian.sha512,
+        build: {
+          blocks: [{ use: "nginx", params: {} }],
+          upgrade: true,
+          guest: { cores: 1, memory: 512, disk: 4, bridge: "vmbr0", ip: "dhcp" },
+        },
+        retention: { keep: 2 },
+      },
+    },
+    status: {
+      versions: [
+        {
+          version: 1,
+          status: "ready",
+          trigger: "change",
+          run_id: 3,
+          revision: 7,
+          recipe_sha256: "4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d",
+          base_sha256: debian.sha512,
+          disk_gb: 4,
+          started_at: "2026-11-10T08:00:00Z",
+          finished_at: "2026-11-10T08:04:30Z",
+          removed_at: null,
+          targets: ["ct-web1"],
+        },
+      ],
+      building: null,
+      last_build: null,
+      next_build_at: null,
+      unused_imports: [],
+    },
+  });
+  const web1 = targets.get("web1");
+  if (!web1 || targets.has("ct1")) return;
+  // A container from debian-ct-web v1: no ssh_keys, the Block deploy-user (D-251).
+  targets.set("ct-web1", {
+    revision: 7,
+    document: {
+      kind: "Target",
+      name: "ct-web1",
+      spec: {
+        type: "lxc",
+        image: "debian-ct-web",
+        guest: { cores: 1, memory: 512, disk: 4, bridge: "vmbr0", ip: "dhcp" },
+        blocks: [
+          {
+            use: "deploy-user",
+            params: {
+              ssh_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlumbExampleKeyOnly admin@example",
+            },
+          },
+        ],
+      },
+    },
+    status: {
+      ...structuredClone(web1.status),
+      phase: "ready",
+      guest_id: "9011",
+      ips: [],
+      reported_ips: ["192.168.1.48"],
+      reported_at: "2026-11-10T09:00:10Z",
+      open_issues: 0,
+      waiting: [],
+      image_version: 1,
+      last_run_id: 3,
+    },
+  });
+  targets.set("ct1", {
+    revision: 7,
+    document: {
+      kind: "Target",
+      name: "ct1",
+      spec: {
+        type: "lxc",
+        image: "debian-ct",
+        guest: {
+          cores: 1,
+          memory: 512,
+          disk: 4,
+          bridge: "vmbr0",
+          ip: "dhcp",
+          ssh_keys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlumbExampleKeyOnly admin@example"],
+        },
+        blocks: [],
+      },
+    },
+    status: {
+      ...structuredClone(web1.status),
+      phase: "ready",
+      guest_id: "9010",
+      ips: [],
+      reported_ips: ["192.168.1.47"],
+      reported_at: "2026-11-10T09:00:10Z",
+      open_issues: 0,
+      waiting: [],
+      image_version: null,
       last_run_id: 3,
     },
   });

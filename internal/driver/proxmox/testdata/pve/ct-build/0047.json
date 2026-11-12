@@ -1,0 +1,10 @@
+{
+  "seq": 47,
+  "method": "PUT",
+  "path": "/nodes/pve/lxc/9000/config",
+  "form": "delete=nameserver%2Csearchdomain%2Conboot\u0026description=plumb-image%3A+t082-debian-13%0Aversion%3D1%0Abuild%3Deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee%0APlumb+image+template.+Do+not+change+it+here.\u0026digest=ea606090c4f139011f81a516e6feb48ce736b999\u0026hostname=plumb-img-t082-debian-13-v1",
+  "status": 200,
+  "body": {
+    "data": null
+  }
+}

@@ -385,9 +385,12 @@ func readGuestFile(root, p string, max int64) (string, error) {
 
 // rewriteGuestFile replaces the content of the existing regular guest file
 // p in place: opened with O_NOFOLLOW (no link in any component), one hard
-// link only, then truncated and written through the fd. In place, because
-// a container bind-mounts /etc/hostname and /etc/hosts (a rename fails
-// there). A missing file is made with writeGuestFile.
+// link only, then truncated and written through the fd. In place, so the
+// inode stays: a container runtime may bind-mount /etc/hostname and
+// /etc/hosts (Docker does; a rename fails there). Proxmox does not: it
+// rewrites these files and /etc/resolv.conf in the root fs at every start,
+// between "# --- BEGIN PVE ---" and "# --- END PVE ---" (host D1). A
+// missing file is made with writeGuestFile.
 func rewriteGuestFile(root, p string, data []byte) error {
 	dir, name := splitGuest(p)
 	dfd, err := openGuestDir(root, dir)

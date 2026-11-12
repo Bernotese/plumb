@@ -36,8 +36,22 @@ func newRecorder(next http.RoundTripper, dir, baseURL, node string) *recorder {
 	}
 	ipv4 := regexp.MustCompile(`\b(\d{1,3}\.){3}\d{1,3}\b`)
 	mac := regexp.MustCompile(`\b([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`)
-	sshKey := regexp.MustCompile(`(ssh-[a-z0-9-]+)(%20|\s|\+)[A-Za-z0-9+/=%]+`)
+	sshKey := sshKeyRE // leakscan_test.go (review S1 of #167)
+	// The enrollment token of a container (env, D-231): in a form, in a
+	// config answer and in a pending row (T-079).
+	envToken := regexp.MustCompile(`(PLUMB_ENROLL_TOKEN(?:=|%3D|\\u003d))[A-Za-z0-9_-]+`)
+	// Each token gets its own placeholder, so the replay still sees an
+	// old and a new token as two values (TokenPending).
+	tokens := map[string]int{}
 	scrub := func(s string) string {
+		s = envToken.ReplaceAllStringFunc(s, func(m string) string {
+			sub := envToken.FindStringSubmatch(m)
+			tok := strings.TrimPrefix(m, sub[1])
+			if tokens[tok] == 0 {
+				tokens[tok] = len(tokens) + 1
+			}
+			return fmt.Sprintf("%sscrubbed-%d", sub[1], tokens[tok])
+		})
 		if host != "" {
 			s = strings.ReplaceAll(s, host, "pve.example")
 		}
@@ -72,7 +86,10 @@ type recording struct {
 
 func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	var form []byte
-	if req.Body != nil {
+	if strings.HasPrefix(req.Header.Get("Content-Type"), "multipart/") {
+		// A template upload: hundreds of MB, file bytes only (T-079).
+		form = []byte(fmt.Sprintf("<multipart upload, %d bytes>", req.ContentLength))
+	} else if req.Body != nil {
 		form, _ = io.ReadAll(req.Body)
 		// Keep the length: a body without it goes out chunked, and
 		// pveproxy answers 501 "chunked transfer encoding not supported".

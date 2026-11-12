@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/Bernotese/plumb/internal/driver/proxmox/ctpack"
 )
 
 const fakeSecret = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
@@ -148,7 +150,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 		"+ pveum acl modify /storage/plumb-snippets --tokens plumb@pve\\!plumb --roles PlumbSnippets --propagate 0",
 		"+ pveum user token add plumb@pve plumb --privsep 1",
 		"+ pvesm add dir plumb-snippets --path " + h.snippet + " --content snippets --shared 0",
-		"+ pvesm add dir plumb-images --path " + h.images() + " --content import --shared 0",
+		"+ pvesm add dir plumb-images --path " + h.images() + " --content import\\,vztmpl --shared 0",
 		"+ pveam download local debian-13-standard_13.1-2_amd64.tar.zst",
 		"+ pct create 105 local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst --hostname plumb --unprivileged 1",
 		"+ pct push 105 " + h.plumb + " /usr/local/bin/.plumb.plumb-new --perms 0755",
@@ -393,6 +395,14 @@ func TestSnippet(t *testing.T) {
 	}
 	if !strings.Contains(files["/etc/systemd/system/plumb-agent.service"], "ExecStart=/usr/local/bin/plumb-agent run") {
 		t.Error("agent unit")
+	}
+	// One source of behaviour (T-038 §9): an LXC template gets the same
+	// script and agent unit as the vendor snippet.
+	if want := ctpack.FirstBootScript("https://10.0.0.5:8444"); script != want {
+		t.Errorf("the snippet script and ctpack.FirstBootScript differ:\n--- snippet\n%s\n--- ctpack\n%s", script, want)
+	}
+	if files["/etc/systemd/system/plumb-agent.service"] != ctpack.AgentUnit {
+		t.Errorf("the snippet unit and ctpack.AgentUnit differ:\n%s", files["/etc/systemd/system/plumb-agent.service"])
 	}
 	// No other command than the snippet storage and the file is printed.
 	for _, line := range strings.Split(out, "\n") {

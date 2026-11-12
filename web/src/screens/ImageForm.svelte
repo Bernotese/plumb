@@ -3,7 +3,14 @@
   import { properties as imageProps } from "../../../internal/state/schema/image.json";
   import type { PlumbApi } from "../lib/client";
   import { pointerErrors } from "../lib/formErrors";
-  import { WEEKDAYS, nextSlot, weekdayName, type Schedule, type Weekday } from "../lib/images";
+  import {
+    KNOWN_LXC_TEMPLATES,
+    WEEKDAYS,
+    nextSlot,
+    weekdayName,
+    type Schedule,
+    type Weekday,
+  } from "../lib/images";
   import { go, href } from "../lib/router";
   import {
     fieldsOf,
@@ -14,6 +21,7 @@
     type Values,
   } from "../lib/schemaForm";
   import type { BlockView, ImageSpec, ImageView } from "../lib/types";
+  import { KIND_NAME, type GuestKind } from "../lib/view";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
@@ -23,9 +31,15 @@
   const specProps = imageProps.spec.properties;
   const guestFields: Field[] = fieldsOf(specProps.build.properties.guest as never);
   const namePattern = new RegExp(imageProps.name.pattern, "u");
-  const urlPattern = new RegExp(specProps.url.pattern, "u");
-  const shaPattern = new RegExp(specProps.sha256.pattern, "u");
+  // A VM Image needs https://; an lxc Image may use http://, its pin is the trust (D-224).
+  const urlPattern: Record<GuestKind, RegExp> = { vm: /^https:\/\//u, lxc: /^https?:\/\//u };
+  const shaPattern: Record<GuestKind, RegExp> = {
+    vm: new RegExp(specProps.sha256.pattern, "u"),
+    lxc: new RegExp(specProps.sha512.pattern, "u"),
+  };
   const atPattern = new RegExp(specProps.schedule.properties.at.pattern, "u");
+  // The root file system of a container needs at least 2 GiB (T-075, minLXCDisk).
+  const MIN_LXC_DISK = 2;
   const editing = $derived(name !== undefined);
 
   interface Use {
@@ -39,11 +53,14 @@
   }
 
   let existing = $state<ImageView | null>(null);
+  let keyedTargets = $state<string[]>([]);
   let allBlocks = $state<BlockView[]>([]);
   let loaded = $state(false);
   let loadError = $state<unknown>(null);
 
   let imageName = $state("");
+  let kind = $state<GuestKind>("vm");
+  let known = $state("");
   let title = $state("");
   let url = $state("");
   let sha = $state("");
@@ -103,10 +120,18 @@
   }
 
   $effect(() => {
-    Promise.all([api.listBlocks(), name ? api.getImage(name) : Promise.resolve(null)]).then(
-      ([b, i]) => {
+    Promise.all([
+      api.listBlocks(),
+      name ? api.getImage(name) : Promise.resolve(null),
+      name ? api.listTargets() : Promise.resolve([]),
+    ]).then(
+      ([b, i, t]) => {
         allBlocks = b;
         existing = i;
+        // D-251: a Target of this Image with SSH keys blocks a build of it.
+        keyedTargets = t
+          .filter((x) => x.document.spec.image === name && x.document.spec.guest.ssh_keys?.length)
+          .map((x) => x.document.name);
         addChoice = b.find((x) => !hasSecret(x))?.document.name ?? "";
         const s = i?.document.spec;
         const g = s?.build?.guest;
@@ -121,8 +146,9 @@
         if (i && s) {
           imageName = i.document.name;
           title = s.title ?? "";
+          kind = s.type;
           url = s.url;
-          sha = s.sha256;
+          sha = (s.type === "lxc" ? s.sha512 : s.sha256) ?? "";
           build = s.build !== undefined;
           upgrade = s.build?.upgrade ?? true;
           uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
@@ -160,11 +186,23 @@
     if (!editing && !namePattern.test(imageName))
       e["name"] =
         "Use lower-case letters, digits, '-' and '.'; start and end with a letter or digit.";
-    if (!urlPattern.test(url.trim())) e["url"] = "Give an https:// address of the cloud image.";
-    if (!shaPattern.test(sha.trim()))
-      e["sha256"] = "Give the SHA-256 checksum: 64 characters 0-9 and a-f.";
+    if (!urlPattern[kind].test(url.trim()))
+      e["url"] =
+        kind === "lxc"
+          ? "Give the http:// or https:// address of the Proxmox template."
+          : "Give an https:// address of the cloud image.";
+    if (!shaPattern[kind].test(sha.trim()))
+      e[shaKey] =
+        kind === "lxc"
+          ? "Give the SHA-512 checksum: 128 characters 0-9 and a-f."
+          : "Give the SHA-256 checksum: 64 characters 0-9 and a-f.";
     if (!reason.trim()) e["reason"] = "Say why you make this change.";
-    guestErrors = build ? validate(guestFields, guest) : {};
+    guestErrors = build ? validate(kindGuestFields, guest) : {};
+    if (build && kind === "lxc" && !guestErrors["disk"] && Number(guest["disk"]) < MIN_LXC_DISK)
+      guestErrors = {
+        ...guestErrors,
+        disk: `The root file system of a container build needs at least ${MIN_LXC_DISK} GiB.`,
+      };
     if (build) {
       if (!(Number.isInteger(keep) && keep >= 1 && keep <= 20))
         e["keep"] = "Keep 1 to 20 versions.";
@@ -202,9 +240,9 @@
     const old = existing?.document.spec;
     const spec: ImageSpec = {
       ...(title.trim() ? { title: title.trim() } : {}),
-      type: "vm",
+      type: kind,
       url: url.trim(),
-      sha256: sha.trim(),
+      ...(kind === "lxc" ? { sha512: sha.trim() } : { sha256: sha.trim() }),
     };
     if (build) {
       spec.build = {
@@ -214,7 +252,7 @@
           params: mergeParams(u.stored, u.fields, u.values),
         })),
         upgrade,
-        guest: mergeParams(old?.build?.guest ?? {}, guestFields, guest) as NonNullable<
+        guest: mergeParams(old?.build?.guest ?? {}, kindGuestFields, guest) as NonNullable<
           ImageSpec["build"]
         >["guest"],
       };
@@ -233,6 +271,35 @@
     } finally {
       busy = false;
     }
+  }
+
+  const shaKey = $derived(kind === "lxc" ? "sha512" : "sha256");
+  // The schema texts speak of VMs; a container build field gets its own help.
+  const kindGuestFields = $derived(
+    kind === "lxc"
+      ? guestFields.map((f) =>
+          f.name === "disk"
+            ? {
+                ...f,
+                description: `GiB: the root file system of the build container, at least ${MIN_LXC_DISK}. A Target from this image needs at least this size.`,
+              }
+            : f.name === "ip"
+              ? {
+                  ...f,
+                  description: "dhcp or an IPv4 address in CIDR form for the build container.",
+                }
+              : f,
+        )
+      : guestFields,
+  );
+
+  /** The pick list fills url and pin of a known Proxmox template. */
+  function pickKnown(label: string) {
+    known = label;
+    const t = KNOWN_LXC_TEMPLATES.find((x) => x.label === label);
+    if (!t) return;
+    url = t.url;
+    sha = t.sha512;
   }
 
   const desc = (id: string, err: string | undefined, hint = true) =>
@@ -266,44 +333,97 @@
           <label for="i-title">Title (optional)</label>
           <input id="i-title" type="text" bind:value={title} maxlength="100" />
         </div>
-        <div class="field">
-          <span class="label">Type</span>
-          <span>Virtual machine</span>
-        </div>
+        {#if editing}
+          <div class="field">
+            <span class="label">Type</span>
+            <span id="i-type">{KIND_NAME[kind]}</span>
+          </div>
+        {/if}
       </div>
+      {#if !editing}
+        <fieldset class="field plain-set" aria-describedby="i-type-hint">
+          <legend class="label">Type</legend>
+          <label class="check"
+            ><input type="radio" name="i-type" value="vm" bind:group={kind} />
+            {KIND_NAME.vm}</label
+          >
+          <label class="check"
+            ><input type="radio" name="i-type" value="lxc" bind:group={kind} />
+            {KIND_NAME.lxc}</label
+          >
+          <span class="hint" id="i-type-hint"
+            >A Target uses an Image of its own type. The type cannot change later.</span
+          >
+        </fieldset>
+      {/if}
+      {#if kind === "lxc"}
+        <div class="field">
+          <label for="i-known">Known template</label>
+          <select
+            id="i-known"
+            bind:value={known}
+            onchange={(e) => pickKnown(e.currentTarget.value)}
+            aria-describedby="i-known-hint"
+          >
+            <option value="">Choose to fill address and checksum</option>
+            {#each KNOWN_LXC_TEMPLATES as t (t.label)}
+              <option value={t.label}>{t.label}</option>
+            {/each}
+          </select>
+          <span class="hint" id="i-known-hint"
+            >The checksums come from the signed Proxmox appliance index.</span
+          >
+        </div>
+      {/if}
       <div class="field">
         <label for="i-url">Download address<span aria-hidden="true"> *</span></label>
         <input
           id="i-url"
+          oninput={() => (known = "")}
           type="text"
           inputmode="url"
           spellcheck="false"
           bind:value={url}
           required
-          placeholder="https://cloud.debian.org/images/cloud/…qcow2"
+          placeholder={kind === "lxc"
+            ? "http://download.proxmox.com/images/system/…tar.zst"
+            : "https://cloud.debian.org/images/cloud/…qcow2"}
           aria-invalid={!!fieldError("url", "/url")}
           aria-describedby={desc("i-url", fieldError("url", "/url"))}
         />
-        <span class="hint" id="i-url-hint">The official cloud image (qcow2 or img).</span>
+        <span class="hint" id="i-url-hint"
+          >{kind === "lxc"
+            ? "A Proxmox system template. Proxmox serves them over http only: the checksum is the trust, and the controller downloads the file itself."
+            : "The official cloud image (qcow2 or img)."}</span
+        >
         {#if fieldError("url", "/url")}<span class="error" id="i-url-error"
             >{fieldError("url", "/url")}</span
           >{/if}
       </div>
       <div class="field">
-        <label for="i-sha">SHA-256 checksum<span aria-hidden="true"> *</span></label>
+        <label for="i-sha"
+          >{kind === "lxc" ? "SHA-512" : "SHA-256"} checksum<span aria-hidden="true">
+            *</span
+          ></label
+        >
         <input
           id="i-sha"
+          oninput={() => (known = "")}
           type="text"
           class="mono"
           bind:value={sha}
           required
           spellcheck="false"
-          aria-invalid={!!fieldError("sha256", "/sha256")}
-          aria-describedby={desc("i-sha", fieldError("sha256", "/sha256"))}
+          aria-invalid={!!fieldError(shaKey, `/${shaKey}`)}
+          aria-describedby={desc("i-sha", fieldError(shaKey, `/${shaKey}`))}
         />
-        <span class="hint" id="i-sha-hint">Plumb refuses any other file.</span>
-        {#if fieldError("sha256", "/sha256")}<span class="error" id="i-sha-error"
-            >{fieldError("sha256", "/sha256")}</span
+        <span class="hint" id="i-sha-hint"
+          >{kind === "lxc"
+            ? "Copy it from the sha512sum field of the signed Proxmox appliance index, never from the downloaded file. Plumb refuses any other file. Only a person can approve a new address or checksum."
+            : "Plumb refuses any other file."}</span
+        >
+        {#if fieldError(shaKey, `/${shaKey}`)}<span class="error" id="i-sha-error"
+            >{fieldError(shaKey, `/${shaKey}`)}</span
           >{/if}
       </div>
     </fieldset>
@@ -321,11 +441,28 @@
           Build templates from this image
         </label>
         <span class="hint" id="i-build-hint"
-          >Off: a stock image, imported as it is. On: Plumb makes versioned templates with the
-          Blocks below and fresh packages. Only a person can approve a change of the recipe, the
-          schedule or the retention.</span
+          >{#if kind === "lxc"}Off: each create uses the Proxmox template with the agent installer
+            added. On: Plumb makes versioned container templates with the Blocks below and fresh
+            packages.{:else}Off: a stock image, imported as it is. On: Plumb makes versioned
+            templates with the Blocks below and fresh packages.{/if} Only a person can approve a change
+          of the recipe, the schedule or the retention.</span
         >
       </div>
+      {#if build && kind === "lxc"}
+        <p class="banner info" id="i-lxc-keys">
+          A container from a built image gets no SSH keys from Proxmox. Add the keys with the Block <span
+            class="mono">deploy-user</span
+          > on the Target or in this build (D-251).
+        </p>
+        {#if keyedTargets.length}
+          <p class="banner warn" id="i-lxc-keyed-targets">
+            The server refuses this build while Targets of this image have SSH keys: <span
+              class="mono">{keyedTargets.join(", ")}</span
+            >. Remove their keys first (use the Block <span class="mono">deploy-user</span>), then
+            switch on the build.
+          </p>
+        {/if}
+      {/if}
       {#if wasBuilt && !build}
         <p class="banner warn" id="i-unbuild">
           Without a build, the plan removes every built version of this image. Guests made from them
@@ -391,7 +528,7 @@
       </div>
 
       <fieldset>
-        <legend>Build guest</legend>
+        <legend>{kind === "lxc" ? "Build container" : "Build guest"}</legend>
         <div class="field">
           <label class="check">
             <input
@@ -403,12 +540,17 @@
             Upgrade all packages in the build
           </label>
           <span class="hint" id="i-upgrade-hint"
-            >On: every build installs what the package mirror serves at that time. apt checks the
-            signatures. Off: the packages of the base image.</span
+            >{#if kind === "lxc"}On: before the template is made, the build runs
+              <span class="mono">apt-get update</span> and
+              <span class="mono">apt-get dist-upgrade</span> in the container (old configuration files
+              stay), so the template has what the package mirror serves at that time. apt checks the signatures.
+              The build fails when a package is left to upgrade. Off: the packages of the Proxmox template.{:else}On:
+              every build installs what the package mirror serves at that time. apt checks the
+              signatures. Off: the packages of the base image.{/if}</span
           >
         </div>
         <SchemaFields
-          fields={guestFields}
+          fields={kindGuestFields}
           bind:values={guest}
           errors={{
             ...guestErrors,
@@ -435,8 +577,9 @@
               aria-describedby={desc("i-keep", errors["keep"])}
             />
             <span class="hint" id="i-keep-hint"
-              >Newest ready versions that stay (1 … 20). One version takes about 1.4 GB (Debian) or
-              3.3 … 3.9 GB (Ubuntu).</span
+              >Newest ready versions that stay (1 … 20). {kind === "lxc"
+                ? "One version is a full copy of the root file system of the build container."
+                : "One version takes about 1.4 GB (Debian) or 3.3 … 3.9 GB (Ubuntu)."}</span
             >
             {#if errors["keep"]}<span class="error" id="i-keep-error">{errors["keep"]}</span>{/if}
           </div>
@@ -523,8 +666,9 @@
       >
     </div>
     <p class="muted">
-      Nothing changes until you approve the plan. A new or changed recipe builds a new version in
-      the Run of that plan.
+      {kind === "vm"
+        ? "Nothing changes until you approve the plan. A new or changed recipe builds a new version in the Run of that plan."
+        : "Nothing changes until you approve the plan."}
     </p>
   </form>
 {:else if !loadError}
@@ -532,6 +676,21 @@
 {/if}
 
 <style>
+  .plain-set {
+    border: 0;
+    padding: 0;
+    background: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+  }
+  .plain-set legend {
+    padding: 0;
+    margin-bottom: var(--space-1);
+  }
+  .plain-set .hint {
+    flex-basis: 100%;
+  }
   .add {
     margin-bottom: var(--space-4);
   }

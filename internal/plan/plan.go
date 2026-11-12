@@ -164,6 +164,8 @@ type Config struct {
 	// seal 5 min (the apply uses ApplyTimeout).
 	BuildEnrollTimeout time.Duration
 	SealTimeout        time.Duration
+	// ContainerSealTimeout bounds seal of an lxc build (D-252). Default 15 min.
+	ContainerSealTimeout time.Duration
 	// PowerPoll is how often a build lane reads the power state after
 	// seal; default 2 s.
 	PowerPoll time.Duration
@@ -268,6 +270,9 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if cfg.SealTimeout == 0 {
 		cfg.SealTimeout = DefaultSealTimeout
+	}
+	if cfg.ContainerSealTimeout == 0 {
+		cfg.ContainerSealTimeout = DefaultContainerSealTimeout
 	}
 	if cfg.PowerPoll == 0 {
 		cfg.PowerPoll = 2 * time.Second
@@ -520,9 +525,9 @@ type sensitiveCache struct {
 	renders map[string]*state.Rendered
 }
 
-// headRender returns the render of a target in the head revision, or nil
-// when there is no revision or no such target.
-func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered, error) {
+// headCache returns the cache of the head revision, or nil when there is
+// no revision.
+func (e *Engine) headCache(ctx context.Context) (*sensitiveCache, error) {
 	head, err := e.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
@@ -542,6 +547,16 @@ func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered
 		e.mu.Lock()
 		e.cache = c
 		e.mu.Unlock()
+	}
+	return c, nil
+}
+
+// headRender returns the render of a target in the head revision, or nil
+// when there is no revision or no such target.
+func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered, error) {
+	c, err := e.headCache(ctx)
+	if c == nil || err != nil {
+		return nil, err
 	}
 	e.mu.Lock()
 	r, ok := c.renders[target]

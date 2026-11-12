@@ -111,6 +111,11 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 	if u.kind == KindImage {
 		out.Guest.Attrs = withDefaults(withDefaults(t.guest, sch.buildGuestDefaults), sch.guestDefaults)
 	}
+	if out.Kind == wire.KindLXC {
+		// The default bootstrap user is a cloud-init setting; an LXC
+		// Target has none (D-226).
+		delete(out.Guest.Attrs, "user")
+	}
 
 	bud := newBudget(s.limits, total)
 	nonce := newNonce()          // markers of this render only (D-088)

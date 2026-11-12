@@ -5,13 +5,14 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 GO_BUILD     = CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)"
 # Pinned linter. Change the version here only.
 STATICCHECK  = honnef.co/go/tools/cmd/staticcheck@v0.8.2
+GOVULNCHECK  = golang.org/x/vuln/cmd/govulncheck@v1.9.0
 # npm packages can ship Go files. The go command skips web/node_modules
 # through the "ignore" line in go.mod; gofmt needs its own file list.
 GO_FILES     = $(shell find . -name '*.go' -not -path '*/node_modules/*')
 # npm ci runs only when the lock file changed; npm writes this file on every install.
 WEB_DEPS     = web/node_modules/.package-lock.json
 
-.PHONY: build check-embed build-web test test-go test-race test-web test-e2e lint lint-go lint-sh lint-web test-guest test-pve clean
+.PHONY: build check-embed build-web test test-go test-race test-web test-e2e lint lint-go lint-sh lint-web vuln test-guest test-pve clean
 
 ## build: web UI and both static binaries → bin/
 build: build-web
@@ -67,6 +68,10 @@ lint-go:
 	go vet ./...
 	go run $(STATICCHECK) ./...
 	go mod tidy -diff
+
+## vuln: known vulnerabilities in called code (std library and modules; T-038 §6)
+vuln:
+	go run $(GOVULNCHECK) ./...
 
 ## lint-web: OpenAPI check, eslint, prettier --check, svelte-check
 lint-web: $(WEB_DEPS)

@@ -1,0 +1,37 @@
+{
+  "seq": 57,
+  "method": "GET",
+  "path": "/nodes/pve/lxc/9000/status/current",
+  "status": 200,
+  "body": {
+    "data": {
+      "name": "plumb-ct-test",
+      "cpus": 2,
+      "pressurememorysome": "0.00",
+      "netin": 0,
+      "cpu": 0,
+      "maxmem": 805306368,
+      "ha": {
+        "managed": 0
+      },
+      "pressureiosome": "0.00",
+      "diskwrite": 6995968,
+      "uptime": 1,
+      "pressureiofull": "0.00",
+      "netout": 0,
+      "pressurecpufull": "0.00",
+      "type": "lxc",
+      "disk": 598286336,
+      "maxdisk": 4143677440,
+      "status": "running",
+      "swap": 0,
+      "pressurecpusome": "0.00",
+      "vmid": 9000,
+      "maxswap": 536870912,
+      "mem": 26079232,
+      "pressurememoryfull": "0.00",
+      "diskread": 422199296,
+      "pid": 288550
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "seq": 141,
+  "method": "DELETE",
+  "path": "/nodes/pve/lxc/9001",
+  "query": "destroy-unreferenced-disks=1\u0026purge=1",
+  "status": 200,
+  "body": {
+    "data": "UPID:pve:000496B9:006F7AD0:6AF5CEE4:vzdestroy:9001:plumb@pve!plumb:"
+  }
+}
