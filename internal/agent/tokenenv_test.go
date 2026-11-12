@@ -74,6 +74,45 @@ func TestEnvToken(t *testing.T) {
 	}
 }
 
+// Keep the token at the end so a truncated read cannot pass the size check.
+func TestEnvTokenBoundaries(t *testing.T) {
+	const key = "PLUMB_ENROLL_TOKEN"
+	const secret = "qa-private-token"
+	entry := key + "=" + secret
+	for _, tc := range []struct {
+		name, body string
+		wantError  bool
+	}{
+		{"last entry without NUL", "OTHER=private-other\x00" + entry, false},
+		{"empty without NUL", key + "=", true},
+		{"whitespace first duplicate", key + "= \t\n\x00" + entry, true},
+		{"first duplicate without final NUL", entry + "\x00" + key + "=second-private-token", false},
+		{"exact cap without NUL", "X=" + strings.Repeat("x", maxEnviron-len(entry)-3) + "\x00" + entry, false},
+		{"one byte over cap", "X=" + strings.Repeat("x", maxEnviron-len(entry)-2) + "\x00" + entry, true},
+		{"token before oversized tail", entry + "\x00X=" + strings.Repeat("x", maxEnviron), true},
+		{"missing with private values", "OTHER=private-other\x00" + key + "_OLD=" + secret, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := envToken(environFile(t, tc.body), key)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				if got != "" {
+					t.Error("error returned a token")
+				}
+				for _, value := range []string{secret, "private-other", "second-private-token"} {
+					if strings.Contains(err.Error(), value) {
+						t.Error("error contains a private environment value")
+					}
+				}
+			} else if err != nil || got != secret {
+				t.Error("expected the first token without an error")
+			}
+		})
+	}
+}
+
 func TestConfigTokenEnv(t *testing.T) {
 	ca := newCA(t)
 	base := Config{URL: "https://10.0.0.5:8444", CA: ca.pem}
