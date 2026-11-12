@@ -55,4 +55,7 @@ Facts it builds on: the unit is the same in VM and LXC (`Restart=always`, `Resta
 **Needs the wire contract (T-090):** update body and result item id, `Hello.Capabilities`, and (proposal) a `Hello` field "last update reverted (from, to)", so T-092 can show a revert instead of a timeout. The wire agent-path additions above are small; I can do them in this PR.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-backend/T-091-agent-self-update`. Agent: `update` command, guard (`plumb-agent.prev guard` + timer), confirm after hello, Hello `binary_sha256`/`capabilities`/`reverted`, `self-test` and `guard` subcommands, new agent paths/units in `wire`.
+- Tests: `make lint test build` ok; `make test-guest` ok on Debian 13 and Ubuntu 26.04: `TestUpdateInGuest` good (VM and LXC config), no-connect → `.prev` back (≈72 s, 60 s test window), crash loop → `.prev` back (≈37 s), hash mismatch.
+- Doc of the manual step: ARCHITECTURE §5. Decisions D-271 … D-273 in `docs/decisions/T-091.md`.
+- For T-092: `internal/link` must send `update` and accept the `agent:binary` Item; never send `update` to a `build:` link (seal does not remove `.prev`).
