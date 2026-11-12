@@ -168,6 +168,8 @@ func TestCheckStorages(t *testing.T) {
 		"disk without images": {func(f *fakePVE) { set(f, "local-lvm", "content", "rootdir") }, []string{ProblemStorageContent}},
 		"image import,iso":    {func(f *fakePVE) { set(f, "local", "content", "import,iso") }, []string{ProblemStorageContent}},
 		"snippets + vztmpl":   {func(f *fakePVE) { set(f, "plumb-snippets", "content", "snippets,vztmpl") }, []string{ProblemStorageContent}},
+		"image vztmpl only":   {func(f *fakePVE) { set(f, "local", "content", "vztmpl") }, []string{ProblemStorageContent}},
+		"image + vztmpl,iso":  {func(f *fakePVE) { set(f, "local", "content", "import,vztmpl,iso") }, []string{ProblemStorageContent}},
 		"two problems": {func(f *fakePVE) {
 			f.noPool = true
 			set(f, "local", "content", "iso")
@@ -287,6 +289,36 @@ func TestCheckEachStorageFailure(t *testing.T) {
 					t.Errorf("problems = %+v, want %s for %s", p, kind, id)
 				}
 			})
+		}
+	}
+}
+
+// D-229: the image storage has exactly {import} (an install from before
+// D-229: the check passes, LXC Images get the repair-run text) or exactly
+// {import, vztmpl}, compared as sets (pvesm set reorders, host G0).
+func TestCheckImageTemplateContent(t *testing.T) {
+	for content, templates := range map[string]bool{
+		"import":          false,
+		"import,vztmpl":   true,
+		"vztmpl,import":   true,
+		" vztmpl, import": true,
+	} {
+		f := newFakePVE(t)
+		for _, s := range f.storages {
+			if s["storage"] == "local" {
+				s["content"] = content
+			}
+		}
+		d := checkDriver(t, f)
+		if _, err := d.Check(context.Background()); err != nil {
+			t.Fatalf("%q: %v", content, err)
+		}
+		err := d.TemplateContentError()
+		if templates != (err == nil) {
+			t.Errorf("%q: TemplateContentError = %v", content, err)
+		}
+		if err != nil && err.Error() != "local has no content vztmpl: run install.sh again (repair run)" {
+			t.Errorf("%q: text %q", content, err)
 		}
 	}
 }

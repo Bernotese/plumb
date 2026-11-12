@@ -103,6 +103,16 @@ func (d *Driver) Check(ctx context.Context) (string, error) {
 	return version, nil
 }
 
+// TemplateContentError is nil when the start check saw the content
+// "vztmpl" on the image storage (D-229). Otherwise it is the error of an
+// LXC Image create: the install is from before D-229.
+func (d *Driver) TemplateContentError() error {
+	if d.templates {
+		return nil
+	}
+	return fmt.Errorf("%s has no content vztmpl: run install.sh again (repair run)", d.cfg.ImageStorage)
+}
+
 func (d *Driver) checkVersion(ctx context.Context) (string, error) {
 	wait, poll := d.cfg.StartWait, d.cfg.StartPoll
 	if wait == 0 {
@@ -232,7 +242,11 @@ func (d *Driver) checkStorages(ctx context.Context, hp *HostProblems) error {
 		rule string
 	}{
 		{d.cfg.DiskStorage, func(c map[string]bool) bool { return c["images"] && !c["snippets"] }, `"images" and not "snippets"`},
-		{d.cfg.ImageStorage, func(c map[string]bool) bool { return len(c) == 1 && c["import"] }, `exactly "import"`},
+		// {import} is an install from before D-229 (a warning, VM Images
+		// work); {import, vztmpl} holds LXC templates too.
+		{d.cfg.ImageStorage, func(c map[string]bool) bool {
+			return c["import"] && (len(c) == 1 || (len(c) == 2 && c["vztmpl"]))
+		}, `exactly "import" or exactly "import,vztmpl"`},
 		{d.cfg.SnippetStorage, func(c map[string]bool) bool { return len(c) == 1 && c["snippets"] }, `exactly "snippets"`},
 	}
 	for _, w := range want {
@@ -254,6 +268,8 @@ func (d *Driver) checkStorages(ctx context.Context, hp *HostProblems) error {
 			}
 			if !w.ok(set) {
 				hp.Problems = append(hp.Problems, HostProblem{Kind: ProblemStorageContent, ID: w.id, Content: s.Content, Rule: w.rule})
+			} else if w.id == d.cfg.ImageStorage {
+				d.templates = set["vztmpl"]
 			}
 			break
 		}

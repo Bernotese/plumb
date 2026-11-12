@@ -264,5 +264,9 @@ func proxmoxDriver(ctx context.Context, getenv func(string) string, log *slog.Lo
 	}
 	log.Info("Proxmox host checked", "url", c.URL(), "node", pc.Node, "version", version, "pool", pc.Pool,
 		"vmid_range", fmt.Sprintf("%d-%d", pc.VMIDMin, pc.VMIDMax))
+	if err := d.TemplateContentError(); err != nil {
+		// An install from before D-229: VM Targets work, LXC Images do not.
+		log.Warn("Proxmox image storage without LXC templates", "storage", pc.ImageStorage, "err", err)
+	}
 	return d, nil
 }

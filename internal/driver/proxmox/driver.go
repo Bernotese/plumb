@@ -27,7 +27,8 @@ type Config struct {
 	Pool   string // the pool of every Plumb guest and template (D-032)
 	// DiskStorage holds the VM disks and the cloud-init drives.
 	DiskStorage string
-	// ImageStorage holds downloaded images (content type "import").
+	// ImageStorage holds downloaded images (content "import") and LXC
+	// templates (content "vztmpl", D-229).
 	ImageStorage string
 	// SnippetStorage and Snippet name the static vendor snippet that the
 	// installer wrote (D-025). The driver never writes it.
@@ -73,6 +74,10 @@ type Driver struct {
 	// parallel calls until one of them made its VM.
 	idMu     sync.Mutex
 	reserved map[int]bool
+
+	// templates: the start check saw the content "vztmpl" on the image
+	// storage (D-229). Check sets it once, before serve uses the driver.
+	templates bool
 }
 
 // imageLock returns the lock of one template name.
