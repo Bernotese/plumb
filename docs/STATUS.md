@@ -11,7 +11,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 ## Tasks
 | Card | Owner | State |
 |---|---|---|
-| T-038 LXC targets (slice 2 part B, second) | pl-architect plans | plan draft on branch pl-architect/T-038-plan (D-224 … D-231 proposed, child cards T-075 … T-083). **All host facts are in** (log on the plan branch): the token can create, clone and delete containers with nesting and `env` (the key risk is answered: yes); it cannot delete a template file; the controller's start-up check refuses `vztmpl` on `plumb-images` today (plan must cover it). Next: final plan, review, the user's approval (4 questions) |
+| T-038 LXC targets (slice 2 part B, second) | pl-architect planned | **plan reviewed and on main** (PR #152; D-224 … D-231, D-233 … D-237 proposed; child cards T-075 … T-083; host log `docs/tasks/T-038.log.md`). **Waits for the user's approval**: 4 questions. No new token right; containers are unprivileged with nesting=1; template trust = pinned SHA-512 from the signed Proxmox index; upgrade by the installer's repair run |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
@@ -77,6 +77,6 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Nothing now.
-- Known limit (D-192, D-220, D-223): a STOCK Ubuntu 26.04 image used directly: a guest with a static address sometimes stays on DHCP until its first restart. An Ubuntu version built by Plumb (image builds) does not have the limit. The `guest:address` Issue shows the fault.
-- Note 2026-11-11: the dev VM and the test host crashed and came back; pl-lead checked: repo, worktrees and host are clean (no half-made VM, controller active).
+- T-038 plan approval (LXC Targets), 4 questions (recommendation in brackets): template trust (the Image pins the SHA-512 of the signed Proxmox list); the user in a container (SSH keys to root, a named user by the deploy-user Block); LXC image builds (yes, last card); template files that the token cannot delete (keep it so, Plumb shows the command).
+- Optional, no hurry: grant `Sys.Audit` so Plumb can read the thin-pool metadata use (recommendation: no; the Plan says "unknown").
+- Known limit (D-192, D-220, D-223): a STOCK Ubuntu 26.04 image used directly can stay on DHCP until its first restart; an Ubuntu version built by Plumb does not have the limit.
