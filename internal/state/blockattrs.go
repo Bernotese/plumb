@@ -17,8 +17,9 @@ import (
 //   - every attribute must be a property of the schema of its type;
 //   - every attribute value must match the schema of that property;
 //   - a string that holds a template action ("{{") renders to a string
-//     whose content is unknown now: only a "type" error is kept for it
-//     (a template never renders to an integer, a boolean or a list);
+//     whose content is unknown now: "type" and "not" errors are kept for it
+//     (a template never renders to an integer, a boolean or a list,
+//     and literal text must still pass deny rules);
 //   - rules over the whole object (required, if/then/else) depend on
 //     parameters and defaults, so render checks them.
 //
@@ -55,7 +56,7 @@ func (s *Set) CheckBlockAttrs(names []string) Errors {
 					continue
 				}
 				for _, e := range schemaErrors(KindBlock, name, path, err) {
-					if templated(v, strings.TrimPrefix(e.Path, path)) && !typeError(err, strings.TrimPrefix(e.Path, path)) {
+					if templated(v, strings.TrimPrefix(e.Path, path)) && !templateStaticError(err, strings.TrimPrefix(e.Path, path)) {
 						continue
 					}
 					errs = append(errs, e)
@@ -110,8 +111,8 @@ func at(v any, loc string) (any, bool) {
 	return v, true
 }
 
-// typeError reports whether a leaf error at loc is of kind "type".
-func typeError(err error, loc string) bool {
+// templateStaticError reports whether a leaf error at loc is "type" or "not".
+func templateStaticError(err error, loc string) bool {
 	var ve *jsonschema.ValidationError
 	if !errors.As(err, &ve) {
 		return false
@@ -120,8 +121,11 @@ func typeError(err error, loc string) bool {
 	var walk func(e *jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
 		if len(e.Causes) == 0 {
-			if _, isType := e.ErrorKind.(*kind.Type); isType && instancePath(e.InstanceLocation) == loc {
-				found = true
+			if instancePath(e.InstanceLocation) == loc {
+				switch e.ErrorKind.(type) {
+				case *kind.Type, *kind.Not:
+					found = true
+				}
 			}
 			return
 		}

@@ -27,6 +27,9 @@ func TestCheckBlockAttrs(t *testing.T) {
 			[]string{"/spec/resources/0/service/enabled: got string, want boolean"}},
 		{"bad item after a template", `{"params":{"type":"object","properties":{"p":{"type":"string"}}},"resources":[{"service":{"name":"a","restart_on":["{{ .p }}","not-an-id"]}}]}`,
 			[]string{"/spec/resources/0/service/restart_on/1: "}},
+		// Deny rules still reject literal text beside a template action.
+		{"template with forbidden path", `{"params":{"type":"object","properties":{"p":{"type":"string"}}},"resources":[{"file":{"path":"/../{{ .p }}"}}]}`,
+			[]string{"/spec/resources/0/file/path: "}},
 		// Rules over the whole object depend on parameters: render checks them.
 		{"required is for render", `{"resources":[{"symlink":{"path":"/etc/x"}}]}`, nil},
 	}
