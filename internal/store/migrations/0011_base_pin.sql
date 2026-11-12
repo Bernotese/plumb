@@ -11,7 +11,8 @@ CREATE TABLE image_version_new (
     run_id        INTEGER NOT NULL REFERENCES run (id),
     revision_id   INTEGER NOT NULL REFERENCES revision (id),  -- the pinned head of the Run
     recipe_sha256 TEXT NOT NULL CHECK (length(recipe_sha256) = 64),
-    base_sha256   TEXT NOT NULL CHECK (length(base_sha256) IN (64, 128)),  -- vm: SHA-256, lxc: SHA-512 pin
+    -- vm: SHA-256, lxc: SHA-512 pin; lower-case hex only (QA of #174)
+    base_sha256   TEXT NOT NULL CHECK (length(base_sha256) IN (64, 128) AND base_sha256 NOT GLOB '*[^0-9a-f]*'),
     digest        TEXT NOT NULL CHECK (length(digest) = 64),  -- build=<digest> in the template description
     disk_gb       INTEGER NOT NULL CHECK (disk_gb >= 1),
     started_at    TEXT NOT NULL,
