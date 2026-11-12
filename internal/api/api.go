@@ -191,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	route("GET /api/v1/targets", read, s.listDocs("Target"))
 	route("GET /api/v1/targets/{name}", read, s.getDoc("Target"))
 	route("POST /api/v1/targets/{name}/reenroll", planTier, s.reenroll)
+	route("POST /api/v1/targets/{name}/agent-update", planTier, s.agentUpdate)
 
 	route("GET /api/v1/plans", read, s.listPlans)
 	route("POST /api/v1/plans", planTier, s.createPlan)
@@ -381,6 +382,7 @@ type problemBody struct {
 	Targets []string `json:"targets,omitempty"`
 	Plans   []int64  `json:"plans,omitempty"`
 	Secrets []string `json:"secrets,omitempty"` // missing secrets of a 422
+	Missing []string `json:"missing,omitempty"` // agent-outdated (D-268)
 }
 
 func writeProblem(w http.ResponseWriter, p problemBody) {

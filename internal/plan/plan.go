@@ -178,6 +178,12 @@ type Config struct {
 	// DiskLimitPercent is the limit of the disk gate for creates and
 	// builds (D-219); default DefaultDiskLimitPercent.
 	DiskLimitPercent int
+	// UpdateHelloWait bounds the wait of an update step for the hello of
+	// the new binary; default wire.UpdateHelloSeconds (D-258).
+	UpdateHelloWait time.Duration
+	// Agent is the agent that this controller serves (T-092). A zero
+	// SHA256: no agent binary in this build; no update is proposed.
+	Agent AgentBuild
 }
 
 // Engine runs the change flow.
@@ -212,6 +218,8 @@ type Engine struct {
 	removing map[imageKey]bool
 	// scheduled builds (T-063): they run one after the other.
 	schedPlans map[int64]bool // Plans of scheduled builds that run now
+	// helloWait: update steps that wait for a hello (T-092).
+	helloWait map[string][]chan agentHello
 }
 
 // Disk is the disk gate of the engine. Image builds (T-062) reserve their
@@ -282,6 +290,9 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.UpdateHelloWait <= 0 {
+		cfg.UpdateHelloWait = wire.UpdateHelloSeconds * time.Second
 	}
 	if cfg.AddrStable <= 0 {
 		cfg.AddrStable = AddrStable
@@ -407,11 +418,17 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		// A Run that works on the target sends the watch list when it is
 		// done; a watch before the first apply would report every resource
 		// of a new guest as drift.
+		bound, err := e.bound(ctx, d.Target)
+		if err == nil && bound {
+			// The capabilities are stored before the hello counts: a Run
+			// that waits for the hello checks its gate with them (D-276).
+			err = e.recordHello(ctx, d)
+		}
 		e.mu.Lock()
 		e.hello[d.Target]++
 		busy := e.busy[d.Target] > 0
 		e.mu.Unlock()
-		if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
+		if err != nil || !bound {
 			return err // no guest: no watch list, so no secret value, and no address list (D-211, D-214)
 		}
 		if err := e.storeAddrs(ctx, d); err != nil {
@@ -507,7 +524,7 @@ func (e *Engine) sendWatch(ctx context.Context, target string) error {
 // values. When a secret is missing it sends nothing: a marker or an empty
 // value never reaches a guest (D-089).
 func (e *Engine) watch(ctx context.Context, target string, r *state.Rendered) error {
-	body, _, err := e.withSecrets(ctx, r.Resources, nil)
+	body, _, err := e.withSecrets(ctx, e.watchable(ctx, target, r.Resources), nil)
 	if err != nil {
 		return fmt.Errorf("plan: watch list of %s not sent: %w", target, err)
 	}

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/agent"
 	"github.com/Bernotese/plumb/internal/api"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
@@ -37,6 +40,18 @@ func agentBinary() []byte {
 		return nil
 	}
 	return b
+}
+
+// servedAgent describes the agent binary that the link serves (T-092):
+// its SHA-256, the version of this build (make builds both with one
+// version) and the capabilities of the agent code of this build.
+func servedAgent() plan.AgentBuild {
+	b := agentBinary()
+	if b == nil {
+		return plan.AgentBuild{}
+	}
+	sum := sha256.Sum256(b)
+	return plan.AgentBuild{SHA256: hex.EncodeToString(sum[:]), Version: version, Capabilities: agent.Capabilities()}
 }
 
 // devTargets are the simulated guests of --dev.
@@ -236,6 +251,10 @@ func (d *devAgents) start(ctx context.Context, target, ref string) {
 	} else if st, err := d.drv.Observe(ctx, driver.GuestID(ref)); err == nil {
 		a.SetAddrs(append([]string{}, st.IPs...))
 	}
+	// A simulated agent is the agent of this build (T-092): no update
+	// proposal, and the gate passes.
+	served := servedAgent()
+	a.SetHello(wire.Hello{BinarySHA256: served.SHA256, Capabilities: &served.Capabilities})
 	actx, cancel := context.WithCancel(ctx)
 	d.agents[target] = &devAgent{ref: ref, a: a, cancel: cancel}
 	d.wg.Add(1)
