@@ -56,10 +56,20 @@ export function agentState(status: Status): AgentState | undefined {
   return u ? STATES[u] : undefined;
 }
 
-export const REVERT_REASON: Record<"crash-loop" | "no-hello", string> = {
+const REVERT_REASON: Record<string, string> = {
   "crash-loop": "the new binary did not stay up",
   "no-hello": "the new binary had no successful hello within 5 minutes",
 };
+
+/** Why the guest went back to the old binary; an unknown reason stays as sent. */
+export function revertReason(reason: string): string {
+  return Object.hasOwn(REVERT_REASON, reason) ? (REVERT_REASON[reason] as string) : reason;
+}
+
+/** A server sentence with an upper-case start ("update the agent first" → "Update …"). */
+export function sentence(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 /** What a missing capability means: "unit" is a resource type, "file.acl" an attribute. */
 export function missingText(m: string): string {
@@ -79,7 +89,7 @@ export function outdatedOf(err: unknown): Outdated | undefined {
   const p = err.problem;
   if (!p.type.endsWith(":agent-outdated")) return undefined;
   return {
-    detail: p.detail ?? "Update the agent first.",
+    detail: sentence(p.detail ?? "update the agent first."),
     targets: p.targets ?? [],
     missing: p.missing ?? [],
   };

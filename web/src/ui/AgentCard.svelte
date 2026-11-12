@@ -2,7 +2,7 @@
   // The agent of a Target (T-097): version, update state, what it lacks, a
   // revert, and "Propose agent update", which opens the Plan (D-257: no
   // silent action; the update runs only after an approval).
-  import { agentState, missingText, REVERT_REASON } from "../lib/agent";
+  import { agentState, missingText, revertReason } from "../lib/agent";
   import { ApiError } from "../lib/api";
   import type { PlumbApi } from "../lib/client";
   import { go } from "../lib/router";
@@ -80,9 +80,9 @@
   {#if st.agent_reverted}
     {@const r = st.agent_reverted}
     <p class="warn" id="agent-reverted">
-      The last update to <span class="mono">{r.to}</span> failed in the guest ({REVERT_REASON[
-        r.reason
-      ]}). The agent went back to <span class="mono">{r.from}</span> at {formatTime(r.at)}.
+      The last update to <span class="mono">{r.to}</span> failed in the guest ({revertReason(
+        r.reason,
+      )}). The agent went back to <span class="mono">{r.from}</span> at {formatTime(r.at)}.
     </p>
   {/if}
   {#if agent?.canUpdate}

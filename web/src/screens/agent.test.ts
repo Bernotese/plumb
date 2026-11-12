@@ -68,7 +68,8 @@ describe("agent on the Target page", () => {
     // Any change of this Target is refused until the agent is updated.
     type("#t-reason", "Try a change.");
     el<HTMLFormElement>("form").requestSubmit();
-    await until(() => text().includes("update the agent first"));
+    await until(() => text().includes("Update the agent first"));
+    expect(text()).toContain("Agent too old. Update the agent first");
     const alert = el('[role="alert"]');
     expect(alert.textContent).toContain("The agent lacks: resource type unit.");
     const link = [...alert.querySelectorAll("a")].find(
@@ -106,5 +107,12 @@ describe("agent page", () => {
       from: "v0.3.0",
       to: MOCK_AGENT_VERSION,
     });
+  });
+
+  it("keeps a page title to focus when the Target does not exist", async () => {
+    show(TargetAgent, { api: adminApi(), name: "nope" });
+    await until(() => document.querySelector('[role="alert"]'));
+    expect(el("#page-title").textContent).toContain("Agent of nope");
+    expect(document.querySelectorAll("#page-title")).toHaveLength(1);
   });
 });

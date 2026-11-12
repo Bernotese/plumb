@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentState, missingText, outdatedOf } from "./agent";
+import { agentState, missingText, outdatedOf, revertReason, sentence } from "./agent";
 import { ApiError } from "./api";
 import type { TargetView } from "./types";
 
@@ -39,7 +39,8 @@ describe("agent helpers", () => {
       targets: ["web1"],
       missing: ["unit"],
     });
-    expect(outdatedOf(err)).toEqual({
+    expect(outdatedOf(err)?.detail).toBe("Update the agent first");
+    expect({ ...outdatedOf(err), detail: "update the agent first" }).toEqual({
       detail: "update the agent first",
       targets: ["web1"],
       missing: ["unit"],
@@ -48,5 +49,13 @@ describe("agent helpers", () => {
       outdatedOf(new ApiError({ type: "urn:plumb:problem:plan-stale", title: "x", status: 409 })),
     ).toBeUndefined();
     expect(outdatedOf(new Error("x"))).toBeUndefined();
+  });
+
+  it("keeps an unknown revert reason and capitalizes server sentences", () => {
+    expect(revertReason("no-hello")).toContain("no successful hello");
+    expect(revertReason("disk-full")).toBe("disk-full");
+    expect(revertReason("toString")).toBe("toString");
+    expect(sentence("update the agent first")).toBe("Update the agent first");
+    expect(sentence("")).toBe("");
   });
 });

@@ -28,7 +28,7 @@
   <div class="banner danger" role="alert">
     {#if p}
       <strong>{p.title}.</strong>
-      {#if p.detail}{p.detail}{/if}
+      {#if outdated}{outdated.detail}{:else if p.detail}{p.detail}{/if}
       {#if outdated}
         {#if outdated.missing.length}
           <p class="list">

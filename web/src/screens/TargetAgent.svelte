@@ -26,10 +26,12 @@
 </script>
 
 <p class="back"><a href={href({ name: "target-edit", target: name })}>← Target {name}</a></p>
-<ProblemBox {error} />
 {#if target}
+  <ProblemBox {error} />
   <AgentCard {api} {target} headingLevel={1} />
-{:else if !error}
+{:else}
+  <!-- The page title is the focus target of a route change, also on a load error. -->
   <h1 id="page-title" tabindex="-1">Agent of <span class="mono">{name}</span></h1>
-  <p class="muted" aria-live="polite">Loading…</p>
+  <ProblemBox {error} />
+  {#if !error}<p class="muted" aria-live="polite">Loading…</p>{/if}
 {/if}
