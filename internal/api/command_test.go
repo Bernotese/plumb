@@ -2,9 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
@@ -50,6 +54,13 @@ func TestCommandOnlyHumanApproves(t *testing.T) {
 		if risk != "destructive" {
 			t.Fatalf("%s: plan risk %s, want destructive", tc.name, risk)
 		}
+		if _, err := e.eng.Approve(e.ctx, id, plan.PrincipalSystem, plan.SystemCheck); !errors.Is(err, plan.ErrNotSystemPlan) {
+			t.Fatalf("%s: system approval: %v", tc.name, err)
+		}
+		p, err := e.st.GetPlan(e.ctx, id)
+		if err != nil || p.Status != store.PlanPending {
+			t.Fatalf("refused approval changed Plan: %+v, %v", p, err)
+		}
 		code, b := dis.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", map[string]string{"comment": "ok"})
 		if code != 403 || problemType(b) != "risk-too-high" {
 			t.Errorf("%s: token approves a command: %d %s", tc.name, code, b)
@@ -61,4 +72,22 @@ func TestCommandOnlyHumanApproves(t *testing.T) {
 			e.eng.Wait()
 		}
 	}
+}
+
+// Exercise proposal validation against the saved head, including Block-only edits.
+func TestCommandImageProposalRefusals(t *testing.T) {
+	e := newEnv(t, false, withBuilds)
+	adm := e.admin()
+	docs := builtImageDoc("web", "hi")
+	command := doc(state.KindBlock, "banner", `{"resources":[{"command":{"name":"init","argv":["/bin/true"],"creates":"/done"}}]}`)
+	assertRefused := func(put []state.Doc) {
+		t.Helper()
+		code, b := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "command in image", "put": put})
+		if code != 422 || !strings.Contains(string(b), "cannot hold a command") {
+			t.Fatalf("Image command proposal: %d %s", code, b)
+		}
+	}
+	assertRefused([]state.Doc{command, docs[1]})
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "safe image", "put": docs})
+	assertRefused([]state.Doc{command})
 }

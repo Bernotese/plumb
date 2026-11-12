@@ -49,3 +49,28 @@ func TestPlanRisk(t *testing.T) {
 		t.Errorf("file: %s", got)
 	}
 }
+
+// RenderImage is also the build-start boundary. Bypass save validation to
+// prove rendering checks the current Blocks independently.
+func TestCommandRefusedWhenRenderingImage(t *testing.T) {
+	image := builtImage(t, func(s map[string]any) {
+		s["build"].(map[string]any)["blocks"] = []any{map[string]any{"use": "app"}}
+	})
+	set, err := Validate([]Doc{image, doc(KindBlock, "app", `{"resources":[{"file":{"path":"/etc/app","content":"x"}}]}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set.RenderImage("web"); err != nil {
+		t.Fatal(err)
+	}
+	commands, err := Validate([]Doc{doc(KindBlock, "app", cmdBlock)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.blocks["app"] = commands.blocks["app"]
+	rendered, err := set.RenderImage("web")
+	errAt(t, err, KindImage, "/spec/build/blocks", "cannot hold a command")
+	if rendered != nil {
+		t.Fatal("unsafe build recipe returned")
+	}
+}
