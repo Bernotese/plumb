@@ -400,9 +400,12 @@ func TestAuditACLRepairAndRemove(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.state, "role.PlumbAudit")); !os.IsNotExist(err) {
 		t.Errorf("audit role remains: %v", err)
 	}
-	got, err = os.ReadFile(acl)
-	if err != nil || strings.Contains(string(got), "PlumbAudit") {
-		t.Errorf("audit ACLs remain: %q, %v", got, err)
+	// The fake does not cascade ACL deletion when principals are removed.
+	calls := "\n" + strings.Join(h.changed(), "\n") + "\n"
+	for _, want := range []string{"pveum user token remove plumb@pve plumb", "pveum user delete plumb@pve", "pveum role delete PlumbAudit"} {
+		if !strings.Contains(calls, "\n"+want+"\n") {
+			t.Errorf("remove did not call %q", want)
+		}
 	}
 }
 
