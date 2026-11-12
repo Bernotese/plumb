@@ -2581,9 +2581,11 @@ components:
         last_seen: { $ref: "#/components/schemas/NullableTime" }
         agent_version:
           type: [string, "null"]
+          maxLength: 64
           description: |
             Version of the agent from its last hello, also when it is offline now. `null` before
-            the first hello. Missing on an older controller.
+            the first hello. Missing on an older controller. Guest text: the controller keeps at
+            most 64 bytes of printable ASCII.
           examples: ["v0.4.0"]
         agent_update:
           type: string
@@ -2669,11 +2671,13 @@ components:
     AgentRevert:
       type: object
       additionalProperties: false
-      description: An agent update that the guest rolled back (D-258). Reported by the guest; display only.
+      description: |
+        An agent update that the guest rolled back (D-258). Reported by the guest and checked by
+        the controller before it is stored (ARCHITECTURE §14); display only.
       required: [from, to, reason, at]
       properties:
-        from: { type: string, description: "Version that runs again." }
-        to: { type: string, description: "Version that failed." }
+        from: { type: string, maxLength: 64, description: "Version that runs again." }
+        to: { type: string, maxLength: 64, description: "Version that failed." }
         reason:
           type: string
           enum: [crash-loop, no-hello]
