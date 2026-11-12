@@ -171,7 +171,9 @@ func AgentConflicts(rs []Resource) []AgentConflict {
 	}
 	var out []AgentConflict
 	for _, r := range rs {
-		if r.Type == "service" {
+		// A service or a unit file (T-093) of an agent unit: it could stop,
+		// mask or replace the agent or its update guard (review of #190).
+		if r.Type == "service" || r.Type == "unit" {
 			if n, _ := r.Attrs["name"].(string); isAgentUnit(n) {
 				out = append(out, AgentConflict{ID: r.ID, Attr: "name", Value: n})
 			}

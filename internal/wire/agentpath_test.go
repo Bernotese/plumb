@@ -62,6 +62,9 @@ func TestAgentConflicts(t *testing.T) {
 	service := func(n string) Resource {
 		return Resource{ID: "service:" + n, Type: "service", Attrs: map[string]any{"name": n}}
 	}
+	unit := func(n string) Resource {
+		return Resource{ID: "unit:" + n, Type: "unit", Attrs: map[string]any{"name": n}}
+	}
 	tests := []struct {
 		name string
 		rs   []Resource
@@ -75,6 +78,12 @@ func TestAgentConflicts(t *testing.T) {
 		{"service", []Resource{service("plumb-agent")}, "service:plumb-agent"},
 		{"service with suffix", []Resource{service("plumb-agent.service")}, "service:plumb-agent.service"},
 		{"harmless", []Resource{service("nginx"), link("/opt/x", "/var/lib"), file("/opt/x/nginx/a")}, ""},
+		// Review of #190: a unit file or a service of the update guard.
+		{"guard timer unit", []Resource{unit("plumb-agent-guard.timer")}, "unit:plumb-agent-guard.timer"},
+		{"guard service unit", []Resource{unit("plumb-agent-guard.service")}, "unit:plumb-agent-guard.service"},
+		{"agent unit file", []Resource{unit("plumb-agent.service")}, "unit:plumb-agent.service"},
+		{"guard service", []Resource{service("plumb-agent-guard")}, "service:plumb-agent-guard"},
+		{"harmless unit", []Resource{unit("backup.timer")}, ""},
 	}
 	for _, tt := range tests {
 		got := AgentConflicts(tt.rs)

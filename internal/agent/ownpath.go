@@ -24,7 +24,7 @@ import (
 // credential through the resource types, not a sandbox: a Block runs as
 // root in the guest.
 func (a *Agent) ownPathRefusal(r wire.Resource) string {
-	if r.Type == "service" {
+	if r.Type == "service" || r.Type == "unit" {
 		// wire knows every unit of the agent: also the update guard (D-271).
 		if len(wire.AgentConflicts([]wire.Resource{r})) > 0 {
 			return "the agent does not manage its own unit"
