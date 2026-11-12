@@ -229,6 +229,9 @@ func TestRights(t *testing.T) {
 		t.Errorf("Sys.Audit granted on another path than /:\n%s", o)
 	}
 	if !strings.Contains(rights, "Sys.Audit on / is not inherited (propagate 0)") ||
+		!strings.Contains(rights, "the task list of all users") ||
+		!strings.Contains(rights, "use metrics (CPU, memory, disk, network, uptime, with history) of every guest") ||
+		!strings.Contains(rights, "names and volumes of the guests in backup jobs") ||
 		!strings.Contains(rights, "no Sys.Audit on /nodes or any other path") {
 		t.Errorf("the rights text does not say what Sys.Audit on / is:\n%s", rights)
 	}
@@ -303,8 +306,11 @@ func TestRepairAddsSysAudit(t *testing.T) {
 		}
 	}
 
-	// An inherited ACL on / is set back to propagate 0.
-	os.WriteFile(acl, []byte(strings.Replace(string(now), "/ plumb@pve PlumbAudit user 0", "/ plumb@pve PlumbAudit user 1", 1)), 0o644)
+	// An inherited ACL on / is set back to propagate 0, for user and token
+	// (the token's rights are what counts).
+	flipped := strings.Replace(string(now), "/ plumb@pve PlumbAudit user 0", "/ plumb@pve PlumbAudit user 1", 1)
+	flipped = strings.Replace(flipped, "/ plumb@pve!plumb PlumbAudit token 0", "/ plumb@pve!plumb PlumbAudit token 1", 1)
+	os.WriteFile(acl, []byte(flipped), 0o644)
 	h.resetCalls()
 	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
 		t.Fatalf("repair 2: %d %s %s", code, out, errOut)
@@ -315,12 +321,15 @@ func TestRepairAddsSysAudit(t *testing.T) {
 			acls = append(acls, c)
 		}
 	}
-	if len(acls) != 1 || acls[0] != "pveum acl modify / --users plumb@pve --roles PlumbAudit --propagate 0" {
-		t.Errorf("repair of the inherited ACL: %v", acls)
+	if strings.Join(acls, "\n") != "pveum acl modify / --users plumb@pve --roles PlumbAudit --propagate 0\n"+
+		"pveum acl modify / --tokens plumb@pve!plumb --roles PlumbAudit --propagate 0" {
+		t.Errorf("repair of the inherited ACLs: %v", acls)
 	}
 	now, _ = os.ReadFile(acl)
-	if !strings.Contains(string(now), "/ plumb@pve PlumbAudit user 0\n") {
-		t.Errorf("ACL on / still inherited:\n%s", now)
+	for _, w := range []string{"/ plumb@pve PlumbAudit user 0\n", "/ plumb@pve!plumb PlumbAudit token 0\n"} {
+		if !strings.Contains(string(now), w) {
+			t.Errorf("ACL %q still inherited:\n%s", w, now)
+		}
 	}
 }
 
