@@ -76,7 +76,10 @@ type recording struct {
 
 func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	var form []byte
-	if req.Body != nil {
+	if strings.HasPrefix(req.Header.Get("Content-Type"), "multipart/") {
+		// A template upload: hundreds of MB, file bytes only (T-079).
+		form = []byte(fmt.Sprintf("<multipart upload, %d bytes>", req.ContentLength))
+	} else if req.Body != nil {
 		form, _ = io.ReadAll(req.Body)
 		// Keep the length: a body without it goes out chunked, and
 		// pveproxy answers 501 "chunked transfer encoding not supported".

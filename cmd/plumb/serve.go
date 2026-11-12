@@ -24,6 +24,7 @@ import (
 	"github.com/Bernotese/plumb/internal/api"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
+	"github.com/Bernotese/plumb/internal/driver/proxmox"
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/link"
@@ -235,6 +236,14 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	})
 	if err != nil {
 		return err
+	}
+	if pd, ok := drv.(*proxmox.Driver); ok {
+		// Container templates carry the link CA and the agent URL that
+		// the vendor snippet of VMs names too: the first --hosts entry
+		// and the agent port (install.sh, D-082, D-230).
+		if err := pd.SetCTSource(proxmox.CTSource{TempDir: filepath.Join(f.data, "tmp"), CA: lk.CA().CertPEM, AgentURL: agentURL(f.hosts, f.agentListen)}); err != nil {
+			log.Warn("LXC Images are off", "err", err)
+		}
 	}
 	eng, err = plan.New(plan.Config{
 		Store: st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
@@ -469,4 +478,18 @@ func randomToken() string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// agentURL is the URL that a guest uses for the agent link: the first
+// host name of the certificates and the port of the agent listener.
+func agentURL(hosts []string, listen string) string {
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil || port == "" {
+		port = "8444"
+	}
+	host := "localhost"
+	if len(hosts) > 0 {
+		host = hosts[0]
+	}
+	return "https://" + net.JoinHostPort(host, port)
 }

@@ -7,7 +7,10 @@ package proxmox
 // mount points with a host path, devices or unprivileged=0 (H10).
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -239,4 +242,59 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 	default:
 		fail(w, 501, "Method '"+key+"' not implemented", nil)
 	}
+}
+
+// upload is the multipart upload of a template (host B1): the field order
+// of the web UI, a Content-Length, the SHA-256 checked by the task, and
+// .tar.gz/.tar.zst/.tar.xz/.tar names only (B2).
+func (f *fakePVE) upload(w http.ResponseWriter, r *http.Request, key, storage string) {
+	if r.ContentLength < 0 || len(r.TransferEncoding) > 0 {
+		fail(w, 501, "chunked transfer encoding not supported", nil)
+		return
+	}
+	mr, err := r.MultipartReader()
+	if err != nil {
+		fail(w, 400, "bad multipart", nil)
+		return
+	}
+	fields := map[string]string{}
+	var order []string
+	var data []byte
+	var name string
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fail(w, 400, "bad multipart", nil)
+			return
+		}
+		order = append(order, p.FormName())
+		b, _ := io.ReadAll(p)
+		if p.FileName() != "" {
+			data, name = b, p.FileName()
+		} else {
+			fields[p.FormName()] = string(b)
+		}
+	}
+	f.uploadOrder = order
+	if strings.Join(order, ",") != "content,checksum-algorithm,checksum,filename" {
+		fail(w, 400, "", nil) // pveproxy: an empty body, the reason only in its journal
+		return
+	}
+	if fields["content"] != "vztmpl" || !regexp.MustCompile(`\.tar(\.(gz|zst|xz))?$`).MatchString(name) {
+		fail(w, 400, "Parameter verification failed.", map[string]string{"filename": "wrong file extension"})
+		return
+	}
+	upid := f.task(key)
+	sum := sha256.Sum256(data)
+	if fields["checksum-algorithm"] != "sha256" || fields["checksum"] != hex.EncodeToString(sum[:]) {
+		f.tasks[upid].exit = "checksum mismatch"
+	}
+	if f.tasks[upid].exit == "OK" {
+		f.files[storage+":vztmpl/"+name] = true
+		f.uploads[name] = data
+	}
+	reply(w, 200, upid)
 }
