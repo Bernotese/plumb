@@ -15,7 +15,7 @@ import (
 // ownPathRefusal returns why the agent refuses a resource, or "" (D-207,
 // reviews S1 of T-039 and T-059). A resource may not write, link or remove
 // a path of the agent itself (wire.IsAgentPath, the configured state dir)
-// and a service resource may not touch the agent's unit. The save check
+// and a service or unit resource may not touch the agent's units. The save check
 // (wire.AgentConflicts) knows only the links of the same resource list, so
 // the agent resolves every symbolic link that exists in the guest and
 // checks the real path too.
@@ -24,8 +24,8 @@ import (
 // credential through the resource types, not a sandbox: a Block runs as
 // root in the guest.
 func (a *Agent) ownPathRefusal(r wire.Resource) string {
-	if r.Type == "service" {
-		if n, _ := r.Attrs["name"].(string); n == "plumb-agent" || n == "plumb-agent.service" {
+	if r.Type == "service" || r.Type == "unit" {
+		if n, _ := r.Attrs["name"].(string); wire.IsAgentUnit(n) {
 			return "the agent does not manage its own unit"
 		}
 		return ""

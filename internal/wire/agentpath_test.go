@@ -74,7 +74,9 @@ func TestAgentConflicts(t *testing.T) {
 		{"link loop", []Resource{link("/a", "/b"), link("/b", "/a"), file("/a/x")}, ""},
 		{"service", []Resource{service("plumb-agent")}, "service:plumb-agent"},
 		{"service with suffix", []Resource{service("plumb-agent.service")}, "service:plumb-agent.service"},
-		{"harmless", []Resource{service("nginx"), link("/opt/x", "/var/lib"), file("/opt/x/nginx/a")}, ""},
+		{"unit", []Resource{{ID: "unit:plumb-agent.service", Type: "unit", Attrs: map[string]any{"name": "plumb-agent.service"}}}, "unit:plumb-agent.service"},
+		{"unit timer", []Resource{{ID: "unit:plumb-agent.timer", Type: "unit", Attrs: map[string]any{"name": "plumb-agent.timer"}}}, "unit:plumb-agent.timer"},
+		{"harmless", []Resource{service("nginx"), {ID: "unit:app.service", Type: "unit", Attrs: map[string]any{"name": "app.service"}}, link("/opt/x", "/var/lib"), file("/opt/x/nginx/a")}, ""},
 	}
 	for _, tt := range tests {
 		got := AgentConflicts(tt.rs)
@@ -105,12 +107,12 @@ func TestIsAgentPathInstallUnit(t *testing.T) {
 			t.Errorf("IsAgentPath(%q) = true", p)
 		}
 	}
-	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent"} {
-		if !isAgentUnit(n) {
-			t.Errorf("isAgentUnit(%q) = false", n)
+	for _, n := range []string{"plumb-agent-install", "plumb-agent-install.service", "plumb-agent", "plumb-agent.service", "plumb-agent.timer", "plumb-agent.path", "plumb-agent-install.socket"} {
+		if !IsAgentUnit(n) {
+			t.Errorf("IsAgentUnit(%q) = false", n)
 		}
 	}
-	if isAgentUnit("plumb-agent-installer") || isAgentUnit("nginx") {
-		t.Error("isAgentUnit too wide")
+	if IsAgentUnit("plumb-agent-installer") || IsAgentUnit("nginx") || IsAgentUnit("plumb-agent.service.d") || IsAgentUnit("plumb-agent-x.service") {
+		t.Error("IsAgentUnit too wide")
 	}
 }

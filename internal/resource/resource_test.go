@@ -30,7 +30,7 @@ func compile(t *testing.T, typ Type) *jsonschema.Schema {
 }
 
 func TestTypeTable(t *testing.T) {
-	want := []string{"directory", "file", "package", "service", "symlink", "user"}
+	want := []string{"apt_repository", "directory", "file", "package", "service", "symlink", "sysctl", "unit", "user"}
 	if got := Names(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
@@ -65,6 +65,8 @@ func TestTypeTable(t *testing.T) {
 }
 
 func TestSchemas(t *testing.T) {
+	const pgp = `-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBFit2ioBEADh\n-----END PGP PUBLIC KEY BLOCK-----\n`
+	const apt = `"name":"docker","uris":["https://download.docker.com/linux/debian"],"suites":["trixie"],"components":["stable"]`
 	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeFakeFakeFakeFakeFakeFakeFakeFakeFakeFake me@host"
 	tests := []struct {
 		typ   string
@@ -111,6 +113,30 @@ func TestSchemas(t *testing.T) {
 		{"symlink", `{"path":"/etc/x","target":"a\u0000b"}`, false},         // NUL in target
 		{"symlink", `{"path":"/etc/../x","target":"y"}`, false},             // no ".." in the path
 		{"symlink", `{"path":"/etc/x","target":"y","owner":"root"}`, false}, // unknown attribute
+		{"apt_repository", `{` + apt + `,"key":"` + pgp + `"}`, true},
+		{"apt_repository", `{` + apt + `}`, false},                                    // present needs the key
+		{"apt_repository", `{"name":"docker","state":"absent"}`, true},                // absent needs nothing else
+		{"apt_repository", `{` + apt + `,"key":"https://x/key.gpg"}`, false},          // never a URL
+		{"apt_repository", `{` + apt + `,"key":"` + pgp + `","trusted":true}`, false}, // no Trusted
+		{"apt_repository", `{` + apt + `,"key":"` + pgp + `","options":"x"}`, false},  // no free options
+		{"apt_repository", `{"name":"../x","state":"absent"}`, false},                 // name is part of a path
+		{"apt_repository", `{"name":"d","uris":["file:///srv"],"suites":["a"],"key":"` + pgp + `"}`, false},
+		{"apt_repository", `{"name":"d","uris":["https://x"],"suites":["a b"],"key":"` + pgp + `"}`, false},
+		{"unit", `{"name":"backup.timer","content":"[Timer]\nOnCalendar=daily\n"}`, true},
+		{"unit", `{"name":"app.service"}`, false}, // present needs content
+		{"unit", `{"name":"app.service","state":"absent"}`, true},
+		{"unit", `{"name":"app","content":"x"}`, false},                 // no unit suffix
+		{"unit", `{"name":"plumb-agent.service","content":"x"}`, false}, // the agent unit is Plumb's
+		{"unit", `{"name":"-x.service","content":"x"}`, false},
+		{"unit", `{"name":"a/b.service","content":"x"}`, false},
+		{"sysctl", `{"name":"net.ipv4.ip_forward","value":"1"}`, true},
+		{"sysctl", `{"name":"net.ipv4.ip_forward","value":1}`, true},
+		{"sysctl", `{"name":"vm.swappiness"}`, false},
+		{"sysctl", `{"name":"vm.swappiness","state":"absent"}`, true},
+		{"sysctl", `{"name":"kernel","value":"1"}`, false},          // needs a dot
+		{"sysctl", `{"name":"net/ipv4/x","value":"1"}`, false},      // no slash
+		{"sysctl", `{"name":"vm.swappiness","value":"1\n"}`, false}, // one line
+		{"sysctl", `{"name":"vm.swappiness","value":" "}`, false},
 	}
 	schemas := map[string]*jsonschema.Schema{}
 	for _, tt := range tests {

@@ -132,10 +132,14 @@ type AgentConflict struct {
 	Value string // the path as resolved, or the unit name
 }
 
-// isAgentUnit reports whether a service name is the agent's unit.
-func isAgentUnit(name string) bool {
+// IsAgentUnit reports whether a service or unit name is one of the
+// agent's units ("plumb-agent" is the same as "plumb-agent.service"). A
+// unit of another type with the same stem counts too: plumb-agent.timer or
+// plumb-agent.path would start the agent's service by default.
+func IsAgentUnit(name string) bool {
 	for _, u := range agentUnits {
-		if name == u || name+".service" == u {
+		stem := strings.TrimSuffix(u, ".service")
+		if name == stem || strings.HasPrefix(name, stem+".") && !strings.Contains(name[len(stem)+1:], ".") {
 			return true
 		}
 	}
@@ -145,8 +149,8 @@ func isAgentUnit(name string) bool {
 // AgentConflicts lists the resources of one target that would change the
 // agent (D-207): a path of the agent, also through a symlink that the same
 // list makes (/opt/x → /var/lib, then file /opt/x/plumb-agent/credential),
-// and a service resource on the agent's unit (it could stop or mask the
-// agent). Links that already exist in the guest are not known here: the
+// and a service or unit resource on the agent's unit (it could stop, mask
+// or replace the agent). Links that already exist in the guest are not known here: the
 // agent resolves the real path before it writes (T-060).
 func AgentConflicts(rs []Resource) []AgentConflict {
 	// Symlinks of the list: link path → absolute target.
@@ -167,8 +171,8 @@ func AgentConflicts(rs []Resource) []AgentConflict {
 	}
 	var out []AgentConflict
 	for _, r := range rs {
-		if r.Type == "service" {
-			if n, _ := r.Attrs["name"].(string); isAgentUnit(n) {
+		if r.Type == "service" || r.Type == "unit" {
+			if n, _ := r.Attrs["name"].(string); IsAgentUnit(n) {
 				out = append(out, AgentConflict{ID: r.ID, Attr: "name", Value: n})
 			}
 			continue
