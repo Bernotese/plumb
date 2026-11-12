@@ -177,7 +177,7 @@ func TestSealBuildGuest(t *testing.T) {
 	writeUpdateFiles(t, root)
 	r.onSync = func() {
 		// At the sync the agent's files are gone already.
-		for _, p := range append([]string{DefaultStateDir + "/credential"}, agentFiles...) {
+		for _, p := range append(append([]string{DefaultStateDir + "/credential"}, agentFiles...), updateFiles...) {
 			if exists(root, p) {
 				t.Errorf("%s still there at the sync", p)
 			}
