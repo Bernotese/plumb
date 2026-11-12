@@ -512,22 +512,40 @@ func (e *Engine) UnusedImports(ctx context.Context, image, sha256 string) ([]Unu
 }
 
 // UnusedTemplateFiles lists the container template files (vztmpl) of an
-// lxc Image that nothing uses (D-233, T-085): not the file of the current
-// document (pin, CA and agent URL; Driver.TemplateRef) and not a file that
-// a pool container names in its description (D-250). Plumb never deletes
-// them; a person runs Command. A driver without such files gives none.
-// When the current file is not known, it lists nothing: a file in use must
-// never get a free line. url and sha512 are those of the document.
+// lxc Image that nothing uses (D-233, T-085): not the current file of any
+// lxc Image of the head revision (pin, CA and agent URL; Driver.TemplateRef)
+// and not a file that a pool container names in its description (D-250).
+// Every lxc Image counts, not only this one: two names that differ only by
+// "." and "-" share one file prefix (review S1 of PR #171). Plumb never
+// deletes the files; a person runs Command. A driver without such files
+// gives none. When a current file is not known, it lists nothing: a file
+// in use must never get a free line. url and sha512 are those of the
+// document of image.
 func (e *Engine) UnusedTemplateFiles(ctx context.Context, image, url, sha512 string) ([]UnusedImport, error) {
-	spec := driver.ImageSpec{Name: image, Kind: wire.KindLXC, URL: url, SHA512: sha512}
-	current, err := e.cfg.Driver.TemplateRef(spec)
-	if errors.Is(err, driver.ErrNotImplemented) {
-		return nil, nil
-	}
+	specs := []driver.ImageSpec{{Name: image, Kind: wire.KindLXC, URL: url, SHA512: sha512}}
+	c, err := e.headCache(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("the current template file: %w", err)
+		return nil, err
 	}
-	objs, err := e.cfg.Driver.ListImages(ctx, spec.Name)
+	if c != nil {
+		for _, name := range c.set.Images() {
+			if info, ok := c.set.ImageInfo(name); ok && info.Type == wire.KindLXC {
+				specs = append(specs, driver.ImageSpec{Name: name, Kind: wire.KindLXC, URL: info.URL, SHA512: info.SHA512})
+			}
+		}
+	}
+	current := map[string]bool{}
+	for _, spec := range specs {
+		ref, err := e.cfg.Driver.TemplateRef(spec)
+		if errors.Is(err, driver.ErrNotImplemented) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("the current template file of %s: %w", spec.Name, err)
+		}
+		current[string(ref)] = true
+	}
+	objs, err := e.cfg.Driver.ListImages(ctx, image)
 	if errors.Is(err, driver.ErrNotImplemented) {
 		return nil, nil
 	}
@@ -536,7 +554,7 @@ func (e *Engine) UnusedTemplateFiles(ctx context.Context, image, url, sha512 str
 	}
 	var out []UnusedImport
 	for _, o := range objs {
-		if o.Kind != driver.ImageTemplateFile || o.Name == string(current) || o.Ref == current || o.Containers > 0 {
+		if o.Kind != driver.ImageTemplateFile || current[o.Name] || current[string(o.Ref)] || o.Containers > 0 {
 			continue
 		}
 		out = append(out, UnusedImport{Volume: o.Name, SizeBytes: o.SizeBytes, Command: TemplateFreeCommand(o.Name)})

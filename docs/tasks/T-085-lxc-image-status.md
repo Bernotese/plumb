@@ -25,4 +25,4 @@ pl-frontend/T-085-lxc-image-status · PR #171 (stacked on #169) · tests: `make 
 - Status for every lxc Image; `UnusedTemplateFiles` hides the current file and files with containers; strict `pvesm free …:vztmpl/…` line.
 - Fake driver models template files like Proxmox (kind, volid, container count, RemoveImage refuses; TemplateRef needs no fetch).
 - Retention/removal plan: test proves 0 RemoveImage calls for a template file. Contract "planned" wording removed.
-- Open point: a create that fetched an old file but has not written its description yet is not protected (short window).
+- Review S1 fixed: the current file of every lxc Image at head is never listed. Open point (create of an older revision between fetch and description write) is documented in the contract.

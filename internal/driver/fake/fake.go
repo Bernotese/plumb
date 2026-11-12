@@ -269,9 +269,11 @@ func (d *Driver) TemplateRef(spec driver.ImageSpec) (driver.ImageRef, error) {
 // Image, in the name form of the Proxmox driver (D-250). The fake hashes
 // only the pin into the name.
 func templateFile(spec driver.ImageSpec) driver.ImageRef {
-	name := strings.ReplaceAll(strings.ToLower(spec.Name), ".", "-")
-	return driver.ImageRef("plumb-images:vztmpl/plumb-ct-" + name + "-" + spec.SHA512[:12] + ".tar.gz")
+	return driver.ImageRef("plumb-images:vztmpl/plumb-ct-" + ctName(spec.Name) + "-" + spec.SHA512[:12] + ".tar.gz")
 }
+
+// ctName is the Image part of a template file name: lower case, "." is "-".
+func ctName(image string) string { return strings.ReplaceAll(strings.ToLower(image), ".", "-") }
 
 // StopOutside stops a guest outside Plumb. Pending values stay pending.
 func (d *Driver) StopOutside(id driver.GuestID) error {
@@ -824,7 +826,9 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 	return task(ctx, d, OpListImages, func() ([]driver.ImageObject, error) {
 		var out []driver.ImageObject
 		for ref, t := range d.tpls {
-			if t.image == image {
+			// Like Proxmox, a template file matches by its file prefix:
+			// two names that differ only by "." and "-" share it.
+			if t.image == image || t.kind == driver.ImageTemplateFile && ctName(t.image) == ctName(image) {
 				out = append(out, d.object(ref, t))
 			}
 		}

@@ -2,6 +2,7 @@ package plan
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -191,5 +192,58 @@ func TestUnusedTemplateFilesUntrustedMetadata(t *testing.T) {
 	}
 	if commands[string(f.oldRef)] != "pvesm free "+string(f.oldRef) {
 		t.Fatalf("safe volume missing: %+v", got)
+	}
+}
+
+// Review S1 of PR #171: two lxc Images whose names differ only by "." and
+// "-" share one file prefix. The status of one never lists the current
+// file of the other; a file of no head Image is still listed.
+func TestUnusedTemplateFilesOtherImages(t *testing.T) {
+	f := newTemplateFixture(t)
+	const url = "http://download.proxmox.com/a.tar.zst"
+	pin := func(c string) string { return strings.Repeat(c, 128) }
+	doc := func(name, sha512 string) store.DocRow {
+		body, err := state.Canonical(state.Doc{Kind: state.KindImage, Name: name,
+			Spec: json.RawMessage(`{"type":"lxc","url":"` + url + `","sha512":"` + sha512 + `"}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store.DocRow{Kind: state.KindImage, Name: name, Hash: state.Hash(body), Body: body}
+	}
+	p, err := f.e.st.CreatePlan(f.ctx, store.Plan{Origin: "proposal", Risk: "reversible", Reason: "r", Author: "user:a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.e.st.ApprovePlan(f.ctx, p.ID, "user:a", store.NewRevision{Author: "user:a",
+		Docs: []store.DocRow{doc("deb-13.6", pin("d")), doc("deb-13-6", pin("e"))}}); err != nil {
+		t.Fatal(err)
+	}
+	var refs []driver.ImageRef
+	for _, s := range []driver.ImageSpec{
+		{Name: "deb-13.6", Kind: wire.KindLXC, URL: url, SHA512: pin("d")}, // current of deb-13.6
+		{Name: "deb-13-6", Kind: wire.KindLXC, URL: url, SHA512: pin("e")}, // current of deb-13-6
+		{Name: "deb-13-6", Kind: wire.KindLXC, URL: url, SHA512: pin("f")}, // of no head Image
+	} {
+		ref, err := f.drv.FetchImage(f.ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, ref)
+	}
+	for _, name := range []string{"deb-13-6", "deb-13.6"} {
+		info := map[string]string{"deb-13.6": pin("d"), "deb-13-6": pin("e")}[name]
+		got, err := f.e.UnusedTemplateFiles(f.ctx, name, url, info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Volume != string(refs[2]) {
+			t.Fatalf("%s: unused = %+v, want only %s", name, got, refs[2])
+		}
+	}
+	// No current file of a head Image known: nothing is listed.
+	bad := f.current
+	bad.SHA512 = "short"
+	if got, err := f.e.UnusedTemplateFiles(f.ctx, "deb-13-6", bad.URL, bad.SHA512); err == nil || got != nil {
+		t.Fatalf("unknown current file: %+v %v", got, err)
 	}
 }
