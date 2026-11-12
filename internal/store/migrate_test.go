@@ -402,12 +402,14 @@ func TestMigrateBasePin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SHA-512 pin: %v", err)
 	}
-	for _, bad := range []string{strings.Repeat("c", 100), ""} {
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at)
-			VALUES ('x', 1, 'building', 'manual', 1, 1, ?, ?, ?, 1, `+ts+`)`, h64, bad, h64); err == nil {
-			t.Errorf("base_sha256 of length %d accepted", len(bad))
+	for i, pin := range []string{h64, strings.Repeat("aB09", 32), "", strings.Repeat("c", 63), strings.Repeat("c", 65), strings.Repeat("c", 100), strings.Repeat("c", 127), strings.Repeat("c", 129), strings.Repeat("g", 64), strings.Repeat("g", 128)} {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at)
+            VALUES (?, 1, 'building', 'manual', 1, 1, ?, ?, ?, 1, `+ts+`)`, fmt.Sprintf("pin-%d", i), h64, pin, h64)
+		if wantOK := i < 2; (err == nil) != wantOK {
+			t.Errorf("base pin case %d (length %d): err=%v, want accepted=%t", i, len(pin), err, wantOK)
 		}
 	}
+
 	// Index and triggers: one building per Image, no delete, fixed columns.
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO image_version (image, version, status, trigger, run_id, revision_id, recipe_sha256, base_sha256, digest, disk_gb, started_at)
 		VALUES ('web', 3, 'building', 'manual', 1, 1, ?, ?, ?, 1, `+ts+`)`, h64, h64, h64); err == nil {
