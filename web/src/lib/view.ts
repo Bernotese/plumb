@@ -36,6 +36,13 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
       return { label: "Pending", tone: "muted", detail: "No guest yet." };
     case "error":
       return { label: "Error", tone: "danger", detail: "The last run failed." };
+    case "stopped":
+      // Contract only (T-111, D-299); T-118 places it before the offline check.
+      return {
+        label: "Stopped",
+        tone: "muted",
+        detail: "Stopped on purpose (desired power: stopped).",
+      };
   }
 }
 
