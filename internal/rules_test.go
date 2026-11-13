@@ -22,7 +22,7 @@ const module = "github.com/Bernotese/plumb"
 // Every package may also import wire and its own sub-packages.
 // A new package or a new arrow needs a change of ARCHITECTURE §2 first.
 var mayImport = map[string][]string{
-	"api":      {"plan", "issue", "state", "secret", "event", "store"},
+	"api":      {"plan", "issue", "state", "secret", "event", "store", "backup"},
 	"plan":     {"state", "link", "driver", "secret", "event", "store"},
 	"issue":    {"plan", "state", "event", "store"},
 	"state":    {"resource", "store"},
@@ -34,12 +34,13 @@ var mayImport = map[string][]string{
 	"resource": {},
 	"agent":    {"resource"},
 	"wire":     {},
+	"backup":   {"secret", "event", "store"},
 }
 
 // cmdMayImport lists what each binary may link. The agent binary must stay
 // small and must not contain controller code.
 var cmdMayImport = map[string][]string{
-	"plumb":       {"api", "plan", "issue", "state", "link", "driver", "secret", "event", "store", "resource", "wire"},
+	"plumb":       {"api", "plan", "issue", "state", "link", "driver", "secret", "event", "store", "resource", "wire", "backup"},
 	"plumb-agent": {"agent", "resource", "wire"},
 }
 
