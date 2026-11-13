@@ -41,6 +41,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-118 web slice 4 · T-119 starter Block `firewall` | pl-frontend | T-118: UI complete, e2e in work; T-119 merged (PR #219) |
 | T-120 QA slice 4: mutation audits of backup crypto (20/20), restored mode (44 attempts, 0 survivors), safe apply + firewall (40, 2 only killable in CI guest tests, checked by reading) | pl-codex-qa | parts 1, 2 merged (PRs #223, #225); part 3 PR #226 |
 | T-122 slice 4 real-host acceptance | pl-backend | last |
+| T-127 Plans that adopt guest data ("Accept", raw mode) are human-only (user decision 2026-11-13, D-323) | pl-reviewer (pl-architect reviews) | in work |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-124 GitHub releases with ready binaries and checksums: prepare only; **a release needs the user's own yes** | pl-codex-qa | merged (PR #216): manual workflow, draft only. No release and no tag exist |
 | T-109 flaky `TestAgentUpdateCommand` (test asserted too early; product safe) | pl-codex-qa | merged (PR #208) |
@@ -109,7 +110,6 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- **Accept Plans human-only?** A compromised guest can report valid-looking values (an SSH key of a user, an apt source). pl-lead recommends: a Plan that adopts guest data may be approved only by a person, never by a token (small follow-up card).
 - **First release?** The release workflow is ready (T-124). It runs only when the user says yes and names the version. pl-lead recommends: after the slice 4 acceptance run.
 - Slice 4, user question 1: a real install needs the name of the backup storage from the user (`--backup-storage`). For the test host pl-lead proposes one (T-122).
 - Guests made before slice 3 need one manual root command per guest so that their agent can update itself (`docs/ARCHITECTURE.md` §5).
