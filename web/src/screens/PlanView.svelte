@@ -209,6 +209,17 @@
               : "The service restarts because a resource it depends on changes."}
           </p>
         {/if}
+        {#if r.summary?.length}
+          <ul class="summary" aria-label="Summary of {r.resource}">
+            {#each r.summary as line, j (j)}<li>{line}</li>{/each}
+          </ul>
+        {/if}
+        {#if r.confirm_seconds}
+          <p class="muted safe">
+            Safe apply: after the change the agent must reach Plumb again within {r.confirm_seconds} s.
+            Else it puts the old state back by itself, and the step fails as "rolled back".
+          </p>
+        {/if}
         {#if r.changes.length === 0 && r.action === "create"}
           <p class="muted">
             Not observed yet: the guest does not exist. The agent observes and applies it at the
@@ -282,6 +293,10 @@
     gap: var(--space-2);
     align-items: center;
     flex-wrap: wrap;
+  }
+  .summary {
+    margin: 0 0 var(--space-2);
+    padding-left: var(--space-6);
   }
   .order {
     margin: 0 0 var(--space-2);

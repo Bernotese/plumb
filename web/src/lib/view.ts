@@ -44,13 +44,6 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
       return { label: "Pending", tone: "muted", detail: "No guest yet." };
     case "error":
       return { label: "Error", tone: "danger", detail: "The last run failed." };
-    case "stopped":
-      // Contract only (T-111, D-299); T-118 places it before the offline check.
-      return {
-        label: "Stopped",
-        tone: "muted",
-        detail: "Stopped on purpose (desired power: stopped).",
-      };
   }
 }
 
@@ -175,6 +168,15 @@ export function changeNotes(c: Change, resource?: string): { tags: string[]; not
         `Plumb writes ${to} to Proxmox. The VM keeps ${from} until its next stop and start. That can be a restart that nobody plans (host maintenance, HA). This Run does not restart the VM (allow_restart is off). A reboot inside the guest is not enough.`,
       );
     }
+  }
+  // D-291: Proxmox cannot shrink a disk, so a grow is for good.
+  if (c.attr === "disk" && !c.pending && typeof c.from === "number" && typeof c.to === "number") {
+    if (c.to > c.from) notes.push("A grow cannot be undone: Proxmox cannot make a disk smaller.");
+  }
+  if (c.attr === "power" && c.to === "stopped") {
+    notes.push(
+      "Plumb stops the guest at the end of the Run. Agent steps are skipped while it is stopped.",
+    );
   }
   return { tags, notes };
 }
