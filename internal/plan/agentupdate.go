@@ -596,11 +596,14 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 	check := time.NewTicker(min(5*time.Second, max(e.cfg.UpdateHelloWait/4, 10*time.Millisecond)))
 	defer check.Stop()
 	gotResult := false
+	oldAfterResult := false // a hello with the old sha came after the result
 	var silentSince time.Time
 	for {
 		select {
 		case rep := <-results:
-			if rep.Type == wire.ReportProgress {
+			if rep.Type == wire.ReportProgress || gotResult {
+				// A second result is the old agent sending its result
+				// again after a lost reply (T-108): the first decides.
 				continue
 			}
 			if rep.Error != "" {
@@ -631,9 +634,13 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 				s.set(ctx, wire.AgentBinaryID, wire.StatusApplied, planned, "")
 				return true
 			case h.afterResult && oldSHA != "" && h.sha == oldSHA:
-				// Not a reconnect of the old agent before its result: it
-				// restarted on the old binary.
-				return fail("the agent came back with its old binary")
+				// Either the agent restarted on the old binary, or the old
+				// process reconnects before it exits: its result reached
+				// us but the reply did not, so it says hello and sends the
+				// result again (T-106 F3). The hello cannot tell the two
+				// apart, so it decides nothing: the new binary's hello
+				// passes the step, else helloTimeout fails it (T-108).
+				oldAfterResult = true
 			}
 			// Before a result and without a revert: a reconnect of the old
 			// agent; its result follows.
@@ -650,6 +657,9 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 					e.cfg.UpdateHelloWait))
 			}
 		case <-helloTimeout:
+			if oldAfterResult {
+				return fail(fmt.Sprintf("the agent came back with its old binary (no hello of the new agent within %v)", e.cfg.UpdateHelloWait))
+			}
 			return fail(fmt.Sprintf("no hello of the new agent within %v; the guest goes back to the old binary by itself", e.cfg.UpdateHelloWait))
 		case <-cmdTimeout.C:
 			return fail(fmt.Errorf("%w (%s, %v)", ErrTimeout, tp.Target, e.cfg.ApplyTimeout).Error())
