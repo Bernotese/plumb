@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -148,6 +149,48 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p *princ
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type oneTimePassword struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// resetUserPassword gives another user a new one-time password (D-321):
+// shown once, must change at the first login; it ends a lock of a
+// restore and every session of the user. Humans only.
+func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request, p *principal) {
+	name := r.PathValue("name")
+	if name == "" || len(name) > 64 {
+		problem(w, http.StatusNotFound, "not-found", "Not found", "No such user.")
+		return
+	}
+	if name == p.user.Name {
+		problem(w, http.StatusConflict, "own-user", "Own user", "Change your own password with PUT /api/v1/session/password.")
+		return
+	}
+	password := RandomPassword()
+	var hash string
+	if !s.withHashSlot(func() { hash = HashPassword(password, s.cfg.PasswordParams) }) {
+		tooMany(w, time.Second)
+		return
+	}
+	err := s.st.ResetPassword(r.Context(), name, hash)
+	if errors.Is(err, store.ErrNotFound) {
+		problem(w, http.StatusNotFound, "not-found", "Not found", "No such user.")
+		return
+	}
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	if s.cfg.Events != nil {
+		if _, err := s.cfg.Events.Emit(r.Context(), "user.password_reset", "user:"+name, p.name,
+			map[string]string{"username": name}); err != nil {
+			s.log.Error("user event", "user", name, "err", err)
+		}
+	}
+	writeJSON(w, http.StatusOK, oneTimePassword{Username: name, Password: password}) // writeJSON sets no-store
 }
 
 func (s *Server) internal(w http.ResponseWriter, err error) {

@@ -59,6 +59,7 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/restore", nil, TierRead, false},
 	{"POST", "/api/v1/restore/confirm", map[string]any{}, TierAdmin, true}, // allowed → 400
 	{"POST", "/api/v1/tokens/nope/enable", nil, TierAdmin, true},           // allowed → 404
+	{"POST", "/api/v1/users/nobody/password", nil, TierAdmin, true},        // allowed → 404
 	{"DELETE", "/api/v1/tokens/tok_nope", nil, TierAdmin, true},
 	{"DELETE", "/api/v1/session", nil, TierAdmin, true}, // last: it logs the session out
 }

@@ -161,11 +161,37 @@ func (e *Engine) checkSilent(ctx context.Context, target string, observed driver
 		[]wire.Change{{Attr: "hello", From: nil, To: "any", Risk: wire.RiskRead}})
 }
 
-// openRestoreIssue reports whether the Issue of a restore is open for a
-// target.
-func (e *Engine) openRestoreIssue(ctx context.Context, target, id string) bool {
-	iss, err := e.st.OpenIssue(ctx, target, id)
-	return err == nil && iss.Status == store.IssueOpen
+// foreignHolds reports whether a name mismatch on the VMID of a Target
+// still counts as a foreign guest (D-320): while restored mode holds, and
+// after it while guest:missing of the Target is open or ignored (an
+// ignore_once or a Rule keeps it, D-322). Otherwise a name mismatch is a
+// rename, the same as on a controller that was never restored.
+func (e *Engine) foreignHolds(ctx context.Context, target string) (bool, error) {
+	if e.restoreActive() {
+		return true, nil
+	}
+	iss, err := e.st.OpenIssue(ctx, target, GuestMissingID)
+	if err == nil && iss.Status == store.IssueOpen {
+		return true, nil
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	if _, err := e.st.IgnoredOnce(ctx, target, GuestMissingID); err == nil {
+		return true, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return false, err
+	}
+	dropped, err := e.st.IgnoredDriftOf(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	for _, d := range dropped {
+		if d.Resource == GuestMissingID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // setForeign records whether the VMID of a binding belongs to another
@@ -191,8 +217,10 @@ func (e *Engine) setForeign(ref string, foreign bool) {
 var ErrForeignGuest = errors.New("plan: after the restore this VMID holds another guest; Plumb does not touch it (the Issue guest:missing tells)")
 
 // checkOwnGuest is the guard of a Run on the guest of a Target after a
-// restore: the bound VMID must still hold a guest with the name of the
-// Target. A guest that is gone is no error here.
+// restore: while a name mismatch counts as a foreign guest (foreignHolds),
+// the bound VMID must hold a guest with the name of the Target. Later a
+// renamed guest is written to as on a never restored controller (D-322).
+// A guest that is gone is no error here.
 func (e *Engine) checkOwnGuest(ctx context.Context, target string) error {
 	if !e.cfg.Restore.Restored() {
 		return nil
@@ -211,10 +239,13 @@ func (e *Engine) checkOwnGuest(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
-	if observed.Spec.Name != target {
-		return fmt.Errorf("%w (VMID %s, name %q, Target %s)", ErrForeignGuest, b.Ref, observed.Spec.Name, target)
+	if observed.Spec.Name == target {
+		return nil
 	}
-	return nil
+	if holds, err := e.foreignHolds(ctx, target); err != nil || !holds {
+		return err
+	}
+	return fmt.Errorf("%w (VMID %s, name %q, Target %s)", ErrForeignGuest, b.Ref, observed.Spec.Name, target)
 }
 
 // unknownTTL is how long the list of unknown guests is kept.

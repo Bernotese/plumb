@@ -177,6 +177,43 @@ paths:
         "422": { $ref: "#/components/responses/Unprocessable" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /users/{name}/password:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: User name.
+        schema: { type: string, minLength: 1, maxLength: 64 }
+        example: alice
+    post:
+      tags: [session]
+      operationId: resetUserPassword
+      summary: Give another user a new one-time password
+      description: |
+        Human session only, never a token (D-321). The server makes a new random password, shows it
+        once in the response and stores only its hash. The user must change it at the first login
+        (`must_change_password`). A lock of a restore ends (D-311), and every session of the user
+        ends. The own password changes with `PUT /session/password` (409 `own-user`). Works also in
+        restored mode. Emits `user.password_reset`; the event holds no password.
+      security:
+        - session: []
+      responses:
+        "200":
+          description: The one-time password. It is not stored and not shown again.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OneTimePassword" }
+              example:
+                username: alice
+                password: Zq0v3cN1x9LkPq2aR7sT8w
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   /images:
     get:
       tags: [images]
@@ -2369,7 +2406,7 @@ components:
         names the Targets and `missing` what they lack. Plans of every origin that send resources
         to an agent are checked at creation and at approval; the Run checks again at start.
         Slice 4 (D-303): `restored-mode` (the controller waits for `POST /restore/confirm`),
-        `backup-running`, `token-revoked`.
+        `backup-running`, `token-revoked`, `own-user` (D-321).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -2525,6 +2562,13 @@ components:
       properties:
         username: { type: string, minLength: 1, maxLength: 64 }
         password: { type: string, minLength: 1, maxLength: 1024, format: password }
+    OneTimePassword:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password, description: Shown once. }
     ChangePasswordRequest:
       type: object
       additionalProperties: false
@@ -3802,15 +3846,16 @@ components:
             - backup.finished
             - restore.confirmed
             - token.enabled
+            - user.password_reset
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string
-          pattern: "^(plan|run|issue|target|revision|token|secret|image|backup|restore):.+$"
+          pattern: "^(plan|run|issue|target|revision|token|secret|image|backup|restore|user):.+$"
           description: |
             `<kind>:<id or name>`, for example `plan:12` or `target:web1`. `image.version` (subject
             `image:<name>`): a version of the Image changed its status. `backup.finished` (subject
             `backup:<file name>`, data `{result: ok|failed}`) and `restore.confirmed` (subject
-            `restore:1`) are D-302, D-303.
+            `restore:1`) are D-302, D-303. `user.password_reset` (subject `user:<name>`) is D-321.
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }
         data:
