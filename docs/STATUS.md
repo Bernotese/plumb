@@ -16,13 +16,13 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-088 `nginx` and `nginx-site` Blocks: default page answered 403 on Debian/Ubuntu | done | merged (PR #182, D-255): `index index.html index.htm index.nginx-debian.html;`. An existing install keeps its stored Block text: copy that line into the stored `nginx` / `nginx-site` Block. |
 | T-089 plan for slice 3 ("Blocks for every day") | pl-architect | **approved by the user on 2026-11-12 with all 6 recommendations** (D-256 … D-262 accepted). Child cards T-090 … T-100. |
 | T-090 contract (C1) | pl-architect | merged (PR #187, D-266 … D-270) |
-| T-091 agent self-update (C2) · T-092 controller update + gate (C3) | pl-backend | T-091 merged (PR #190, D-271 … D-273). T-092: PR #196 approved, 3 lows + main merge in work. |
-| T-093 resources `apt_repository`, `unit`, `sysctl` (C4) | pl-reviewer (implements; pl-architect reviews) | PR #191 approved (D-274: every `plumb-agent*` unit name refused); main merge in work |
+| T-091 agent self-update (C2) · T-092 controller update + gate (C3) | pl-backend | both merged (PR #190, #196; fix of two races PR #200; D-271 … D-273, D-275 … D-278; migration 0012) |
+| T-093 resources `apt_repository`, `unit`, `sysctl` (C4) | pl-reviewer | merged (PR #191, QA PR #194; D-274: every `plumb-agent*` unit name refused) |
 | T-094 resource `command` (C4b) | pl-architect | merged (PR #189; QA PRs #192, #195) |
-| T-095 starter Blocks (C5) | pl-frontend | PR #197 (guest tests ok); review after #191 is on main |
-| T-096 Blocks screen (C6) · T-097 agent version in the web (C7) | pl-frontend | T-096 merged (PR #188, D-263 … D-265). T-097 code done on the T-092 branch, PR after #196. |
-| T-098 QA debt (C8) · T-099 QA per card (C9) | pl-codex-qa | T-098 merged (PR #186: 9 web mutants, 3 gaps closed, Content-Length == cap test). T-099 runs per card. |
-| T-100 real-host acceptance (C10) | pl-backend | last |
+| T-095 starter Blocks (C5) | pl-frontend | merged (PR #197, D-279 … D-281): `ssh-hardening`, `common-tools`, `shell`, `docker-engine` + `docker-compose` (split, several projects per Target; VM only) |
+| T-096 Blocks screen (C6) · T-097 agent version in the web (C7) | pl-frontend | both merged (PR #188, #198; D-263 … D-265, D-282) |
+| T-098 QA debt (C8) · T-099 QA per card (C9) | pl-codex-qa | merged (PR #186; #192, #194, #195, #199: update hash check and gate, 8/8 mutants killed) |
+| T-100 real-host acceptance (C10) | pl-backend | **started: all slice 3 code is on main.** Dry plan first, then the run. |
 | T-101 server checks Block resource attributes at save (found in T-096) | pl-architect | merged (PR #193) |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
