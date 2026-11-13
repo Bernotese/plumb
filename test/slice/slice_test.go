@@ -76,12 +76,21 @@ func TestSliceAcceptance(t *testing.T) {
 		t.Helper()
 		write(t, root, site, value)
 		var issueID string
+		// os.WriteFile truncates, then writes: a drift check between the
+		// two (debounce 20 ms, a busy CI runner) opens the Issue with the
+		// empty file, and Accept would take that. Wait until the Issue
+		// shows the written content.
 		wait("nginx drift issue opens", func() bool {
 			for _, item := range call("GET", "/issues?status=open", nil, 200)["items"].([]any) {
 				i := item.(map[string]any)
-				if i["target"] == "web1" && i["resource"] == "file:/"+site {
-					issueID = id(i["id"])
-					return true
+				if i["target"] != "web1" || i["resource"] != "file:/"+site {
+					continue
+				}
+				for _, c := range i["changes"].([]any) {
+					if ch := c.(map[string]any); ch["attr"] == "content" && ch["from"] == value {
+						issueID = id(i["id"])
+						return true
+					}
 				}
 			}
 			return false
