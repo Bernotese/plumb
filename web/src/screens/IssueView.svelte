@@ -24,6 +24,33 @@
   let ignored = $state(false);
   let allTargets = $state(false);
   let onlyChanged = $state(false);
+  let comment = $state("");
+  let commentMissing = $state(false);
+  let commentBusy = $state(false);
+  let commentError = $state<unknown>(null);
+  let commentAdded = $state("");
+
+  async function addComment(e: SubmitEvent) {
+    e.preventDefault();
+    commentAdded = "";
+    commentMissing = !comment.trim();
+    if (commentMissing) {
+      document.getElementById("comment-body")?.focus();
+      return;
+    }
+    commentBusy = true;
+    commentError = null;
+    try {
+      const c = await api.commentIssue(id, comment.trim());
+      if (issue) issue.comments = [...issue.comments, c];
+      comment = "";
+      commentAdded = "Comment added.";
+    } catch (err) {
+      commentError = err;
+    } finally {
+      commentBusy = false;
+    }
+  }
 
   $effect(() => {
     api.getIssue(id).then(
@@ -295,15 +322,36 @@
     </section>
   {/if}
 
-  {#if issue.comments.length}
-    <h2>Comments</h2>
-    {#each issue.comments as c (c.id)}
-      <div class="card">
-        <p class="muted"><span class="mono">{c.author}</span> · {formatTime(c.created_at)}</p>
-        <p class="body">{c.body}</p>
-      </div>
-    {/each}
-  {/if}
+  <h2 id="comments-title">Comments</h2>
+  {#each issue.comments as c (c.id)}
+    <div class="card">
+      <p class="muted"><span class="mono">{c.author}</span> · {formatTime(c.created_at)}</p>
+      <p class="body">{c.body}</p>
+    </div>
+  {:else}
+    <p class="muted">No comments yet.</p>
+  {/each}
+  <form class="card" onsubmit={addComment} novalidate aria-labelledby="comments-title">
+    <div class="field">
+      <label for="comment-body">Add a comment</label>
+      <textarea
+        id="comment-body"
+        bind:value={comment}
+        maxlength="10000"
+        aria-invalid={commentMissing}
+        aria-describedby={commentMissing ? "comment-error comment-hint" : "comment-hint"}
+        oninput={() => (commentMissing = false)}></textarea>
+      {#if commentMissing}<p id="comment-error" class="error">Write a comment first.</p>{/if}
+      <p id="comment-hint" class="muted hint">
+        Plain text. Everyone who can read this issue sees it, also API tokens.
+      </p>
+    </div>
+    <ProblemBox error={commentError} />
+    <div class="row">
+      <button class="btn" type="submit" disabled={commentBusy}>Add comment</button>
+      {#if commentAdded}<span role="status" class="muted">{commentAdded}</span>{/if}
+    </div>
+  </form>
 {:else if !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
@@ -341,5 +389,14 @@
   .body {
     white-space: pre-wrap;
     margin: 0;
+  }
+  .error {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-danger);
+  }
+  .hint {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
   }
 </style>

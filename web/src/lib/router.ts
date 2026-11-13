@@ -15,13 +15,15 @@ export type Route =
   | { name: "block-new" }
   | { name: "block"; block: string }
   | { name: "block-edit"; block: string }
+  | { name: "plans" }
   | { name: "plan"; id: number }
+  | { name: "runs" }
   | { name: "run"; id: number }
-  | { name: "issues" }
+  | { name: "issues"; target?: string }
   | { name: "issue"; id: number }
   | { name: "rules" }
   | { name: "history" }
-  | { name: "revision"; id: number }
+  | { name: "revision"; id: number; from?: number }
   | { name: "settings"; tab: SettingsTab }
   | { name: "not-found"; path: string };
 
@@ -45,9 +47,15 @@ export function isRouteHash(hash: string): boolean {
 }
 
 export function parse(hash: string): Route {
-  const path = hash.replace(/^#/, "") || "/targets";
+  const full = hash.replace(/^#/, "") || "/targets";
+  // A query only on the routes that take one (T-153): issues?target=, revisions/n?from=.
+  const q = full.indexOf("?");
+  const path = q < 0 ? full : full.slice(0, q);
+  const query = new URLSearchParams(q < 0 ? "" : full.slice(q + 1));
   const parts = path.split("/").filter(Boolean);
   const id = (s: string | undefined) => (s && /^[1-9][0-9]{0,15}$/.test(s) ? Number(s) : undefined);
+  if (q >= 0 && !(parts[0] === "issues" && parts.length === 1) && parts[0] !== "revisions")
+    return { name: "not-found", path: full };
   const [a, b, c] = parts;
   if (parts.length === 0) return { name: "targets" };
   if (parts.length === 1 && a === "login") return { name: "login" };
@@ -73,17 +81,29 @@ export function parse(hash: string): Route {
     return { name: "block-edit", block: b };
   }
   const n = parts.length === 2 ? id(b) : undefined;
+  if (parts.length === 1 && a === "plans") return { name: "plans" };
   if (a === "plans" && n) return { name: "plan", id: n };
+  if (parts.length === 1 && a === "runs") return { name: "runs" };
   if (a === "runs" && n) return { name: "run", id: n };
-  if (parts.length === 1 && a === "issues") return { name: "issues" };
+  if (parts.length === 1 && a === "issues") {
+    const target = query.get("target");
+    if (target === null) return { name: "issues" };
+    if (NAME.test(target)) return { name: "issues", target };
+    return { name: "not-found", path: full };
+  }
   if (parts.length === 2 && a === "issues" && b === "rules") return { name: "rules" };
   if (a === "issues" && n) return { name: "issue", id: n };
   if (parts.length === 1 && a === "history") return { name: "history" };
-  if (a === "revisions" && n) return { name: "revision", id: n };
+  if (a === "revisions" && n) {
+    const from = query.get("from");
+    if (from === null) return { name: "revision", id: n };
+    const f = id(from);
+    if (f) return { name: "revision", id: n, from: f };
+  }
   if (parts.length === 1 && a === "settings") return { name: "settings", tab: "tokens" };
   if (parts.length === 2 && a === "settings" && b && TABS.includes(b))
     return { name: "settings", tab: b as SettingsTab };
-  return { name: "not-found", path };
+  return { name: "not-found", path: full };
 }
 
 export function href(r: Route): string {
@@ -116,12 +136,16 @@ export function href(r: Route): string {
       return `#/blocks/${encodeURIComponent(r.block)}`;
     case "block-edit":
       return `#/blocks/${encodeURIComponent(r.block)}/edit`;
+    case "plans":
+      return "#/plans";
     case "plan":
       return `#/plans/${r.id}`;
+    case "runs":
+      return "#/runs";
     case "run":
       return `#/runs/${r.id}`;
     case "issues":
-      return "#/issues";
+      return r.target ? `#/issues?target=${encodeURIComponent(r.target)}` : "#/issues";
     case "issue":
       return `#/issues/${r.id}`;
     case "rules":
@@ -129,7 +153,7 @@ export function href(r: Route): string {
     case "history":
       return "#/history";
     case "revision":
-      return `#/revisions/${r.id}`;
+      return r.from ? `#/revisions/${r.id}?from=${r.from}` : `#/revisions/${r.id}`;
     case "settings":
       return `#/settings/${r.tab}`;
     case "not-found":
