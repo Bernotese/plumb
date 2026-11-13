@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/store"
 )
 
@@ -118,6 +119,10 @@ func (s *Server) confirmRestore(w http.ResponseWriter, r *http.Request, p *princ
 		return
 	}
 	rs, err := s.cfg.Plans.ConfirmRestore(r.Context(), p.name, req.Reason)
+	if errors.Is(err, plan.ErrRestoreCheck) {
+		problem(w, http.StatusConflict, "restore-check-failed", "Guest check failed", err.Error()+" Restored mode stays.")
+		return
+	}
 	if errors.Is(err, store.ErrNotRestoredMode) {
 		problem(w, http.StatusConflict, "nothing-to-do", "Nothing to do", "This controller is not in restored mode.")
 		return

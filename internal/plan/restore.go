@@ -83,6 +83,11 @@ func (e *Engine) restoreActive() bool { return e.cfg.Restore.Active() }
 // the switch, the event, and the current watch list to every online agent
 // (until now they keep the one of the old controller).
 func (e *Engine) ConfirmRestore(ctx context.Context, by, reason string) (store.RestoreState, error) {
+	if e.restoreActive() {
+		if err := e.checkBeforeConfirm(ctx); err != nil {
+			return store.RestoreState{}, err
+		}
+	}
 	r, err := e.st.ConfirmRestore(ctx, by, reason)
 	if err != nil {
 		return r, err
@@ -104,6 +109,39 @@ func (e *Engine) ConfirmRestore(ctx context.Context, by, reason string) (store.R
 		}
 	}
 	return r, nil
+}
+
+// ErrRestoreCheck: the guest check before the confirm could not observe
+// a bound guest; restored mode stays (409 restore-check-failed).
+var ErrRestoreCheck = errors.New("plan: the guest check before the confirm failed")
+
+// checkBeforeConfirm observes the guest of every Target once before
+// restored mode ends (review H1 of #224): a gone guest and a guest of
+// another name open guest:missing now, so the Issue is in the database
+// and foreignHolds stays true after the confirm. A guest that Proxmox
+// does not answer for fails the confirm: a mismatch it hides would count
+// as a rename afterwards.
+func (e *Engine) checkBeforeConfirm(ctx context.Context) error {
+	binds, err := e.st.Bindings(ctx, state.KindTarget)
+	if err != nil {
+		return err
+	}
+	for _, b := range binds {
+		observed, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+		switch {
+		case errors.Is(err, driver.ErrNotFound):
+			err = e.guestMissing(ctx, b, true)
+		case err != nil:
+			return fmt.Errorf("%w: Proxmox did not answer for %s (%v); try again", ErrRestoreCheck, b.Name, err)
+		case observed.Spec.Name != b.Name:
+			e.setForeign(b.Ref, true)
+			err = e.guestMissing(ctx, b, false)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // guestMissing reports the Issue guest:missing of a Target whose bound

@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/store"
@@ -211,6 +213,42 @@ func TestRestoreIgnoreOnceForeign(t *testing.T) {
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "remove web2", "delete": []map[string]string{{"kind": "Target", "name": "web2"}}})
 	if _, err := e.drv.Observe(e.ctx, driver.GuestID(b1.Ref)); err != nil {
 		t.Fatalf("the delete of web2 removed the foreign guest: %v", err)
+	}
+	rc.check()
+}
+
+// Review H1 of #224: restored mode ends before one good poll of a
+// binding whose VMID holds a guest of another name. The confirm checks
+// every guest first: an Observe error refuses it, a name mismatch opens
+// guest:missing, so no delete reaches the foreign guest afterwards.
+func TestRestoreConfirmChecksGuests(t *testing.T) {
+	e, _, mode, _ := restoredEnv(t)
+	rc := &recorder{t: t}
+	b1, _ := e.st.GetBinding(e.ctx, "Target", "web1")
+	b2, _ := e.st.GetBinding(e.ctx, "Target", "web2")
+	b1.Ref = b2.Ref // the VMID of web1 holds the guest named web2
+	if err := e.st.PutBinding(e.ctx, b1); err != nil {
+		t.Fatal(err)
+	}
+	adm := e.login("admin", "restored-password-1")
+	adm.do("PUT", "/api/v1/session/password", map[string]string{"current_password": "restored-password-1", "new_password": "another-good-password"})
+	e.drv.Fail(fake.OpObserve, errors.New("proxmox: 500"))
+	if code, body := rc.do(adm, "POST", "/api/v1/restore/confirm", "/restore/confirm", map[string]any{"old_controller_off": true}); code != 409 || problemType(body) != "restore-check-failed" {
+		t.Fatalf("confirm while Observe fails: %d %s", code, body)
+	}
+	if !mode.Active() {
+		t.Fatal("a failed check ended restored mode")
+	}
+	if code, body := rc.do(adm, "POST", "/api/v1/restore/confirm", "/restore/confirm", map[string]any{"old_controller_off": true}); code != 200 {
+		t.Fatalf("confirm: %d %s", code, body)
+	}
+	if _, err := e.st.OpenIssue(e.ctx, "web1", plan.GuestMissingID); err != nil {
+		t.Fatalf("no guest:missing after the confirm check: %v", err)
+	}
+	e.eng.CheckGuests(e.ctx)
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "remove web1", "delete": []map[string]string{{"kind": "Target", "name": "web1"}}})
+	if _, err := e.drv.Observe(e.ctx, driver.GuestID(b2.Ref)); err != nil {
+		t.Fatalf("the delete of web1 removed the guest named web2: %v", err)
 	}
 	rc.check()
 }
