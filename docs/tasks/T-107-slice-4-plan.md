@@ -1,6 +1,6 @@
 # T-107 – Plan for slice 4
 
-- **State:** plan updated after review round 1 (PR #206); waits for pl-reviewer, then the user.
+- **State:** plan updated after review rounds 1 and 2 (PR #206); waits for pl-reviewer, then the user.
 - **Owner:** pl-architect   · **Reviewer:** pl-reviewer   · **QA:** –
 - **Size:** M   · **Depends on:** –
 
@@ -103,11 +103,11 @@ Slice 4 holds, in this order:
 ### Child cards (numbers from pl-lead)
 | # | Title | Owner | Reviewer | Size | Depends on | Parallel |
 |---|---|---|---|---|---|---|
-| C1a | Contract backup/restore: backup file format (L5), API (`GET /backups`, `POST /backups`, state of the off-host copy, no download), `plumb restore`, installer flags (`--backup-storage`, `--remove --keep-guests`, `--restore`), restored mode (API 409 `restored-mode`, what is stopped, D-290), Issues `guest:missing` and `agent:silent` | pl-architect | pl-reviewer | M | – | first |
+| C1a | Contract backup/restore: backup file format (L5), API (`GET /backups`, `POST /backups`, state of the off-host copy, no download), `plumb restore`, installer flags (`--backup-storage`, `--remove --keep-guests`, `--restore`), restored mode (API 409 `restored-mode`, what is stopped, D-290), Issues `guest:missing` and `agent:silent`; host copy timer trust boundary (pointer `latest`, name regex, size cap, temp + rename, mount check, root-owned status dir; D-289 N1–N3); `--keep-guests` pre-checks (fresh backup copied off, recovery key against the header fingerprint) and what it keeps (`plumb-snippets` and its files); `--restore` checks of pool, node, install id and the new token's ACLs (D-290 N4–N7) | pl-architect | pl-reviewer | M | – | first |
 | C1b | Contract day 2 + firewall: `guest.power`, `guest.tags`, grow-only `guest.disk`, agent command `grow`, safe-apply wire (`confirm` window, result `rolled-back`), schema of `firewall` (SSH rule, D-295), raw-mode marks on Issues and the override editor | pl-architect | pl-reviewer | M | – | with C1a |
 | C2 | Backup in the controller: online SQLite snapshot + link dir, chunked AEAD under a key derived from the master key, schedule + retention, API, events | pl-backend | pl-reviewer | M | C1a | with C5, C6 |
 | C3 | Restore: `plumb restore`; restored mode in API, engine, schedules and agent link; on restore drop sessions, disable API tokens, force a new admin password (D-290); `guest:missing`, `agent:silent`, unknown guests | pl-backend | pl-reviewer | L | C2 | after C2 |
-| C4 | Installer: backup copy timer (Q1 (a)), `--remove --keep-guests`, `--restore <file>` (recovery key on a TTY, same address, no DHCP, new token), dry run and repair run of each | pl-reviewer as implementer | **pl-architect** | M | C1a, Q1 | with C2 |
+| C4 | Installer: backup copy timer (Q1 (a), D-289 incl. N1–N3), `--remove --keep-guests` (fresh backup + key check first, keeps `plumb-snippets`), `--restore <file>` (recovery key on a TTY, same address, no DHCP, pool/node/install id check, new token with its ACLs), dry run and repair run of each | pl-reviewer as implementer | **pl-architect** | M | C1a, Q1 | with C2 |
 | C5 | Proxmox day 2 in driver and engine: `power`, `tags`, disk grow (VM resize + agent `grow`; LXC resize; disk gate D-219), risk classes, drift, steps on a stopped Target | pl-reviewer as implementer | **pl-architect** | L | C1b, C7 for the VM grow end to end | with C2 |
 | C6 | Agent: safe apply (round trip after the change, else restore; the guard of D-271 covers an agent crash) + resource `firewall` + CI guest tests incl. a forced rollback and nftables in an LXC | pl-backend | pl-reviewer | L | C1b | with C5 |
 | C7 | Agent command `grow` (growpart + `resize2fs`/`xfs_growfs` on the root file system only) + guest test | pl-codex-fix | pl-reviewer | S | C1b | with C6 |
@@ -115,14 +115,15 @@ Slice 4 holds, in this order:
 | C9 | Starter Block `firewall` (package `nftables`, SSH + listed ports open, rest of input closed) | pl-frontend | pl-reviewer | S | C6 | after C6 |
 | C10 | QA per card: tests against C2–C9; mutation audit of the backup crypto, the restored mode and the safe-apply rollback | pl-codex-qa | – | M | each card | per card |
 | C11 | Fix flaky `TestServeNoAnswer` (find the race, fix the test or the code; 200 runs green) | pl-codex-fix | pl-reviewer | S | – | now |
-| C12 | Real-host acceptance: backup → off-host copy → `--remove --keep-guests` with a VM and an LXC in the pool → `--restore` → restored mode, confirm, agents come back, Plan clean, revoked token stays off, `guest:missing` and unknown guests shown; power/tags/grow on VM and LXC; a `firewall` change that cuts the link rolls back by itself; a `drop` without SSH is refused | pl-backend | pl-reviewer | M | C2–C9 | last |
+| C12 | Real-host acceptance: backup → off-host copy → `--remove --keep-guests` with a VM and an LXC in the pool (a wrong recovery key stops it before any change; a kept VM starts between remove and restore) → `--restore` (a wrong pool is refused) → restored mode, confirm, agents come back, Plan clean, revoked token stays off, `guest:missing` and unknown guests shown; power/tags/grow on VM and LXC; a `firewall` change that cuts the link rolls back by itself; a `drop` without SSH is refused | pl-backend | pl-reviewer | M | C2–C9 | last |
 
 Codex cards (C7, C11, C10 parts) are narrow: one command, one test, one audit per card. C6 is too big for Codex (it touches the agent loop). pl-reviewer implements C4 and C5, so pl-architect reviews those two (M6). If the user takes Q5 (a), a card C6b `network` (pl-backend, M, after C6) is added, with a CI probe of netplan in both cloud images first.
 
 ### Risks and the real test host
 - **Two controllers at once.** A restore while the old controller still runs gives two controllers with the same CA and agent identities. Mitigation: restored mode (D-290). Until a person confirms that the old controller is off, the restored Plumb sends no Proxmox write and no agent command except observe; no Plan is approved; image schedules, retention, agent updates, Revert and the backup schedule wait.
 - **Revoked access comes back.** A token revoked after the backup, an old admin password and old sessions are in the restored database. Mitigation (D-290): the restore drops all sessions and disables every API token; a person re-enables tokens one by one in restored mode; the admin must set a new password at the first login.
-- **Replace the controller with guests in the pool.** Today `--remove` refuses while the pool has guests (`install/install.sh:1412`). New: `--remove --keep-guests` removes only the Plumb LXC, its key volume, the copy timer and the Plumb token; it keeps pool, guests, templates, user, roles, ACLs and storages. `--restore` then installs into this pool and accepts its guests. C12 tests it with a VM and an LXC in the pool.
+- **The host copy timer reads untrusted data.** A compromised `plumb` user controls the files in the container. The timer reads only a fixed pointer, checks the name and size, names the host copy itself, checks that a share is mounted, and pushes its status into a root-owned directory (D-289).
+- **Replace the controller with guests in the pool.** Today `--remove` refuses while the pool has guests (`install/install.sh:1412`). New: `--remove --keep-guests` removes only the Plumb LXC, its key volume, the copy timer and the Plumb token; it keeps pool, guests, templates, user (with its ACLs), roles, storages and `plumb-snippets` with the vendor snippet (kept VMs must still start). Before any removal it takes a fresh backup, copies it off the LXC and checks the recovery key against the backup's key fingerprint; a failure stops it before any change. `--restore` checks pool, node and install id and gives the new token its ACLs again (D-290). `--restore` then installs into this pool and accepts its guests. C12 tests it with a VM and an LXC in the pool.
 - **Same address needed.** Agents pin the controller URL (D-082). `--restore` refuses another LXC address than the one in the backup and refuses `--lxc-ip dhcp` (D-179).
 - **The backup holds the CA key and agent identities.** It is encrypted with a key derived from the master key, which is never in it (D-177). The Proxmox token secret is not in it; the restore makes a new token. Without the recovery key a backup is useless, also for an attacker. The copy timer copies only the encrypted file (H1); a vzdump of the container (Q1 (b)) would put `/etc/plumb/plumb.env`, the link dir and the database in clear on the storage.
 - **State after the backup.** A Target deleted after the backup: its guest is gone, the restored Plumb opens `guest:missing` and never re-creates it by itself. A guest made after the backup: unknown, listed, not touched. A bound guest whose agent re-enrolled after the backup: its credential is unknown; no hello within 10 minutes after the confirm opens `agent:silent` with the re-enroll action. Secrets changed after the backup are old again: the restore page says so.
@@ -134,13 +135,14 @@ Codex cards (C7, C11, C10 parts) are narrow: one command, one test, one audit pe
 ### New decisions (proposed; full text in `docs/decisions/T-107.md`)
 D-287 scope and order · D-288 backup content, format and encryption · D-289 off-host copy by a host timer · D-290 replace the controller, restore and restored mode · D-291 Proxmox day 2 (`power`, `tags`, disk grow) · D-292 more NICs and VLAN tags later · D-293 safe apply · D-294 `network` later (Q5) · D-295 `firewall` resource · D-296 raw mode on Issues and Targets.
 
-### Changes after review (round 1)
+### Changes after review (rounds 1 and 2)
 - H1: Q1 re-worded; D-289 is now a host timer that copies only the encrypted file; the vzdump option says what it holds in clear.
 - H2: `--remove --keep-guests` and `--restore` into the kept pool (D-290, C1a, C4, C12).
 - M1, M2, M3: in D-290 (sessions, tokens, admin password; `agent:silent`; restored mode stops every writer).
 - M4: Q5 is now `network` now or later (recommended later, D-294); the old Q5 (fs grow) is the default of D-291.
 - M5: SSH rule and `nftables` package in D-295, C9. M6: C6 → pl-backend, C5 → pl-reviewer, pl-architect reviews C4 and C5.
 - L1: C1 split into C1a, C1b; the netplan probe moves to C6b (only with Q5 (a)). L2: C5 depends on C7, C4 on Q1. L3, L4: in D-291. L5: in D-288, D-290. L6: two gap rows added.
+- Round 2: N1 (pointer, name regex, size cap, temp + rename) in D-288, D-289; N2 (root-owned status dir), N3 (storage active and mounted) in D-289; N4 (fresh backup + key check before removal), N5 (new token gets its ACLs again), N6 (keep `plumb-snippets`), N7 (pool, node, install id check) in D-290. All in C1a, C4, C12.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
