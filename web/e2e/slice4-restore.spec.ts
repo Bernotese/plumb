@@ -65,14 +65,15 @@ test("backup now, restore, restored mode, confirm, enable a token", async ({ bro
 
     // The restore locked the user "dev" (T-126, D-321): a one-time
     // password, shown once; "dev" logs in with it and must change it.
-    await page.locator("#restore-otp-name").fill("dev");
-    await page.getByRole("button", { name: "Give a one-time password" }).click();
+    await expect(page.locator("#restore-otp-users")).toContainText("dev");
+    await page.getByRole("button", { name: "Give dev a one-time password" }).click();
     await page.getByRole("button", { name: "Make a one-time password" }).click();
     await expect(page.locator("#restore-otp-title")).toHaveText('One-time password for "dev"');
     const otp = (await page.locator("#restore-otp-value").textContent())?.trim() ?? "";
     expect(otp.length).toBeGreaterThan(8);
     await page.getByRole("button", { name: "Done, I copied it" }).click();
     await expect(page.locator("#restore-otp-value")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Give dev a one-time password" })).toHaveCount(0);
     const devCtx = await browser.newContext();
     const dev = await devCtx.newPage();
     await dev.goto(server.base);

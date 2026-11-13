@@ -38,7 +38,8 @@
         if (
           e.type === "backup.finished" ||
           e.type === "restore.confirmed" ||
-          e.type === "token.enabled"
+          e.type === "token.enabled" ||
+          e.type === "user.password_reset"
         )
           l.reloadSoon();
       },
@@ -63,6 +64,16 @@
   const copyLine = (c: BackupList["copy"]) =>
     `Last copy: ${formatTime(c.at)}${c.storage ? ` to ${c.storage}` : ""}.`;
   const RESULT: Record<string, Tone> = { running: "info", ok: "ok", failed: "danger" };
+
+  // A user with a new password leaves the locked list (D-321).
+  async function reloadRestore() {
+    try {
+      restore = await api.getRestore();
+      onRestore?.(restore);
+    } catch (e) {
+      error = e;
+    }
+  }
 
   async function backUpNow() {
     actionError = null;
@@ -153,12 +164,19 @@
           <a href={href({ name: "settings", tab: "tokens" })}>API tokens</a>.
         </p>
       {/if}
-      <h3 id="locked-title">Locked users</h3>
-      <p class="muted">
-        The restore locked every user but admin. Give a user a one-time password to let them in
-        again; they choose their own password at the first login.
-      </p>
-      <ResetPassword {api} id="restore-otp" />
+      {#if restore.locked_users}
+        <h3 id="restore-otp-users-title" tabindex="-1">Locked users</h3>
+        <p class="muted">
+          The restore locked every user but admin. Give a user a one-time password to let them in
+          again; they choose their own password at the first login.
+        </p>
+        <ResetPassword
+          {api}
+          id="restore-otp"
+          users={restore.locked_users}
+          onReset={reloadRestore}
+        />
+      {/if}
       {#if restore.unknown_guests?.length}
         <h3>Unknown guests</h3>
         <p class="muted">

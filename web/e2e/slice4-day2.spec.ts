@@ -3,8 +3,8 @@ import { approveAndRun, login } from "./login";
 
 // T-118 on the real API (T-115; D-291, D-299): day 2 of a Target (disk
 // grow, tags, power) and the Block picker filtered by the target kind
-// (D-260). web2: no later spec plans it; it ends stopped. The kind filter uses the
-// container Image e2e-ct of slice2-lxc.spec.ts.
+// (D-260). web2: no later spec plans it; it ends running again. The kind
+// filter uses the container Image e2e-ct of slice2-lxc.spec.ts.
 
 test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }) => {
   test.setTimeout(150_000);
@@ -23,24 +23,17 @@ test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }
   await expect(page.getByText(/^A stop needs '.+' below\.$/)).toBeVisible();
   await expect(page).toHaveURL(/#\/targets\/web2\/edit$/);
 
-  // A grow: the Plan shows the D-299 note. It is not approved: the dev
-  // agent (linktest) has no grow command, so the Run would fail.
+  // A grow and a tag: one Plan with the D-299 note, applied.
   await page.locator("#guest-disk").fill("24");
   await page.locator("#guest-power").selectOption("");
+  await page.locator("#guest-tags-add").click();
+  await page.locator("#guest-tags-0").fill("e2e");
   await page.getByRole("button", { name: "Show the plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText("A grow cannot be undone").first()).toBeVisible();
-
-  // A tag: applied.
-  await page.goto("/#/targets/web2/edit");
-  await expect(page.locator("#guest-disk")).toHaveValue("20");
-  await page.locator("#guest-tags-add").click();
-  await page.locator("#guest-tags-0").fill("e2e");
-  await page.locator("#t-reason").fill("e2e: tag web2");
-  await page.getByRole("button", { name: "Show the plan" }).click();
-  await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await approveAndRun(page);
   await page.goto("/#/targets/web2/edit");
+  await expect(page.locator("#guest-disk")).toHaveValue("24");
   await expect(page.locator("#guest-tags-0")).toHaveValue("e2e");
 
   // A stop with allow_restart: the Target shows Stopped, not Offline.
@@ -53,8 +46,16 @@ test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }
   await approveAndRun(page);
   await page.getByRole("link", { name: "Targets", exact: true }).click();
   await expect(page.getByRole("row", { name: /web2/ })).toContainText("Stopped");
-  // web2 stays stopped: the dev agent does not come back after a start,
-  // so a Run of web2 would wait for it. No later spec plans web2.
+
+  // Start it again: the agent comes back, the Target is no longer Stopped.
+  await page.goto("/#/targets/web2/edit");
+  await page.locator("#guest-power").selectOption("running");
+  await page.locator("#t-reason").fill("e2e: start web2");
+  await page.getByRole("button", { name: "Show the plan" }).click();
+  await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
+  await approveAndRun(page);
+  await page.getByRole("link", { name: "Targets", exact: true }).click();
+  await expect(page.getByRole("row", { name: /web2/ })).not.toContainText("Stopped");
 });
 
 test("kind filter: a sysctl Block is not offered for a container", async ({ page }) => {

@@ -742,6 +742,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         n++;
       }
     restore.disabled_tokens = n;
+    restore.locked_users = MOCK_USERS.filter((u) => u !== "admin");
   }
   /** 409 `restored-mode` for the writers that wait for the confirm (D-303). */
   function writable(): void {
@@ -2317,6 +2318,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         throw problem("not-found", "Not found", 404, `User ${name} does not exist.`);
       const rnd = crypto.getRandomValues(new Uint8Array(16));
       const password = btoa(String.fromCharCode(...rnd)).replace(/[^A-Za-z0-9]/g, "");
+      if (restore.locked_users)
+        restore.locked_users = restore.locked_users.filter((u) => u !== name);
       emit("user.password_reset", `user:${name}`, {});
       return { username: name, password };
     },
