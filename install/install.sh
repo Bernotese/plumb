@@ -311,7 +311,6 @@ parse_args() {
 	[[ $BACKUP_MAX_SIZE =~ ^([1-9][0-9]{0,5})([MG])$ ]] || die "bad --backup-max-size (for example 512M or 2G)"
 	BACKUP_MAX_BYTES=$((BASH_REMATCH[1] << 20))
 	[[ ${BASH_REMATCH[2]} == G ]] && BACKUP_MAX_BYTES=$((BACKUP_MAX_BYTES << 10))
-	[[ -z $BACKUP_STORAGE || $BACKUP_STORAGE == none || $BACKUP_STORAGE =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die "bad --backup-storage"
 	[[ $KEEP_GUESTS == 0 || $MODE == remove ]] || die "--keep-guests works only with --remove"
 	[[ -z $BACKUP_TO || $KEEP_GUESTS == 1 ]] || die "--backup-to works only with --remove --keep-guests"
 	[[ -z $RESTORE_FILE || $MODE == install ]] || die "--restore is an install; use it without --remove or --snippet-only"
@@ -1547,6 +1546,7 @@ storage_field() {
 # sets COPY_TYPE and COPY_PATH.
 COPY_TYPE="" COPY_PATH=""
 check_backup_storage() {
+	[[ -z $BACKUP_STORAGE || $BACKUP_STORAGE == none || $BACKUP_STORAGE =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die "bad --backup-storage"
 	[[ -n $BACKUP_STORAGE && $BACKUP_STORAGE != none ]] || return 0
 	case $BACKUP_STORAGE in
 	"$DISK_STORAGE" | "$SNIPPET_STORAGE" | "$IMAGE_STORAGE")
@@ -1631,7 +1631,9 @@ check_copy_setting() {
 		BACKUP_STORAGE=$(state_get backup_storage)
 		if [[ -n $RESTORE_FILE ]]; then
 			say "Using kept backup storage $BACKUP_STORAGE for the restored controller."
-			check_backup_storage
+			if ! (check_backup_storage); then
+				die "Backup storage $BACKUP_STORAGE from the kept state failed its checks; give --backup-storage ID or give --backup-storage none. Nothing was changed."
+			fi
 			return 0
 		fi
 		if ! (check_backup_storage) 2>/dev/null; then

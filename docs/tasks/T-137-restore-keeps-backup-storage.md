@@ -22,3 +22,4 @@ After `--remove --keep-guests` and `--restore` the off-host copy runs again with
 branch · commit · tests · notes
 
 pl-codex-fix/T-137-restore-keeps-backup-storage · see PR commit · tests: make lint test build → PASS (ShellCheck installed); targeted fake-PVE restore/keep/dry-run tests → PASS · no host access; origin/main merged before PR.
+Review F1/N1: validate storage names in check_backup_storage; explain failed kept-storage checks and the none override. Tests: targeted fake-PVE restore, bad kept name, inactive kept storage, repair/copy settings → PASS; make lint-sh → PASS.

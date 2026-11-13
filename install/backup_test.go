@@ -657,6 +657,43 @@ func TestRestoreBackupStorage(t *testing.T) {
 	}
 }
 
+func TestRestoreKeptBackupStorageFails(t *testing.T) {
+	for _, badName := range []bool{false, true} {
+		t.Run(fmt.Sprintf("badName=%t", badName), func(t *testing.T) {
+			b, file := keptHost(t)
+			env := []string{"FAKE_STORAGE_INACTIVE=backups"}
+			want := "not active"
+			if badName {
+				raw, err := os.ReadFile(b.stateF)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = []byte(strings.ReplaceAll(string(raw), "backup_storage=backups", "backup_storage=../bad"))
+				if err := os.WriteFile(b.stateF, raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				env = nil
+				want = "bad --backup-storage"
+			}
+			before, _ := os.ReadFile(b.stateF)
+			b.resetCalls()
+			code, out, errOut := b.restore(env, file, "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1")
+			if code == 0 || !strings.Contains(errOut, want) || !strings.Contains(errOut, "from the kept state") || !strings.Contains(errOut, "or give --backup-storage none") {
+				t.Fatalf("%d\n%s\n%s", code, out, errOut)
+			}
+			after, _ := os.ReadFile(b.stateF)
+			if string(before) != string(after) {
+				t.Error("failed storage check changed the kept state")
+			}
+			for _, c := range b.calls() {
+				if mutating.MatchString(c) || strings.HasPrefix(c, "systemctl") || strings.Contains(c, "../bad") {
+					t.Errorf("failed storage check reached: %s", c)
+				}
+			}
+		})
+	}
+}
+
 // D-290 N7, D-304: each wrong restore is refused before any change.
 func TestRestoreRefused(t *testing.T) {
 	b, file := keptHost(t)
