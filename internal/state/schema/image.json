@@ -60,7 +60,7 @@
             "source"
           ],
           "additionalProperties": false,
-          "description": "Where Plumb finds the newest pin for url (D-335). ubuntu-cloud: SHA256SUMS + SHA256SUMS.gpg in the directory of url, signed by the pinned Ubuntu cloud image key (vm, sha256). proxmox-aplinfo: aplinfo-pve-9.dat.gz + .asc of download.proxmox.com, signed by the pinned Proxmox release key, field sha512sum (lxc, sha512). debian-https: SHA512SUMS in the directory of url over HTTPS, no signature exists, so every refresh needs a person (vm, sha512). Keys are pinned in the binary; no field adds one. The pin stays in sha256 or sha512; POST /images/{name}/refresh and the build schedule propose a pin-only change. The server checks that source fits type and url.",
+          "description": "Where Plumb finds the newest pin for url (D-335). ubuntu-cloud: SHA256SUMS + SHA256SUMS.gpg in the directory of url, signed by the pinned Ubuntu cloud image key (vm, sha256). proxmox-aplinfo: aplinfo-pve-9.dat.gz of download.proxmox.com, unpacked and checked against the detached aplinfo-pve-9.dat.asc (over the unpacked bytes), signed by the pinned Proxmox Trixie release key, field sha512sum (lxc, sha512). One pinned key per source. debian-https: SHA512SUMS in the directory of url over HTTPS, no signature exists, so every refresh needs a person (vm, sha512). Keys are pinned in the binary; no field adds one. The pin stays in sha256 or sha512; POST /images/{name}/refresh and the build schedule propose a pin-only change. The server checks that source fits type and url.",
           "properties": {
             "source": {
               "enum": [

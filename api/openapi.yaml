@@ -3529,7 +3529,9 @@ components:
             adopts values that a guest reported (D-323), or a change of the Plan sets a value (or
             adds a list element) that any guest reported as drift in the last 30 days, on any
             Target, whether its Issue is open, closed or ignored, whatever the origin (D-331;
-            `guest_data_issues` names the Issues). Checked when the Plan is made and again at
+            `guest_data_issues` names the Issues), or the Target is flagged because its stored
+            reported values reached the cap (an Issue `agent:values` is open; no match is listed).
+            Checked when the Plan is made and again at
             approval: a report that arrives in between adds the reason, and the approval returns
             403 `human-required` for a token. `unverified-pin`: a
             `pin_refresh` Plan from a source without a signature, with a signature that is not
@@ -3847,6 +3849,13 @@ components:
         `system` resolves them as `gone` when the guest or the hello comes back, or when an
         applied Plan deletes the Target (then with the system comment "Resolved: the Target was
         deleted."; a foreign guest stays and is never deleted, D-322).
+
+        Slice 5 (D-331): `system` opens `agent:values` when the stored values that the guest of
+        a Target reported as drift reach the cap (10 000). Nothing is evicted; for 30 days every
+        Plan that touches the Target is human-only (`accept-guest-data`). One change
+        `{attr: reported_values, from: null, to: "cap reached", risk: read}`; only `ignore_once`
+        and `ignore_rule`, and the ignore does not end the flag. `system` resolves it as `gone`
+        when the 30 days end.
       required:
         - id
         - target
