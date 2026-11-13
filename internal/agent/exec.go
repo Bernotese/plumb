@@ -56,6 +56,12 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) wire.Report {
 			return fail(fmt.Errorf("seal body: %w", err))
 		}
 		rep.Items = a.seal(ctx, cmd.ID, body)
+	case wire.CommandGrow:
+		var body wire.GrowBody
+		if err := json.Unmarshal(cmd.Body, &body); err != nil {
+			return fail(fmt.Errorf("grow body: %w", err))
+		}
+		rep.Items = []wire.Item{a.grow(ctx, body)}
 	case wire.CommandUpdate:
 		var body wire.UpdateBody
 		if err := json.Unmarshal(cmd.Body, &body); err != nil {
