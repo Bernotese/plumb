@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/backup"
@@ -80,14 +79,10 @@ func backupNow(ctx context.Context, data, keyFile string, wait time.Duration) (s
 	if _, err := secret.Open(ctx, st, key); err != nil {
 		return "", err
 	}
-	keep := backup.DefaultKeep
-	if v := os.Getenv("PLUMB_BACKUP_KEEP"); v != "" {
-		if keep, err = strconv.Atoi(v); err != nil {
-			return "", fmt.Errorf("PLUMB_BACKUP_KEEP %q: %w", v, err)
-		}
-	}
+	// The retention of serve: keep comes from the install file, never from
+	// the environment (the installer runs this without plumb.env).
 	svc, err := backup.New(ctx, backup.Config{Store: st, Events: event.New(st), Key: key, DataDir: data,
-		Time: envOr("PLUMB_BACKUP_TIME", backup.DefaultTime), Keep: keep, PlumbVersion: version,
+		Keep: in.Keep, PlumbVersion: version,
 		InstallID: in.InstallID, Node: in.Node, Pool: in.Pool, AgentURL: in.AgentURL,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
@@ -95,7 +90,7 @@ func backupNow(ctx context.Context, data, keyFile string, wait time.Duration) (s
 	}
 	deadline := time.Now().Add(wait)
 	for {
-		run, err := svc.RunNow(ctx, backup.SystemActor)
+		run, err := svc.RunNow(ctx, backup.SystemActor, store.BackupCLI)
 		if errors.Is(err, backup.ErrRunning) {
 			if time.Now().After(deadline) {
 				return "", fmt.Errorf("another backup still runs after %s", wait)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/backup"
+	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
@@ -71,7 +72,7 @@ func TestBackupsAPI(t *testing.T) {
 		t.Fatalf("list: %d %s", code, body)
 	}
 	// While one runs: 409 backup-running.
-	if _, err := e.st.StartBackupRun(e.ctx, "system", "plumb-20990101T000000Z.pbk"); err != nil {
+	if _, err := e.st.StartBackupRun(e.ctx, "system", store.BackupSchedule, "plumb-20990101T000000Z.pbk"); err != nil {
 		t.Fatal(err)
 	}
 	code, body = rc.do(adm, "POST", "/api/v1/backups", "/backups", nil)

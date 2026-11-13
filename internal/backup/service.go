@@ -73,6 +73,10 @@ type Install struct {
 	Node      string `json:"node"`
 	Pool      string `json:"pool"`
 	AgentURL  string `json:"agent_url"`
+	// Keep is --backup-keep of serve: "plumb backup now" runs the same
+	// retention (review L1 of #220: the installer runs it without
+	// plumb.env).
+	Keep int `json:"keep"`
 }
 
 // LoadInstall reads InstallFile of a data directory.
@@ -86,6 +90,9 @@ func LoadInstall(dataDir string) (Install, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
 		return Install{}, fmt.Errorf("%s: %w", InstallFile, err)
+	}
+	if in.Keep < 1 || in.Keep > MaxKeep {
+		return Install{}, fmt.Errorf("%s: keep %d: restart plumb serve once", InstallFile, in.Keep)
 	}
 	return in, nil
 }
@@ -155,7 +162,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if err := cfg.Store.FailRunningBackups(ctx, "interrupted: the controller stopped during the backup"); err != nil {
 		return nil, err
 	}
-	in, err := json.Marshal(Install{InstallID: cfg.InstallID, Node: cfg.Node, Pool: cfg.Pool, AgentURL: cfg.AgentURL})
+	in, err := json.Marshal(Install{InstallID: cfg.InstallID, Node: cfg.Node, Pool: cfg.Pool, AgentURL: cfg.AgentURL, Keep: cfg.Keep})
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +191,7 @@ func (s *Service) Schedule() (string, int) { return s.cfg.Time, s.cfg.Keep }
 // Start starts one backup in the background and returns its run. by is
 // the principal. ErrRunning while one runs.
 func (s *Service) Start(ctx context.Context, by string) (store.BackupRun, error) {
-	run, err := s.begin(ctx, by)
+	run, err := s.begin(ctx, by, store.BackupAPI)
 	if err != nil {
 		return run, err
 	}
@@ -198,8 +205,9 @@ func (s *Service) Start(ctx context.Context, by string) (store.BackupRun, error)
 }
 
 // RunNow runs one backup and waits for it. It returns the finished run.
-func (s *Service) RunNow(ctx context.Context, by string) (store.BackupRun, error) {
-	run, err := s.begin(ctx, by)
+// trigger is store.BackupSchedule or store.BackupCLI.
+func (s *Service) RunNow(ctx context.Context, by, trigger string) (store.BackupRun, error) {
+	run, err := s.begin(ctx, by, trigger)
 	if err != nil {
 		return run, err
 	}
@@ -212,7 +220,7 @@ func (s *Service) Wait() { s.wg.Wait() }
 
 // begin takes the lock and records the run. On success the caller owns
 // s.mu and must unlock it.
-func (s *Service) begin(ctx context.Context, by string) (store.BackupRun, error) {
+func (s *Service) begin(ctx context.Context, by, trigger string) (store.BackupRun, error) {
 	if !s.mu.TryLock() {
 		return store.BackupRun{}, ErrRunning
 	}
@@ -221,7 +229,7 @@ func (s *Service) begin(ctx context.Context, by string) (store.BackupRun, error)
 		s.mu.Unlock()
 		return store.BackupRun{}, err
 	}
-	run, err := s.cfg.Store.StartBackupRun(ctx, by, name)
+	run, err := s.cfg.Store.StartBackupRun(ctx, by, trigger, name)
 	if err != nil {
 		s.mu.Unlock()
 		if errors.Is(err, store.ErrBackupRunning) {
@@ -440,12 +448,13 @@ func randHex() string {
 
 // file is one backup in the directory.
 type file struct {
-	name string
-	at   time.Time // the time of the name
-	n    int       // the -<n> suffix
+	name  string
+	mtime time.Time // when the file was written
 }
 
-// files lists the backups, newest first.
+// files lists the backups, newest first by the time the file was written,
+// not by the time in its name: after a clock step back a new backup has
+// an older name (review L3 of #220).
 func (s *Service) files() ([]file, error) {
 	ents, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -457,20 +466,17 @@ func (s *Service) files() ([]file, error) {
 		if !e.Type().IsRegular() || !NameRE.MatchString(name) {
 			continue
 		}
-		stem := strings.TrimSuffix(strings.TrimPrefix(name, "plumb-"), FileSuffix)
-		ts, suffix, _ := strings.Cut(stem, "-")
-		at, err := time.Parse(NameLayout, ts)
+		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		n, _ := strconv.Atoi(suffix)
-		out = append(out, file{name: name, at: at, n: n})
+		out = append(out, file{name: name, mtime: info.ModTime()})
 	}
 	slices.SortFunc(out, func(a, b file) int {
-		if c := b.at.Compare(a.at); c != 0 {
+		if c := b.mtime.Compare(a.mtime); c != 0 {
 			return c
 		}
-		return b.n - a.n
+		return strings.Compare(b.name, a.name)
 	})
 	return out, nil
 }
@@ -648,7 +654,7 @@ func (s *Service) Due(ctx context.Context) (bool, error) {
 	if now.Before(slot) {
 		slot = slot.AddDate(0, 0, -1)
 	}
-	last, err := s.cfg.Store.LastBackupRun(ctx, SystemActor)
+	last, err := s.cfg.Store.LastBackupRun(ctx, store.BackupSchedule)
 	if errors.Is(err, store.ErrNotFound) {
 		return true, nil
 	}
@@ -670,7 +676,7 @@ func (s *Service) RunSchedule(ctx context.Context, interval time.Duration, pause
 			if err != nil {
 				s.cfg.Logger.Error("backup schedule", "err", err)
 			} else if due {
-				if _, err := s.RunNow(ctx, SystemActor); err != nil && !errors.Is(err, ErrRunning) {
+				if _, err := s.RunNow(ctx, SystemActor, store.BackupSchedule); err != nil && !errors.Is(err, ErrRunning) {
 					s.cfg.Logger.Error("scheduled backup", "err", err)
 				}
 			}

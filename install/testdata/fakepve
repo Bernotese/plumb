@@ -42,8 +42,11 @@ hostname)
 	if [[ ${1:-} == -d ]]; then echo "${FAKE_HOST_DOMAIN:-}"; else echo pve1; fi
 	;;
 stat) # stat -c '%U %a' -- DIR: the tests run as a normal user; root unless FAKE_DIR_OWNER
+	if [[ ${2:-} != '%U %a' ]]; then exec /usr/bin/stat "$@"; fi
 	printf '%s %s\n' "${FAKE_DIR_OWNER:-root}" "$(/usr/bin/stat -c %a -- "${!#}")"
 	;;
+systemctl) ;; # the call is in $st/calls
+mountpoint) [[ ${FAKE_MOUNTED:-0} == 1 ]] ;;
 ip) echo "5: vmbr0    inet 192.168.1.5/24 brd 192.168.1.255 scope global vmbr0\\       valid_lft forever preferred_lft forever" ;;
 install)
 	args=()
@@ -146,7 +149,14 @@ pveum)
 			touch "$st/token.$5"
 			printf '{"full-tokenid":"%s!%s","info":{"privsep":1},"value":"%s"}\n' "$4" "$5" "$FAKE_SECRET"
 			;;
-		remove) rm -f "$st/token.$5" ;;
+		remove)
+			rm -f "$st/token.$5"
+			# Like Proxmox: the ACLs of the token go with it.
+			if [[ -e $st/acl ]]; then
+				awk -v u="$4!$5" '$2 != u' "$st/acl" >"$st/acl.new"
+				mv "$st/acl.new" "$st/acl"
+			fi
+			;;
 		esac
 		;;
 	*) echo "fakepve: unknown pveum $*" >&2; exit 2 ;;
@@ -154,7 +164,13 @@ pveum)
 	;;
 pvesm)
 	case $1 in
-	status) has "storage.$3" ;;
+	status)
+		has "storage.$3" || exit 1
+		# Like pvesm status: a header, then name type status total used avail %.
+		state=active
+		[[ ${FAKE_STORAGE_INACTIVE:-} == "$3" ]] && state=inactive
+		printf 'Name Type Status Total Used Available %%\n%s %s %s 100 10 90 10.00%%\n' "$3" "$(cat "$st/type.$3" 2>/dev/null || echo dir)" "$state"
+		;;
 	add)
 		id=$3
 		touch "$st/storage.$id"
@@ -240,16 +256,17 @@ pct)
 			exit 2
 		fi
 		shift 2
-		host="" desc="" mp=""
+		host="" desc="" mp="" net=""
 		while [[ $# -gt 0 ]]; do
 			case $1 in
 			--hostname) host=$2 ;;
 			--description) desc=$2 ;;
 			--mp0) mp=$2 ;;
+			--net0) net=$2 ;;
 			esac
 			shift
 		done
-		printf 'hostname: %s\ndescription: %s\n' "$host" "$desc" >"$st/lxc.$id"
+		printf 'hostname: %s\ndescription: %s\nnet0: %s\n' "$host" "$desc" "$net" >"$st/lxc.$id"
 		touch "$st/stopped.$id" # a new container is stopped
 		if [[ -n $mp ]]; then
 			# local-lvm:1,mp=… becomes local-lvm:vm-ID-disk-1,mp=…
@@ -267,7 +284,7 @@ pct)
 	destroy)
 		# A destroy that leaves the container (review nit test).
 		[[ ${FAKE_DESTROY_NOOP:-0} == 1 ]] && exit 0
-		rm -f "$st/lxc.$2" "$st/key.$2" "$st/stopped.$2"
+		rm -f "$st/lxc.$2" "$st/key.$2" "$st/stopped.$2" "$st/db.$2"
 		# Like pve-container 6.1: --purge keeps rules.seccomp and passthrough/.
 		if [[ -n ${PLUMB_INSTALL_LXC_DIR:-} ]]; then
 			mkdir -p "$PLUMB_INSTALL_LXC_DIR/$2/passthrough"
@@ -297,9 +314,23 @@ pct)
 		[[ -n ${FAKE_EXEC_FAIL:-} && "$*" == "$FAKE_EXEC_FAIL" ]] && exit 3
 		case "$*" in
 		"hostname -I") echo "fd00::50 192.168.1.50" ;;
+		"dd if="*)
+			# A file of the fake LXC in $st/ct/ID/PATH; iflag=nofollow
+			# refuses a link, like GNU dd.
+			f=$st/ct/$id/${2#if=}
+			[[ -L $f && "$*" == *iflag=nofollow* ]] && { echo "dd: failed to open '${2#if=}': Too many levels of symbolic links" >&2; exit 1; }
+			[[ -f $f ]] || { echo "dd: failed to open '${2#if=}': No such file or directory" >&2; exit 1; }
+			cat "$f"
+			;;
+		"/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb backup now --data /var/lib/plumb")
+			[[ ${FAKE_BACKUP_NOW_FAIL:-0} == 1 ]] && exit 1
+			touch "$st/backup-now"
+			;;
 		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
 		"grep -q ^"*" /etc/plumb/plumb.env") grep -q "$3" "$st/push/_etc_plumb_plumb.env" ;;
+		"grep -qx "*" /etc/plumb/plumb.env") grep -qxF "$3" "$st/push/_etc_plumb_plumb.env" ;;
 		"test -s /var/lib/plumb/key/master.key") has "key.$id" ;;
+		"test -s /var/lib/plumb/plumb.db") has "db.$id" ;;
 		"mountpoint -q /var/lib/plumb/key") grep -q '^mp0: .*mp=/var/lib/plumb/key' "$st/lxc.$id" ;;
 		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;
 		"sha256sum /proc/"*"/exe")
@@ -349,6 +380,16 @@ pct)
 	;;
 lxc-attach) # lxc-attach -n ID --clear-env -- runuser -u plumb -- plumb key init …
 	[[ ${FAKE_KEYINIT_FAIL:-0} == 1 ]] && exit 1
+	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb" ]]; then
+		has "key.$2" && exit 1
+		touch "$st/key.$2"
+	fi
+	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from /var/lib/plumb/restore.pbk" ]]; then
+		[[ ${FAKE_RESTORE_FAIL:-0} == 1 ]] && exit 1
+		[[ -e $st/push/_var_lib_plumb_restore.pbk ]] || exit 1
+		touch "$st/db.$2"
+		echo "Restored. User: admin  Password: NEWPW"
+	fi
 	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key init --data /var/lib/plumb" ]]; then
 		has "key.$2" && exit 1 # a key is never replaced
 		touch "$st/key.$2"

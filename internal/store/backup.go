@@ -23,16 +23,24 @@ type BackupRun struct {
 	FinishedAt time.Time // zero while running
 	Result     string
 	By         string
+	Trigger    string // BackupSchedule, BackupAPI or BackupCLI
 	Name       string
 	Message    string
 }
+
+// Triggers of a backup run: only a scheduled run counts for the schedule.
+const (
+	BackupSchedule = "schedule"
+	BackupAPI      = "api"
+	BackupCLI      = "cli"
+)
 
 // ErrBackupRunning: another backup runs (only one at a time).
 var ErrBackupRunning = errors.New("store: a backup is running")
 
 // StartBackupRun records a new running backup. It fails with
 // ErrBackupRunning while another one runs.
-func (s *Store) StartBackupRun(ctx context.Context, by, name string) (BackupRun, error) {
+func (s *Store) StartBackupRun(ctx context.Context, by, trigger, name string) (BackupRun, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return BackupRun{}, err
@@ -46,9 +54,9 @@ func (s *Store) StartBackupRun(ctx context.Context, by, name string) (BackupRun,
 		return BackupRun{}, ErrBackupRunning
 	}
 	now := s.now()
-	run := BackupRun{Result: BackupRunning, By: by, Name: name}
-	if err := tx.QueryRowContext(ctx, `INSERT INTO backup_run (started_at, result, by, name) VALUES (?, 'running', ?, ?) RETURNING id`,
-		now, by, name).Scan(&run.ID); err != nil {
+	run := BackupRun{Result: BackupRunning, By: by, Trigger: trigger, Name: name}
+	if err := tx.QueryRowContext(ctx, `INSERT INTO backup_run (started_at, result, by, trigger, name) VALUES (?, 'running', ?, ?, ?) RETURNING id`,
+		now, by, trigger, name).Scan(&run.ID); err != nil {
 		return BackupRun{}, fmt.Errorf("store: start backup run: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -76,19 +84,19 @@ func (s *Store) FailRunningBackups(ctx context.Context, message string) error {
 	return err
 }
 
-// LastBackupRun returns the newest backup run; by "" means any principal.
+// LastBackupRun returns the newest backup run; trigger "" means any.
 // ErrNotFound when there is none.
-func (s *Store) LastBackupRun(ctx context.Context, by string) (BackupRun, error) {
-	q := `SELECT id, started_at, COALESCE(finished_at, ''), result, by, name, message FROM backup_run`
+func (s *Store) LastBackupRun(ctx context.Context, trigger string) (BackupRun, error) {
+	q := `SELECT id, started_at, COALESCE(finished_at, ''), result, by, trigger, name, message FROM backup_run`
 	var args []any
-	if by != "" {
-		q += ` WHERE by = ?`
-		args = append(args, by)
+	if trigger != "" {
+		q += ` WHERE trigger = ?`
+		args = append(args, trigger)
 	}
 	q += ` ORDER BY id DESC LIMIT 1`
 	var r BackupRun
 	var started, finished string
-	err := s.db.QueryRowContext(ctx, q, args...).Scan(&r.ID, &started, &finished, &r.Result, &r.By, &r.Name, &r.Message)
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&r.ID, &started, &finished, &r.Result, &r.By, &r.Trigger, &r.Name, &r.Message)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BackupRun{}, ErrNotFound
 	}

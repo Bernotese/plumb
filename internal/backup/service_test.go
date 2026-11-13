@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -79,7 +80,11 @@ func newFixture(t *testing.T, cfg func(*Config)) *fixture {
 
 func (f *fixture) backup(by string) store.BackupRun {
 	f.t.Helper()
-	run, err := f.svc.RunNow(f.ctx, by)
+	trigger := store.BackupAPI
+	if by == SystemActor {
+		trigger = store.BackupSchedule
+	}
+	run, err := f.svc.RunNow(f.ctx, by, trigger)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -359,46 +364,75 @@ func TestKeyDerivation(t *testing.T) {
 	}
 }
 
+// setMtime gives a backup a known write time.
+func (f *fixture) setMtime(name string, at time.Time) {
+	f.t.Helper()
+	if err := os.Chtimes(filepath.Join(f.data, DirName, name), at, at); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// Retention keeps the newest files by write time (review L3 of #220) and
+// always the pointer target.
 func TestRetention(t *testing.T) {
 	f := newFixture(t, func(c *Config) { c.Keep = 3 })
+	base := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
 	var names []string
 	for i := range 5 {
-		f.clock.set(time.Date(2026, 11, 13, 10, 0, i, 0, time.UTC))
+		f.clock.set(base.Add(time.Duration(i) * time.Second))
 		names = append(names, f.backup("system").Name)
+		f.setMtime(names[i], base.Add(time.Duration(i)*time.Minute))
 	}
 	// Two in the same second get -1.
 	second := f.backup("user:admin").Name
 	if second != "plumb-20261113T100004Z-1.pbk" {
 		t.Fatalf("same second: %q", second)
 	}
-	items, err := f.svc.Items()
-	if err != nil {
+	f.setMtime(second, base.Add(10*time.Minute))
+	if err := f.svc.retain(); err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, it := range items {
-		got = append(got, it.Name)
+	kept := func() []string {
+		items, err := f.svc.Items()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, it := range items {
+			got = append(got, it.Name)
+		}
+		return got
 	}
-	want := []string{second, names[4], names[3]}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := kept(), []string{second, names[4], names[3]}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("kept %v, want %v", got, want)
 	}
 	if _, err := os.Stat(filepath.Join(f.data, DirName, names[0]+SumSuffix)); !os.IsNotExist(err) {
 		t.Error("sum file of a removed backup stays")
 	}
+	// A clock step back: the new backup has an older name, but it is the
+	// newest file; it stays, and an older file with a "future" name goes.
+	f.clock.set(base.Add(-24 * time.Hour))
+	back := f.backup("system").Name
+	if back >= names[0] {
+		t.Fatalf("name after the step back: %q", back)
+	}
+	if got := kept(); len(got) != 3 || got[0] != back || slices.Contains(got, names[3]) {
+		t.Fatalf("after a clock step back: %v", got)
+	}
 	// The pointer protects its file even when it is not among the newest.
 	dir := filepath.Join(f.data, DirName)
-	for _, n := range []string{"plumb-20261113T120000Z.pbk", "plumb-20261113T120001Z.pbk", "plumb-20261113T120002Z.pbk"} {
+	for i, n := range []string{"plumb-20261113T120000Z.pbk", "plumb-20261113T120001Z.pbk", "plumb-20261113T120002Z.pbk"} {
 		os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600)
+		f.setMtime(n, time.Now().Add(time.Duration(i+1)*time.Hour))
 	}
-	os.WriteFile(filepath.Join(dir, PointerName), []byte(`{"name":"`+names[3]+`","size":1,"sha256":"x"}`), 0o600)
+	os.WriteFile(filepath.Join(dir, PointerName), []byte(`{"name":"`+names[4]+`","size":1,"sha256":"x"}`), 0o600)
 	if err := f.svc.retain(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, names[3])); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, names[4])); err != nil {
 		t.Errorf("the pointer file was removed: %v", err)
 	}
-	for _, gone := range []string{second, names[4]} {
+	for _, gone := range []string{second, back} {
 		if _, err := os.Stat(filepath.Join(dir, gone)); !os.IsNotExist(err) {
 			t.Errorf("%s stays", gone)
 		}
@@ -408,7 +442,7 @@ func TestRetention(t *testing.T) {
 func TestBackupFailureVisible(t *testing.T) {
 	f := newFixture(t, nil)
 	os.Remove(filepath.Join(f.data, "link", "ca.key"))
-	run, err := f.svc.RunNow(f.ctx, "system")
+	run, err := f.svc.RunNow(f.ctx, "system", store.BackupSchedule)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +473,7 @@ func TestOneAtATimeAndInterrupted(t *testing.T) {
 	}
 	f.svc.Wait()
 	// A running row of a stopped serve is failed at the next start.
-	if _, err := f.st.StartBackupRun(f.ctx, "system", "plumb-20261113T100001Z.pbk"); err != nil {
+	if _, err := f.st.StartBackupRun(f.ctx, "system", store.BackupSchedule, "plumb-20261113T100001Z.pbk"); err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(f.data, DirName, TempPrefix+"plumb-x"), []byte("half"), 0o600)
@@ -471,6 +505,13 @@ func TestDue(t *testing.T) {
 	f.backup("user:admin") // a manual one does not count for the schedule
 	if due, _ := f.svc.Due(f.ctx); !due {
 		t.Error("after a manual backup: still due")
+	}
+	// Neither does plumb backup now, also by system (review L2 of #220).
+	if run, err := f.svc.RunNow(f.ctx, SystemActor, store.BackupCLI); err != nil || run.Result != store.BackupOK {
+		t.Fatalf("cli: %+v %v", run, err)
+	}
+	if due, _ := f.svc.Due(f.ctx); !due {
+		t.Error("after plumb backup now: still due")
 	}
 	f.backup(SystemActor)
 	f.clock.set(time.Date(2026, 11, 14, 2, 59, 0, 0, time.UTC))

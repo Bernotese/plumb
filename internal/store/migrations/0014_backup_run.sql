@@ -5,6 +5,8 @@
 --   is still running at the start of serve was cut by a stop and is set
 --   to failed. A backup holds its own row as running (the snapshot is
 --   taken inside the run).
+-- * trigger: schedule (the daily backup of serve), api (POST /backups) or
+--   cli (plumb backup now). Only schedule counts for the schedule.
 
 CREATE TABLE backup_run (
     id          INTEGER PRIMARY KEY,
@@ -12,6 +14,7 @@ CREATE TABLE backup_run (
     finished_at TEXT,
     result      TEXT NOT NULL CHECK (result IN ('running', 'ok', 'failed')),
     by          TEXT NOT NULL,          -- principal: system, user:<name>, token:<id>
+    trigger     TEXT NOT NULL CHECK (trigger IN ('schedule', 'api', 'cli')),
     name        TEXT NOT NULL,          -- the file name (backup.NameRE)
     message     TEXT NOT NULL DEFAULT '',
     CHECK ((result = 'running') = (finished_at IS NULL))
