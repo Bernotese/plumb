@@ -48,6 +48,31 @@ var ErrAcceptImage = errors.New("issue: accept is not possible for the image or 
 // cannot hold (driver.AttrFeatures and driver.Outside).
 var containerAttrs = map[string]bool{"features": true, "mounts": true, "devices": true, "raw_lxc": true}
 
+// ErrAcceptFirewall: Accept never takes guest data into a firewall
+// (D-300, review M1 of #218). The firewall is set only by Block
+// parameters: a forged drift report could otherwise open ports, widen the
+// sources, set policy accept or drop the SSH rule.
+var ErrAcceptFirewall = errors.New("issue: accept is not possible for a firewall: it is set only by the Block parameters; change them, or revert the drift")
+
+// AcceptRefused returns why Accept cannot take the changes of an Issue of
+// resource, or nil. The Issue view offers "accept" only when it is nil.
+func AcceptRefused(resource string, changes []wire.Change) error {
+	if typ, _, _ := wire.SplitID(resource); typ == "firewall" {
+		return ErrAcceptFirewall
+	}
+	for _, c := range changes {
+		switch {
+		case c.Sensitive:
+			return ErrAcceptSensitive
+		case resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind"):
+			return ErrAcceptImage
+		case resource == wire.GuestConfigID && containerAttrs[c.Attr]:
+			return ErrAcceptOutside
+		}
+	}
+	return nil
+}
+
 // ErrAcceptOutside is returned for accept of the features, mount points,
 // devices or raw lxc lines of a container: a Target cannot hold them
 // (D-227, T-038 §3).
@@ -307,16 +332,10 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 	if attrs == nil {
 		attrs = map[string]any{}
 	}
+	if err := AcceptRefused(iss.Resource, changes); err != nil {
+		return state.Doc{}, err
+	}
 	for _, c := range changes {
-		if c.Sensitive {
-			return state.Doc{}, ErrAcceptSensitive
-		}
-		if iss.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind") {
-			return state.Doc{}, ErrAcceptImage
-		}
-		if iss.Resource == wire.GuestConfigID && containerAttrs[c.Attr] {
-			return state.Doc{}, ErrAcceptOutside
-		}
 		if c.Attr == wire.AttrRestart {
 			continue
 		}
