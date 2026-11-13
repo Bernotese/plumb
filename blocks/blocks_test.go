@@ -103,6 +103,7 @@ func TestBlocks(t *testing.T) {
 		"../internal/resource/schema/apt_repository.json", // D-260, T-095
 		"../internal/resource/schema/unit.json",           // D-260, T-095
 		"../internal/resource/schema/sysctl.json",         // D-260, T-095
+		"../internal/resource/schema/firewall.json",       // D-295, T-119
 	} {
 		name := strings.TrimSuffix(filepath.Base(path), ".json")
 		resourceSchemas[name] = compileSchema(t, path)
