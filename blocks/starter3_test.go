@@ -9,8 +9,8 @@ import (
 )
 
 // T-095: the slice 3 starter Blocks render on a VM Target through the
-// controller's own validation, and docker-compose is refused on an LXC
-// Target (sysctl is vm only, D-260, D-262).
+// controller's own validation, also on an LXC Target (T-104: docker-engine
+// holds no sysctl, which is vm only, D-260).
 func starter3Docs(t *testing.T, kind string, uses []any) []state.Doc {
 	t.Helper()
 	image := map[string]any{"type": "vm", "url": "https://example.invalid/debian.img", "sha256": strings.Repeat("0", 64)}
@@ -136,22 +136,31 @@ func TestStarter3ComposeNeedsEngineAndAPair(t *testing.T) {
 	}
 }
 
-func TestStarter3ComposeRefusedOnLXC(t *testing.T) {
-	set, err := state.Validate(starter3Docs(t, "lxc", []any{engineUse, composeUse}))
-	if err == nil {
-		_, err = set.Render("t1")
-	}
-	if err == nil || !strings.Contains(err.Error(), "sysctl") {
-		t.Fatalf("docker-compose on lxc: %v", err)
-	}
-	// The other three work in a container.
-	set, err = state.Validate(starter3Docs(t, "lxc", []any{
+func TestStarter3DockerOnLXC(t *testing.T) {
+	uses := []any{
 		map[string]any{"use": "ssh-hardening"}, map[string]any{"use": "common-tools"}, map[string]any{"use": "shell"},
-	}))
-	if err == nil {
-		_, err = set.Render("t1")
+		engineUse, composeUse,
 	}
-	if err != nil {
-		t.Fatal(err)
+	for _, kind := range []string{"lxc", "vm"} {
+		set, err := state.Validate(starter3Docs(t, kind, uses))
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		r, err := set.Render("t1")
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		ids := map[string]bool{}
+		for _, res := range r.Resources {
+			ids[res.ID] = true
+			if strings.HasPrefix(res.ID, "sysctl:") {
+				t.Errorf("%s: %s (sysctl is vm only; dockerd sets ip_forward itself)", kind, res.ID)
+			}
+		}
+		for _, id := range []string{"apt_repository:docker", "package:docker-ce", "service:docker", "service:plumb-compose-whoami.service"} {
+			if !ids[id] {
+				t.Errorf("%s: %s missing", kind, id)
+			}
+		}
 	}
 }
