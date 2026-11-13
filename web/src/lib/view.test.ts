@@ -144,6 +144,11 @@ describe("humanOnlyReasons (D-099)", () => {
       "It makes, changes or deletes the recipe of a built image, or makes a container image or changes its address or checksum.",
     ]);
   });
+  it("names adopted guest data of an Accept (D-323)", () => {
+    expect(humanOnlyReasons({ ...base, human_only: ["accept-guest-data"], targets: [] })).toEqual([
+      "It adopts values that the guest reported. A person must check them.",
+    ]);
+  });
   it("names the secrets and the target", () => {
     const plan = {
       ...base,

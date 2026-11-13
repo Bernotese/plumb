@@ -16,7 +16,7 @@ func TestSliceNginxSitesFirstRun(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		for _, sitesFirst := range []bool{false, true} {
 			t.Run(fmt.Sprintf("existing=%t/sitesFirst=%t", existing, sitesFirst), func(t *testing.T) {
-				srv, bearer, runner, root := fixtureNginx(t, false)
+				srv, bearer, _, runner, root := fixtureNginx(t, false)
 				call := sliceCall(t, srv.URL, bearer)
 				approve := func(p map[string]any) {
 					t.Helper()

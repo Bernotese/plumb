@@ -16,8 +16,9 @@ import (
 )
 
 func TestSliceAcceptance(t *testing.T) {
-	srv, bearer, runner, root := fixture(t)
+	srv, bearer, password, runner, root := fixture(t)
 	call := sliceCall(t, srv.URL, bearer)
+	human := sessionCall(t, srv.URL, password)
 	wait := func(label string, ready func() bool) {
 		t.Helper()
 		start := time.Now()
@@ -30,12 +31,22 @@ func TestSliceAcceptance(t *testing.T) {
 		t.Logf("%s: %s", label, time.Since(start))
 	}
 	id := func(v any) string { return fmt.Sprintf("%.0f", v) }
+	// An Accept adopts guest data: only a person approves it (D-323).
 	approve := func(p map[string]any) map[string]any {
 		t.Helper()
-		if len(p["human_only"].([]any)) != 0 {
+		approver := call
+		if p["origin"] == "accept" {
+			if fmt.Sprint(p["human_only"]) != "[accept-guest-data]" {
+				t.Fatalf("accept plan human_only: %v", p["human_only"])
+			}
+			if refused := call("POST", "/plans/"+id(p["id"])+"/approve", nil, 403); refused["type"] == nil {
+				t.Fatalf("token approve of accept: %+v", refused)
+			}
+			approver = human
+		} else if len(p["human_only"].([]any)) != 0 {
 			t.Fatal("secret-free slice unexpectedly needs a human")
 		}
-		run := call("POST", "/plans/"+id(p["id"])+"/approve", nil, 202)
+		run := approver("POST", "/plans/"+id(p["id"])+"/approve", nil, 202)
 		wait("run succeeds", func() bool {
 			run = call("GET", "/runs/"+id(run["id"]), nil, 200)
 			if run["status"] == "failed" {
@@ -140,13 +151,45 @@ func TestSliceAcceptance(t *testing.T) {
 }
 
 func sliceCall(t *testing.T, url, bearer string) func(string, string, any, int) map[string]any {
+	return sliceCallAs(t, url, func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+bearer) })
+}
+
+// sessionCall logs the admin in, changes the bootstrap password and calls
+// as that person. The session cookie is Secure, so it is set by hand.
+func sessionCall(t *testing.T, url, password string) func(string, string, any, int) map[string]any {
+	t.Helper()
+	var cookie *http.Cookie
+	call := sliceCallAs(t, url, func(req *http.Request) {
+		req.Header.Set("Origin", "https://"+req.Host)
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+	})
+	raw, err := json.Marshal(map[string]string{"username": "admin", "password": password})
+	must(t, err)
+	req, err := http.NewRequest("POST", url+"/api/v1/session", bytes.NewReader(raw))
+	must(t, err)
+	req.Header.Set("Origin", "https://"+req.Host)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	must(t, err)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || len(resp.Cookies()) != 1 {
+		t.Fatalf("login: %d", resp.StatusCode)
+	}
+	cookie = resp.Cookies()[0]
+	call("PUT", "/session/password", map[string]string{"current_password": password, "new_password": "a-good-long-password"}, 204)
+	return call
+}
+
+func sliceCallAs(t *testing.T, url string, auth func(*http.Request)) func(string, string, any, int) map[string]any {
 	return func(method, path string, body any, status int) map[string]any {
 		t.Helper()
 		raw, err := json.Marshal(body)
 		must(t, err)
 		req, err := http.NewRequest(method, url+"/api/v1"+path, bytes.NewReader(raw))
 		must(t, err)
-		req.Header.Set("Authorization", "Bearer "+bearer)
+		auth(req)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := (&http.Client{Timeout: 12 * time.Second}).Do(req)
 		must(t, err)
@@ -157,7 +200,9 @@ func sliceCall(t *testing.T, url, bearer string) func(string, string, any, int) 
 			t.Fatalf("%s %s: %d %s", method, path, resp.StatusCode, b)
 		}
 		var out map[string]any
-		must(t, json.Unmarshal(b, &out))
+		if len(b) > 0 {
+			must(t, json.Unmarshal(b, &out))
+		}
 		return out
 	}
 }
