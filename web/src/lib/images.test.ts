@@ -89,6 +89,15 @@ describe("versions", () => {
   it("formats sizes", () => {
     expect(bytesText(612368384)).toBe("584 MiB");
     expect(bytesText(1.5 * 2 ** 30)).toBe("1.5 GiB");
+    // Small files (a backup of a new install) are not "0 MiB".
+    expect(bytesText(0)).toBe("0 B");
+    expect(bytesText(512)).toBe("512 B");
+    expect(bytesText(1023)).toBe("1023 B");
+    expect(bytesText(1024)).toBe("1 KiB");
+    expect(bytesText(193915)).toBe("189 KiB");
+    // The unit follows the rounded value: never "1024 KiB" or "1024 MiB".
+    expect(bytesText(2 ** 20 - 100)).toBe("1 MiB");
+    expect(bytesText(2 ** 30 - 2 ** 18)).toBe("1.0 GiB");
   });
   it("gives the smallest disk only for a built image", () => {
     expect(smallestDisk(undefined)).toBeNull();

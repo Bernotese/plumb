@@ -124,8 +124,8 @@ full list of rights.
    these on the Target, also through a Plan:
    - **Power:** "running" or "stopped". A stop needs "Plumb may restart this VM" (for a container:
      "this container") on the Target.
-   - **Tags:** the Proxmox tags of the guest. Plumb keeps exactly these. A new Target with no
-     entry: Plumb does not touch its tags.
+   - **Tags:** the Proxmox tags of the guest. Plumb keeps exactly these. With no entry, Plumb does
+     not touch the tags of the guest.
    - **Disk:** it only grows. Proxmox cannot make a disk smaller, so a grow cannot be undone.
 
    ![Targets list with four Targets: app1 in Plumb; db1, web1 and web2 out of Plumb; each with image, size, address and agent version](docs/screenshots/readme-targets.png)
@@ -234,15 +234,16 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
 
    Without `--backup-storage` at the install, add `--backup-to <directory>`: a directory on this
    host. That is not an off-host copy; the installer warns you.
-2. Restore. The installer prints this line at the end of step 1. Use the same address as before:
-   the agents in the guests know only this address.
+2. Restore. The installer prints the first part of this line at the end of step 1. Use the same
+   address as before: the agents in the guests know only this address.
 
    ```sh
-   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway>
+   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway> --backup-storage <storage>
    ```
 
-   It asks for the recovery key and checks the file before it changes anything. A wrong key stops
-   the run.
+   Give `--backup-storage` again: without it, the restored Plumb makes no off-host copy. The
+   installer asks for the recovery key and checks the file before it changes anything. A wrong key
+   stops the run.
 
 ### After a restore
 
