@@ -39,4 +39,8 @@ Not allowed: network config, SSH config, `authorized_keys`, root password, `loca
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- Branch `pl-backend/T-122-slice4-real-host`; log `docs/tasks/T-122.log.md`. Host: only LXC 100 (`bf42f61`) left, pool and `plumb-images` empty, `plumb-backup` 3 copies, old Issues digest unchanged.
+- PASS: backup → off-LXC copy → keep-guests (wrong key stops; kept VM starts) → restore (wrong pool refused; 3rd run after T-130, T-132) → restored mode, confirm, agents back, Plan clean, revoked token off, `guest:missing`, foreign guest marked and kept (also after its Target delete).
+- PASS: power/tags/grow on VM and LXC incl. retried root grow; firewall rollback when the link is cut (new connections dropped, 90 s); `drop` without SSH impossible without `allow_no_ssh` (with `ssh_port` refused); `backup verify` of an off-LXC copy.
+- Not provable: one-time password for a locked user (F3: no second user can exist).
+- Findings: F1, F2 (T-128), F4 (T-129), F5 (T-130), F6, F7 (T-132) fixed; open: F3, F8 (open `guest:missing` of deleted Targets), F9 (422 text for `allow_no_ssh` + `ssh_port`).
