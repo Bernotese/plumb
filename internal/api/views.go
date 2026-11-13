@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -132,6 +133,9 @@ type planView struct {
 	Warnings     []string         `json:"warnings"`
 	// Images: builds and removals (D-199); missing means none.
 	Images []imagePlanView `json:"images,omitempty"`
+	// The copy rule (D-331, D-352); missing means none.
+	GuestDataIssues  []int64               `json:"guest_data_issues,omitempty"`
+	GuestDataMatches []plan.GuestDataMatch `json:"guest_data_matches,omitempty"`
 }
 
 func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
@@ -158,6 +162,14 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		return v, err
 	}
 	v.Images = images
+	if issues, matches, err := s.st.PlanGuestData(ctx, p.ID); err == nil {
+		v.GuestDataIssues = issues
+		if err := json.Unmarshal(matches, &v.GuestDataMatches); err != nil {
+			return v, err
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return v, err
+	}
 	var targets []plan.TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return v, err

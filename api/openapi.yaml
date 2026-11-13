@@ -3559,9 +3559,11 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [issue_id, target, resource, attr]
+            required: [target, resource, attr]
             properties:
-              issue_id: { $ref: "#/components/schemas/Id" }
+              issue_id:
+                $ref: "#/components/schemas/Id"
+                description: Missing when the reported drift had no Issue (a Rule covered it; D-352).
               target: { $ref: "#/components/schemas/Name" }
               resource: { type: string, examples: ["user:alice"] }
               attr: { type: string, examples: [ssh_keys] }
