@@ -14,7 +14,7 @@ The agent applies firewall rules and puts the old rules back by itself when it l
 ## Acceptance criteria
 - [x] Safe apply (D-293): keep the old state, apply, need a fresh controller round trip within 90 s, else restore and report `failed` / `rolled-back`; the guard of D-271 covers an agent crash
 - [x] Resource `firewall` (D-295): one table `inet plumb`, atomic `nft -f`, input only, loopback and `established,related` always kept; `drop` without an SSH accept refused unless `allow_no_ssh: true` (save, schema and agent)
-- [ ] CI guest tests: Debian 13 and Ubuntu, VM and unprivileged LXC; a forced rollback; nftables in an LXC
+- [x] CI guest tests: Debian 13 and Ubuntu, VM and unprivileged LXC; a forced rollback; nftables in an LXC
 - [x] `make lint test build` and `make test-guest` green
 
 ## Out of scope
@@ -24,7 +24,7 @@ The agent applies firewall rules and puts the old rules back by itself when it l
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-`pl-backend/T-116-agent-safe-apply-firewall` (from the T-111 contract branch) · tests: `make lint test build` green; `TestGuestFirewall` green in privileged Debian 13 and Ubuntu 26.04 containers (local Docker); LXD containers + VMs only in CI (job `firewall-lxd`; local LXD launch was blocked by the permission rules).
+`pl-backend/T-116-agent-safe-apply-firewall` (from the T-111 contract branch) · tests: `make lint test build` green; `TestGuestFirewall` green in privileged Debian 13 and Ubuntu 26.04 containers (local Docker); CI green on PR #213 incl. job `firewall-lxd` (unprivileged LXC + VM, Debian 13 + Ubuntu 26.04, 4/4 pass).
 - Agent: `resource/firewall.go` (nft table `inet plumb`, boot file, unit, rollback timer), `agent/safeapply.go` (marker, confirm on a new connection, commit/restore, restore at start with a result report).
 - Controller: link answers `confirm` (204/409), checks `rolled_back`; Plan `confirm_seconds`; Run step `rolled_back` (migration 0013).
 - Review findings of T-111: F1 timer, F2 boot file in `/etc/plumb-agent`, F3 result after restart, F4 unit order, F5 checks before the marker. D-305 … D-307 in `docs/decisions/T-116.md`.
