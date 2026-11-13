@@ -58,7 +58,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-144 slice 5 C1a: contract (catalogue, users and roles, copy rule, `verify` + refresh) | pl-architect | in work |
 | T-149 slice 5 C5: netplan probe in the CI guests | pl-codex-qa | in work |
 | T-153 slice 5 C9a: web gaps that need no new API | pl-frontend | in work |
-| T-155 slice 5 C10: npm audit refresh | pl-codex-fix | in work |
+| T-155 slice 5 C10: npm audit refresh | pl-codex-fix | closed without a change (2026-11-13): 2 low findings via `deepmerge` 4.3.1 (dev-only), the advisory has no patched version and the latest `@sveltejs/vite-plugin-svelte` needs it. No downgrade, no suppression. Check again in slice 9 |
 | Slice 5, not started yet: T-145 C1b contract `network`/`group`, T-146 C2 catalogue API, T-147 C3 users and roles, T-148 C4 copy rule, T-150 C6 generic safe apply + `network`, T-151 C7 `group`, T-152 C8 signed checksums, T-154 C9b web, T-156 C11 Block `network`, T-157 C12 QA, T-158 C13 host acceptance, T-159 C14 README | – | waits for its dependencies (plan T-138) |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
