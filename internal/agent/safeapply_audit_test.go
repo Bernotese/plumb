@@ -66,8 +66,9 @@ func TestSafeApplyFailureRecovery(t *testing.T) {
 }
 
 func TestSafeApplyStartupFailures(t *testing.T) {
-	for _, failRestore := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unknown version", true: "restore fails"}[failRestore], func(t *testing.T) {
+	for _, scenario := range []string{"unknown version", "unknown type", "restore fails"} {
+		t.Run(scenario, func(t *testing.T) {
+			failRestore := scenario == "restore fails"
 			root := t.TempDir()
 			if err := os.MkdirAll(filepath.Join(root, "etc/plumb-agent"), 0700); err != nil {
 				t.Fatal(err)
@@ -75,11 +76,14 @@ func TestSafeApplyStartupFailures(t *testing.T) {
 			write(t, filepath.Join(root, resource.FirewallBootFile), "table inet plumb\ndelete table inet plumb\n")
 			nft := &nftRunner{failRestore: failRestore}
 			a := &Agent{state: auditState(t), env: resource.NewEnv(root, nft), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-			version := 2
-			if failRestore {
-				version = 1
+			version, typ := 1, "firewall"
+			if scenario == "unknown version" {
+				version = 2
 			}
-			if err := a.writeMarker(safeMarker{Version: version, Type: "firewall", Resource: "firewall:main", Command: "stale"}); err != nil {
+			if scenario == "unknown type" {
+				typ = "unknown"
+			}
+			if err := a.writeMarker(safeMarker{Version: version, Type: typ, Resource: "firewall:main", Command: "stale"}); err != nil {
 				t.Fatal(err)
 			}
 			if rep := a.restoreAtStart(context.Background()); rep != nil {
@@ -99,7 +103,7 @@ func TestSafeApplyStartupFailures(t *testing.T) {
 func TestSafeApplyDefaultWindow(t *testing.T) {
 	ca := newCA(t)
 	ta := startAgent(t, newController(t, ca, "tok"), ca, "tok")
-	if ta.a.opt.ConfirmWindow != wire.SafeApplySeconds*time.Second {
+	if ta.a.opt.ConfirmWindow != 90*time.Second {
 		t.Fatalf("default window: %s", ta.a.opt.ConfirmWindow)
 	}
 }
