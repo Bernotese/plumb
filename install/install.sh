@@ -82,7 +82,7 @@ KEEP_GUESTS=0
 BACKUP_TO=""
 RESTORE_FILE=""
 DRY_RUN=0
-DRY_GONE_LXC="" DRY_GONE_TOKEN=0 # what a dry run has removed (T-132)
+DRY_GONE_LXC="" # the half-made LXC that a dry run has destroyed (T-132)
 YES=0
 SNIPPET_DIR_SET=0
 PVE_CA=${PLUMB_INSTALL_PVE_CA:-/etc/pve/pve-root-ca.pem}
@@ -706,14 +706,10 @@ json_rows() { perl -MJSON::PP -e 'my $d = decode_json(join "", <STDIN>); '"$1" "
 # acl_entries prints "path ugid role type propagate" for every ACL of the Plumb user
 # and token.
 acl_entries() {
-	# A dry run that removed the token drops its ACLs here, as the real run
-	# does (T-132, T-122 F6).
-	local token=$PVE_USER!$TOKEN_NAME
-	[[ $DRY_GONE_TOKEN != 1 ]] || token=""
 	# shellcheck disable=SC2016 # perl code
 	query pveum acl list --output-format json |
-		json_rows 'for my $e (@$d) { next unless $e->{ugid} eq $ARGV[0] || ($ARGV[1] ne "" && $e->{ugid} eq $ARGV[1]);
-			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type} ", ($e->{propagate} ? 1 : 0), "\n" }' "$PVE_USER" "$token"
+		json_rows 'for my $e (@$d) { next unless $e->{ugid} eq $ARGV[0] || $e->{ugid} eq $ARGV[1];
+			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type} ", ($e->{propagate} ? 1 : 0), "\n" }' "$PVE_USER" "$PVE_USER!$TOKEN_NAME"
 }
 
 # stray_acls prints the ACLs of the Plumb user and token that are not in
@@ -846,7 +842,6 @@ remove_token() {
 		run pveum acl delete "$path" --tokens "$ugid" --roles "$role"
 	done <<<"$acls"
 	run pveum user token remove "$PVE_USER" "$TOKEN_NAME"
-	[[ $DRY_RUN != 1 ]] || DRY_GONE_TOKEN=1
 }
 
 # ensure_token sets TOKEN_SECRET when it makes a new token. An existing
