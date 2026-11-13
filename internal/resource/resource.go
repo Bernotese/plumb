@@ -64,6 +64,12 @@ type Env struct {
 	// AccountLock serializes useradd, usermod and userdel of one guest:
 	// Blocks apply in parallel, and the shadow tools lock /etc/passwd.
 	AccountLock *sync.Mutex
+	// StateDir is the agent state directory; network keeps its confirmed
+	// file there during a safe apply (D-349). "" outside the agent.
+	StateDir string
+	// Controller is the host of the agent URL (name or IP): network finds
+	// the main NIC and address by the route to it (D-348).
+	Controller string
 }
 
 // MaxOutput is the longest Item.Output in bytes.
