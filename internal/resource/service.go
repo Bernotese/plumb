@@ -82,7 +82,8 @@ func RestartChange(svc wire.Resource, changed []string) (wire.Change, bool) {
 // resource of the same name, the file /etc/systemd/system/<unit>, or a
 // package. Then "state: stopped → S" is covered by the planned "state:
 // absent → S" and "enabled: false → E" by the planned "enabled: null → E",
-// each with the same to and risk. Every other change must be covered by
+// each with the same to and risk. A stopped service may plan only the
+// enable change when its unit is absent. Every other change must be covered by
 // wire.Covers as before.
 func NewUnitCovers(svc wire.Resource, planned, now []wire.Change, made []wire.Resource) bool {
 	if svc.Type != "service" {
@@ -118,11 +119,13 @@ func NewUnitCovers(svc wire.Resource, planned, now []wire.Change, made []wire.Re
 		}
 		return false
 	}
-	created := false
+	created, statePlanned, enableAbsent := false, false, false
 	for _, p := range planned {
+		statePlanned = statePlanned || p.Attr == wire.AttrState
 		created = created || (p.Attr == wire.AttrState && wire.SameValue(p.From, wire.StateAbsent))
+		enableAbsent = enableAbsent || (p.Attr == "enabled" && p.From == nil && wire.SameValue(p.To, true))
 	}
-	if !created {
+	if !created && (statePlanned || !enableAbsent) {
 		return false
 	}
 	for _, c := range now {
@@ -182,7 +185,11 @@ func (s *service) Diff(observed State) []wire.Change {
 	cur := observed[wire.AttrState]
 	if cur == wire.StateAbsent {
 		if s.a.State == ServiceStopped {
-			return nil // a unit that does not exist is not running
+			// A unit that does not exist is not running, but may need enabling.
+			if s.a.Enabled {
+				out = append(out, change("enabled", nil, true, wire.RiskReversible))
+			}
+			return s.finish(out)
 		}
 		out = append(out, change(wire.AttrState, wire.StateAbsent, s.a.State, wire.RiskReversible))
 		out = append(out, change("enabled", nil, s.a.Enabled, wire.RiskReversible))
