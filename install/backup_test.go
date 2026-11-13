@@ -497,10 +497,10 @@ func TestRemoveKeepGuests(t *testing.T) {
 		t.Error("the copy timer stays without an LXC")
 	}
 	st := b.stateFile()
-	if st["lxc_id"] != "" || st["kept_guests"] != "1" || st["install_id"] != id || st["node"] != "pve1" || st["pool"] != "plumb" || st["old_address"] != "192.0.2.50/24" || st["old_gateway"] != "192.0.2.1" {
+	if st["backup_storage"] != "backups" || st["lxc_id"] != "" || st["kept_guests"] != "1" || st["install_id"] != id || st["node"] != "pve1" || st["pool"] != "plumb" || st["old_address"] != "192.0.2.50/24" || st["old_gateway"] != "192.0.2.1" {
 		t.Errorf("kept state %v", st)
 	}
-	if !strings.Contains(out, "--restore "+copyPath+" --lxc-ip 192.0.2.50/24 --lxc-gw 192.0.2.1") {
+	if !strings.Contains(out, "--restore "+copyPath+" --lxc-ip 192.0.2.50/24 --lxc-gw 192.0.2.1 --backup-storage backups") {
 		t.Errorf("no exact restore line:\n%s", out)
 	}
 	// A plain install into the kept pool is refused.
@@ -631,6 +631,79 @@ func TestRestore(t *testing.T) {
 	}
 }
 
+func TestRestoreBackupStorage(t *testing.T) {
+	for _, storage := range []string{"", "other", "none"} {
+		t.Run("storage="+storage, func(t *testing.T) {
+			b, file := keptHost(t)
+			b.addStorage("other", "dir", b.store)
+			args := []string{"--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1"}
+			want := "backups"
+			if storage != "" {
+				args = append(args, "--backup-storage", storage)
+				want = storage
+			}
+			if storage == "none" {
+				want = ""
+			}
+			code, out, errOut := b.restore(nil, file, args...)
+			if code != 0 {
+				t.Fatalf("%d\n%s\n%s", code, out, errOut)
+			}
+			if got := b.stateFile()["backup_storage"]; got != want {
+				t.Errorf("backup storage = %q, want %q", got, want)
+			}
+			conf, err := os.ReadFile(b.conf)
+			if want == "" {
+				if !os.IsNotExist(err) || !strings.Contains(out, "No off-host backup copy is configured") {
+					t.Errorf("disabled copy: config error %v, output %s", err, out)
+				}
+			} else if err != nil || !strings.Contains(string(conf), "storage="+want+"\n") {
+				t.Errorf("copy config: %s, error %v", conf, err)
+			}
+			if storage == "" && !strings.Contains(out, "Using kept backup storage backups") {
+				t.Errorf("missing kept-storage notice: %s", out)
+			}
+		})
+	}
+}
+
+func TestRestoreKeptBackupStorageFails(t *testing.T) {
+	for _, badName := range []bool{false, true} {
+		t.Run(fmt.Sprintf("badName=%t", badName), func(t *testing.T) {
+			b, file := keptHost(t)
+			env := []string{"FAKE_STORAGE_INACTIVE=backups"}
+			want := "not active"
+			if badName {
+				raw, err := os.ReadFile(b.stateF)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = []byte(strings.ReplaceAll(string(raw), "backup_storage=backups", "backup_storage=../bad"))
+				if err := os.WriteFile(b.stateF, raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				env = nil
+				want = "bad --backup-storage"
+			}
+			before, _ := os.ReadFile(b.stateF)
+			b.resetCalls()
+			code, out, errOut := b.restore(env, file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
+			if code == 0 || !strings.Contains(errOut, want) || !strings.Contains(errOut, "from the kept state") || !strings.Contains(errOut, "or give --backup-storage none") {
+				t.Fatalf("%d\n%s\n%s", code, out, errOut)
+			}
+			after, _ := os.ReadFile(b.stateF)
+			if string(before) != string(after) {
+				t.Error("failed storage check changed the kept state")
+			}
+			for _, c := range b.calls() {
+				if mutating.MatchString(c) || strings.HasPrefix(c, "systemctl") || strings.Contains(c, "../bad") {
+					t.Errorf("failed storage check reached: %s", c)
+				}
+			}
+		})
+	}
+}
+
 // D-290 N7, D-304: each wrong restore is refused before any change.
 func TestRestoreRefused(t *testing.T) {
 	t.Parallel()
@@ -715,8 +788,8 @@ func TestRestoreAgainAfterFailure(t *testing.T) {
 	if st["restoring"] != "" || st["kept_guests"] != "" || st["lxc_id"] != "105" {
 		t.Errorf("state after the restore: %v", st)
 	}
-	if !strings.Contains(out, "No backup copy timer is set") {
-		t.Errorf("no hint for the copy timer:\n%s", out)
+	if !strings.Contains(out, "Using kept backup storage backups") || b.stateFile()["backup_storage"] != "backups" {
+		t.Errorf("copy storage not restored after retry:\n%s", out)
 	}
 	// A restored LXC (it has a database) is never destroyed by --restore.
 	b2, file2 := keptHost(t)
@@ -757,7 +830,7 @@ func TestBackupDryRuns(t *testing.T) {
 	}
 	b2, file := keptHost(t)
 	b2.resetCalls()
-	code, out, errOut = b2.restore(nil, file, "--dry-run", "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1", "--backup-storage", "backups")
+	code, out, errOut = b2.restore(nil, file, "--dry-run", "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
 	if code != 0 || !strings.Contains(out, "plumb key restore") || !strings.Contains(out, "systemctl enable --now plumb-backup-copy.timer") {
 		t.Fatalf("restore dry run: %d\n%s\n%s", code, out, errOut)
 	}
