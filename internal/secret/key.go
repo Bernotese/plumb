@@ -199,3 +199,34 @@ func WriteKeyFile(path string, k Key) (err error) {
 	}
 	return nil
 }
+
+// HKDF info labels of the backup file (D-302). internal/backup has the
+// same values (KDFInfoData, KDFInfoFingerprint); its test checks them.
+const (
+	backupInfoData        = "plumb backup v1 data"
+	backupInfoFingerprint = "plumb backup v1 fingerprint"
+	backupFingerprintSize = 16
+)
+
+// BackupDataKey returns the 32-byte data key of one backup file:
+// HKDF-SHA256(master, salt, "plumb backup v1 data") (D-302). The salt is
+// random per file.
+func (k Key) BackupDataKey(salt []byte) []byte {
+	out, err := hkdf.Key(sha256.New, k.b[:], salt, backupInfoData, 32)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+// BackupFingerprint returns the key fingerprint of the backup header:
+// 16 bytes of HKDF-SHA256(master, no salt, "plumb backup v1 fingerprint").
+// It is the same for every backup of this key and tells nothing about the
+// other derived keys.
+func (k Key) BackupFingerprint() []byte {
+	out, err := hkdf.Key(sha256.New, k.b[:], nil, backupInfoFingerprint, backupFingerprintSize)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}

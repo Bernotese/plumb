@@ -48,7 +48,7 @@ func TestMigrationsCreateSliceTables(t *testing.T) {
 	// The exact list of ARCHITECTURE §3, plus the secret store of
 	// migration 0003 (D-087).
 	want := []string{
-		"agent", "api_token", "binding", "doc", "enroll_token", "event", "ignored_drift", "image_schedule", "image_version", "issue", "issue_comment", "issue_ignore",
+		"agent", "api_token", "backup_run", "binding", "doc", "enroll_token", "event", "ignored_drift", "image_schedule", "image_version", "issue", "issue_comment", "issue_ignore",
 		"key_check", "plan", "revision", "revision_doc", "run", "run_step", "secret", "secret_counter",
 		"session", "user",
 	}
