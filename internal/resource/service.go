@@ -70,6 +70,73 @@ func RestartChange(svc wire.Resource, changed []string) (wire.Change, bool) {
 	return wire.Change{}, false
 }
 
+// NewUnitCovers is the one exception to wire.Covers (T-103, D-075). A Plan
+// that observed a service before its unit existed shows "state: absent →
+// S" and "enabled: null → E". When an earlier step of the same apply made
+// the unit, the agent observes the new unit as "stopped" and, when it has
+// an [Install] section, "enabled: false": a direct result of that step,
+// not a change of the guest that the Plan did not show.
+//
+// made are the resources of the apply that the service waited for and
+// that this apply created. Only a maker of the unit counts: the unit
+// resource of the same name, the file /etc/systemd/system/<unit>, or a
+// package. Then "state: stopped → S" is covered by the planned "state:
+// absent → S" and "enabled: false → E" by the planned "enabled: null → E",
+// each with the same to and risk. Every other change must be covered by
+// wire.Covers as before.
+func NewUnitCovers(svc wire.Resource, planned, now []wire.Change, made []wire.Resource) bool {
+	if svc.Type != "service" {
+		return false
+	}
+	name, _ := svc.Attrs["name"].(string)
+	if name == "" {
+		return false
+	}
+	unit := unitName(name)
+	maker := false
+	for _, r := range made {
+		switch r.Type {
+		case "unit":
+			maker = maker || r.Attrs["name"] == unit
+		case "file":
+			maker = maker || r.Attrs["path"] == unitDir+unit
+		case "package":
+			maker = true
+		}
+	}
+	if !maker {
+		return false
+	}
+	// plannedFrom finds the planned change of attr with the given from and
+	// the same to and risk as c.
+	plannedFrom := func(c wire.Change, from any) bool {
+		for _, p := range planned {
+			if p.Attr == c.Attr && !p.Sensitive && p.Risk == c.Risk &&
+				wire.SameValue(p.From, from) && wire.SameValue(p.To, c.To) {
+				return true
+			}
+		}
+		return false
+	}
+	created := false
+	for _, p := range planned {
+		created = created || (p.Attr == wire.AttrState && wire.SameValue(p.From, wire.StateAbsent))
+	}
+	if !created {
+		return false
+	}
+	for _, c := range now {
+		switch {
+		case wire.Covers(planned, []wire.Change{c}):
+		case c.Attr == wire.AttrState && wire.SameValue(c.From, ServiceStopped) && plannedFrom(c, wire.StateAbsent):
+		case c.Attr == "enabled" && wire.SameValue(c.From, false) && plannedFrom(c, nil):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // Observe asks systemd for the load, active and enablement state. A unit
 // that systemd does not know is absent. "enabled" is left out when the unit
 // cannot be enabled or disabled (static, generated, indirect ...). A masked
