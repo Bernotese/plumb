@@ -51,6 +51,16 @@ export interface PlumbApi {
   getPlan(id: number): Promise<Plan>;
   approvePlan(id: number, comment?: string): Promise<Run>;
   getRun(id: number): Promise<Run>;
+  /** One page of plans, newest first; `status` filters (T-153). */
+  listPlans(
+    filter?: { status?: Plan["status"] },
+    cursor?: string,
+    limit?: number,
+  ): Promise<PageOf<Plan>>;
+  /** Drops a pending plan: it becomes `stale` (DELETE /plans/{id}); 409 when not pending. */
+  discardPlan(id: number): Promise<void>;
+  /** One page of runs, newest first (T-153). */
+  listRuns(cursor?: string, limit?: number): Promise<PageOf<Run>>;
   /** Issues, newest first; the filter uses the `target` and `status` query of GET /issues. */
   listIssues(filter?: { target?: string; status?: Issue["status"] }): Promise<Issue[]>;
   getIssue(id: number): Promise<Issue>;
@@ -61,6 +71,8 @@ export interface PlumbApi {
     reason?: string,
     rule?: RuleScope,
   ): Promise<Plan>;
+  /** Adds a comment to an issue (T-153). */
+  commentIssue(id: number, body: string): Promise<Issue["comments"][number]>;
   /** `ignore_once`: resolves the Issue without a Plan (D-091). */
   ignoreOnce(id: number, reason?: string): Promise<Issue>;
   /** Rules of the head revision (D-092). */

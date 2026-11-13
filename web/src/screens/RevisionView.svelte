@@ -6,7 +6,7 @@
   import DocDiff from "../ui/DocDiff.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
-  let { api, id }: { api: PlumbApi; id: number } = $props();
+  let { api, id, from }: { api: PlumbApi; id: number; from?: number } = $props();
   let diff = $state<RevisionDiff | null>(null);
   let error = $state<unknown>(null);
   let rollbackError = $state<unknown>(null);
@@ -17,11 +17,40 @@
   let busy = $state(false);
 
   $effect(() => {
-    api.diffRevision(id).then(
+    api.diffRevision(id, from).then(
       (d) => (diff = d),
       (e: unknown) => (error = e),
     );
   });
+
+  // Compare any two revisions (T-153): GET /revisions/{n}/diff?from=.
+  let head = $state<number | null>(null);
+  $effect(() => {
+    api.listRevisions(undefined, 1).then(
+      (p) => (head = p.items[0]?.id ?? null),
+      () => (head = null),
+    );
+  });
+  // The screen is keyed by id and from (App.svelte): the start value is enough.
+  // svelte-ignore state_referenced_locally
+  let base = $state(from ? String(from) : "");
+  let baseError = $state("");
+  function compare(e: SubmitEvent) {
+    e.preventDefault();
+    const n = Number(base.trim());
+    if (!/^[1-9][0-9]*$/.test(base.trim()) || (head !== null && n > head)) {
+      baseError = `Give a revision number from 1${head !== null ? ` to ${head}` : ""}.`;
+      document.getElementById("compare-from")?.focus();
+      return;
+    }
+    if (n === id) {
+      baseError = "Pick another revision than this one.";
+      document.getElementById("compare-from")?.focus();
+      return;
+    }
+    baseError = "";
+    go({ name: "revision", id, from: n });
+  }
 
   const counts = $derived({
     added: diff?.changes.filter((c) => c.op === "added").length ?? 0,
@@ -58,6 +87,34 @@
 <h1 id="page-title" tabindex="-1">Revision {id}</h1>
 <ProblemBox {error} />
 {#if diff}
+  <form class="card compare" onsubmit={compare} novalidate aria-labelledby="compare-title">
+    <h2 id="compare-title">Compare</h2>
+    <div class="row">
+      <div class="field">
+        <label for="compare-from">Base revision</label>
+        <input
+          id="compare-from"
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          bind:value={base}
+          placeholder={id > 1 ? String(id - 1) : ""}
+          aria-invalid={baseError !== ""}
+          aria-describedby={baseError ? "compare-error" : undefined}
+          oninput={() => (baseError = "")}
+        />
+      </div>
+      <button class="btn" type="submit">Compare</button>
+    </div>
+    {#if baseError}<p id="compare-error" class="error">{baseError}</p>{/if}
+    <p class="muted links">
+      {#if from !== undefined}<a href={href({ name: "revision", id })}>With the revision before</a
+        >{/if}
+      {#if head !== null && head !== id && from !== head}<a
+          href={href({ name: "revision", id, from: head })}>With the head (revision {head})</a
+        >{/if}
+    </p>
+  </form>
   <p>
     {#if diff.from === null}
       Compared with the empty state.
@@ -73,7 +130,11 @@
   {#each diff.changes as c, i (`${c.kind}/${c.name}`)}
     <DocDiff change={c} id="doc-{i}" />
   {:else}
-    <p class="muted">This revision has the same documents as the one before.</p>
+    <p class="muted">
+      {from === undefined || diff.from === null
+        ? "This revision has the same documents as the one before."
+        : `Revision ${id} has the same documents as revision ${diff.from}.`}
+    </p>
   {/each}
 
   <form class="card" onsubmit={rollback} novalidate>
@@ -124,6 +185,21 @@
     margin: var(--space-1) 0 0;
     font-size: var(--text-sm);
     color: var(--color-danger);
+  }
+  .compare .row {
+    align-items: flex-end;
+  }
+  .compare .field {
+    margin: 0;
+  }
+  .compare input {
+    width: 8rem;
+  }
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    margin: var(--space-2) 0 0;
   }
   .hint {
     margin: var(--space-1) 0 0;

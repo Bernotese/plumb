@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/network.json",
+  "title": "network",
+  "description": "Extra network settings of the main NIC of a VM (D-294, D-332, D-348 … D-350): extra addresses, routes, name servers and search domains. VM only: Proxmox owns the network of a container. The main address, the gateway and DHCP stay as cloud-init made them (create-only). The agent writes one file /etc/netplan/60-plumb-<name>.yaml (0600) with only these values, under the netplan key of the main NIC (the ethernets entry that holds the main address in the merged netplan get view, eth0 on a Plumb VM), and runs netplan apply inside the safe apply (D-293, D-333). Before any change it checks the merged result in a temporary root (netplan get --root-dir): the main address, gateway, match and set-name must be unchanged and every value of this resource present, else the step fails with nothing changed. Observe: the file and the live state (ip -j addr, ip -j route, resolvectl); a listed address, route, name server or search domain that is missing live is drift; other live values are not Plumb's. Needs netplan with the networkd backend (Debian 13 and Ubuntu 26.04 cloud images have it). The server parses every value (netip.ParsePrefix / ParseAddr): prefix in range, no link-local, multicast, unspecified or loopback address, no 0.0.0.0/0 or ::/0 in routes; the patterns allow no spaces. Every netplan apply also re-runs IPv6 autoconfiguration: a SLAAC address and the RA default route are gone for about 2 s (T-160), so an IPv6 link to the controller sees a short gap. Capability for the agent version gate: resource:network. Risk: create, change and absent disruptive. Absent removes the file and runs netplan apply in the safe apply.",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$",
+      "description": "Key; part of the file name. Several network resources on one Target add up; they must not repeat a value of each other."
+    },
+    "addresses": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^$|^[0-9a-fA-F:.]+/[0-9]{1,3}(,[0-9a-fA-F:.]+/[0-9]{1,3})*$",
+      "default": "",
+      "x-plumb-list": ",",
+      "description": "Extra addresses on the main NIC, comma separated, with prefix, for example 192.0.2.10/24,2001:db8::10/64. The server refuses an address that is not the guest's (D-348, review G1 of #244): the main address of this Target, the controller address (agent_url), the Proxmox node address, the main address and the gateway of every Target, and every extra address of another Target. Before any change the agent probes each new address on the main NIC (IPv4: RFC 5227 ARP probes; IPv6: RFC 4862 neighbor solicitation) and refuses, with nothing changed, when another host answers."
+    },
+    "routes": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^$|^[0-9a-fA-F:.]+/[0-9]{1,3} via [0-9a-fA-F:.]+( metric [0-9]{1,9})?(;[0-9a-fA-F:.]+/[0-9]{1,3} via [0-9a-fA-F:.]+( metric [0-9]{1,9})?)*$",
+      "default": "",
+      "x-plumb-list": ";",
+      "description": "Routes over the main NIC, ';' separated, each '<cidr> via <ip>[ metric <n>]', for example 198.51.100.0/24 via 192.0.2.1. No default route (0.0.0.0/0, ::/0): the gateway stays create-only. The via address must be in a network of the main NIC (main or extra address); the agent checks it in the temporary root."
+    },
+    "nameservers": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^$|^[0-9a-fA-F:.]+(,[0-9a-fA-F:.]+)*$",
+      "default": "",
+      "x-plumb-list": ",",
+      "description": "Extra DNS servers for the main NIC, comma separated IPs. They should come after the servers that cloud-init set; whether netplan appends is checked by the preflight in the temporary root (and proven first by T-150)."
+    },
+    "search": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^$|^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?(,[a-zA-Z0-9]([a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?)*$",
+      "default": "",
+      "x-plumb-list": ",",
+      "description": "Extra DNS search domains, comma separated."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  }
+}
