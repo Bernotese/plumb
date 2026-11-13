@@ -79,6 +79,8 @@ type Server struct {
 	streamMu  sync.Mutex
 	streams   map[string]map[uint64]context.CancelFunc // open event streams per principal (review m2)
 	streamSeq uint64
+
+	raw rawCache // raw mode of the head revision (D-301)
 }
 
 // Limits of expensive or long-lived work.
