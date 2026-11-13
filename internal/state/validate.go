@@ -319,10 +319,13 @@ func deepCopy(v any) any {
 // --- parsed documents ---
 
 type imageSpec struct {
-	Type      string      `json:"type"`
-	URL       string      `json:"url"`
-	SHA256    string      `json:"sha256"`
-	SHA512    string      `json:"sha512"` // lxc only (D-224)
+	Type   string `json:"type"`
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+	SHA512 string `json:"sha512"` // lxc, or a vm Image from a Debian list (D-224, D-345)
+	Verify *struct {
+		Source string `json:"source"`
+	} `json:"verify"` // D-335, D-344
 	Build     *imageBuild `json:"build"`
 	Retention *struct {
 		Keep int `json:"keep"`
@@ -839,16 +842,55 @@ func checkImageSpec(name string, img imageSpec) Errors {
 				errs = append(errs, errf("/spec/build/guest/user", "an LXC build has no bootstrap user (D-226)"))
 			}
 		}
-		return errs
+		return append(errs, checkVerify(img, errf)...)
 	}
 	if !strings.HasPrefix(img.URL, "https://") {
 		errs = append(errs, errf("/spec/url", "a VM Image needs an https:// url"))
 	}
-	if img.SHA512 != "" {
-		errs = append(errs, errf("/spec/sha512", "a VM Image pins sha256, not sha512"))
+	switch {
+	case img.SHA256 != "" && img.SHA512 != "":
+		errs = append(errs, errf("/spec/sha512", "a VM Image pins one checksum: sha256 or sha512, not both (D-345)"))
+	case img.SHA256 == "" && img.SHA512 == "":
+		errs = append(errs, errf("/spec", "a VM Image needs sha256 (or sha512 for a Debian list, D-345)"))
 	}
-	if img.SHA256 == "" {
-		errs = append(errs, errf("/spec", "a VM Image needs sha256"))
+	return append(errs, checkVerify(img, errf)...)
+}
+
+// verifySources are the rules of D-344: the type, the url prefix and the
+// pin field that each verify.source fits. internal/trust checks the url
+// again before any fetch.
+var verifySources = map[string]struct {
+	kind   wire.Kind
+	prefix string
+	field  string
+}{
+	"ubuntu-cloud":    {wire.KindVM, "https://cloud-images.ubuntu.com/", "sha256"},
+	"debian-https":    {wire.KindVM, "https://cloud.debian.org/images/cloud/", "sha512"},
+	"proxmox-aplinfo": {wire.KindLXC, "download.proxmox.com/images/system/", "sha512"},
+}
+
+// checkVerify checks that verify.source fits the Image (D-344).
+func checkVerify(img imageSpec, errf func(path, format string, args ...any) *Error) Errors {
+	if img.Verify == nil {
+		return nil
+	}
+	r, ok := verifySources[img.Verify.Source]
+	if !ok {
+		return Errors{errf("/spec/verify/source", "unknown source %q", img.Verify.Source)}
+	}
+	var errs Errors
+	if string(r.kind) != img.Type {
+		errs = append(errs, errf("/spec/verify/source", "source %s is for a %s Image (D-344)", img.Verify.Source, r.kind))
+	}
+	url := img.URL
+	if r.kind == wire.KindLXC {
+		url = strings.TrimPrefix(strings.TrimPrefix(url, "http://"), "https://")
+	}
+	if !strings.HasPrefix(url, r.prefix) {
+		errs = append(errs, errf("/spec/url", "source %s needs a url under %s (D-344)", img.Verify.Source, r.prefix))
+	}
+	if (r.field == "sha256" && img.SHA256 == "") || (r.field == "sha512" && img.SHA512 == "") {
+		errs = append(errs, errf("/spec/"+r.field, "source %s gives a %s pin; set %s (D-344)", img.Verify.Source, r.field, r.field))
 	}
 	return errs
 }

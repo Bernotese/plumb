@@ -346,12 +346,14 @@ var safeName = regexp.MustCompile(`[^a-z0-9.-]+`)
 // it, so a new checksum is a new template (D-077).
 func templateName(spec driver.ImageSpec) string {
 	n := safeName.ReplaceAllString(strings.ToLower(spec.Name), "-")
-	return fmt.Sprintf("plumb-img-%s-%s", n, spec.SHA256[:12])
+	_, sum := spec.Pin()
+	return fmt.Sprintf("plumb-img-%s-%s", n, sum[:12])
 }
 
 func importFile(spec driver.ImageSpec) string {
 	n := safeName.ReplaceAllString(strings.ToLower(spec.Name), "-")
-	return fmt.Sprintf("plumb-%s-%s.qcow2", n, spec.SHA256[:12])
+	_, sum := spec.Pin()
+	return fmt.Sprintf("plumb-%s-%s.qcow2", n, sum[:12])
 }
 
 // imageMarker is a line in the description of a guest that names the
@@ -359,11 +361,32 @@ func importFile(spec driver.ImageSpec) string {
 // attribute image; a re-made template does not change it.
 const imageMarker = "plumb-image: "
 
+// pinLine is the checksum line of a base template description:
+// sha256=<64 hex> or, for a SHA-512 pin, sha512=<128 hex> (D-345).
+func pinLine(sum string) string {
+	if len(sum) == 128 {
+		return "sha512=" + sum
+	}
+	return "sha256=" + sum
+}
+
+// pinOf reads the checksum line of a base template description; the
+// value must be full hex of its algorithm.
+func pinOf(description string) string {
+	if s := lineValue(description, "sha256="); sha256Hex.MatchString(s) {
+		return s
+	}
+	if s := lineValue(description, "sha512="); sha512Hex.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
 // hasChecksum reports whether a template description holds the full
 // checksum line that FetchImage writes (D-188).
 func hasChecksum(description, sum string) bool {
 	for _, line := range strings.Split(description, "\n") {
-		if strings.TrimSpace(line) == "sha256="+sum {
+		if strings.TrimSpace(line) == pinLine(sum) {
 			return true
 		}
 	}
@@ -389,14 +412,16 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	default:
 		return "", fmt.Errorf("proxmox: unknown image type %q", spec.Kind)
 	}
-	if !sha256Hex.MatchString(spec.SHA256) || !strings.HasPrefix(spec.URL, "https://") {
-		return "", errors.New("proxmox: an image needs an https URL and a SHA-256")
+	algo, sum := spec.Pin()
+	if (algo == "sha256" && !sha256Hex.MatchString(sum)) || (algo == "sha512" && (!sha512Hex.MatchString(sum) || spec.SHA256 != "")) ||
+		!strings.HasPrefix(spec.URL, "https://") {
+		return "", errors.New("proxmox: an image needs an https URL and one checksum: a SHA-256 or a SHA-512")
 	}
 	name := templateName(spec)
 	lock := d.imageLock(name)
 	lock.Lock()
 	defer lock.Unlock()
-	ref, halfMade, err := d.findTemplate(ctx, name, spec.SHA256)
+	ref, halfMade, err := d.findTemplate(ctx, name, sum)
 	if err != nil || ref != "" {
 		return ref, err
 	}
@@ -426,7 +451,7 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 	if !have {
 		if err := d.c.Task(ctx, d.cfg.Node, "POST", storage+"/download-url", url.Values{
 			"content": {"import"}, "filename": {file}, "url": {spec.URL},
-			"checksum": {spec.SHA256}, "checksum-algorithm": {"sha256"}, "verify-certificates": {"1"},
+			"checksum": {sum}, "checksum-algorithm": {algo}, "verify-certificates": {"1"},
 		}); err != nil {
 			return "", fmt.Errorf("proxmox: download %s: %w", spec.URL, err)
 		}
@@ -443,7 +468,7 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 		"scsihw": {"virtio-scsi-single"}, "scsi0": {d.cfg.DiskStorage + ":0,import-from=" + volid},
 		"ide2": {d.cfg.DiskStorage + ":cloudinit"}, "boot": {"order=scsi0"},
 		"serial0": {"socket"}, "vga": {"serial0"},
-		"description": {"Plumb image " + spec.Name + "\nsha256=" + spec.SHA256},
+		"description": {"Plumb image " + spec.Name + "\n" + pinLine(sum)},
 	}); err != nil {
 		return "", halfMadeLeft(fmt.Errorf("proxmox: create template VM: %w", err), id, d.removeHalfMade(ctx, id, name, false))
 	}
@@ -483,14 +508,14 @@ func (d *Driver) findTemplate(ctx context.Context, name, sum string) (driver.Ima
 			case cfg["lock"] != "":
 				busy, busyLock = m.VMID, cfg["lock"]
 			case cfg["template"] == "1" && !hasChecksum(cfg["description"], sum):
-				return "", nil, fmt.Errorf("proxmox: template VM %d has the name %s but not the checksum sha256=%s in its description; Plumb does not use or remove it: check it and remove it by hand (qm destroy %d)", m.VMID, name, sum, m.VMID)
+				return "", nil, fmt.Errorf("proxmox: template VM %d has the name %s but not the checksum line %s in its description; Plumb does not use or remove it: check it and remove it by hand (qm destroy %d)", m.VMID, name, sum, m.VMID)
 			case cfg["template"] == "1":
 				return driver.ImageRef(strconv.Itoa(m.VMID)), nil, nil
 			case !hasChecksum(cfg["description"], sum):
 				// A name match alone proves nothing (review S1 of PR #92):
 				// FetchImage writes the checksum line at create, so a VM
 				// without it is not a half-made image of ours.
-				return "", nil, fmt.Errorf("proxmox: VM %d has the name %s but is no template and has not the checksum sha256=%s in its description; Plumb does not use or remove it: check it and remove it by hand (qm destroy %d)", m.VMID, name, sum, m.VMID)
+				return "", nil, fmt.Errorf("proxmox: VM %d has the name %s but is no template and has not the checksum line %s in its description; Plumb does not use or remove it: check it and remove it by hand (qm destroy %d)", m.VMID, name, sum, m.VMID)
 			default:
 				halfMade = append(halfMade, m.VMID)
 			}
