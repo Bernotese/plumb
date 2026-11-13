@@ -407,6 +407,9 @@ func TestFirewallRecoveryWiring(t *testing.T) {
 			t.Errorf("boot unit missing %q", required)
 		}
 	}
+	if n := nft.count("systemd-run"); n != 1 {
+		t.Fatalf("rollback timer must be armed exactly once, got %d calls", n)
+	}
 	for _, call := range nft.calls {
 		if call[0] != "systemd-run" {
 			continue
