@@ -59,6 +59,13 @@ const (
 	// it does not list "update" in Capabilities.Commands, so the controller
 	// never sends it there (CanUpdate).
 	CommandUpdate CommandType = "update"
+	// CommandGrow grows the root partition and file system of a VM after
+	// the driver grew its disk (D-291, D-299). Body: GrowBody. An agent
+	// that does not list "grow" in Capabilities.Commands never gets it: a
+	// Plan that grows the disk of a VM with such an agent is refused by
+	// the gate (GateCommandPrefix). The agent of this build lists it only
+	// when T-117 adds the handler (AgentCommands).
+	CommandGrow CommandType = "grow"
 )
 
 // BuildLinkPrefix starts the link name of an image build guest:
@@ -66,7 +73,7 @@ const (
 const BuildLinkPrefix = "build:"
 
 // Command is the answer to a poll. Body depends on Type:
-// ObserveBody, ApplyBody, WatchBody, SealBody or UpdateBody.
+// ObserveBody, ApplyBody, WatchBody, SealBody, UpdateBody or GrowBody.
 type Command struct {
 	ID   string          `json:"id"`
 	Type CommandType     `json:"type"`
@@ -159,6 +166,65 @@ const AgentBinaryID = AgentItemType + ":binary"
 // AttrAgentVersion is the attribute of the change of AgentBinaryID.
 const AttrAgentVersion = "version"
 
+// GrowBody asks the agent to grow the root file system to the disk that
+// the driver resized (D-299). It holds no device or path: the agent finds
+// the device and partition of "/" itself and refuses anything else.
+//
+// The agent waits up to GrowWaitSeconds for the kernel to see a disk of
+// at least MinBytes (it rescans the SCSI device), then grows the
+// partition of "/" (growpart) and the file system (resize2fs or
+// xfs_growfs). The result has one Item GrowItemID: StatusApplied when it
+// grew, StatusUnchanged when the partition already fills the disk,
+// StatusFailed with Output when "/" is not on the last partition of its
+// disk, is on LVM, RAID or a file system other than ext4 or xfs, the tool
+// is missing, or the disk stays smaller than MinBytes. A failed grow
+// leaves the guest as it was: the bigger disk stays (it cannot shrink),
+// and a later grow command can finish the job.
+type GrowBody struct {
+	PlanID   int64 `json:"plan_id"`
+	MinBytes int64 `json:"min_bytes"` // the new disk size in bytes (GiB × 2^30)
+}
+
+// GrowWaitSeconds is how long the agent waits for the kernel to see the
+// grown disk.
+const GrowWaitSeconds = 30
+
+// GrowItemType is the type part of GrowItemID. Like SealItemType it is no
+// resource type: link takes an Item of it only as the answer of an
+// outstanding grow command.
+const GrowItemType = "grow"
+
+// GrowItemID is the Item of the result of a grow command. In a Run the
+// grow is part of the step guest:config (change disk); the controller
+// copies the Output of a failed grow into that step.
+const GrowItemID = GrowItemType + ":root"
+
+// Safe apply (D-293, D-300). For a resource type in SafeApplyTypes the
+// agent, inside an apply:
+//
+//  1. writes the marker <state>/safe-apply.json (version 1: resource id,
+//     deadline) before it changes anything;
+//  2. applies the new state live, but keeps the confirmed state where the
+//     guest loads it at boot (for firewall: /etc/plumb/firewall.nft,
+//     loaded by plumb-firewall.service before the network);
+//  3. closes its idle connections and sends a Report of type
+//     ReportConfirm for the resource over a new TCP and TLS connection;
+//  4. on a 2xx answer within SafeApplySeconds of the change, makes the new
+//     state the confirmed one, removes the marker, and reports the Item
+//     StatusApplied;
+//  5. else puts the confirmed state back live, removes the marker, and
+//     reports the Item StatusFailed with RolledBack and Output.
+//
+// An agent that starts and finds the marker (it died in the window, or
+// the guest rebooted) puts the confirmed state back before it does
+// anything else. A reboot in the window loads the confirmed state. The
+// update guard of D-271 is not used for this: it runs only after an
+// update, as the old binary.
+const SafeApplySeconds = 90
+
+// SafeApplyTypes are the resource types with safe apply.
+var SafeApplyTypes = []string{"firewall"}
+
 // The result of seal has one Item per step, in this order, with the
 // resource id "seal:<step>" (SealItemID). Status is applied, skipped (the
 // step does not apply to this guest, for example no dracut) or failed;
@@ -225,6 +291,13 @@ const (
 	// ReportAddrs carries a changed address list (D-212). It is not a
 	// second Hello: the controller counts Hellos to see a restarted agent.
 	ReportAddrs ReportType = "addrs"
+	// ReportConfirm is the round trip of a safe apply (D-300): Items has
+	// one Item with the resource id and StatusRunning, CommandID the
+	// apply. It must reach the controller over a new connection. The
+	// controller answers 204 when the command is the open apply of this
+	// agent and the resource is in it, else 409; it stores nothing. It is
+	// no progress: the Run step stays running.
+	ReportConfirm ReportType = "confirm"
 )
 
 // Report is every message from the agent after enrollment.
@@ -322,4 +395,8 @@ type Item struct {
 	Status   Status   `json:"status"`
 	Changes  []Change `json:"changes,omitempty"`
 	Output   string   `json:"output,omitempty"` // short, for humans; never a secret
+	// RolledBack: a safe apply (D-300) changed the resource, got no round
+	// trip within SafeApplySeconds and put the confirmed state back. Only
+	// with StatusFailed.
+	RolledBack bool `json:"rolled_back,omitempty"`
 }

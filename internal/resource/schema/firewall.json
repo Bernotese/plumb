@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/firewall.json",
+  "title": "firewall",
+  "description": "The input filter of the guest (D-295, D-300): the agent owns exactly one nftables table, inet plumb, with one input chain, and replaces it atomically (nft -f). Other tables are never read or changed; drift is a change to this table only. One per Target: the key name is always main. The table always accepts, before every rule: loopback, established and related packets (the agent link is outbound), ICMPv6 neighbor discovery and router advertisements, and DHCPv6 replies (udp 546 from fe80::/10). The SSH port stays open unless allow_no_ssh is true. No output or forward chain: ports that Docker publishes go through forward and are not filtered here. Needs the package nftables (nft). Safe apply (D-293): the agent keeps the confirmed rules and puts them back when it gets no fresh controller round trip within 90 s. Risk: create and change disruptive; absent removes the table (disruptive).",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "const": "main",
+      "description": "Always main: a Target has one firewall."
+    },
+    "policy": {
+      "enum": [
+        "accept",
+        "drop"
+      ],
+      "default": "drop",
+      "description": "What happens to an input packet that no rule accepts."
+    },
+    "tcp_ports": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^$|^([0-9]{1,5}(-[0-9]{1,5})?)(,[0-9]{1,5}(-[0-9]{1,5})?)*$",
+      "default": "",
+      "description": "TCP ports to accept, comma separated, ranges as a-b, for example 80,443,8000-8100. A text, so a Block parameter can fill it. Each port is 1 … 65535 and a range goes up (the agent checks it, a bad value fails the step)."
+    },
+    "udp_ports": {
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^$|^([0-9]{1,5}(-[0-9]{1,5})?)(,[0-9]{1,5}(-[0-9]{1,5})?)*$",
+      "default": "",
+      "description": "UDP ports to accept, in the form of tcp_ports."
+    },
+    "sources": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^$|^[0-9a-fA-F:.]+/[0-9]{1,3}(,[0-9a-fA-F:.]+/[0-9]{1,3})*$",
+      "default": "",
+      "description": "Source networks for tcp_ports and udp_ports, comma separated CIDRs (IPv4 or IPv6). Empty: from everywhere."
+    },
+    "ssh_port": {
+      "type": [
+        "string",
+        "integer"
+      ],
+      "minimum": 1,
+      "maximum": 65535,
+      "pattern": "^[1-9][0-9]{0,4}$",
+      "default": 22,
+      "description": "The SSH port. The table always accepts TCP to it (from ssh_sources), whatever the policy, so a firewall change cannot lock out SSH by accident (D-295)."
+    },
+    "ssh_sources": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^$|^[0-9a-fA-F:.]+/[0-9]{1,3}(,[0-9a-fA-F:.]+/[0-9]{1,3})*$",
+      "default": "",
+      "description": "Source networks for the SSH port, in the form of sources. Empty: from everywhere."
+    },
+    "allow_no_ssh": {
+      "type": "boolean",
+      "default": false,
+      "description": "true: no SSH rule. With policy drop and no rule for the SSH port, only the console reaches the guest. The Plan shows this attribute. ssh_port and ssh_sources must then be missing."
+    },
+    "ping": {
+      "type": "boolean",
+      "default": true,
+      "description": "Accept ICMP and ICMPv6 echo requests."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present",
+      "description": "absent: the agent deletes the table inet plumb and its boot file; the other attributes must then be missing."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "allow_no_ssh": {
+            "const": true
+          }
+        },
+        "required": [
+          "allow_no_ssh"
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "ssh_port"
+              ]
+            },
+            {
+              "required": [
+                "ssh_sources"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "absent"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "name",
+            "state"
+          ]
+        }
+      }
+    }
+  ]
+}
