@@ -18,11 +18,22 @@ import (
 // grow uses only the mounted root and its direct disk. It never accepts a device from the controller.
 func (a *Agent) grow(ctx context.Context, body wire.GrowBody) (item wire.Item) {
 	item = wire.Item{Resource: wire.GrowItemID, Status: wire.StatusFailed}
-	fail := func(err error) wire.Item { item.Output = err.Error(); return item }
+	fail := func(err error) wire.Item {
+		item.Output = resource.SafeOutput(wire.Resource{ID: wire.GrowItemID}, err.Error())
+		return item
+	}
 	if body.MinBytes <= 0 {
 		return fail(fmt.Errorf("grow: min_bytes must be positive"))
 	}
 	run := a.env.Run.Run
+	if _, err := run(ctx, "systemd-detect-virt", "--container", "--quiet"); err == nil {
+		return fail(fmt.Errorf("grow: unsupported in a container"))
+	} else {
+		var exit *resource.ExitError
+		if !errors.As(err, &exit) || exit.Code != 1 {
+			return fail(fmt.Errorf("grow: detect container: %w", err))
+		}
+	}
 	out, err := run(ctx, "findmnt", "--noheadings", "--output", "SOURCE,FSTYPE", "--target", "/")
 	if err != nil {
 		return fail(err)

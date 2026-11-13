@@ -20,7 +20,7 @@ func TestGuestGrowRefusesContainerRoot(t *testing.T) {
 	}
 	a := &Agent{env: resource.NewEnv("/", resource.ExecRunner{})}
 	item := a.grow(context.Background(), wire.GrowBody{MinBytes: 1})
-	if item.Status != wire.StatusFailed || item.Output != "grow: root must be an ext4 or xfs disk partition" {
+	if item.Status != wire.StatusFailed || item.Output != "grow: unsupported in a container" {
 		t.Fatalf("%+v", item)
 	}
 }

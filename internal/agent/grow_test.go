@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/resource"
@@ -15,12 +16,22 @@ type growRunner struct {
 	calls           [][]string
 	fs              string
 	later, nochange bool
+	container       bool
+	err             error
 }
 
 func (r *growRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string{name}, args...))
 	switch name {
+	case "systemd-detect-virt":
+		if r.container {
+			return nil, nil
+		}
+		return nil, &resource.ExitError{Code: 1}
 	case "findmnt":
+		if r.err != nil {
+			return nil, r.err
+		}
 		return []byte("/dev/sda1 " + r.fs), nil
 	case "lsblk":
 		extra := ""
@@ -74,5 +85,25 @@ func TestGrow(t *testing.T) {
 				t.Fatal(r.calls)
 			}
 		})
+	}
+}
+
+func TestGrowClipsFailureOutput(t *testing.T) {
+	err := &resource.ExitError{Name: "findmnt", Code: 1, Stderr: strings.Repeat("x", resource.MaxStderr)}
+	r := &growRunner{err: err}
+	a := &Agent{env: resource.NewEnv(t.TempDir(), r)}
+	item := a.grow(context.Background(), wire.GrowBody{MinBytes: 1})
+	want := resource.SafeOutput(wire.Resource{ID: wire.GrowItemID}, err.Error())
+	if item.Status != wire.StatusFailed || item.Output != want || len(item.Output) > 64<<10 || len(item.Output) >= len(err.Error()) {
+		t.Fatalf("status=%s output bytes=%d", item.Status, len(item.Output))
+	}
+}
+
+func TestGrowRefusesContainerBeforeInspectingRoot(t *testing.T) {
+	r := &growRunner{container: true, fs: "ext4"}
+	a := &Agent{env: resource.NewEnv(t.TempDir(), r)}
+	item := a.grow(context.Background(), wire.GrowBody{MinBytes: 1})
+	if item.Status != wire.StatusFailed || item.Output != "grow: unsupported in a container" || len(r.calls) != 1 {
+		t.Fatalf("%+v calls=%v", item, r.calls)
 	}
 }
