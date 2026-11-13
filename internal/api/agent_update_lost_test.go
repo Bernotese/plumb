@@ -222,3 +222,75 @@ func TestAgentUpdateOldRevertAfterLostPollAnswer(t *testing.T) {
 		t.Fatalf("run %s %+v", status, steps)
 	}
 }
+
+// T-108 (T-106 F3 on the real host): the result reaches the controller
+// but its reply is lost. The old process reconnects with a hello of the
+// old sha and sends the result again before it exits; then the new binary
+// says hello. The old-sha hello after the result decides nothing.
+func TestAgentUpdateLateOldHello(t *testing.T) {
+	tests := []struct {
+		name   string
+		last   func(caps wire.Capabilities) *wire.Hello // nil: no further hello
+		status string
+		want   string
+	}{
+		{"new binary follows", func(wire.Capabilities) *wire.Hello {
+			served := servedCaps()
+			return &wire.Hello{BinarySHA256: newSHA, Capabilities: &served}
+		}, "applied", ""},
+		{"revert follows", func(caps wire.Capabilities) *wire.Hello {
+			return &wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps, Reverted: revertOf(wire.RevertCrashLoop)}
+		}, "failed", "the agent went back to its old binary"},
+		{"old binary stays", func(wire.Capabilities) *wire.Hello { return nil },
+			"failed", "the agent came back with its old binary (no hello of the new agent within"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e, c, _ := newLostEnv(t)
+			caps := slice3Caps()
+			id := e.proposeUpdate(c)
+			a := e.agents["web1"]
+			a.LoseUpdateResult(true) // the test sends the result itself
+			swapped := make(chan struct{})
+			a.OnUpdate(func(wire.UpdateBody) (wire.Item, *wire.Hello) {
+				close(swapped)
+				return wire.Item{}, nil
+			})
+			run := approve(t, c, id)
+			<-swapped
+			result := wire.Report{Type: wire.ReportResult, CommandID: a.UpdateCommandID(),
+				Items: []wire.Item{{Resource: wire.AgentBinaryID, Status: wire.StatusApplied}}}
+			// 1. The result arrives; the agent never sees the reply.
+			if code := a.Report(e.ctx, result); code != 204 {
+				t.Fatalf("result: %d", code)
+			}
+			// 2. The old process reconnects: hello with the old sha.
+			e.hello(wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps})
+			// 3. It sends the result again: the link took the first one
+			// and forgot the command, so 409 (as on the host); the old
+			// process then exits.
+			if code := a.Report(e.ctx, result); code != 409 {
+				t.Fatalf("resent result: %d", code)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if st := e.stepStatus(c, run); st != "running" {
+				t.Fatalf("the old-sha hello ended the step: %s %s", st, e.runJSON(c, run))
+			}
+			// 4. The old process exits; the next hello decides.
+			if h := tc.last(caps); h != nil {
+				e.hello(*h)
+			}
+			start := time.Now()
+			status, steps := runSteps(t, e, c, run)
+			if d := time.Since(start); d > lostApplyTimeout/3 {
+				t.Errorf("the step waited %v", d)
+			}
+			if len(steps) != 1 || steps[0].Status != tc.status || !strings.Contains(steps[0].Output, tc.want) {
+				t.Fatalf("run %s %+v", status, steps)
+			}
+			if tc.status == "applied" && status != "succeeded" || tc.status == "failed" && status != "failed" {
+				t.Fatalf("run status %s", status)
+			}
+		})
+	}
+}
