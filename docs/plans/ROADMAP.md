@@ -1,0 +1,56 @@
+# Road to the release (T-138)
+
+Base: `main` 71c14c0 (2026-11-13), D-326, BRIEF §5/§6, prep files of T-139 (host facts), T-140 (risks), T-141 (web gaps), T-142 (code gaps).
+Every row was checked against the code (paths in the prep files or in the column "State today"). Decisions: `docs/decisions/T-138.md` (D-327 … D-341).
+**USER** = needs a new token right or ACL (D-081), a public step, something outside `pve-dev`, or a change to the user's own installation (D-326 (4)).
+
+## 1. Questions for the user (ask all in one message now; needed from slice 6 on)
+| # | Slice | Question | Recommendation | Reason |
+|---|---|---|---|---|
+| U1 | 6 | SSH repair fallback: how does Plumb reach a guest whose agent is dead? (a) one Plumb repair SSH key in every **new** guest, line `restrict,from="<controller IP>",command="<fixed repair>"`; human-only Plan · (b) Proxmox guest agent: new right `VM.GuestAgent.Unrestricted` on the pool (VM only) · (c) both | **(a)** | (b) is root on every pool VM through the token, and LXC has no guest agent; (a) needs no Proxmox right and works for VM and LXC with sshd |
+| U2 | 6 | Adoption of guests that Plumb did not make: (a) only guests that you put into the pool `plumb` by hand in Proxmox **(recommended)** · (b) Plumb moves guests into the pool: new rights `Pool.Allocate` on `/pool/plumb` and `VM.Allocate` on the guest paths outside the pool | **(a)** | (b) lets the token reach guests outside the pool; a move by hand is one click |
+| U3 | 7 | More NICs and VLAN tags: may the token get `SDN.Use` on each more bridge (or the VLAN zone path) that you name at install? And may we add one isolated bridge without a port (`vmbr9`) or make `vmbr0` VLAN-aware on `pve-dev` for the proof? | yes to both, isolated bridge without a port | `pve-dev` has one bridge and AGENTS.md forbids network changes on it; without a second bridge there is no real proof (D-292) |
+| U4 | 7 | Guest backups: (a) Plumb runs `vzdump` per Target from a `backup` field (schedule, keep, storage): new rights `VM.Backup` on the pool and `Datastore.AllocateSpace` + `Datastore.Audit` on one backup storage you name · (b) Plumb only shows the state of your own Proxmox backup jobs (no new right, it reads them with `Sys.Audit` today) | **(a)**, encrypted storage (PBS with client key) recommended in the docs | the brief wants backups as desired state; (b) is only a view. A vzdump holds the agent credential and the desired list in clear (T-140 §6) |
+| U5 | 8 | AI help on Issues: (a) no AI inside Plumb; your own AI client (Claude, …) works through the Plumb MCP server with a `plan` token and writes comments · (b) Plumb calls an AI API with a key in the secret store | **(a)** | (b) sends guest data to an outside service and needs a key and costs; (a) keeps all data in the house |
+| U6 | 9 | Release: public steps (tag, GitHub release, README "install" with the tarball) | ask at the end of slice 9 | D-326 (1) |
+| U7 | 7, 9 | Your own installation: a repair run of the installer to add the new ACLs of U3/U4 | at the release | D-326 (4) |
+
+Not a user question (decided by the team, D-328 … D-341): roles of users, `network` scope, signed checksums, the starter catalogue, the D-323 copy rule, MCP transport.
+
+## 2. Open points and their slice
+| # | Brief | Point | State today (checked) | Slice | Size | Risks (T-140 where named) | Mark |
+|---|---|---|---|---|---|---|---|
+| 1 | 5.7, 5.2 | **Starter catalogue reaches the store** | **bug**: no non-test code imports `blocks.FS`; a fresh install has no Blocks (T-141 #9; `grep 'plumb/blocks"'` finds tests only) | 5 (first) | M | a catalogue Block must never overwrite a stored Block of the same name (D-255 note) | – |
+| 2 | 5.2, D-326 | **User management**: list, create, roles, disable, last admin | only `POST /users/{name}/password` (D-321); `user` table without role (0001) | 5 | L | T-140 §1: self-raise, token path, last admin race, old sessions, name reuse, lockout | – |
+| 3 | 5.9, D-323 | **Copy of Issue values by a token** (D-323 limit, also for MCP) | a `plan` token can propose the observed values of an Issue as a normal change; an `apply` token can approve it | 5 | S | T-140 §4 worst case 2 | – |
+| 4 | 5.6 | **`network` resource** (VM: routes, name servers, search, extra addresses) + safe apply | missing (T-142); design in D-294 | 5 | L | cuts the agent link; netplan in both cloud images unproven | – |
+| 5 | 5.7 | starter Block `network` | missing (T-142) | 5 | S | – | – |
+| 6 | 5.6 | resource `group` (create a group, gid, system) | missing: `user` manages membership only (T-142) | 5 | S | – | – |
+| 7 | 5.4, ARCH §10 | **Signed image checksums** + pin refresh for scheduled builds | missing: pins are typed by hand (`image.json` `sha256`, `sha512`); a schedule on a `latest` URL fails when the base changes | 5 | L | T-140 §5: key pinning, downgrade, parser. T-139 §5: Ubuntu (`SHA256SUMS.gpg`) and Proxmox (`aplinfo-pve-9.dat.asc`) are signed; **Debian cloud images have no signature** (`SHA512SUMS` over HTTPS only): a Debian pin refresh stays human (D-335) | – |
+| 8 | 5.2, 5.5 | Web: delete Target/Block/Image, plan list + drop, run list, add comment, compare revisions, issue filter by Target | API exists, UI misses it (T-141 #5, #8, #12–#15, #18) | 5 | M | – | – |
+| 9 | 5.2 | Web: settings (backup schedule and keep, Proxmox connection view) | read-only (T-141 #1) | 6 | M | – | – |
+| 10 | 5.8 | **Accept to a Block parameter** (brief: raw mode only when no parameter fits) | Accept always writes an override (T-141 #17, D-296) | 6 | L | guest data into parameters: human-only (D-323) | – |
+| 11 | 5.6 | **SSH repair fallback** | missing (no SSH code) | 6 | L | T-140 §3: key leak, host key trust, standing backdoor | **USER U1** |
+| 12 | 5.5, D-326 | **Adoption of existing guests** | only the list `unknown_guests` after a restore (D-322) | 6 | L | T-140 §2: guest data, wrong guest, unsealed guest | **USER U2** |
+| 13 | 5.2 | object / array-of-object parameters in forms; YAML view of Target and Image | "needs raw mode (later)" (T-141 #7) | 6 | M | – | – |
+| 14 | 5.5 | **More NICs, VLAN tags** | one `net0`, one bridge (`driver.go:48`, D-292) | 7 | L | each bridge (and each VLAN tag) an ACL path (T-139 §1); a second NIC on `vmbr0` without a tag needs no new right; no second bridge on `pve-dev` | **USER U3** |
+| 15 | 5.3, D-326 | **Guest backups** (and restore of one guest) | missing; Plumb backs up only itself (slice 4) | 7 | L | T-140 §6: credential in the backup, clear secrets, restore = data loss. T-139 §3: a backup's owner is the VMID only and `nextid` reuses VMIDs, so a new guest gets the old backups: Plumb must name its backups and check the Target name before a read, delete or restore | **USER U4** |
+| 16 | 5.9 | **MCP server** | missing | 8 | M | T-140 §4: injection, DNS rebinding, loops | – |
+| 17 | 5.8 | **AI help on Issues** | missing | 8 | M | T-140 §4 | **USER U5** |
+| 18 | 5.2 | Plan shows which documents change (Block edit review) | only resource effects (T-141 #13c) | 8 | M | – | – |
+| 19 | – | leftovers: 2 low `npm audit` (`deepmerge`, dev-only), GO-2026-5932, Ubuntu 26.04 first-boot limit (documented) | open | 5 (npm), 9 (rest) | S | – | – |
+| 20 | 5.1 | release: tarball from a tag, README install path, last full host run from a clean install | workflow ready (T-124), unused | 9 | M | – | **USER U6, U7** |
+
+Done and only re-checked (no slice): installer (5.1), export/import of the desired state (5.3; history is in the backup, D-288), rollback (5.3), backups of Plumb (slice 4), retention and scheduled rebuilds (5.4), LXC templates, create/change/start/stop/delete in the API (5.5), resources except `network`, `group` (5.6; template = `file`, SSH key in `user`, timer = `unit`, D-260), Docker Compose, agent updates, drift, strictness for `package`, ignore rules, events, tiers, provenance of revisions (5.8, 5.9), §6 (ARCHITECTURE §1–9).
+Not a brief point, so no slice: template features `when`/`each`/`uses` and typed values (ARCH §10); comma-separated string attributes cover lists (as the `firewall` Block does, D-332).
+
+## 3. Slices
+| Slice | Name | Points | Needs from the user | Host proof |
+|---|---|---|---|---|
+| 5 | People, network, trusted images | 1–8, npm part of 19 | nothing | users, `network` with a forced rollback, a scheduled build that takes a new signed base |
+| 6 | Guests without an agent | 9–13 | U1, U2 (ask now) | repair of a VM and an LXC with a dead agent; adoption of a hand-made guest in the pool |
+| 7 | More of Proxmox | 14, 15 | U3, U4, and U7 for your own install later | second NIC on the isolated bridge; guest backup + restore, old credential refused |
+| 8 | AI-ready | 16–18 | U5 | MCP client in CI against `serve --dev`; on the host: one Issue explained and commented by an MCP client with a `plan` token |
+| 9 | Release readiness | 19, 20 | U6, U7 | clean install from the tarball, all slice checks once more, leak hunt |
+
+Order reason: slice 5 fixes a product bug (empty catalogue), adds the people who must approve the later human-only steps (repair, adoption, restore of a guest), and needs no user answer, so it starts at once. Slices 6 and 7 hold every point with a new right, so the questions U1 … U4 go out now, two slices ahead. MCP comes after users and the copy rule, because both decide what an AI client may do.
