@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
+  import { can, canTakeRisk, roleNote } from "../lib/session.svelte";
   import { offersRaw } from "../lib/raw";
   import { go, href } from "../lib/router";
   import type { Issue, IssueAction } from "../lib/types";
@@ -205,7 +206,9 @@
     </p>
   {/if}
 
-  {#if issue.status === "open"}
+  {#if issue.status === "open" && !can("resolveIssue")}
+    <p class="muted" id="resolve-role">{roleNote("plan")} You cannot resolve this issue.</p>
+  {:else if issue.status === "open"}
     <section class="card" aria-labelledby="resolve-title">
       <h2 id="resolve-title">Resolve</h2>
       <div class="field">
@@ -246,7 +249,7 @@
 
       {#if canIgnore}
         <h3>Ignore</h3>
-        {#if issue.actions.includes("ignore_once")}
+        {#if issue.actions.includes("ignore_once") && canTakeRisk(issue.risk)}
           <div class="option">
             {#if confirmIgnore}
               <div class="confirm" role="group" aria-labelledby="ignore-q">
@@ -331,27 +334,32 @@
   {:else}
     <p class="muted">No comments yet.</p>
   {/each}
-  <form class="card" onsubmit={addComment} novalidate aria-labelledby="comments-title">
-    <div class="field">
-      <label for="comment-body">Add a comment</label>
-      <textarea
-        id="comment-body"
-        bind:value={comment}
-        maxlength="10000"
-        aria-invalid={commentMissing}
-        aria-describedby={commentMissing ? "comment-error comment-hint" : "comment-hint"}
-        oninput={() => (commentMissing = false)}></textarea>
-      {#if commentMissing}<p id="comment-error" class="error">Write a comment first.</p>{/if}
-      <p id="comment-hint" class="muted hint">
-        Plain text. Everyone who can read this issue sees it, also API tokens.
-      </p>
-    </div>
-    <ProblemBox error={commentError} />
-    <div class="row">
-      <button class="btn" type="submit" disabled={commentBusy}>Add comment</button>
-      {#if commentAdded}<span role="status" class="muted">{commentAdded}</span>{/if}
-    </div>
-  </form>
+  {#if can("commentIssue")}<form
+      class="card"
+      onsubmit={addComment}
+      novalidate
+      aria-labelledby="comments-title"
+    >
+      <div class="field">
+        <label for="comment-body">Add a comment</label>
+        <textarea
+          id="comment-body"
+          bind:value={comment}
+          maxlength="10000"
+          aria-invalid={commentMissing}
+          aria-describedby={commentMissing ? "comment-error comment-hint" : "comment-hint"}
+          oninput={() => (commentMissing = false)}></textarea>
+        {#if commentMissing}<p id="comment-error" class="error">Write a comment first.</p>{/if}
+        <p id="comment-hint" class="muted hint">
+          Plain text. Everyone who can read this issue sees it, also API tokens.
+        </p>
+      </div>
+      <ProblemBox error={commentError} />
+      <div class="row">
+        <button class="btn" type="submit" disabled={commentBusy}>Add comment</button>
+        {#if commentAdded}<span role="status" class="muted">{commentAdded}</span>{/if}
+      </div>
+    </form>{/if}
 {:else if !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}

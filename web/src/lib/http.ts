@@ -2,7 +2,7 @@
 // session cookie, no token or password is stored by the UI. Errors are
 // ApiError with the problem+json body.
 import { API_BASE, ApiError, NetworkError, toProblem } from "./api";
-import type { PlumbApi } from "./client";
+import type { CatalogBlock, PinRefresh, PlumbApi, User } from "./client";
 import type { components } from "./api.gen";
 import type {
   BlockView,
@@ -48,6 +48,8 @@ export const EVENT_TYPES = [
   "restore.confirmed",
   "token.enabled",
   "user.password_reset",
+  "user.created",
+  "user.changed",
 ] as const satisfies readonly components["schemas"]["Event"]["type"][];
 
 export interface HttpOptions {
@@ -142,7 +144,16 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     buildImage: (name, reason) =>
       call<Plan>("POST", `/images/${encodeURIComponent(name)}/build`, reason ? { reason } : {}),
     listBlocks: () => all<BlockView>("/blocks"),
+    listCatalogBlocks: async () =>
+      (await call<{ items: CatalogBlock[] }>("GET", "/catalog/blocks")).items,
     getBlock: (name) => call<BlockView>("GET", `/blocks/${encodeURIComponent(name)}`),
+    refreshImagePin: async (name) => {
+      const r = await call<Plan | { status: "unchanged"; pin: PinRefresh }>(
+        "POST",
+        `/images/${encodeURIComponent(name)}/refresh`,
+      );
+      return "status" in r && r.status === "unchanged" ? { unchanged: r.pin } : { plan: r as Plan };
+    },
     listTargets: () => all<TargetView>("/targets"),
     getTarget: (name) => call<TargetView>("GET", `/targets/${encodeURIComponent(name)}`),
     createPlan: (proposal) => call<Plan>("POST", "/plans", proposal),
@@ -216,6 +227,9 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
       }),
     resetUserPassword: (name) =>
       call<OneTimePassword>("POST", `/users/${encodeURIComponent(name)}/password`),
+    listUsers: () => all<User>("/users"),
+    createUser: (name, role) => call<OneTimePassword>("POST", "/users", { name, role }),
+    changeUser: (name, change) => call<User>("PATCH", `/users/${encodeURIComponent(name)}`, change),
     revokeToken: async (id) => {
       await call<undefined>("DELETE", `/tokens/${encodeURIComponent(id)}`);
     },

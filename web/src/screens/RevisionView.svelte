@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ApiError } from "../lib/api";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { go, href } from "../lib/router";
   import type { RevisionDiff } from "../lib/types";
   import DocDiff from "../ui/DocDiff.svelte";
@@ -137,41 +138,41 @@
     </p>
   {/each}
 
-  <form class="card" onsubmit={rollback} novalidate>
-    <h2>Roll back to this revision</h2>
-    <p>
-      Plumb makes a plan that puts the documents back to revision {id}. Nothing changes until you
-      approve the plan. Secret values do not roll back.
-    </p>
-    <div class="field">
-      <label for="rollback-reason">Reason (required)</label>
-      <textarea
-        id="rollback-reason"
-        bind:value={reason}
-        required
-        maxlength="2000"
-        aria-invalid={reasonMissing}
-        aria-describedby={reasonMissing ? "rollback-error rollback-hint" : "rollback-hint"}
-        oninput={() => (reasonMissing = false)}></textarea>
-      {#if reasonMissing}
-        <p id="rollback-error" class="error">Give a reason for the rollback.</p>
-      {/if}
-      <p id="rollback-hint" class="muted hint">
-        Why do you roll back? The reason goes into the plan.
+  {#if can("rollbackRevision")}<form class="card" onsubmit={rollback} novalidate>
+      <h2>Roll back to this revision</h2>
+      <p>
+        Plumb makes a plan that puts the documents back to revision {id}. Nothing changes until you
+        approve the plan. Secret values do not roll back.
       </p>
-    </div>
-    {#if nothing}
-      <div class="banner info" role="status">
-        <strong>Nothing to roll back.</strong> Revision {id} has the same documents as the head revision.
+      <div class="field">
+        <label for="rollback-reason">Reason (required)</label>
+        <textarea
+          id="rollback-reason"
+          bind:value={reason}
+          required
+          maxlength="2000"
+          aria-invalid={reasonMissing}
+          aria-describedby={reasonMissing ? "rollback-error rollback-hint" : "rollback-hint"}
+          oninput={() => (reasonMissing = false)}></textarea>
+        {#if reasonMissing}
+          <p id="rollback-error" class="error">Give a reason for the rollback.</p>
+        {/if}
+        <p id="rollback-hint" class="muted hint">
+          Why do you roll back? The reason goes into the plan.
+        </p>
       </div>
-    {/if}
-    <ProblemBox error={rollbackError} />
-    <div class="row">
-      <button class="btn primary" type="submit" disabled={busy}>
-        Roll back to this revision
-      </button>
-    </div>
-  </form>
+      {#if nothing}
+        <div class="banner info" role="status">
+          <strong>Nothing to roll back.</strong> Revision {id} has the same documents as the head revision.
+        </div>
+      {/if}
+      <ProblemBox error={rollbackError} />
+      <div class="row">
+        <button class="btn primary" type="submit" disabled={busy}>
+          Roll back to this revision
+        </button>
+      </div>
+    </form>{/if}
 {:else if !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}

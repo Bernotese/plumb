@@ -1,6 +1,7 @@
 <script lang="ts">
   import { agentState } from "../lib/agent";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { TargetView } from "../lib/types";
@@ -46,7 +47,8 @@
 
 <div class="spread">
   <h1 id="page-title" tabindex="-1">Targets</h1>
-  <a class="btn primary" href={href({ name: "target-new" })}>New target</a>
+  {#if can("createPlan")}<a class="btn primary" href={href({ name: "target-new" })}>New target</a
+    >{/if}
 </div>
 <ProblemBox {error} />
 {#if targets === null && !error}

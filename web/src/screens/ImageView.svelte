@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { PlumbApi } from "../lib/client";
+  import type { PinRefresh, PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import {
     TRIGGER_TEXT,
     bytesText,
@@ -30,6 +31,30 @@
   /** Why a version failed: the output of its failed step, by version. */
   let failures = $state<Record<number, string>>({});
   let copied = $state("");
+  // "Refresh base" (D-335): a pin-only plan, or "unchanged".
+  let refreshBusy = $state(false);
+  let refreshError = $state<unknown>(null);
+  let unchanged = $state<PinRefresh | null>(null);
+
+  async function refresh() {
+    refreshBusy = true;
+    refreshError = null;
+    unchanged = null;
+    try {
+      const r = await api.refreshImagePin(name);
+      if ("plan" in r) go({ name: "plan", id: r.plan.id });
+      else unchanged = r.unchanged;
+    } catch (err) {
+      refreshError = err;
+    } finally {
+      refreshBusy = false;
+    }
+  }
+  const sourceText = {
+    "ubuntu-cloud": "Ubuntu cloud images, signed SHA256SUMS",
+    "proxmox-aplinfo": "Proxmox appliance index, signed",
+    "debian-https": "Debian SHA512SUMS over HTTPS, not signed by Debian",
+  } as const;
 
   $effect(() => {
     const live = liveSnapshot({
@@ -162,7 +187,9 @@
 
 <div class="spread">
   <h1 id="page-title" tabindex="-1">Image {name}</h1>
-  {#if image}<a class="btn" href={href({ name: "image-edit", image: name })}>Edit</a>{/if}
+  {#if image && can("createPlan")}<a class="btn" href={href({ name: "image-edit", image: name })}
+      >Edit</a
+    >{/if}
 </div>
 <ProblemBox {error} />
 {#if image && spec}
@@ -185,10 +212,52 @@
       <dd class="mono wrap">{spec.url}</dd>
       <dt>Checksum</dt>
       <dd class="mono wrap" id="image-sum">
-        {spec.type === "lxc" ? `sha512 ${spec.sha512 ?? "–"}` : `sha256 ${spec.sha256 ?? "–"}`}
+        {spec.type === "lxc" || spec.sha512
+          ? `sha512 ${spec.sha512 ?? "–"}`
+          : `sha256 ${spec.sha256 ?? "–"}`}
+      </dd>
+      <dt>Checksum source</dt>
+      <dd id="image-verify">
+        {spec.verify ? sourceText[spec.verify.source] : "none: a person checks a new checksum"}
       </dd>
     </dl>
   </div>
+
+  {#if spec.verify}
+    <section class="card" aria-labelledby="refresh-title">
+      <h2 id="refresh-title">Refresh base</h2>
+      <p>
+        Plumb fetches the newest checksum list of the source{spec.verify.source === "debian-https"
+          ? ""
+          : " and checks its signature with the key built into Plumb"}. When the checksum of this
+        address changed, Plumb proposes a plan that changes only the pin. Nothing changes until it
+        is approved.
+      </p>
+      {#if spec.verify.source === "debian-https"}
+        <p class="muted" id="refresh-unsigned">
+          Not signed by Debian: a person must approve every new pin.
+        </p>
+      {/if}
+      {#if unchanged}
+        <p class="banner ok" role="status" id="refresh-unchanged">
+          The pin is current: the list of {unchanged.source} has the same checksum for
+          <span class="mono">{unchanged.file}</span>.{unchanged.signed_at
+            ? ` Signed at ${formatTime(unchanged.signed_at)}.`
+            : ""}
+        </p>
+      {/if}
+      <ProblemBox error={refreshError} />
+      {#if can("refreshImagePin")}
+        <button
+          class="btn"
+          type="button"
+          id="refresh-base"
+          disabled={refreshBusy || restored.mode}
+          onclick={refresh}>{refreshBusy ? "Checking…" : "Refresh base"}</button
+        >
+      {/if}
+    </section>
+  {/if}
 
   {#if spec.build && st}
     {@const b = spec.build}
@@ -216,24 +285,24 @@
         Newest ready version: {newest ? `v${newest.version}` : "none"}. New Targets get it. A new
         version changes no existing Target.
       </p>
-      <form onsubmit={buildNow}>
-        <div class="field">
-          <label for="build-reason">Reason (optional)</label>
-          <input id="build-reason" type="text" bind:value={reason} maxlength="2000" />
-        </div>
-        <ProblemBox error={buildError} />
-        <button
-          class="btn primary"
-          type="submit"
-          disabled={busy || st.building !== null || restored.mode}
-          aria-describedby={restored.mode ? "build-restored" : undefined}>Build now</button
-        >
-        {#if restored.mode}<p class="muted" id="build-restored">{RESTORED_WAIT}</p>{/if}
-        <p class="muted">
-          This makes a plan for a new version from the recipe below. Nothing happens until it is
-          approved.
-        </p>
-      </form>
+      {#if can("buildImage")}<form onsubmit={buildNow}>
+          <div class="field">
+            <label for="build-reason">Reason (optional)</label>
+            <input id="build-reason" type="text" bind:value={reason} maxlength="2000" />
+          </div>
+          <ProblemBox error={buildError} />
+          <button
+            class="btn primary"
+            type="submit"
+            disabled={busy || st.building !== null || restored.mode}
+            aria-describedby={restored.mode ? "build-restored" : undefined}>Build now</button
+          >
+          {#if restored.mode}<p class="muted" id="build-restored">{RESTORED_WAIT}</p>{/if}
+          <p class="muted">
+            This makes a plan for a new version from the recipe below. Nothing happens until it is
+            approved.
+          </p>
+        </form>{/if}
       {#if use && st.disk}
         <p class:warn={use.now > st.disk.limit_percent} id="disk-use">
           Disk storage {use.text} A build does not start when the storage would be more than {st

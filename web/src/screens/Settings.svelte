@@ -8,7 +8,7 @@
   import ExportImport from "./ExportImport.svelte";
   import Secrets from "./Secrets.svelte";
   import Tokens from "./Tokens.svelte";
-  import ResetPassword from "../ui/ResetPassword.svelte";
+  import Users from "./Users.svelte";
 
   let {
     api,
@@ -33,8 +33,14 @@
 <h1 id="page-title" tabindex="-1">Settings</h1>
 {#if session.tier !== "admin"}
   <div class="banner warn" role="alert">
-    <strong>Only a person who logged in can open the settings.</strong> You use the API token
-    <span class="mono">{session.principal}</span>. A token cannot manage tokens, secrets or imports.
+    {#if session.principal.startsWith("user:")}
+      <strong>Only an admin can open the settings.</strong> Your role is {session.tier}. Ask an
+      admin for a higher role.
+    {:else}
+      <strong>Only a person who logged in can open the settings.</strong> You use the API token
+      <span class="mono">{session.principal}</span>. A token cannot manage tokens, secrets or
+      imports.
+    {/if}
   </div>
 {:else}
   <nav class="tabs" aria-label="Settings">
@@ -52,23 +58,13 @@
   {:else if tab === "backups"}
     <Backups {api} {onRestore} />
   {:else if tab === "users"}
-    <section class="card" aria-labelledby="users-title">
-      <h2 id="users-title">One-time password</h2>
-      <p>
-        Give another user a new password when they lost theirs, or when a restore locked them. Plumb
-        makes the password and shows it once. The user must change it at the first login.
-      </p>
-      <ResetPassword {api} id="users-otp" />
-    </section>
+    <Users {api} {session} />
   {:else}
     <ExportImport {api} />
   {/if}
 {/if}
 
 <style>
-  .card h2 {
-    margin-top: 0;
-  }
   .tabs {
     display: flex;
     flex-wrap: wrap;
