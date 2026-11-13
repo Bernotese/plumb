@@ -56,9 +56,12 @@ var (
 )
 
 // The agent's units: the agent, the first-boot installer of an LXC
-// template (T-076), and the update guard with its timer (T-091, D-271).
+// template (T-076), the update guard with its timer (T-091, D-271), and
+// the firewall boot unit with the rollback timer of a safe apply (T-116,
+// D-300). The firewall boot file is in /etc/plumb-agent.
 var agentUnits = []string{"plumb-agent.service", "plumb-agent-install.service",
-	"plumb-agent-guard.service", "plumb-agent-guard.timer"}
+	"plumb-agent-guard.service", "plumb-agent-guard.timer",
+	"plumb-firewall.service", "plumb-firewall-rollback.service", "plumb-firewall-rollback.timer"}
 
 // IsAgentPath reports whether p (absolute) is the agent's own path, or a
 // path inside one of its directories. p is cleaned first.
@@ -146,9 +149,16 @@ const agentUnitPrefix = "plumb-agent"
 // "plumb-agent@x.service"). A prefix rule, not a list: a timer, path or
 // socket unit can start the agent's service, and a list misses the units
 // that a newer agent adds.
+//
+// The units of the firewall boot file and of its rollback timer (T-116,
+// D-300) start with "plumb-firewall": a Block that masks or replaces them
+// could keep unconfirmed rules or load other rules at boot.
 func IsAgentUnit(name string) bool {
-	return strings.HasPrefix(name, agentUnitPrefix)
+	return strings.HasPrefix(name, agentUnitPrefix) || strings.HasPrefix(name, firewallUnitPrefix)
 }
+
+// firewallUnitPrefix starts the units of the agent's firewall.
+const firewallUnitPrefix = "plumb-firewall"
 
 // AgentConflicts lists the resources of one target that would change the
 // agent (D-207): a path of the agent, also through a symlink that the same

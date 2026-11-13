@@ -383,7 +383,20 @@ func (e *Engine) planTarget(ctx context.Context, before *state.Rendered, next *s
 	if err == nil && r != nil {
 		showOrder(&tp, r)
 	}
+	showConfirm(&tp)
 	return tp, err
+}
+
+// showConfirm names the window of a safe apply on each resource of
+// wire.SafeApplyTypes that the Plan changes (D-293, D-300).
+func showConfirm(tp *TargetPlan) {
+	for i := range tp.Resources {
+		rc := &tp.Resources[i]
+		typ, _, _ := wire.SplitID(rc.Resource)
+		if slices.Contains(wire.SafeApplyTypes, typ) && (rc.Unverified || len(rc.Changes) > 0) {
+			rc.ConfirmSeconds = wire.SafeApplySeconds
+		}
+	}
 }
 
 // showOrder adds what the Plan shows about the apply order (D-171): After

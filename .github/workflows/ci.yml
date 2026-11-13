@@ -16,7 +16,7 @@ jobs:
   guest:
     name: Debian and Ubuntu guest tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,6 +51,31 @@ jobs:
           test -z "$containers"
           test -z "$images"
           ! compgen -G '/tmp/tmp.*/guest.test' >/dev/null
+        env:
+          GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  firewall-lxd:
+    name: Firewall in unprivileged LXC and VMs (Debian 13, Ubuntu 26.04)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Set up LXD
+        run: |
+          sudo snap install lxd --channel=6/stable || sudo snap refresh lxd --channel=6/stable
+          sudo lxd waitready
+          sudo lxd init --auto
+          sudo chmod 666 /var/snap/lxd/common/lxd/unix.socket
+          # Docker on the runner drops forwarded packets of other bridges.
+          if sudo iptables -L DOCKER-USER >/dev/null 2>&1; then
+            sudo iptables -I DOCKER-USER -i lxdbr0 -j ACCEPT
+            sudo iptables -I DOCKER-USER -o lxdbr0 -j ACCEPT
+          fi
+      - run: make test-guest-lxd
         env:
           GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
   check:

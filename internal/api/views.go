@@ -99,6 +99,8 @@ type resourcePlanView struct {
 	Unverified bool          `json:"unverified,omitempty"`
 	After      []string      `json:"after,omitempty"`      // D-171
 	RestartBy  []string      `json:"restart_by,omitempty"` // D-171
+	// ConfirmSeconds: the safe apply window (D-300).
+	ConfirmSeconds int `json:"confirm_seconds,omitempty"`
 }
 
 type targetPlanView struct {
@@ -166,7 +168,8 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 				action = wire.ActionUpdate
 			}
 			tv.Resources = append(tv.Resources, resourcePlanView{Resource: rc.Resource, Action: action, Risk: rc.Risk,
-				Changes: changes(rc.Changes), Unverified: rc.Unverified, After: rc.After, RestartBy: rc.RestartBy})
+				Changes: changes(rc.Changes), Unverified: rc.Unverified, After: rc.After, RestartBy: rc.RestartBy,
+				ConfirmSeconds: rc.ConfirmSeconds})
 			if rc.Unverified {
 				unverified++
 			}
@@ -196,6 +199,7 @@ type stepView struct {
 	Status     string        `json:"status"`
 	Changes    []wire.Change `json:"changes"`
 	Output     string        `json:"output"`
+	RolledBack bool          `json:"rolled_back,omitempty"` // D-300
 	StartedAt  *time.Time    `json:"started_at"`
 	FinishedAt *time.Time    `json:"finished_at"`
 }
@@ -253,7 +257,7 @@ func (s *Server) runView(ctx context.Context, run store.Run) (runView, error) {
 			return v, err
 		}
 		sv := stepView{Resource: st.Resource, Status: st.Status, Changes: changes(ch), Output: st.Output,
-			StartedAt: utc(st.StartedAt), FinishedAt: utc(st.FinishedAt)}
+			RolledBack: st.RolledBack, StartedAt: utc(st.StartedAt), FinishedAt: utc(st.FinishedAt)}
 		if a := wire.ActionOf(ch); a != wire.ActionNone {
 			sv.Action = &a
 		}

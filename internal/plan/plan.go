@@ -115,6 +115,9 @@ type ResourceChange struct {
 	// of its restart_on list that cause it: they change in this Plan or
 	// nobody observed them (D-171). For display; the apply does not use it.
 	RestartBy []string `json:"restart_by,omitempty"`
+	// ConfirmSeconds is the window of a safe apply (D-300): set for a
+	// changed resource of wire.SafeApplyTypes. For display.
+	ConfirmSeconds int `json:"confirm_seconds,omitempty"`
 }
 
 // risk is the highest risk of a target plan.
