@@ -106,7 +106,7 @@ func TestSchemaErrorsNeverEchoValue(t *testing.T) {
 		}
 		s, err := Validate([]Doc{doc(KindImage, "img", image),
 			doc(KindBlock, "b", `{"params":{"type":"object","properties":{"v":{"type":"string"}}},"resources":[`+templ+`]}`),
-			target(`"blocks":[{"use":"b","params":{"v":"`+val+`"}}]`)})
+			target(`"blocks":[{"use":"b","params":{"v":"` + val + `"}}]`)})
 		if err == nil {
 			_, err = s.Render("t1")
 		}
@@ -118,7 +118,7 @@ func TestSchemaErrorsNeverEchoValue(t *testing.T) {
 	check("param default", err, "/spec/params/properties/v/default: has the wrong form")
 	_, err = Validate([]Doc{doc(KindImage, "img", image),
 		doc(KindBlock, "b", `{"params":{"type":"object","properties":{"v":{"type":"string","pattern":"^[a-z]+$"}}},"resources":[{"file":{"path":"/x"}}]}`),
-		target(`"blocks":[{"use":"b","params":{"v":"`+credURL+`"}}]`)})
+		target(`"blocks":[{"use":"b","params":{"v":"` + credURL + `"}}]`)})
 	check("param value", err, "has the wrong form: it must match the pattern")
 	// A document schema.
 	_, err = Validate([]Doc{doc(KindImage, "img", `{"type":"vm","url":"`+credURL+` x","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}`)})
