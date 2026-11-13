@@ -547,8 +547,19 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 		return false
 	}
 	var oldSHA string
+	// oldRevert is the revert that the agent reported before this step
+	// (review B1 of #202): a reconnect that lost the poll answer with the
+	// command sends it again, also when the link counts the command as
+	// taken. Both are checked hellos, so equal fields mean the same revert.
+	var oldRevert *wire.UpdateRevert
 	if before.Hello != nil {
 		oldSHA = before.Hello.BinarySHA256
+		if len(before.Hello.Reverted) > 0 {
+			var r wire.UpdateRevert
+			if json.Unmarshal(before.Hello.Reverted, &r) == nil {
+				oldRevert = &r
+			}
+		}
 	}
 	if !e.cfg.Agents.Online(tp.Target) {
 		if err := e.waitOnline(ctx, tp.Target, -1); err != nil {
@@ -613,7 +624,8 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 			helloTimeout = t.C
 		case h := <-w.ch:
 			switch {
-			case h.reverted != nil && (h.afterResult || h.taken) && (h.reverted.ToSHA256 == served || h.reverted.ToSHA256 == ""):
+			case h.reverted != nil && (oldRevert == nil || *h.reverted != *oldRevert) && (h.afterResult || h.taken) &&
+				(h.reverted.ToSHA256 == served || h.reverted.ToSHA256 == ""):
 				return fail(fmt.Sprintf("the new agent failed in the guest (%s); the agent went back to its old binary", h.reverted.Reason))
 			case h.sha == served:
 				s.set(ctx, wire.AgentBinaryID, wire.StatusApplied, planned, "")

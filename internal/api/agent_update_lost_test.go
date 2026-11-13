@@ -190,3 +190,35 @@ func (e *env) stepStatus(c *client, id int64) string {
 	}
 	return v.Targets[0].Steps[0].Status
 }
+
+// Review B1 of #202: the agent took the command at a poll, but the poll
+// answer was lost. It reconnects with the revert of an earlier update to
+// the same binary. That revert is not this update's outcome; the later
+// result decides.
+func TestAgentUpdateOldRevertAfterLostPollAnswer(t *testing.T) {
+	e, c, _ := newLostEnv(t)
+	caps := slice3Caps()
+	old := revertOf(wire.RevertCrashLoop)
+	e.hello(wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps, Reverted: old})
+	id := e.proposeUpdate(c)
+	a := e.agents["web1"]
+	taken, release := make(chan struct{}), make(chan struct{})
+	served := servedCaps()
+	a.OnUpdate(func(wire.UpdateBody) (wire.Item, *wire.Hello) {
+		close(taken) // the link counts the command as taken from here
+		<-release
+		return wire.Item{Resource: wire.AgentBinaryID, Status: wire.StatusApplied}, &wire.Hello{BinarySHA256: newSHA, Capabilities: &served}
+	})
+	run := approve(t, c, id)
+	<-taken
+	e.hello(wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps, Reverted: old})
+	time.Sleep(200 * time.Millisecond)
+	if st := e.stepStatus(c, run); st != "running" {
+		t.Fatalf("the old revert ended the step: %s %s", st, e.runJSON(c, run))
+	}
+	close(release)
+	status, steps := runSteps(t, e, c, run)
+	if status != "succeeded" || len(steps) != 1 || steps[0].Status != "applied" {
+		t.Fatalf("run %s %+v", status, steps)
+	}
+}
