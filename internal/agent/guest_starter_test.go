@@ -364,7 +364,7 @@ func TestGuestStarterDockerCompose(t *testing.T) {
 			_ = os.RemoveAll("/etc/systemd/system/plumb-compose-" + name + ".service")
 			_ = os.RemoveAll("/opt/plumb-compose-" + name)
 		}
-		for _, p := range []string{"/etc/apt/sources.list.d/plumb-docker.sources", "/etc/apt/keyrings/plumb-docker.asc", "/etc/sysctl.d/60-plumb-net.ipv4.ip_forward.conf"} {
+		for _, p := range []string{"/etc/apt/sources.list.d/plumb-docker.sources", "/etc/apt/keyrings/plumb-docker.asc"} {
 			_ = os.RemoveAll(p)
 		}
 		_ = exec.Command("systemctl", "daemon-reload").Run()
@@ -373,6 +373,9 @@ func TestGuestStarterDockerCompose(t *testing.T) {
 		_ = exec.Command("apt-get", "-q", "update").Run()
 	})
 	g.run("apt-get", "-q", "-y", "install", "--no-install-recommends", "curl")
+	// T-104: docker-engine holds no sysctl (vm only, D-260), so it also
+	// works on LXC. Start with forwarding off: dockerd must turn it on.
+	g.run("sysctl", "-w", "net.ipv4.ip_forward=0")
 
 	get := func(port int) string {
 		g.t.Helper()
@@ -399,8 +402,21 @@ func TestGuestStarterDockerCompose(t *testing.T) {
 		t.Fatalf(".env: %v %v", st, err)
 	}
 	if v := strings.TrimSpace(g.run("sysctl", "-n", "net.ipv4.ip_forward")); v != "1" {
-		t.Errorf("ip_forward = %s", v)
+		t.Errorf("ip_forward = %s (dockerd did not turn it on)", v)
 	}
+	if _, err := os.Stat("/etc/sysctl.d/60-plumb-net.ipv4.ip_forward.conf"); !os.IsNotExist(err) {
+		t.Errorf("docker-engine wrote a sysctl file: %v", err)
+	}
+	if _, ok := items["sysctl:net.ipv4.ip_forward"]; ok {
+		t.Error("docker-engine holds a sysctl resource")
+	}
+	// Forwarding works: a container reaches the guest's gateway, which is
+	// routed from docker0 out of the guest's own interface.
+	route := strings.Fields(g.run("ip", "-4", "route", "show", "default"))
+	if len(route) < 3 || route[1] != "via" {
+		t.Fatalf("no default route: %v", route)
+	}
+	g.run("docker", "run", "--rm", "busybox:1.37", "ping", "-c", "1", "-W", "5", route[2])
 
 	// A changed compose file restarts the unit: the app moves to a new port.
 	items2 := g.apply("compose-port", starterRender(t, uses(18082), secrets))

@@ -8,9 +8,10 @@ spec:
     854A E2D8 8D81 803C 0EBF CD88) and never downloaded. Use it once per
     Target; the docker-compose Block needs it. Ports that a container
     publishes bypass host firewall rules (Docker writes its own rules).
-    VM Targets only: the Block holds a sysctl resource (net.ipv4.ip_forward,
-    which Docker needs), and sysctl is VM only (D-260), so a container
-    Target refuses it.
+    Works on VM and LXC Targets: an LXC Target needs only nesting=1, which
+    Plumb sets on every container (no keyctl, no privileged container).
+    dockerd turns on IP forwarding itself (net.ipv4.ip_forward in the
+    guest's own network namespace), so the Block holds no sysctl.
   params:
     type: object
     properties:
@@ -30,9 +31,6 @@ spec:
       - properties: {distro: {const: debian}, suite: {const: trixie}}
       - properties: {distro: {const: ubuntu}, suite: {const: resolute}}
   resources:
-    - sysctl:
-        name: net.ipv4.ip_forward
-        value: "1"
     - apt_repository:
         name: docker
         uris: ["https://download.docker.com/linux/{{ .distro }}"]
