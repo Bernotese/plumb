@@ -95,6 +95,11 @@ func TestRestoreRerunDryRun(t *testing.T) {
 	if code, _, errOut := b.restore([]string{"FAKE_RESTORE_FAIL=1"}, file, net...); code == 0 {
 		t.Fatalf("first restore did not fail: %s", errOut)
 	}
+	// Like a running LXC on a real host: its run dir holds more than the
+	// known leftovers of a destroyed one.
+	run := filepath.Join(filepath.Dir(b.state), "lxc", "105")
+	os.MkdirAll(run, 0o755)
+	os.WriteFile(filepath.Join(run, "config"), []byte("lxc.uts.name = plumb\n"), 0o644)
 	b.resetCalls()
 	code, out, errOut := b.restore(nil, file, append(net, "--dry-run")...)
 	if code != 0 {
