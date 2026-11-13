@@ -82,6 +82,7 @@ KEEP_GUESTS=0
 BACKUP_TO=""
 RESTORE_FILE=""
 DRY_RUN=0
+DRY_GONE_LXC="" DRY_GONE_TOKEN=0 # what a dry run has removed (T-132)
 YES=0
 SNIPPET_DIR_SET=0
 PVE_CA=${PLUMB_INSTALL_PVE_CA:-/etc/pve/pve-root-ca.pem}
@@ -191,7 +192,7 @@ run() {
 		# the subcommand is printed: arguments can be long or private.
 		local rc=0
 		"$@" || rc=$?
-		[[ $rc == 0 ]] || echo "install.sh: \"pct $2\" failed (exit $rc); the run stops here" >&2
+		[[ $rc == 0 ]] || echo "install.sh: \"pct $2\" failed (exit $rc)" >&2
 		return $rc
 	fi
 	"$@"
@@ -199,6 +200,26 @@ run() {
 
 # query reads only. It runs in --dry-run too.
 query() { "$@"; }
+
+# pct runs the Proxmox pct; "pct exec" runs with no terminal on stdin,
+# stdout or stderr (T-132, T-122 F7). With a terminal on any of them,
+# lxc-attach gives the command a pty in the container, and a run on an SSH
+# terminal saw a finished step end with SIGHUP (exit 129) right after the
+# first start of the LXC. The output still reaches the terminal: stdout
+# through a pipe, stderr after the command. The key prompts use lxc-attach
+# with the real terminal (D-180), never this.
+pct() {
+	if [[ ${1:-} != exec ]]; then
+		command pct "$@"
+		return
+	fi
+	local rc=0 err
+	err=$(mktemp) || return 1
+	command pct "$@" </dev/null 2>"$err" | cat || rc=$?
+	cat -- "$err" >&2 || true
+	rm -f -- "$err"
+	return "$rc"
+}
 
 # confirm asks before a change. --yes answers it.
 confirm() {
@@ -685,10 +706,14 @@ json_rows() { perl -MJSON::PP -e 'my $d = decode_json(join "", <STDIN>); '"$1" "
 # acl_entries prints "path ugid role type propagate" for every ACL of the Plumb user
 # and token.
 acl_entries() {
+	# A dry run that removed the token drops its ACLs here, as the real run
+	# does (T-132, T-122 F6).
+	local token=$PVE_USER!$TOKEN_NAME
+	[[ $DRY_GONE_TOKEN != 1 ]] || token=""
 	# shellcheck disable=SC2016 # perl code
 	query pveum acl list --output-format json |
-		json_rows 'for my $e (@$d) { next unless $e->{ugid} eq $ARGV[0] || $e->{ugid} eq $ARGV[1];
-			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type} ", ($e->{propagate} ? 1 : 0), "\n" }' "$PVE_USER" "$PVE_USER!$TOKEN_NAME"
+		json_rows 'for my $e (@$d) { next unless $e->{ugid} eq $ARGV[0] || ($ARGV[1] ne "" && $e->{ugid} eq $ARGV[1]);
+			print "$e->{path} $e->{ugid} $e->{roleid} $e->{type} ", ($e->{propagate} ? 1 : 0), "\n" }' "$PVE_USER" "$token"
 }
 
 # stray_acls prints the ACLs of the Plumb user and token that are not in
@@ -821,6 +846,7 @@ remove_token() {
 		run pveum acl delete "$path" --tokens "$ugid" --roles "$role"
 	done <<<"$acls"
 	run pveum user token remove "$PVE_USER" "$TOKEN_NAME"
+	[[ $DRY_RUN != 1 ]] || DRY_GONE_TOKEN=1
 }
 
 # ensure_token sets TOKEN_SECRET when it makes a new token. An existing
@@ -996,6 +1022,10 @@ readonly LXC_MARKER=plumb-installer-lxc
 # lxc_state ID prints "none", "ours" or "foreign".
 lxc_state() {
 	local cfg
+	if [[ $DRY_RUN == 1 && -n $DRY_GONE_LXC && $1 == "$DRY_GONE_LXC" ]]; then
+		echo none
+		return 0
+	fi
 	if ! query pct status "$1" >/dev/null 2>&1; then
 		echo none
 		return 0
@@ -1082,6 +1112,10 @@ check_stale_lxc_dir() {
 # With "die" an unknown entry stops the run; with "keep" it is kept and named.
 clean_stale_lxc_dir() {
 	local id=$1 mode=$2 dir=$LXC_DIR/$1 bad
+	if [[ $DRY_RUN == 1 && $id == "$DRY_GONE_LXC" ]]; then
+		say "(dry run: the leftovers of LXC $id in $dir go with it)"
+		return 0
+	fi
 	[[ -e $dir || -L $dir ]] || return 0
 	# Only the dir of an id without a container is a leftover (review nit).
 	if [[ $(lxc_state "$id") != none ]]; then
@@ -1116,6 +1150,7 @@ ensure_lxc() {
 			# A run that stopped after pct create left it stopped (review S1).
 			if [[ $(query pct status "$LXC_ID" 2>/dev/null) == *stopped* ]]; then
 				(umask 022 && run pct start "$LXC_ID")
+				wait_booted
 			fi
 			return 0
 			;;
@@ -1147,6 +1182,21 @@ ensure_lxc() {
 	LXC_OURS=1
 	state_put
 	(umask 022 && run pct start "$LXC_ID")
+	wait_booted
+}
+
+# wait_booted waits until systemd in the LXC has finished its boot (T-132):
+# the steps after a start must not race the boot of the container (the
+# gettys on its terminals, logind). Bounded inside the LXC by timeout.
+readonly BOOT_WAIT=120
+wait_booted() {
+	[[ $DRY_RUN != 1 ]] || return 0
+	local state
+	state=$(query pct exec "$LXC_ID" -- timeout "$BOOT_WAIT" systemctl is-system-running --wait 2>/dev/null) || true
+	case $state in
+	running | degraded) return 0 ;;
+	esac
+	die "LXC $LXC_ID did not finish its boot within ${BOOT_WAIT}s (systemctl is-system-running: ${state:-no answer}); see: pct exec $LXC_ID -- systemctl --failed"
 }
 
 lxc_ip() {
@@ -1300,7 +1350,14 @@ push_checked() {
 		fi
 	fi
 	if ! run pct exec "$LXC_ID" -- mv -f "$tmp" "$dest" </dev/null; then
+		# The mv may have run although pct exec failed (T-122 F7): check
+		# the result before saying anything about it.
+		have=$(query pct exec "$LXC_ID" -- sha256sum "$dest" </dev/null 2>/dev/null) || have=""
 		pct exec "$LXC_ID" -- rm -f "$tmp" </dev/null >/dev/null 2>&1 || true
+		if [[ ${have%% *} == "$want" ]]; then
+			say "NOTE: pct exec reported a failure, but $dest is in place (checksum checked); the run goes on."
+			return 0
+		fi
 		die "cannot put $dest in place in LXC $LXC_ID; it was not changed"
 	fi
 }
@@ -1353,6 +1410,7 @@ check_running_binary() {
 
 # lxc_has_key reports whether the LXC holds the master key file.
 lxc_has_key() {
+	[[ ! ($DRY_RUN == 1 && $1 == "$DRY_GONE_LXC") ]] || return 1
 	query pct exec "$1" -- test -s "$KEY_FILE" </dev/null >/dev/null 2>&1
 }
 
@@ -1763,6 +1821,10 @@ remove_half_lxc() {
 	fi
 	if [[ $DRY_RUN != 1 ]]; then
 		clean_stale_lxc_dir "$id" keep
+	else
+		# The rest of the dry run sees it gone, as the real run does
+		# (T-132, T-122 F6).
+		DRY_GONE_LXC=$id
 	fi
 }
 # drop_restore_file removes the backup file and its directory from the
