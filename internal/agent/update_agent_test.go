@@ -60,8 +60,14 @@ func TestAgentUpdateCommand(t *testing.T) {
 	// The "new process" (SelfExe is now v2) confirms after its hello. It
 	// keeps the state dir of the first one.
 	state := ta.cfg.StateDir
-	ta2 := startAgentWith(t, ctl, ca, "tok-2", func(o *Options) { paths(o); o.Config.StateDir = state })
-	waitFor(t, "confirm", func() bool { return !present(filepath.Join(state, updateMarkerFile)) })
+	startAgentWith(t, ctl, ca, "tok-2", func(o *Options) { paths(o); o.Config.StateDir = state })
+	// A command result is sent after confirm returns. Marker removal alone
+	// is too early: confirm removes the guard after dropping the marker.
+	ctl.send(t, "o1", wire.CommandObserve, wire.ObserveBody{})
+	ctl.result(t, "o1")
+	if present(filepath.Join(state, updateMarkerFile)) {
+		t.Error("marker left after confirm")
+	}
 	if present(filepath.Join(units, guardTimer)) {
 		t.Error("guard left after confirm")
 	}
@@ -69,7 +75,6 @@ func TestAgentUpdateCommand(t *testing.T) {
 	if last := hs[len(hs)-1].Hello; last.BinarySHA256 != shaOf(nb) {
 		t.Errorf("hello of the new process %+v", last)
 	}
-	_ = ta2
 }
 
 func TestAgentUpdateFailedKeepsRunning(t *testing.T) {
