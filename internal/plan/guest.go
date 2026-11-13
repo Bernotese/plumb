@@ -55,9 +55,25 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			continue
 		}
 		observed, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+		if errors.Is(err, driver.ErrNotFound) && e.cfg.Restore.Restored() {
+			// After a restore: the guest was deleted after the backup
+			// (D-303). Plumb never makes it again by itself.
+			if err := e.guestMissing(ctx, b); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		if e.cfg.Restore.Restored() {
+			if err := e.restoreIssue(ctx, b.Name, GuestMissingID, wire.StatusUnchanged, nil); err != nil {
+				errs = append(errs, err)
+			}
+			if err := e.checkSilent(ctx, b.Name, observed); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		if pollKey(observed) == b.Digest && len(b.Waiting) == 0 {
 			continue

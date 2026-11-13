@@ -139,6 +139,9 @@ func (e *Engine) RunSchedules(ctx context.Context, interval time.Duration) {
 // that meets a running build of the Image is skipped. Scheduled builds run
 // one after the other: while one runs, the next due slot waits.
 func (e *Engine) CheckSchedules(ctx context.Context) error {
+	if e.restoreActive() {
+		return nil // the schedules wait for the confirm (D-303)
+	}
 	head, err := e.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil

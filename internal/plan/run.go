@@ -28,6 +28,11 @@ type CheckFunc func(p store.Plan) error
 // Revision (author and reason of the Plan, approver, plan id) and starts
 // the Run. It returns the Run.
 func (e *Engine) Approve(ctx context.Context, planID int64, principal string, check CheckFunc) (store.Run, error) {
+	// Restored mode: no Run starts, also no build, retention or agent
+	// update of system (D-303).
+	if e.restoreActive() {
+		return store.Run{}, ErrRestoredMode
+	}
 	p, err := e.st.GetPlan(ctx, planID)
 	if err != nil {
 		return store.Run{}, err
@@ -1006,7 +1011,11 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if active {
 			continue // a Run of this process
 		}
-		if err := e.st.FailUnfinishedSteps(ctx, run.ID, "the controller restarted during the Run"); err != nil {
+		why, reason := "the controller restarted during the Run", "controller restart"
+		if e.restoreActive() {
+			why, reason = interruptedByRestore, "restore" // a Run of the backup (D-303)
+		}
+		if err := e.st.FailUnfinishedSteps(ctx, run.ID, why); err != nil {
 			return err
 		}
 		if err := e.finishDeletes(ctx, run); err != nil {
@@ -1016,7 +1025,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 			return err
 		}
 		e.emit(ctx, "run.finished", fmt.Sprintf("run:%d", run.ID), "system",
-			map[string]any{"plan": run.PlanID, "status": "failed", "reason": "controller restart"})
+			map[string]any{"plan": run.PlanID, "status": "failed", "reason": reason})
 		if e.cfg.OnPlanDone != nil {
 			e.cfg.OnPlanDone(ctx, run.PlanID, false)
 		}

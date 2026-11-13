@@ -196,12 +196,16 @@ type Config struct {
 	// Agent is the agent that this controller serves (T-092). A zero
 	// SHA256: no agent binary in this build; no update is proposed.
 	Agent AgentBuild
+	// Restore is restored mode (D-303); nil: never restored.
+	Restore *RestoreMode
 }
 
 // Engine runs the change flow.
 type Engine struct {
 	cfg Config
 	st  *store.Store
+	// restore is what the engine keeps of a restore (D-303).
+	restore restoreState
 	log *slog.Logger
 
 	ctx    context.Context // runs live as long as the engine
@@ -448,6 +452,17 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		}
 		if err := e.storeAddrs(ctx, d); err != nil {
 			return err
+		}
+		if e.restoreActive() {
+			// Restored mode: no command but observe; the agent keeps
+			// the watch list of the old controller (D-303).
+			return nil
+		}
+		if e.cfg.Restore.Restored() {
+			// A hello after the confirm ends agent:silent.
+			if err := e.restoreIssue(ctx, d.Target, AgentSilentID, wire.StatusUnchanged, nil); err != nil {
+				return err
+			}
 		}
 		if busy {
 			return nil

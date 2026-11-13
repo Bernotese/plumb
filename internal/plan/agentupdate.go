@@ -220,6 +220,9 @@ func (e *Engine) resultSeen(target string) {
 // differs, that binary did not revert here already (D-275), and no update
 // Plan of the Target is pending. A failure is logged only.
 func (e *Engine) maybeProposeUpdate(ctx context.Context, target string, h store.AgentHello, caps *wire.Capabilities, rev *wire.UpdateRevert) {
+	if e.restoreActive() {
+		return // system proposes nothing in restored mode (D-303)
+	}
 	served := e.cfg.Agent
 	if served.SHA256 == "" || caps == nil || !caps.CanUpdate() || h.BinarySHA256 == served.SHA256 {
 		return
