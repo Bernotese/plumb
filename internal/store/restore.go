@@ -28,7 +28,8 @@ var ErrNotRestoredMode = errors.New("store: not in restored mode")
 // Restore marks a restored database (plumb restore), in one transaction:
 // every session goes; every API token that is not revoked is disabled;
 // admin gets adminHash and must change it at the next login; every other
-// user is locked; every unused enrollment token goes; the restore record
+// user is locked; every unused enrollment token goes; the running backup
+// run (the one that wrote the file) is ok; the restore record
 // says restored mode. The database must have the user admin.
 func (s *Store) Restore(ctx context.Context, backupCreatedAt time.Time, header json.RawMessage, adminHash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -45,6 +46,10 @@ func (s *Store) Restore(ctx context.Context, backupCreatedAt time.Time, header j
 		{`UPDATE api_token SET disabled_at = ? WHERE revoked_at IS NULL AND disabled_at IS NULL`, []any{now}},
 		{`UPDATE user SET locked_at = ? WHERE name <> 'admin' AND locked_at IS NULL`, []any{now}},
 		{`DELETE FROM enroll_token WHERE used_at IS NULL`, nil},
+		// The backup run that wrote this file was running in the snapshot;
+		// it did finish (only one runs at a time).
+		{`UPDATE backup_run SET result = 'ok', message = 'this controller was restored from this backup', finished_at = ? WHERE result = 'running'`,
+			[]any{formatTime(backupCreatedAt)}},
 		{`DELETE FROM restore_state`, nil},
 		{`INSERT INTO restore_state (id, restored_at, backup_created_at, header, restored_mode) VALUES (1, ?, ?, ?, 1)`,
 			[]any{now, formatTime(backupCreatedAt), string(header)}},
@@ -141,4 +146,70 @@ func MaxSchemaVersion() (int, error) {
 // TokenRow returns a token, revoked or not.
 func (s *Store) TokenRow(ctx context.Context, id string) (Token, error) {
 	return scanToken(s.db.QueryRowContext(ctx, `SELECT `+tokenCols+` FROM api_token WHERE id = ?`, id))
+}
+
+// LockedUsers returns the names of the users that a restore locked, by
+// name.
+func (s *Store) LockedUsers(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM user WHERE locked_at IS NOT NULL ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// MarkForeign records that the bound VMID ref of a Target holds a guest
+// of another name after a restore (D-322).
+func (s *Store) MarkForeign(ctx context.Context, target, ref string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO foreign_guest (target, ref, marked_at) VALUES (?, ?, ?)
+		 ON CONFLICT (target) DO UPDATE SET ref = excluded.ref, marked_at = excluded.marked_at WHERE ref <> excluded.ref`,
+		target, ref, s.now())
+	return err
+}
+
+// ClearForeign drops the foreign mark of a Target: the name matches again.
+// cleared reports whether there was one.
+func (s *Store) ClearForeign(ctx context.Context, target string) (cleared bool, err error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM foreign_guest WHERE target = ?`, target)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// IsForeign reports whether the VMID ref of a Target is marked foreign.
+func (s *Store) IsForeign(ctx context.Context, target, ref string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM foreign_guest WHERE target = ? AND ref = ?`, target, ref).Scan(&n)
+	return n > 0, err
+}
+
+// ForeignRefs returns the VMIDs that are marked foreign for their Target.
+func (s *Store) ForeignRefs(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT f.ref FROM foreign_guest f JOIN binding b ON b.kind = 'Target' AND b.name = f.target AND b.ref = f.ref`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, err
+		}
+		out[ref] = true
+	}
+	return out, rows.Err()
 }

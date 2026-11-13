@@ -376,8 +376,9 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 
 	// After a restore the VMID may hold another guest (review H2 and L-a
 	// of #222): no step of this Target writes to it, also not the clear
-	// step of a container. A new guest has no VMID yet.
-	if tp.Guest != "create" {
+	// step of a container. A new guest has no VMID yet; a delete checks
+	// in its guest step and only drops the binding (D-322).
+	if tp.Guest != "create" && tp.Guest != "delete" {
 		if err := e.checkOwnGuest(ctx, tp.Target); err != nil {
 			s.failRest(ctx, err.Error())
 			return false
@@ -652,8 +653,17 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		if err != nil {
 			return res, err
 		}
-		if err := e.cfg.Driver.Delete(ctx, driver.GuestID(b.Ref)); err != nil && !errors.Is(err, driver.ErrNotFound) {
-			return res, err // the guest may still run: its agent stays (D-211)
+		// A VMID marked foreign after a restore holds a guest that is not
+		// ours: the Target goes, the guest stays (D-322).
+		switch err := e.checkOwnGuest(ctx, tp.Target); {
+		case errors.Is(err, ErrForeignGuest):
+			res.output = fmt.Sprintf("VMID %s holds a guest that is not ours (after the restore); Plumb did not delete it", b.Ref)
+		case err != nil:
+			return res, err
+		default:
+			if err := e.cfg.Driver.Delete(ctx, driver.GuestID(b.Ref)); err != nil && !errors.Is(err, driver.ErrNotFound) {
+				return res, err // the guest may still run: its agent stays (D-211)
+			}
 		}
 		// The guest is gone: its credential (in a backup, a template or a
 		// copy of the disk) must stop working before the binding goes.

@@ -491,8 +491,17 @@ func (s *Store) GetBinding(ctx context.Context, kind, name string) (Binding, err
 
 // DeleteBinding removes a binding.
 func (s *Store) DeleteBinding(ctx context.Context, kind, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM binding WHERE kind = ? AND name = ?`, kind, name)
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM binding WHERE kind = ? AND name = ?`, kind, name); err != nil {
+			return err
+		}
+		if kind != "Target" {
+			return nil
+		}
+		// A foreign mark belongs to the binding (D-322).
+		_, err := tx.ExecContext(ctx, `DELETE FROM foreign_guest WHERE target = ?`, name)
+		return err
+	})
 }
 
 // Bindings returns all bindings of a kind, ordered by name.

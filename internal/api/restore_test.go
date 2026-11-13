@@ -326,7 +326,8 @@ func TestRestoreForeignVMID(t *testing.T) {
 	if _, err := e.drv.Observe(e.ctx, driver.GuestID(b1.Ref)); err != nil {
 		t.Fatalf("the delete of web2 removed the guest of web1: %v", err)
 	}
-	if _, err := e.st.GetBinding(e.ctx, "Target", "web2"); err != nil {
-		t.Errorf("binding of web2 is gone although the delete was refused: %v", err)
+	// The Target goes, the foreign guest stays (D-322).
+	if _, err := e.st.GetBinding(e.ctx, "Target", "web2"); err == nil {
+		t.Error("the binding of web2 stays after its delete")
 	}
 }

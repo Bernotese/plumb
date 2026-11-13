@@ -187,6 +187,22 @@ func TestRestoreCLI(t *testing.T) {
 	if _, err := st.Enroll(ctx, "enroll-hash", time.Now(), store.Agent{ID: "agent-x", Target: "web1", CredentialHash: "cred-hash"}); err == nil {
 		t.Error("an unused enrollment token of the backup still works")
 	}
+
+	// Independent restores must not reuse the temporary admin password.
+	fresh := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(fresh, "key"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := secret.WriteKeyFile(filepath.Join(fresh, "key", "master.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	var freshOut bytes.Buffer
+	if code := restoreCmd(ctx, []string{"--data", fresh, "--from", file}, termIO(&freshOut, &errOut)); code != 0 {
+		t.Fatalf("fresh restore: %d %s", code, errOut.String())
+	}
+	if other := regexp.MustCompile(`User: admin  Password: (\S+)`).FindStringSubmatch(freshOut.String()); other == nil || other[1] == m[1] {
+		t.Fatal("independent restores reused the admin password or omitted it")
+	}
 	// A second restore into the now full data directory is refused.
 	if code := restoreCmd(ctx, args, termIO(&out, &errOut)); code != exitFailed {
 		t.Errorf("second restore: %d", code)
