@@ -36,9 +36,12 @@ type GuestValueMatch struct {
 //
 // Work per report (review L1 of #248): repeats are dropped in memory;
 // then one Issue lookup per resource and at most two statements per
-// value, in one transaction. A report with more distinct values than
-// GuestValueCap writes nothing and reports overflow at once (fail
-// closed), so one report costs at most about 2 × GuestValueCap statements.
+// value. A report with more distinct values than GuestValueCap writes
+// nothing and reports overflow at once (fail closed), so one report costs
+// at most about 2 × GuestValueCap statements. They run in transactions of
+// guestValueChunk values: one long write transaction would hold the
+// database past its busy timeout (5 s), and an agent poll that cannot
+// touch its agent row in that time gets 401 (race job of #248).
 func (s *Store) RecordGuestValues(ctx context.Context, target string, vals []GuestValue) (overflow bool, err error) {
 	seen := make(map[GuestValue]bool, len(vals))
 	uniq := vals[:0:0]
@@ -56,6 +59,26 @@ func (s *Store) RecordGuestValues(ctx context.Context, target string, vals []Gue
 		return true, nil
 	}
 	now := s.now()
+	for len(vals) > 0 {
+		part := vals[:min(guestValueChunk, len(vals))]
+		vals = vals[len(part):]
+		more, err := s.recordGuestValueChunk(ctx, target, part, now)
+		if err != nil {
+			return overflow, err
+		}
+		overflow = overflow || more
+	}
+	return overflow, nil
+}
+
+// guestValueChunk is the most values that one write transaction of
+// RecordGuestValues stores.
+const guestValueChunk = 500
+
+// recordGuestValueChunk stores one chunk in one transaction. The count
+// of the cap is read inside it, so the cap holds across chunks and
+// concurrent reports (SQLite serializes the write transactions).
+func (s *Store) recordGuestValueChunk(ctx context.Context, target string, vals []GuestValue, now string) (overflow bool, err error) {
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		count := -1
 		openOf := map[string]sql.NullInt64{}
