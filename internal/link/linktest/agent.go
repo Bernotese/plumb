@@ -158,7 +158,8 @@ func (a *Agent) SendAddrs(ctx context.Context, list []string) int {
 }
 
 // SetHello sets the slice 3 fields of the next Hellos: BinarySHA256,
-// Capabilities and Reverted of h (T-092). The rest of h is ignored.
+// Capabilities and Reverted of h (T-092), and Version when it is not
+// empty (also for the enrollment; default "test"). The rest of h is ignored.
 func (a *Agent) SetHello(h wire.Hello) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -171,11 +172,20 @@ func (a *Agent) SendHello(ctx context.Context) int {
 	return a.Report(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()})
 }
 
+// versionLocked is the agent version: the Version of SetHello, else
+// "test". a.mu is held.
+func (a *Agent) versionLocked() string {
+	if a.hello2.Version != "" {
+		return a.hello2.Version
+	}
+	return "test"
+}
+
 // hello is the Hello of the agent.
 func (a *Agent) hello() *wire.Hello {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return &wire.Hello{Version: "test", Hostname: "fake", OS: "fake 1", Addrs: slices.Clone(a.addrs),
+	return &wire.Hello{Version: a.versionLocked(), Hostname: "fake", OS: "fake 1", Addrs: slices.Clone(a.addrs),
 		BinarySHA256: a.hello2.BinarySHA256, Capabilities: a.hello2.Capabilities, Reverted: a.hello2.Reverted}
 }
 
@@ -363,7 +373,10 @@ func (a *Agent) enroll(ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	code, body, err := a.do(ctx, "POST", wire.PathEnroll, "", wire.EnrollRequest{Token: tok, Hostname: "fake", Version: "test"})
+	a.mu.Lock()
+	ver := a.versionLocked()
+	a.mu.Unlock()
+	code, body, err := a.do(ctx, "POST", wire.PathEnroll, "", wire.EnrollRequest{Token: tok, Hostname: "fake", Version: ver})
 	if err != nil || code != http.StatusOK {
 		return false
 	}
