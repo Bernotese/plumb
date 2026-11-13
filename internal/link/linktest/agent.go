@@ -53,6 +53,33 @@ type Agent struct {
 	sealFail  string                                         // a step that fails; "" for none
 	sealStuck bool                                           // the guest does not power off after seal
 	noMark    bool                                           // the agent does not take the build mark
+	loseRes   bool                                           // update: the result never reaches the controller
+	paused    bool                                           // Run does not poll (see Pause)
+	inPoll    bool                                           // a poll is in flight
+	pollDone  *sync.Cond                                     // signalled when a poll ends (lazy, on a.mu)
+}
+
+// LoseUpdateResult makes the agent drop the result of the next update
+// commands, like an agent whose link broke at the binary swap (T-102). The
+// Hello of OnUpdate is still sent.
+func (a *Agent) LoseUpdateResult(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.loseRes = on
+}
+
+// Pause stops (on) or resumes the polls of Run. Pause(true) returns once
+// no poll is in flight, so no command is taken until Pause(false).
+func (a *Agent) Pause(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.paused = on
+	if a.pollDone == nil {
+		a.pollDone = sync.NewCond(&a.mu)
+	}
+	for on && a.inPoll {
+		a.pollDone.Wait()
+	}
 }
 
 // NoBuildMark makes the agent ignore the build mark, like an agent that
@@ -249,7 +276,21 @@ func (a *Agent) Run(ctx context.Context) {
 			}
 			continue
 		}
+		a.mu.Lock()
+		if a.paused {
+			a.mu.Unlock()
+			sleep(ctx, 10*time.Millisecond)
+			continue
+		}
+		a.inPoll = true
+		a.mu.Unlock()
 		cmd, code, err := a.poll(ctx, cred)
+		a.mu.Lock()
+		a.inPoll = false
+		if a.pollDone != nil {
+			a.pollDone.Broadcast()
+		}
+		a.mu.Unlock()
 		switch {
 		case code == http.StatusUnauthorized:
 			a.mu.Lock()
@@ -340,7 +381,12 @@ func (a *Agent) update(ctx context.Context, cmd wire.Command) {
 	var body wire.UpdateBody
 	_ = json.Unmarshal(cmd.Body, &body)
 	item, after := fn(body)
-	a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: []wire.Item{item}})
+	a.mu.Lock()
+	lose := a.loseRes
+	a.mu.Unlock()
+	if !lose {
+		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: []wire.Item{item}})
+	}
 	if after != nil {
 		a.SetHello(*after)
 		a.report(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()})

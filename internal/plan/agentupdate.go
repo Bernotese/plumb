@@ -140,17 +140,23 @@ func normalCaps(c wire.Capabilities) wire.Capabilities {
 
 // agentHello is a checked hello for the waiters of an update step.
 // afterResult: the hello came after a result of the target, so it is not
-// a reconnect of the old agent before the swap.
+// a reconnect of the old agent before the swap. taken: the agent had
+// taken the update command when the hello came (T-102). The agent drops
+// its reverted marker when it starts the command and sends its reports
+// one after the other, so a reverted hello with taken set is of this
+// update, not one left from an earlier update.
 type agentHello struct {
 	sha         string
 	reverted    *wire.UpdateRevert
 	afterResult bool
+	taken       bool
 }
 
 // helloWaiter is one update step that waits for hellos.
 type helloWaiter struct {
 	ch          chan agentHello
-	afterResult bool // a result of the target came in (under e.mu)
+	afterResult bool   // a result of the target came in (under e.mu)
+	cmdID       string // the update command, once sent (under e.mu)
 }
 
 // recordHello stores the checked hello of a bound Target, wakes an update
@@ -168,8 +174,10 @@ func (e *Engine) recordHello(ctx context.Context, d link.Delivery) error {
 	}
 	e.mu.Lock()
 	for _, w := range e.helloWait[d.Target] {
+		// Lock order e.mu → link (as in sendCommand).
+		taken := w.cmdID != "" && e.cfg.Agents.Taken(d.Target, w.cmdID)
 		select {
-		case w.ch <- agentHello{sha: h.BinarySHA256, reverted: rev, afterResult: w.afterResult}:
+		case w.ch <- agentHello{sha: h.BinarySHA256, reverted: rev, afterResult: w.afterResult, taken: taken}:
 		default:
 		}
 	}
@@ -179,7 +187,7 @@ func (e *Engine) recordHello(ctx context.Context, d link.Delivery) error {
 }
 
 // waitHellos registers a waiter for the hellos of a target.
-func (e *Engine) waitHellos(target string) (<-chan agentHello, func()) {
+func (e *Engine) waitHellos(target string) (*helloWaiter, func()) {
 	w := &helloWaiter{ch: make(chan agentHello, 16)}
 	e.mu.Lock()
 	if e.helloWait == nil {
@@ -187,7 +195,7 @@ func (e *Engine) waitHellos(target string) (<-chan agentHello, func()) {
 	}
 	e.helloWait[target] = append(e.helloWait[target], w)
 	e.mu.Unlock()
-	return w.ch, func() {
+	return w, func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
 		e.helloWait[target] = slices.DeleteFunc(e.helloWait[target], func(x *helloWaiter) bool { return x == w })
@@ -550,52 +558,91 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 	}
 	s.set(ctx, wire.AgentBinaryID, wire.StatusRunning, nil, "")
 	served := e.cfg.Agent.SHA256
-	hellos, stop := e.waitHellos(tp.Target)
+	w, stop := e.waitHellos(tp.Target)
 	defer stop()
-	rep, err := e.command(ctx, tp.Target, wire.CommandUpdate, wire.UpdateBody{PlanID: p.ID, SHA256: served}, e.cfg.ApplyTimeout, nil)
+	id, results, err := e.sendCommand(tp.Target, wire.CommandUpdate, wire.UpdateBody{PlanID: p.ID, SHA256: served},
+		func(id string) { w.cmdID = id })
 	if err != nil {
 		s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, err.Error())
 		return false
 	}
-	if len(rep.Items) != 1 {
-		s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, "the agent did not report the update")
+	defer e.dropChan(id)
+	fail := func(msg string) bool {
+		s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, msg)
 		return false
 	}
-	switch it := rep.Items[0]; it.Status {
-	case wire.StatusUnchanged:
-		s.set(ctx, wire.AgentBinaryID, wire.StatusUnchanged, nil, "the agent runs this binary already")
-		return true
-	case wire.StatusApplied:
-	default:
-		s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, it.Output)
-		return false
-	}
-	timer := time.NewTimer(e.cfg.UpdateHelloWait)
-	defer timer.Stop()
+
+	// One wait for the result and the hellos (T-102). The result can be
+	// lost when the link breaks at the swap: the old agent exits after
+	// restartWait without it. Then the hellos tell the outcome: the
+	// served sha (passed), or a revert of this update (failed). When the
+	// agent took the command and stays silent (no poll) for
+	// UpdateHelloWait, the step fails as with no hello after a result.
+	// ApplyTimeout stays the limit while the command waits untaken.
+	cmdTimeout := time.NewTimer(e.cfg.ApplyTimeout)
+	defer cmdTimeout.Stop()
+	var helloTimeout <-chan time.Time // set by the result
+	check := time.NewTicker(min(5*time.Second, max(e.cfg.UpdateHelloWait/4, 10*time.Millisecond)))
+	defer check.Stop()
+	gotResult := false
+	var silentSince time.Time
 	for {
 		select {
-		case h := <-hellos:
+		case rep := <-results:
+			if rep.Type == wire.ReportProgress {
+				continue
+			}
+			if rep.Error != "" {
+				return fail(fmt.Sprintf("plan: agent of %s: %s", tp.Target, rep.Error))
+			}
+			if len(rep.Items) != 1 {
+				return fail("the agent did not report the update")
+			}
+			switch it := rep.Items[0]; it.Status {
+			case wire.StatusUnchanged:
+				s.set(ctx, wire.AgentBinaryID, wire.StatusUnchanged, nil, "the agent runs this binary already")
+				return true
+			case wire.StatusApplied:
+			default:
+				return fail(it.Output)
+			}
+			gotResult = true
+			cmdTimeout.Stop()
+			t := time.NewTimer(e.cfg.UpdateHelloWait)
+			defer t.Stop()
+			helloTimeout = t.C
+		case h := <-w.ch:
 			switch {
-			case h.afterResult && h.reverted != nil && (h.reverted.ToSHA256 == served || h.reverted.ToSHA256 == ""):
-				s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil,
-					fmt.Sprintf("the new agent failed in the guest (%s); the agent went back to its old binary", h.reverted.Reason))
-				return false
+			case h.reverted != nil && (h.afterResult || h.taken) && (h.reverted.ToSHA256 == served || h.reverted.ToSHA256 == ""):
+				return fail(fmt.Sprintf("the new agent failed in the guest (%s); the agent went back to its old binary", h.reverted.Reason))
 			case h.sha == served:
 				s.set(ctx, wire.AgentBinaryID, wire.StatusApplied, planned, "")
 				return true
 			case h.afterResult && oldSHA != "" && h.sha == oldSHA:
 				// Not a reconnect of the old agent before its result: it
 				// restarted on the old binary.
-				s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, "the agent came back with its old binary")
-				return false
+				return fail("the agent came back with its old binary")
 			}
-		case <-timer.C:
-			s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil,
-				fmt.Sprintf("no hello of the new agent within %v; the guest goes back to the old binary by itself", e.cfg.UpdateHelloWait))
-			return false
+			// Before a result and without a revert: a reconnect of the old
+			// agent; its result follows.
+		case <-check.C:
+			if gotResult || !e.cfg.Agents.Taken(tp.Target, id) || e.cfg.Agents.Online(tp.Target) {
+				silentSince = time.Time{}
+				continue
+			}
+			now := e.cfg.Now()
+			if silentSince.IsZero() {
+				silentSince = now
+			} else if now.Sub(silentSince) >= e.cfg.UpdateHelloWait {
+				return fail(fmt.Sprintf("the agent took the update but sent no result and no hello, and polled no more for %v; the guest goes back to the old binary by itself",
+					e.cfg.UpdateHelloWait))
+			}
+		case <-helloTimeout:
+			return fail(fmt.Sprintf("no hello of the new agent within %v; the guest goes back to the old binary by itself", e.cfg.UpdateHelloWait))
+		case <-cmdTimeout.C:
+			return fail(fmt.Errorf("%w (%s, %v)", ErrTimeout, tp.Target, e.cfg.ApplyTimeout).Error())
 		case <-ctx.Done():
-			s.set(ctx, wire.AgentBinaryID, wire.StatusFailed, nil, ctx.Err().Error())
-			return false
+			return fail(ctx.Err().Error())
 		}
 	}
 }

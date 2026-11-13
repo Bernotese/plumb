@@ -568,6 +568,20 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 	return id, nil
 }
 
+// Taken reports whether the agent of target took command id at a poll and
+// sent no result for it yet. A command that waits in the queue, or whose
+// result came in, is not taken (T-102).
+func (l *Link) Taken(target, id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ts, ok := l.targets[target]
+	if !ok {
+		return false
+	}
+	_, taken := ts.outstanding[id]
+	return taken
+}
+
 // Online reports whether the target polled in the last 90 seconds.
 func (l *Link) Online(target string) bool {
 	l.mu.Lock()
