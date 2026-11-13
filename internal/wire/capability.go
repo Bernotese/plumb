@@ -137,6 +137,21 @@ func (c Capabilities) Missing(resources []Resource) []string {
 	return out
 }
 
+// GateCommandPrefix starts a gate entry for a command that the agent
+// lacks (D-299): "command:grow" when a Plan grows the disk of a VM whose
+// agent does not list CommandGrow. It sorts with the entries of Missing
+// in TargetStatus.agent_missing and in the 409 agent-outdated answer.
+const GateCommandPrefix = "command:"
+
+// LacksCommand returns GateCommandPrefix + cmd when the agent does not run
+// cmd, else "".
+func (c Capabilities) LacksCommand(cmd CommandType) string {
+	if slices.Contains(c.Commands, cmd) {
+		return ""
+	}
+	return GateCommandPrefix + string(cmd)
+}
+
 // GateMessage is the start of the text of a refused Plan or a refused Run
 // step when the agent lacks a capability (D-259). The full text is
 // GateMessage + ": target <name> needs <missing, comma separated>".

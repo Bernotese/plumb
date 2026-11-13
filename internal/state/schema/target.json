@@ -63,12 +63,29 @@
             "disk": {
               "type": "integer",
               "minimum": 1,
-              "description": "GiB. Create-only in the first slice. lxc: size of the root file system, at least 2."
+              "description": "GiB. Grow only (D-291, D-299): a proposal that lowers the value of an existing Target is refused, and a Plan never shrinks a disk (Proxmox cannot). A grow is disruptive (it cannot be undone), passes the disk gate (D-219), and needs a running guest; a VM also needs an agent that runs the grow command. vm: the boot disk scsi0; lxc: the root file system rootfs, at least 2."
             },
             "bridge": {
               "type": "string",
               "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,14}$",
               "description": "Proxmox bridge, for example vmbr0."
+            },
+            "power": {
+              "enum": [
+                "running",
+                "stopped"
+              ],
+              "description": "Desired power state (D-291, D-299). Missing: Plumb does not manage it (as before slice 4: a create starts the guest, a stop outside Plumb is no drift). running: a stopped guest is drift; a start is reversible. stopped: a stop is disruptive and needs allow_restart; agent resources of a stopped Target are skipped, its offline agent is no Issue, and a disk grow is refused. A new Target is created, enrolled and applied first, then stopped."
+            },
+            "tags": {
+              "type": "array",
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9_][a-z0-9_+.-]{0,63}$"
+              },
+              "description": "Proxmox tags, the exact set (D-291, D-299). Missing: Plumb does not manage tags; []: no tags. Order does not matter. A change is reversible. Lower case only, so the set compares exactly; a tag that a person adds in Proxmox is drift."
             },
             "ip": {
               "type": "string",
@@ -115,7 +132,7 @@
         "allow_restart": {
           "type": "boolean",
           "default": false,
-          "description": "Plumb may restart this VM (D-194). false: no Run stops or restarts the VM while it runs; a change of cores or memory waits until you stop and start the VM, and a re-enrollment of a running VM is refused. true: a Run may restart the VM (clean shutdown, hard power-off after 2 minutes, then start); the Plan shows the restart before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. Accepted and without effect on an LXC Target: cores and memory change live on a container."
+          "description": "Plumb may restart or stop this guest (D-194, D-291). false: no Run stops or restarts the guest while it runs; a change of cores or memory of a VM waits until you stop and start it, a re-enrollment of a running VM is refused, and power: stopped is refused. true: a Run may restart a VM (clean shutdown, hard power-off after 2 minutes, then start) and may stop a VM or an LXC for power: stopped; the Plan shows it before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. cores and memory change live on a container."
         },
         "blocks": {
           "type": "array",
