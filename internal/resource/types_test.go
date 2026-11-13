@@ -239,13 +239,17 @@ func TestService(t *testing.T) {
 	g := newFakeGuest(t)
 	ctx := context.Background()
 
-	// The unit does not exist yet: running means create, stopped means nothing.
+	// The unit does not exist yet: running means create; stopped may enable.
 	r := build(t, res("service", "nginx", nil), g.env())
 	if c := plan(t, r); wire.ActionOf(c) != wire.ActionCreate {
 		t.Fatalf("missing unit changes = %+v", c)
 	}
-	if c := plan(t, build(t, res("service", "nginx", map[string]any{"state": "stopped"}), g.env())); len(c) != 0 {
+	if c := plan(t, build(t, res("service", "nginx", map[string]any{"state": "stopped", "enabled": false}), g.env())); len(c) != 0 {
 		t.Fatalf("stopped and missing: %+v", c)
+	}
+
+	if c := plan(t, build(t, res("service", "nginx", map[string]any{"state": "stopped", "enabled": true}), g.env())); len(c) != 1 || c[0].Attr != "enabled" || c[0].From != nil || c[0].To != true || c[0].Risk != wire.RiskReversible {
+		t.Fatalf("stopped, enabled and missing: %+v", c)
 	}
 
 	g.units["nginx.service"] = &unit{}

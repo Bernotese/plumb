@@ -11,10 +11,10 @@ A `service` with state `stopped`, `enabled: true` and an absent unit gives no Pl
 - `internal/resource/service.go` (`Diff`), `resource.NewUnitCovers`
 
 ## Acceptance criteria
-- [ ] In that case the Plan shows only `enabled null→true`
-- [ ] `NewUnitCovers` accepts `enabled false→true` when the state is not planned, under the same maker rule as T-103 (no wider exception)
-- [ ] One test for the Plan entry, one for the cover
-- [ ] `make lint test build` passes; diff ≤ ~80 lines
+- [x] In that case the Plan shows only `enabled null→true`
+- [x] `NewUnitCovers` accepts `enabled false→true` when the state is not planned, under the same maker rule as T-103 (no wider exception)
+- [x] One test for the Plan entry, one for the cover
+- [x] `make lint test build` passes; diff ≤ ~80 lines
 
 ## Out of scope
 - Any other change to the cover rule
@@ -22,4 +22,4 @@ A `service` with state `stopped`, `enabled: true` and an absent unit gives no Pl
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+pl-codex-fix/T-105-service-enabled · 6ce242a · `make lint test build` passed · Plan and narrow maker-cover regression tests; 28 code/test lines changed.

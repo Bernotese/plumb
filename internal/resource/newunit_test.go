@@ -38,6 +38,11 @@ func TestNewUnitCovers(t *testing.T) {
 		made    []wire.Resource
 		want    bool
 	}{
+		{"stopped service: only enable planned", svc, planned[1:2], fresh[1:2], []wire.Resource{unitRes}, true},
+		{"stopped service: higher enable risk", svc, planned[1:2],
+			[]wire.Change{{Attr: "enabled", From: false, To: true, Risk: wire.RiskDisruptive}}, []wire.Resource{unitRes}, false},
+		{"stopped service: unplanned state", svc, planned[1:2], fresh[:2], []wire.Resource{unitRes}, false},
+		{"stopped service: unrelated maker", svc, planned[1:2], fresh[1:2], []wire.Resource{otherUnit}, false},
 		{"unit resource of the same name", svc, planned, fresh, []wire.Resource{unitRes}, true},
 		{"unit file", svc, planned, fresh, []wire.Resource{unitFile}, true},
 		{"package", svc, planned, fresh, []wire.Resource{pkg}, true},
