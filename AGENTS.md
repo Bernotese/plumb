@@ -68,6 +68,13 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 - Codex agents run with `--approve-for-me` (workspace-write sandbox + automatic review). Same allow/forbid rules in `~/.codex/rules/default.rules`.
 - If an action is blocked and you think it is needed, report it to `pl-lead`; do not work around the block.
 
+## Autonomy and release (D-326, user rule)
+- **No release** until every open point of `docs/BRIEF.md` §5/§6 is done. Nobody starts the release workflow or pushes a tag.
+- **No waiting for the user between slices.** When a slice is done, `pl-architect` plans the next one, `pl-reviewer` checks the plan, the team builds it. For plan questions the recommendation of the team is the decision; `pl-lead` records it in `docs/DECISIONS.md` and sends the user a short note.
+- **Agents with little load prepare the coming topics:** facts from the test host, spikes, plan drafts, risks. Only in plan files (`docs/plans/`) or spike branches; nothing reaches `main` without review.
+- **Still ask the user (through `pl-lead`), also when the answer looks clear:** new token rights or ACLs (D-081), public steps (release, repo settings), everything outside the test host `pve-dev`, changes to the user's own installation.
+- Unchanged: review and QA for everything, acceptance on the real host per slice, no force-push.
+
 ## Test host (Proxmox)
 - Address and login: `~/.config/plump/testhost.env` on the dev VM (`ssh "$PLUMB_TEST_PVE_SSH"`). The repo is public: never commit the address, host keys, tokens or passwords, and keep them out of PRs, logs and reports.
 - Only the agent that `pl-lead` names in a card works on the host, one agent at a time. Do only what the card lists.

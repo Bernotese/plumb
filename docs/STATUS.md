@@ -49,6 +49,12 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | merged (PR #237) |
 | T-136 CI: install tests run in parallel, each script run bounded; "lint, test, build" needs 8 min of 15 (was 11.7–13.6, cancelled on slow runners) | pl-backend | merged (PR #239) |
 | T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | merged (PR #238) |
+| T-138 road to the release (all open points of BRIEF §5/§6 in slices) + plan of slice 5 | pl-architect, check: pl-reviewer | in work |
+| T-139 prep: facts from the test host for the coming topics (read-only) + test controller to latest main | pl-backend | in work |
+| T-140 prep: risk draft for user management, guest adoption, SSH repair fallback, MCP / AI help | pl-reviewer | in work (plan file only) |
+| T-141 prep: gap list BRIEF §5.2 against the web UI | pl-frontend | in work (plan file only) |
+| T-142 prep: gap list BRIEF §5.4 … §5.9 against the code | pl-codex-qa | in work (plan file only) |
+| T-143 small leftovers of slice 4 (README sentence, two test nits) | pl-codex-fix | in work |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-131 screenshots for the README: 7 pictures of the dev demo (light theme, 52–132 KB), each checked by pl-reviewer and pl-lead; demo data on the documentation range | pl-frontend | merged (PR #232) |
@@ -120,8 +126,8 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- **Next slice?** Slice 5 needs a plan and the user's approval first. Candidates: user management, `network` + more NICs (new ACL per bridge), guest adoption, signed image checksums, MCP / AI help.
-- **First release?** The release workflow is ready (T-124). It runs only when the user says yes and names the version. pl-lead recommends: after the slice 4 acceptance run.
+- **Working rule D-326 (user, 2026-11-13):** no release until all of BRIEF §5/§6 is done; the team plans and builds slice after slice on its own and sends short notes. The user is asked only for: new token rights or ACLs, public steps, anything outside `pve-dev`, changes to the user's own installation.
+- First release: **rests** (D-326). The workflow of T-124 is ready and stays unused.
 - Slice 4, user question 1: a real install needs the name of the backup storage from the user (`--backup-storage`). For the test host pl-lead proposes one (T-122).
 - Guests made before slice 3 need one manual root command per guest so that their agent can update itself (`docs/ARCHITECTURE.md` §5).
 - (Decided 2026-11-12: `nginx` card yes, T-088. pl-lead decided: no card for the double upload of a repacked file by two Images with the same base.)
