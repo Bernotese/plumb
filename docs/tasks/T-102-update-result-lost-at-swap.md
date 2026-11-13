@@ -22,4 +22,7 @@ On the real host an agent update whose command result was lost at the binary swa
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- `pl-backend/T-102-update-result-lost` · PR #202. One wait for result + hellos in `runAgentUpdate`; `link.Taken` tells a revert of this update from an older one; silent rule: took the command, offline (90 s) + `UpdateHelloWait` → failed; untaken keeps `ApplyTimeout`.
+- Phase: a failed `agent_update` Run is no `error` while the agent is online (`internal/api/handlers.go`).
+- Tests: `make lint test build` ok; `internal/api/agent_update_lost_test.go` (good hello, reverted hello + phase + D-275, no hello, stale revert before taken), `-count=5` ok; 3 mutants caught.
+- Notes: the old outstanding entry stays in link until re-enroll (harmless). Host re-check useful, not required. Decisions: the silent rule and the phase rule need D-numbers.

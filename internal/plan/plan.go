@@ -132,6 +132,9 @@ func (t TargetPlan) risk() wire.Risk {
 type Agents interface {
 	Send(target string, typ wire.CommandType, body any) (string, error)
 	Online(target string) bool
+	// Taken reports whether the agent of a target took the command id at
+	// a poll and sent no result for it yet (T-102).
+	Taken(target, id string) bool
 	NewEnrollToken(ctx context.Context, target string) (string, time.Time, error)
 	// Revoke removes the agent and the enrollment token of a target.
 	Revoke(ctx context.Context, target string) error
@@ -474,6 +477,26 @@ func (e *Engine) dropChan(id string) {
 	delete(e.results, id)
 }
 
+// sendCommand sends a command and registers its result channel. Send and
+// register run under one lock: HandleReport takes the same lock, so a
+// fast result cannot arrive before its channel exists. under, when not
+// nil, runs under that lock with the command id. The caller drops the
+// channel with dropChan.
+func (e *Engine) sendCommand(target string, typ wire.CommandType, body any, under func(id string)) (string, chan wire.Report, error) {
+	ch := make(chan wire.Report, 1024)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	id, err := e.cfg.Agents.Send(target, typ, body)
+	if err != nil {
+		return "", nil, err
+	}
+	e.results[id] = ch
+	if under != nil {
+		under(id)
+	}
+	return id, ch, nil
+}
+
 // ErrTimeout is returned when an agent did not answer in time.
 var ErrTimeout = errors.New("plan: the agent did not answer in time")
 
@@ -481,15 +504,7 @@ var ErrTimeout = errors.New("plan: the agent did not answer in time")
 // progress report. A lost command (D-061) ends in ErrTimeout.
 func (e *Engine) command(ctx context.Context, target string, typ wire.CommandType, body any,
 	timeout time.Duration, progress func(wire.Report)) (wire.Report, error) {
-	// Send and register under one lock: HandleReport takes the same lock,
-	// so a fast result cannot arrive before its channel exists.
-	ch := make(chan wire.Report, 1024)
-	e.mu.Lock()
-	id, err := e.cfg.Agents.Send(target, typ, body)
-	if err == nil {
-		e.results[id] = ch
-	}
-	e.mu.Unlock()
+	id, ch, err := e.sendCommand(target, typ, body, nil)
 	if err != nil {
 		return wire.Report{}, err
 	}

@@ -257,6 +257,16 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 	if run, err := s.st.LastRunOfTarget(ctx, name); err == nil {
 		st.LastRunID = &run.ID
 		lastFailed = run.Status == "failed"
+		if lastFailed && live.Agent == "online" {
+			// A failed agent update leaves the old agent working; the
+			// status shows it (agent_update, agent_reverted). Not an
+			// error while that agent is online (T-102).
+			p, err := s.st.GetPlan(ctx, run.PlanID)
+			if err != nil {
+				return st, err
+			}
+			lastFailed = p.Origin != plan.OriginAgentUpdate
+		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return st, err
 	}
