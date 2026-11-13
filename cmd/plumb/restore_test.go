@@ -234,3 +234,30 @@ func TestRestoreFailureLeavesNoDatabase(t *testing.T) {
 		}
 	}
 }
+
+// failWriter fails every write, like a terminal that went away.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
+
+// The password is shown before the commit point: when it cannot be shown,
+// nothing is committed (review M-b of #222).
+func TestRestorePasswordBeforeCommit(t *testing.T) {
+	ctx := context.Background()
+	file, key := makeBackup(t)
+	data := t.TempDir()
+	os.MkdirAll(filepath.Join(data, "key"), 0o700)
+	secret.WriteKeyFile(filepath.Join(data, "key", "master.key"), key)
+	var errOut bytes.Buffer
+	kio := keyIO{in: strings.NewReader(""), out: failWriter{}, errOut: &errOut, outTerminal: true}
+	if code := restoreCmd(ctx, []string{"--data", data, "--from", file}, kio); code != exitFailed || !strings.Contains(errOut.String(), "nothing restored") {
+		t.Fatalf("restore with a broken terminal: %d %s", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(data, "plumb.db")); !os.IsNotExist(err) {
+		t.Fatal("a database was committed without a shown password")
+	}
+	var out bytes.Buffer
+	if code := restoreCmd(ctx, []string{"--data", data, "--from", file}, termIO(&out, &errOut)); code != 0 {
+		t.Fatalf("rerun: %d %s", code, errOut.String())
+	}
+}

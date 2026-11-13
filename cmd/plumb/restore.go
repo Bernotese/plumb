@@ -201,14 +201,22 @@ func restore(ctx context.Context, data, from, keyFile string, kio keyIO) (int, e
 	if err := syncDir(data); err != nil {
 		return exitFailed, err
 	}
-	if err := os.Rename(filepath.Join(tmp, "plumb.db"), filepath.Join(data, "plumb.db")); err != nil {
-		return exitFailed, err
+	// The password goes to the terminal before the commit point (review
+	// M-b of #222): when the terminal is gone, nothing is committed and a
+	// rerun makes a new one; when the commit fails, the text says so.
+	if _, err := fmt.Fprintf(kio.out, "User: admin  Password: %s\nThis password is shown once. The first login must change it. Every other user is locked, every API token is disabled.\n", password); err != nil {
+		return exitFailed, fmt.Errorf("show the new admin password: %w; nothing restored, run plumb restore again", err)
 	}
-	if err := syncDir(data); err != nil {
-		return exitFailed, err
+	commit := func() error {
+		if err := os.Rename(filepath.Join(tmp, "plumb.db"), filepath.Join(data, "plumb.db")); err != nil {
+			return err
+		}
+		return syncDir(data)
+	}
+	if err := commit(); err != nil {
+		return exitFailed, fmt.Errorf("the restore did not finish (%w); the password above is not valid; run plumb restore again", err)
 	}
 	fmt.Fprintf(kio.out, "Restored the backup of %s (install %s).\n", h.CreatedAt, h.InstallID)
-	fmt.Fprintf(kio.out, "User: admin  Password: %s\nThis password is shown once. The first login must change it. Every other user is locked, every API token is disabled.\n", password)
 	fmt.Fprintln(kio.out, "Plumb starts in restored mode: it changes nothing until you confirm that the old controller is off (POST /restore/confirm).")
 	return 0, nil
 }

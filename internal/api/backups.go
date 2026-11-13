@@ -88,7 +88,7 @@ func (s *Server) listBackups(w http.ResponseWriter, r *http.Request, _ *principa
 		v.LastRun = backupRunOf(last)
 		v.Running = last.Result == store.BackupRunning
 	}
-	items, err := b.Items()
+	items, err := b.Items(r.Context())
 	if err != nil {
 		s.internal(w, err)
 		return

@@ -64,7 +64,7 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 		if errors.Is(err, driver.ErrNotFound) && e.cfg.Restore.Restored() {
 			// After a restore: the guest was deleted after the backup
 			// (D-303). Plumb never makes it again by itself.
-			if err := e.guestMissing(ctx, b); err != nil {
+			if err := e.guestMissing(ctx, b, true); err != nil {
 				errs = append(errs, err)
 			}
 			continue
@@ -77,9 +77,13 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			// The VMID may hold another guest now (review H2 of #222):
 			// then the bound guest is missing, and the other one is
 			// unknown.
-			if observed.Spec.Name != b.Name {
+			// It counts while restored mode holds, and after it only
+			// until the first good check (while that Issue is open);
+			// later a rename is the normal create-only drift. Writes to
+			// such a guest are refused either way (checkOwnGuest).
+			if observed.Spec.Name != b.Name && (e.restoreActive() || e.openRestoreIssue(ctx, b.Name, GuestMissingID)) {
 				e.setForeign(b.Ref, true)
-				if err := e.guestMissing(ctx, b); err != nil {
+				if err := e.guestMissing(ctx, b, false); err != nil {
 					errs = append(errs, err)
 				}
 				continue

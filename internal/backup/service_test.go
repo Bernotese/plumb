@@ -389,11 +389,11 @@ func TestRetention(t *testing.T) {
 		t.Fatalf("same second: %q", second)
 	}
 	f.setMtime(second, base.Add(10*time.Minute))
-	if err := f.svc.retain(); err != nil {
+	if err := f.svc.retain(f.ctx); err != nil {
 		t.Fatal(err)
 	}
 	kept := func() []string {
-		items, err := f.svc.Items()
+		items, err := f.svc.Items(f.ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -419,20 +419,23 @@ func TestRetention(t *testing.T) {
 	if got := kept(); len(got) != 3 || got[0] != back || slices.Contains(got, names[3]) {
 		t.Fatalf("after a clock step back: %v", got)
 	}
-	// The pointer protects its file even when it is not among the newest.
+	// Files without a run row (copied in by hand) count as the oldest; the
+	// pointer still protects its file.
 	dir := filepath.Join(f.data, DirName)
-	for i, n := range []string{"plumb-20261113T120000Z.pbk", "plumb-20261113T120001Z.pbk", "plumb-20261113T120002Z.pbk"} {
+	foreign := []string{"plumb-20261113T120000Z.pbk", "plumb-20261113T120001Z.pbk", "plumb-20261113T120002Z.pbk"}
+	for i, n := range foreign {
 		os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600)
 		f.setMtime(n, time.Now().Add(time.Duration(i+1)*time.Hour))
 	}
-	os.WriteFile(filepath.Join(dir, PointerName), []byte(`{"name":"`+names[4]+`","size":1,"sha256":"x"}`), 0o600)
-	if err := f.svc.retain(); err != nil {
+	os.WriteFile(filepath.Join(dir, PointerName), []byte(`{"name":"`+foreign[0]+`","size":1,"sha256":"x"}`), 0o600)
+	if err := f.svc.retain(f.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, names[4])); err != nil {
-		t.Errorf("the pointer file was removed: %v", err)
+	got := kept()
+	if len(got) != 4 || got[0] != back || got[3] != foreign[0] {
+		t.Fatalf("with files without a run: %v", got)
 	}
-	for _, gone := range []string{second, back} {
+	for _, gone := range foreign[1:] {
 		if _, err := os.Stat(filepath.Join(dir, gone)); !os.IsNotExist(err) {
 			t.Errorf("%s stays", gone)
 		}

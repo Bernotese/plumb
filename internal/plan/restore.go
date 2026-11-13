@@ -107,11 +107,13 @@ func (e *Engine) ConfirmRestore(ctx context.Context, by, reason string) (store.R
 }
 
 // guestMissing reports the Issue guest:missing of a Target whose bound
-// guest Proxmox no longer has (D-303) and revokes the agent credential of
-// that Target once, so a copy of the old disk cannot enroll as it.
-func (e *Engine) guestMissing(ctx context.Context, b store.Binding) error {
+// guest Proxmox no longer has (D-303). revoke: the guest is gone, so the
+// agent credential of that Target is revoked once (a copy of the old disk
+// cannot enroll as it). A guest of another name on the VMID revokes
+// nothing (review M-a of #222): a person may have renamed our own guest.
+func (e *Engine) guestMissing(ctx context.Context, b store.Binding, revoke bool) error {
 	e.restore.mu.Lock()
-	first := !e.restore.revoked[b.Name]
+	first := revoke && !e.restore.revoked[b.Name]
 	if first {
 		if e.restore.revoked == nil {
 			e.restore.revoked = map[string]bool{}
@@ -157,6 +159,13 @@ func (e *Engine) checkSilent(ctx context.Context, target string, observed driver
 	}
 	return e.restoreIssue(ctx, target, AgentSilentID, wire.StatusDiffers,
 		[]wire.Change{{Attr: "hello", From: nil, To: "any", Risk: wire.RiskRead}})
+}
+
+// openRestoreIssue reports whether the Issue of a restore is open for a
+// target.
+func (e *Engine) openRestoreIssue(ctx context.Context, target, id string) bool {
+	iss, err := e.st.OpenIssue(ctx, target, id)
+	return err == nil && iss.Status == store.IssueOpen
 }
 
 // setForeign records whether the VMID of a binding belongs to another

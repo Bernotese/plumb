@@ -312,8 +312,10 @@ func TestRestoreForeignVMID(t *testing.T) {
 	if _, err := e.st.OpenIssue(e.ctx, "web2", plan.GuestMissingID); err != nil {
 		t.Fatalf("no guest:missing for a reused VMID: %v", err)
 	}
-	if _, err := e.st.AgentByTarget(e.ctx, "web2"); err == nil {
-		t.Error("the agent of web2 was not revoked")
+	// A name mismatch revokes nothing: it may be our own guest, renamed
+	// (review M-a of #222).
+	if _, err := e.st.AgentByTarget(e.ctx, "web2"); err != nil {
+		t.Errorf("a name mismatch revoked the agent of web2: %v", err)
 	}
 	adm := e.login("admin", "restored-password-1")
 	adm.do("PUT", "/api/v1/session/password", map[string]string{"current_password": "restored-password-1", "new_password": "another-good-password"})
@@ -326,5 +328,33 @@ func TestRestoreForeignVMID(t *testing.T) {
 	}
 	if _, err := e.st.GetBinding(e.ctx, "Target", "web2"); err != nil {
 		t.Errorf("binding of web2 is gone although the delete was refused: %v", err)
+	}
+}
+
+// After the confirm a renamed guest is the normal create-only drift: no
+// guest:missing, no revoke, but no Run writes to it (review M-a of #222).
+func TestRestoreRenameAfterConfirm(t *testing.T) {
+	e, _, _, _ := restoredEnv(t)
+	adm := e.login("admin", "restored-password-1")
+	adm.do("PUT", "/api/v1/session/password", map[string]string{"current_password": "restored-password-1", "new_password": "another-good-password"})
+	if code, body := adm.do("POST", "/api/v1/restore/confirm", map[string]any{"old_controller_off": true}); code != 200 {
+		t.Fatalf("confirm: %d %s", code, body)
+	}
+	e.eng.CheckGuests(e.ctx) // a first good check
+	b1, _ := e.st.GetBinding(e.ctx, "Target", "web1")
+	b2, _ := e.st.GetBinding(e.ctx, "Target", "web2")
+	b1.Ref = b2.Ref // web1's VMID now shows the name web2: a rename, as Plumb sees it
+	e.st.PutBinding(e.ctx, b1)
+	e.eng.CheckGuests(e.ctx)
+	if _, err := e.st.OpenIssue(e.ctx, "web1", plan.GuestMissingID); err == nil {
+		t.Error("guest:missing for a rename after the confirm")
+	}
+	if _, err := e.st.AgentByTarget(e.ctx, "web1"); err != nil {
+		t.Errorf("the agent of web1 was revoked: %v", err)
+	}
+	// A Run on web1 does not write to the guest of another name.
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "remove web1", "delete": []map[string]string{{"kind": "Target", "name": "web1"}}})
+	if _, err := e.drv.Observe(e.ctx, driver.GuestID(b2.Ref)); err != nil {
+		t.Fatalf("the delete of web1 removed the guest named web2: %v", err)
 	}
 }
