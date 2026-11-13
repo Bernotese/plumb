@@ -18,7 +18,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && args[0] == "version" {
+	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
 		fmt.Fprintln(stdout, "plumb", version)
 		return 0
 	}
