@@ -28,8 +28,9 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-103 first apply of a unit + its service needed a 2nd Plan (T-100 F2) | pl-reviewer | merged (PR #204, D-286) |
 | T-104 `docker-engine` also for LXC | pl-frontend | merged (PR #203, D-283): one Block for VM and LXC, no `sysctl` |
 | T-105 service stopped + enabled with an absent unit: the Plan now shows the enable (follow-up of T-103) | pl-codex-fix | merged (PR #205) |
-| T-106 second short host run: controller to the latest main, then T-102 … T-105 on the real host (user: yes, 2026-11-13) | pl-backend | in work |
-| T-107 plan for slice 4 (architect writes, reviewer checks, then the user approves; no code before that) | pl-architect | in work |
+| T-106 second short host run (2026-11-13): controller on main e909458; T-102 (75 s lost link), T-103, T-104, T-105 passed on the real host; finding F3 → T-108; host clean | pl-backend | done (log PR #207) |
+| T-108 a short link drop (30 s) during an agent update: the guest is fine, but the Run fails with a false "old binary" (T-106 F3) | pl-backend | in work |
+| T-107 plan for slice 4 (PR #206, review passed in 3 rounds) | pl-architect | **waits for the user's approval; no code before that** |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
