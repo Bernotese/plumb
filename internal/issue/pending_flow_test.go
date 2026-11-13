@@ -582,7 +582,7 @@ func TestFirstRoundAfterMigration(t *testing.T) {
 	// The state of an old controller: the digest seen, no list.
 	st, _ := e.drv.Observe(e.ctx, id)
 	b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1")
-	b.Digest, b.Waiting = st.Digest, nil
+	b.Digest, b.Waiting = st.Digest+" "+string(st.Power), nil // the poll key (D-299)
 	e.st.PutBinding(e.ctx, b)
 	e.check()
 	if len(e.waiting()) != 0 {
@@ -601,7 +601,7 @@ func TestFirstRoundAfterMigration(t *testing.T) {
 	e.drv.TamperPending(id, func(s *driver.GuestSpec) { s.Cores = 6 })
 	st, _ = e.drv.Observe(e.ctx, id)
 	b, _ = e.st.GetBinding(e.ctx, state.KindTarget, "web1")
-	b.Digest = st.Digest
+	b.Digest = st.Digest + " " + string(st.Power) // the poll key (D-299)
 	e.st.PutBinding(e.ctx, b)
 	e.check()
 	if _, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID); err == nil {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -303,6 +304,18 @@ type issueView struct {
 	Comments   []commentView   `json:"comments"`
 }
 
+// shrinks reports whether a revert of these changes would shrink a disk.
+func shrinks(ch []wire.Change) bool {
+	for _, c := range ch {
+		from, err1 := driver.IntValue(c.From)
+		to, err2 := driver.IntValue(c.To)
+		if c.Attr == driver.AttrDisk && err1 == nil && err2 == nil && to < from {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error) {
 	var ch []wire.Change
 	if err := json.Unmarshal(i.Changes, &ch); err != nil {
@@ -315,7 +328,11 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		// ip is create-only: Plumb can neither revert nor accept (D-215).
 		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
 	} else if i.Status == store.IssueOpen {
-		v.Actions = append(v.Actions, "revert")
+		// A disk grown in Proxmox cannot be reverted: Proxmox cannot
+		// shrink it (D-299). Accept takes the bigger size.
+		if !(i.Resource == wire.GuestConfigID && shrinks(ch)) {
+			v.Actions = append(v.Actions, "revert")
+		}
 		accept := true
 		for _, c := range ch {
 			if c.Sensitive || (i.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind")) {

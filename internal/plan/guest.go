@@ -29,7 +29,7 @@ func (e *Engine) PollGuests(ctx context.Context, interval time.Duration) {
 }
 
 // CheckGuests runs one round of the guest poll. It compares only guests
-// whose config digest changed since the last round or whose waiting list
+// whose config digest or power state changed since the last round (pollKey) or whose waiting list
 // is not empty (a cold start need not move the digest, review S8). It
 // writes the waiting list first (D-195), then reports drift on
 // guest:config to OnDrift: "differs" with the changes, or "unchanged"
@@ -59,7 +59,7 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
-		if observed.Digest == b.Digest && len(b.Waiting) == 0 {
+		if pollKey(observed) == b.Digest && len(b.Waiting) == 0 {
 			continue
 		}
 		r, err := e.headRender(ctx, b.Name)
@@ -91,7 +91,7 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 				continue // keep the old digest, so the next round reports again
 			}
 		}
-		b.Digest = observed.Digest
+		b.Digest = pollKey(observed)
 		if err := e.st.PutBinding(ctx, b); err != nil {
 			errs = append(errs, err)
 		}
@@ -118,6 +118,9 @@ type Live struct {
 	// a stock Image or unknown (D-200).
 	ImageVersion int
 	Busy         bool // a Run works on the target
+	// DesiredPower is guest.power of the head revision: "running",
+	// "stopped", or "" when not managed (D-299).
+	DesiredPower string
 	// Waiting are the values that wait for a stop and start (D-195).
 	Waiting []store.Waiting
 	// Reported is the address list of the agent, only while it is online
@@ -158,6 +161,9 @@ func (e *Engine) Live(ctx context.Context, target string) (Live, error) {
 		return l, err
 	}
 	l.GuestID, l.Waiting = b.Ref, b.Waiting
+	if r, err := e.headRender(ctx, target); err == nil && r != nil {
+		l.DesiredPower = string(desiredPower(r))
+	}
 	if st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); err == nil {
 		l.Power, l.IPs, l.ImageVersion = string(st.Power), st.IPs, st.Spec.ImageVersion
 	}
