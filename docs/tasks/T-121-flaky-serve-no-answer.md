@@ -12,8 +12,8 @@ The test failed once with "token refused" instead of "no answer". Find the race 
 - New decisions: `docs/decisions/T-121.md`; ask pl-lead for numbers
 
 ## Acceptance criteria
-- [ ] Cause named; a product bug is reported to pl-lead before a larger fix
-- [ ] 200 runs green; small diff; `make lint test build` green
+- [x] Cause named; a product bug is reported to pl-lead before a larger fix
+- [x] 200 runs green; small diff; `make lint test build` green
 
 ## Out of scope
 - Other tests
@@ -22,4 +22,7 @@ The test failed once with "token refused" instead of "no answer". Find the race 
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+pl-codex-fix/T-121-serve-no-answer · see PR commit · 200 repeats and `make lint test build` pass.
+Cause: closing the fake server releases its port; another test server can reuse it and return 401.
+Fix: reserve the port and close accepted connections without a TLS or HTTP answer.
+Test-only race; reported to pl-lead. No product change or new decision.
