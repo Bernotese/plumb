@@ -31,7 +31,7 @@ type clock struct {
 	t  time.Time
 }
 
-func (c *clock) now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+func (c *clock) now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
 func (c *clock) set(t time.Time) { c.mu.Lock(); c.t = t; c.mu.Unlock() }
 
 type fixture struct {
