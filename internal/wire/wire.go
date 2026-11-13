@@ -226,7 +226,7 @@ const GuestAddressID = "guest:address"
 // it). The type "guest" belongs to the controller.
 var agentTypes = map[string]bool{
 	"apt_repository": true, "command": true, "directory": true, "file": true, "package": true, "service": true, "symlink": true,
-	"firewall": true, "sysctl": true, "unit": true, "user": true,
+	"firewall": true, "network": true, "sysctl": true, "unit": true, "user": true,
 }
 
 // AgentType reports whether an agent may report a resource of this type.

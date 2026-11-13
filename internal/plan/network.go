@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/state"
-	"github.com/Bernotese/plumb/internal/store"
 )
 
 // The server refusals of the network resource (D-348, review G1 of #244)
 // that need more than the Set: the controller and Proxmox node addresses
-// (Config.ReservedAddrs) and the addresses that the agents of other
-// Targets report (a DHCP Target has no main address in its document).
+// (Config.ReservedAddrs). A DHCP Target has no main address in its
+// document; its reported list is display data only (D-216), so it is not
+// used here: the agent's duplicate-address probe covers that address.
 
 // ReservedFunc returns the addresses that no network resource may take.
 type ReservedFunc func(ctx context.Context) ([]state.ReservedAddr, error)
@@ -70,9 +70,8 @@ func HostAddrs(controller []string, nodeURL string) ReservedFunc {
 }
 
 // checkNetworks refuses network values of the touched Targets of next
-// (state.CheckNetworks) with the reserved addresses of the controller,
-// the node and the reports of the other Targets' agents. It does no
-// lookup when no touched Target has a network address.
+// (state.CheckNetworks) with the reserved addresses of the controller and
+// the node. It does no lookup when no touched Target has an extra address.
 func (e *Engine) checkNetworks(ctx context.Context, next *state.Set, touched []string) error {
 	nets, err := next.Networks()
 	if err != nil {
@@ -94,56 +93,8 @@ func (e *Engine) checkNetworks(ctx context.Context, next *state.Set, touched []s
 			return &ProposalError{Msg: "the network addresses cannot be checked: " + err.Error()}
 		}
 	}
-	for _, n := range nets {
-		if !extras {
-			break // only extra addresses are compared with the reserved ones
-		}
-		r, known, err := e.st.ReportedAddrs(ctx, n.Target)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-		if !known {
-			continue
-		}
-		for _, s := range r.List {
-			p, err := netip.ParsePrefix(s)
-			var a netip.Addr
-			if err == nil {
-				a = p.Addr()
-			} else if a, err = netip.ParseAddr(s); err != nil {
-				continue
-			}
-			if slices.ContainsFunc(n.Extras, func(x state.NetworkAddr) bool { return x.Addr.Addr() == a }) {
-				continue // its own extra address: CheckNetworks names it better
-			}
-			reserved = append(reserved, state.ReservedAddr{Addr: a, What: reportedBy(n.Target)})
-		}
-	}
-	// A touched Target's own reports are not reserved for itself: its
-	// main address is guarded by the agent's check in a temporary root.
-	var errs state.Errors
-	for _, t := range touched {
-		var mine []state.ReservedAddr
-		for _, r := range reserved {
-			if r.What != reportedBy(t) {
-				mine = append(mine, r)
-			}
-		}
-		if err := state.CheckNetworks(nets, []string{t}, mine); err != nil {
-			var es state.Errors
-			if errors.As(err, &es) {
-				errs = append(errs, es...)
-			} else {
-				return err
-			}
-		}
-	}
-	if len(errs) > 0 {
-		return &ProposalError{Msg: "the documents are not valid:\n" + errs.Error(), Err: errs}
+	if err := state.CheckNetworks(nets, touched, reserved); err != nil {
+		return &ProposalError{Msg: "the documents are not valid:\n" + err.Error(), Err: err}
 	}
 	return nil
-}
-
-func reportedBy(target string) string {
-	return "an address that the agent of Target " + target + " reports"
 }

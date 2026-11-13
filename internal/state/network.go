@@ -90,8 +90,8 @@ type ReservedAddr struct {
 	What string
 }
 
-// CheckNetworks refuses, for each Target of touched: a network resource on
-// an LXC; an extra address that is a reserved address, the main address
+// CheckNetworks refuses, for each Target of touched (the render refuses
+// network on an LXC already: its type is for VMs only): an extra address that is a reserved address, the main address
 // or gateway of any Target, an extra address of another Target, or twice
 // on this Target; and a static main address that is an extra address of
 // another Target. The errors name the Targets, never the address (D-325).
@@ -127,10 +127,6 @@ func CheckNetworks(nets []TargetNetwork, touched []string, reserved []ReservedAd
 	}
 	for _, n := range nets {
 		if !isTouched[n.Target] {
-			continue
-		}
-		if n.Kind == wire.KindLXC && n.HasNetwork {
-			refuse(n.Target, "network is for a VM only: Proxmox owns the network of a container")
 			continue
 		}
 		mine := map[netip.Addr]string{}
