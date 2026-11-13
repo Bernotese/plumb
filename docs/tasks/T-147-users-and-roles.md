@@ -21,4 +21,9 @@ Slice 5, child card **C3** of T-138. More than one user, with roles `read` < `pl
 - Everything of other rows. Any release step.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+branch `pl-reviewer/T-147-users-and-roles` · tests: `make lint test` → pass
+- Migration 0017 (role, disabled_at, created_by, last_login_at; existing users admin). `GET/POST /users`, `PATCH /users/{name}`; session tier = role; disabled sessions refused.
+- Last admin (enabled, not locked) in one write tx; parallel demote test (20 rounds). Role change/disable ends sessions; loss of admin or disable disables the user's tokens.
+- Role inside approve and ignore_once (review M2); login limit per (name, client) 1→15 min, ends (backoff limiter).
+- D-351: a restore makes user admin an enabled admin again; no admin → restore fails, nothing changed.
+- Extra files with pl-lead OK: store/auth.go, store/restore.go(+test), api/secret.go (unused reset), openapi.yaml marks, tier_test.go rows.

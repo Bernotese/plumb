@@ -62,8 +62,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-160 facts: network setup of the real Debian 13 cloud image (for the `network` contract T-145) | pl-backend | done (branch `pl-backend/T-160-debian-network-facts`): the pinned image has netplan (networkd backend, `50-cloud-init.yaml`, match by MAC); on `pve-dev` an unchanged `netplan apply` kept IPv4 and the agent link (SLAAC IPv6 gap ~2 s). Host clean, pool empty |
 | T-145 slice 5 C1b: contract `network`, `group`, generic safe apply | pl-architect | merged (PR #244), D-348 … D-350 |
 | T-146 slice 5 C2: starter catalogue API | pl-backend | merged (PR #246) |
-| T-147 slice 5 C3: users and roles | pl-reviewer (implementer), review: pl-architect | in work (store + handlers done, `api.go` part now), D-351 |
-| T-148 slice 5 C4: copy rule for guest-reported values (D-331) | pl-backend | PR #248, in review, D-352 |
+| T-147 slice 5 C3: users and roles (migration 0017; closes F3 of T-122) | pl-reviewer (implementer), review: pl-architect | merged (PR #250), D-351 |
+| T-148 slice 5 C4: copy rule for guest-reported values (D-331, migration 0018) | pl-backend | PR #248: review fixes K1–K3 done, re-check next; D-352, D-353 |
 | T-150 slice 5 C6: generic safe apply + resource `network` | pl-backend | in work |
 | T-152 slice 5 C8: signed checksums | pl-architect (implementer) | part A: PR #247, in review; part B after T-147 and T-148 |
 | Slice 5, not started yet: T-151 C7 `group`, T-154 C9b web, T-156 C11 Block `network`, T-157 C12 QA, T-158 C13 host acceptance, T-159 C14 README | – | waits for its dependencies (plan T-138) |
