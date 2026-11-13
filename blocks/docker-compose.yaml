@@ -1,0 +1,74 @@
+kind: Block
+name: docker-compose
+spec:
+  title: Docker Compose project
+  description: >-
+    Runs one Docker Compose project; use it once per project, with its own
+    name. Needs the docker-engine Block on the same Target (it starts after
+    service:docker). The compose file is /opt/plumb-compose-<name>/compose.yaml.
+    Secrets go only into .env next to it (mode 0600, from a Plumb secret);
+    refer to them as ${VAR} in the compose file. The unit
+    plumb-compose-<name>.service runs docker compose up -d at boot and after
+    every change; its output is not written to the journal, so no secret
+    value lands there (use docker compose logs on the guest). Stopping the
+    unit does not stop the containers. Ports that a container publishes
+    bypass host firewall rules.
+  after: ["service:docker"]
+  params:
+    type: object
+    required: [compose, env]
+    properties:
+      name:
+        type: string
+        title: Project name
+        pattern: "^[a-z0-9][a-z0-9_-]{0,62}$"
+        default: app
+      compose:
+        type: string
+        title: Compose file (compose.yaml)
+        contentMediaType: text/plain
+        minLength: 1
+        maxLength: 65536
+      env:
+        type: string
+        title: Environment file (.env, a secret)
+        description: KEY=value lines. Plumb never shows the value.
+        writeOnly: true
+  resources:
+    - directory:
+        path: /opt/plumb-compose-{{ .name }}
+        mode: "0750"
+    - file:
+        path: /opt/plumb-compose-{{ .name }}/compose.yaml
+        mode: "0640"
+        content: "{{ .compose }}"
+    - file:
+        path: /opt/plumb-compose-{{ .name }}/.env
+        mode: "0600"
+        content: "{{ .env }}"
+    - unit:
+        name: plumb-compose-{{ .name }}.service
+        content: |
+          [Unit]
+          Description=Docker Compose project {{ .name }} (Plumb)
+          Requires=docker.service
+          After=docker.service network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          WorkingDirectory=/opt/plumb-compose-{{ .name }}
+          ExecStart=/usr/bin/docker compose --project-name {{ .name }} --progress quiet up --detach --remove-orphans --quiet-pull
+          StandardOutput=null
+          StandardError=null
+          TimeoutStartSec=15min
+
+          [Install]
+          WantedBy=multi-user.target
+    - service:
+        name: plumb-compose-{{ .name }}.service
+        restart_on:
+          - "file:/opt/plumb-compose-{{ .name }}/compose.yaml"
+          - "file:/opt/plumb-compose-{{ .name }}/.env"
+          - "unit:plumb-compose-{{ .name }}.service"

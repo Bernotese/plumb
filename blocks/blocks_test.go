@@ -100,6 +100,9 @@ func TestBlocks(t *testing.T) {
 		"../internal/resource/schema/service.json",
 		"../internal/resource/schema/symlink.json", // T-020
 		"../internal/resource/schema/user.json",
+		"../internal/resource/schema/apt_repository.json", // D-260, T-095
+		"../internal/resource/schema/unit.json",           // D-260, T-095
+		"../internal/resource/schema/sysctl.json",         // D-260, T-095
 	} {
 		name := strings.TrimSuffix(filepath.Base(path), ".json")
 		resourceSchemas[name] = compileSchema(t, path)
@@ -126,7 +129,10 @@ func TestBlocks(t *testing.T) {
 			if !ok {
 				t.Fatal("spec is not an object")
 			}
-			paramSchema := spec["params"].(map[string]any)
+			paramSchema, _ := spec["params"].(map[string]any)
+			if paramSchema == nil {
+				paramSchema = map[string]any{"type": "object", "properties": map[string]any{}}
+			}
 			sample := map[string]any{}
 			for name, value := range paramSchema["properties"].(map[string]any) {
 				prop := value.(map[string]any)
@@ -135,7 +141,8 @@ func TestBlocks(t *testing.T) {
 					sample[name] = def
 				}
 			}
-			fixtures := map[string]map[string]any{"deploy-user": {"ssh_key": "ssh-ed25519 AAAA"}, "app-env": {"password": "x"}}
+			fixtures := map[string]map[string]any{"deploy-user": {"ssh_key": "ssh-ed25519 AAAA"}, "app-env": {"password": "x"},
+				"docker-compose": {"compose": "services: {}\n", "env": "X=1\n"}}
 			required, _ := paramSchema["required"].([]any)
 			for _, value := range required {
 				name := value.(string)

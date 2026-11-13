@@ -64,15 +64,24 @@ func TestStarterParameterMetadataAndTemplates(t *testing.T) {
 				t.Fatal(err)
 			}
 			spec := doc["spec"].(map[string]any)
-			params := spec["params"].(map[string]any)["properties"].(map[string]any)
+			params := map[string]any{}
+			required := map[string]bool{}
+			if p, ok := spec["params"].(map[string]any); ok {
+				params = p["properties"].(map[string]any)
+				list, _ := p["required"].([]any)
+				for _, name := range list {
+					required[name.(string)] = true
+				}
+			}
 			for name, value := range params {
 				param := value.(map[string]any)
 				title, ok := param["title"].(string)
 				if param["type"] != "string" || !ok || title == "" {
 					t.Errorf("%s needs a string type and title", name)
 				}
-				// A secret parameter (writeOnly) has no default by rule (D-088).
-				if name != "ssh_key" && param["writeOnly"] != true && param["default"] == nil {
+				// A secret parameter (writeOnly) has no default by rule (D-088);
+				// a required one (ssh_key, compose) has no sensible default.
+				if !required[name] && param["writeOnly"] != true && param["default"] == nil {
 					t.Errorf("%s needs a default", name)
 				}
 			}

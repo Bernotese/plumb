@@ -52,6 +52,7 @@ for distro in \
   # Only the read-only test directory is mounted; host system paths need review.
   docker run -d --name "$name" --privileged --cgroupns=private \
     --tmpfs /run --tmpfs /run/lock \
+    --tmpfs /var/lib/containerd --tmpfs /var/lib/docker \
     -v "$tmp:/tests:ro" "$image"
   settings=$(docker inspect -f '{{.HostConfig.CgroupnsMode}} {{len .Mounts}}' "$name")
   if [[ "$settings" != "private 1" ]]; then echo "unexpected container settings: $settings" >&2; exit 1; fi
@@ -73,7 +74,8 @@ for distro in \
   # TestSymlinkRules includes the hard-link cases.
   run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
   # guest.test installs cron and refreshes the apt lists needed by agent.test.
-  run_test /tests/agent.test -test.v -test.timeout=5m -test.run '^TestGuest'
+  # T-095: Docker in the guest needs a non-overlay /var/lib/{containerd,docker} (tmpfs above).
+  run_test /tests/agent.test -test.v -test.timeout=15m -test.run '^TestGuest'
   # Review S1 of T-076: a CA of the system store does not pass the agent pin.
   run_test /tests/ctpack.test -test.v -test.timeout=5m -test.run '^TestFirstBootPinInGuest$'
   # T-091: self-update with the real unit; about 3 minutes (guard windows).
