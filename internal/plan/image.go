@@ -225,7 +225,7 @@ func (e *Engine) planRemovals(ctx context.Context, name string, versions []store
 		return out, []string{fmt.Sprintf("Image %s: the templates could not be listed (%v); the removal list may be short.", name, err)}
 	}
 	for _, o := range objs {
-		if o.Kind == driver.ImageBaseTemplate && (!built || o.Digest != info.SHA256) {
+		if o.Kind == driver.ImageBaseTemplate && (!built || o.Digest != info.Pin()) {
 			out = append(out, ImageRemoval{Kind: "base", Name: o.Name})
 		}
 	}

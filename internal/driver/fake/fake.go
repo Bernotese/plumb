@@ -454,21 +454,22 @@ func (d *Driver) FetchImage(ctx context.Context, spec driver.ImageSpec) (driver.
 			d.tpls[ref] = &template{kind: driver.ImageTemplateFile, image: spec.Name, digest: spec.SHA512, size: GiB / 4, lxc: true}
 			return ref, nil
 		}
-		if !sha256Hex.MatchString(spec.SHA256) {
-			return "", errors.New("fake: image checksum must be 64 hex digits")
+		algo, sum := spec.Pin()
+		if (algo == "sha256" && !sha256Hex.MatchString(sum)) || (algo == "sha512" && (!sha512Hex.MatchString(sum) || spec.SHA256 != "")) {
+			return "", errors.New("fake: image checksum must be one SHA-256 (64 hex digits) or one SHA-512 (128)")
 		}
 		if !strings.HasPrefix(spec.URL, "https://") {
 			return "", errors.New("fake: image URL must use https")
 		}
-		key := spec.Name + "@" + spec.SHA256
+		key := spec.Name + "@" + sum
 		if r, ok := d.images[key]; ok {
 			return r, nil
 		}
 		ref := driver.ImageRef(fmt.Sprintf("tpl-%d", d.nextTpl))
 		d.nextTpl++
 		d.images[key] = ref
-		d.tpls[ref] = &template{kind: driver.ImageBaseTemplate, image: spec.Name, digest: spec.SHA256, size: 3 * GiB}
-		f := importFile{image: spec.Name, sum: spec.SHA256}
+		d.tpls[ref] = &template{kind: driver.ImageBaseTemplate, image: spec.Name, digest: sum, size: 3 * GiB}
+		f := importFile{image: spec.Name, sum: sum}
 		if !slices.Contains(d.imports, f) {
 			d.imports = append(d.imports, f)
 		}

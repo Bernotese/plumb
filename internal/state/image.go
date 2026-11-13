@@ -22,6 +22,7 @@ type Recipe struct {
 	Type      wire.Kind       `json:"type"`
 	URL       string          `json:"url"`
 	SHA256    string          `json:"sha256"`
+	SHA512    string          `json:"sha512,omitempty"` // a vm pin from a Debian list (D-345); omitted, so older hashes stay
 	Upgrade   bool            `json:"upgrade"`
 	DiskGB    int             `json:"disk"`
 	Guest     map[string]any  `json:"guest"` // build.guest with its defaults
@@ -95,6 +96,7 @@ func (s *Set) RenderImage(name string) (*RenderedImage, error) {
 			Type:      wire.Kind(img.Type),
 			URL:       img.URL,
 			SHA256:    img.SHA256,
+			SHA512:    vmSHA512(img),
 			Upgrade:   img.Build.Upgrade == nil || *img.Build.Upgrade,
 			DiskGB:    disk,
 			Guest:     buildGuest(r.Guest.Attrs),
@@ -123,14 +125,34 @@ const DefaultKeep = 3
 // render: whether it is built, its base checksum, how many versions stay
 // and its schedule (canonical JSON, nil for none).
 type ImageInfo struct {
-	Name     string
-	Type     wire.Kind
-	SHA256   string
-	SHA512   string // lxc (D-224)
-	URL      string
+	Name   string
+	Type   wire.Kind
+	SHA256 string
+	SHA512 string // lxc (D-224), or a vm pin from a Debian list (D-345)
+	URL    string
+	// Verify is verify.source (D-335); empty for none.
+	Verify   string
 	Built    bool
 	Keep     int
 	Schedule json.RawMessage
+}
+
+// Pin returns the base checksum of the Image: SHA512 when set (every lxc
+// Image, a vm Image from a Debian list, D-345), else SHA256.
+func (i ImageInfo) Pin() string {
+	if i.SHA512 != "" {
+		return i.SHA512
+	}
+	return i.SHA256
+}
+
+// vmSHA512 is the SHA-512 pin of a vm Image for its recipe; an lxc Image
+// keeps its recipe as before (its pin is in the repacked file).
+func vmSHA512(img imageSpec) string {
+	if img.Type == string(wire.KindVM) {
+		return img.SHA512
+	}
+	return ""
 }
 
 // Images returns the names of all Images, sorted.
@@ -144,6 +166,9 @@ func (s *Set) ImageInfo(name string) (ImageInfo, bool) {
 		return ImageInfo{}, false
 	}
 	info := ImageInfo{Name: name, Type: wire.Kind(img.Type), SHA256: img.SHA256, SHA512: img.SHA512, URL: img.URL, Built: img.Build != nil, Keep: DefaultKeep}
+	if img.Verify != nil {
+		info.Verify = img.Verify.Source
+	}
 	if img.Retention != nil && img.Retention.Keep > 0 {
 		info.Keep = img.Retention.Keep
 	}
