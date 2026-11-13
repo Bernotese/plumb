@@ -1738,8 +1738,12 @@ check_restore() {
 # goes into the LXC, then plumb key restore and plumb restore run as user
 # plumb on this terminal, before the first start of plumb.service. The
 # recovery key and the new admin password stay on the terminal (D-178,
-# D-303).
-readonly RESTORE_IN_LXC=/var/lib/plumb/restore.pbk
+# D-303). The file goes outside the data directory: plumb restore refuses
+# a data directory that holds anything but the key volume (D-318, T-130).
+# The directory is root:plumb 0750: user plumb reads the file but cannot
+# put a link where root pushes it.
+readonly RESTORE_DIR=/var/lib/plumb-restore
+readonly RESTORE_IN_LXC=$RESTORE_DIR/restore.pbk
 RESTORING=0
 HALF_LXC=""
 
@@ -1761,18 +1765,28 @@ remove_half_lxc() {
 		clean_stale_lxc_dir "$id" keep
 	fi
 }
+# drop_restore_file removes the backup file and its directory from the
+# LXC, after the restore and after a failed one.
+drop_restore_file() {
+	run pct exec "$LXC_ID" -- rm -rf -- "$RESTORE_DIR" </dev/null || true
+}
 restore_in_lxc() {
 	lxc_has_key "$LXC_ID" && die "LXC $LXC_ID has a master key already; a restore needs a new LXC"
+	run pct exec "$LXC_ID" -- install -d -o root -g plumb -m 0750 "$RESTORE_DIR" </dev/null
 	push_checked "$RESTORE_FILE" "$RESTORE_IN_LXC" 0600
 	run pct exec "$LXC_ID" -- chown plumb:plumb "$RESTORE_IN_LXC" </dev/null
 	say ""
 	say "plumb key restore: type the RECOVERY KEY of the backup."
-	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb ||
+	if ! run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb; then
+		drop_restore_file
 		die "plumb key restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
+	fi
 	say "plumb restore: it shows the NEW password of the user admin once."
-	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from "$RESTORE_IN_LXC" ||
+	if ! run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from "$RESTORE_IN_LXC"; then
+		drop_restore_file
 		die "plumb restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
-	run pct exec "$LXC_ID" -- rm -f "$RESTORE_IN_LXC" </dev/null
+	fi
+	drop_restore_file
 	if [[ $DRY_RUN != 1 && $YES != 1 && -t 0 ]]; then
 		read -r -p "Write the admin password down, then press Enter" _ || true
 	fi

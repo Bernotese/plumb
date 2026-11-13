@@ -588,10 +588,11 @@ func TestRestore(t *testing.T) {
 	}
 	calls := b.calls()
 	order := []string{"pveum user token add plumb@pve plumb", "pveum acl modify / --tokens plumb@pve!plumb --roles PlumbAudit",
-		"pct create 105", "pct push 105 " + file + " /var/lib/plumb/.restore.pbk.plumb-new",
+		"pct create 105", "pct exec 105 -- install -d -o root -g plumb -m 0750 /var/lib/plumb-restore",
+		"pct push 105 " + file + " /var/lib/plumb-restore/.restore.pbk.plumb-new",
 		"lxc-attach -n 105 --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb",
-		"lxc-attach -n 105 --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from /var/lib/plumb/restore.pbk",
-		"pct exec 105 -- rm -f /var/lib/plumb/restore.pbk", "pct exec 105 -- systemctl restart plumb.service"}
+		"lxc-attach -n 105 --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from /var/lib/plumb-restore/restore.pbk",
+		"pct exec 105 -- rm -rf -- /var/lib/plumb-restore", "pct exec 105 -- systemctl restart plumb.service"}
 	last := -1
 	for _, c := range order {
 		i := index(calls, c)
@@ -680,6 +681,14 @@ func TestRestoreAgainAfterFailure(t *testing.T) {
 	st := b.stateFile()
 	if st["restoring"] != "1" || st["lxc_id"] != "105" || st["kept_guests"] != "1" {
 		t.Fatalf("state after the failure: %v", st)
+	}
+	// T-130: the backup file and its directory leave the LXC also after a
+	// failed restore.
+	if index(b.calls(), "pct exec 105 -- rm -rf -- /var/lib/plumb-restore") < 0 {
+		t.Error("the backup file stayed in the LXC after the failed restore")
+	}
+	if left, _ := filepath.Glob(filepath.Join(b.state, "push", "_var_lib_plumb-restore_*")); len(left) != 0 {
+		t.Errorf("left in the LXC: %v", left)
 	}
 	b.resetCalls()
 	code, out, errOut := b.restore(nil, file, net...)
