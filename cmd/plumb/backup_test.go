@@ -68,7 +68,7 @@ func TestBackupNow(t *testing.T) {
 		t.Errorf("other key: %d", code)
 	}
 	// A backup that runs (serve): wait, then give up.
-	if _, err := st.StartBackupRun(ctx, "system", "plumb-20990101T000000Z.pbk"); err != nil {
+	if _, err := st.StartBackupRun(ctx, "system", store.BackupSchedule, "plumb-20990101T000000Z.pbk"); err != nil {
 		t.Fatal(err)
 	}
 	old := backupWaitPoll
@@ -85,5 +85,48 @@ func TestBackupNow(t *testing.T) {
 	}
 	if code := backupCmd(ctx, []string{"later"}, &out, &errOut); code != 2 {
 		t.Errorf("usage: %d", code)
+	}
+}
+
+// backup now runs the retention of serve (keep from install.json), not
+// the default or PLUMB_BACKUP_KEEP (review L1 of #220).
+func TestBackupNowKeep(t *testing.T) {
+	ctx := context.Background()
+	data := t.TempDir()
+	key := secret.NewKey()
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	secret.WriteKeyFile(keyFile, key)
+	os.MkdirAll(filepath.Join(data, "link"), 0o700)
+	os.WriteFile(filepath.Join(data, "link", "ca.crt"), []byte("crt"), 0o644)
+	os.WriteFile(filepath.Join(data, "link", "ca.key"), []byte("key"), 0o600)
+	st, err := store.Open(ctx, filepath.Join(data, "plumb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	secret.Open(ctx, st, key)
+	if _, err := backup.New(ctx, backup.Config{Store: st, Key: key, DataDir: data, Keep: 30, Serve: true}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PLUMB_BACKUP_KEEP", "1")
+	var out, errOut bytes.Buffer
+	for i := range 3 {
+		if code := backupCmd(ctx, []string{"now", "--data", data, "--key-file", keyFile}, &out, &errOut); code != 0 {
+			t.Fatalf("backup %d: %s", i, errOut.String())
+		}
+		time.Sleep(1100 * time.Millisecond) // a new name each time
+	}
+	n := 0
+	ents, _ := os.ReadDir(filepath.Join(data, backup.DirName))
+	for _, e := range ents {
+		if backup.NameRE.MatchString(e.Name()) {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("backups kept: %d, want 3 (keep 30 of serve)", n)
+	}
+	if r, _ := st.LastBackupRun(ctx, ""); r.Trigger != store.BackupCLI || r.By != "system" {
+		t.Errorf("run: %+v", r)
 	}
 }
