@@ -35,6 +35,9 @@ func TestSlice4Schemas(t *testing.T) {
 		{`{"name":"main","ssh_port":0}`, false},
 		{`{"name":"main","ssh_port":70000}`, false},
 		{`{"name":"main","ssh_port":"022"}`, false},
+		{`{"name":"main","ssh_port":"65535"}`, true},
+		{`{"name":"main","ssh_port":"65536"}`, false},
+		{`{"name":"main","ssh_port":"99999"}`, false},
 		{`{"name":"main","output":"drop"}`, false}, // no output chain
 	}
 	sch := compile(t, Type{Name: "firewall"})
