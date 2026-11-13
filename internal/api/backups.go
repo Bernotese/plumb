@@ -88,7 +88,7 @@ func (s *Server) listBackups(w http.ResponseWriter, r *http.Request, _ *principa
 		v.LastRun = backupRunOf(last)
 		v.Running = last.Result == store.BackupRunning
 	}
-	items, err := b.Items()
+	items, err := b.Items(r.Context())
 	if err != nil {
 		s.internal(w, err)
 		return
@@ -106,7 +106,7 @@ func (s *Server) listBackups(w http.ResponseWriter, r *http.Request, _ *principa
 }
 
 func (s *Server) createBackup(w http.ResponseWriter, r *http.Request, p *principal) {
-	if s.noBackups(w) {
+	if s.noBackups(w) || s.restoredMode(w) {
 		return
 	}
 	run, err := s.cfg.Backups.Start(r.Context(), p.name)

@@ -40,6 +40,12 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var restored store.RestoreState // read once per poll (review L3 of #222)
+	if e.cfg.Restore.Restored() {
+		if restored, err = e.st.GetRestore(ctx); err != nil {
+			return err
+		}
+	}
 	var errs []error
 	now := e.cfg.Now()
 	seen := map[string]bool{}
@@ -55,9 +61,40 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			continue
 		}
 		observed, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+		if errors.Is(err, driver.ErrNotFound) && e.cfg.Restore.Restored() {
+			// After a restore: the guest was deleted after the backup
+			// (D-303). Plumb never makes it again by itself.
+			if err := e.guestMissing(ctx, b, true); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		if restored.Restored {
+			// The VMID may hold another guest now (review H2 of #222):
+			// then the bound guest is missing, and the other one is
+			// unknown.
+			// It counts while restored mode holds, and after it only
+			// until the first good check (while that Issue is open);
+			// later a rename is the normal create-only drift. Writes to
+			// such a guest are refused either way (checkOwnGuest).
+			if observed.Spec.Name != b.Name && (e.restoreActive() || e.openRestoreIssue(ctx, b.Name, GuestMissingID)) {
+				e.setForeign(b.Ref, true)
+				if err := e.guestMissing(ctx, b, false); err != nil {
+					errs = append(errs, err)
+				}
+				continue
+			}
+			e.setForeign(b.Ref, false)
+			if err := e.restoreIssue(ctx, b.Name, GuestMissingID, wire.StatusUnchanged, nil); err != nil {
+				errs = append(errs, err)
+			}
+			if err := e.checkSilent(ctx, b.Name, observed, restored); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		if pollKey(observed) == b.Digest && len(b.Waiting) == 0 {
 			continue

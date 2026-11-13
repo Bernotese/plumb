@@ -227,6 +227,10 @@ func (s *Server) Handler() http.Handler {
 
 	route("GET /api/v1/events", read, s.events)
 
+	route("GET /api/v1/restore", read, s.getRestore)
+	route("POST /api/v1/restore/confirm", human, s.confirmRestore)
+	route("POST /api/v1/tokens/{id}/enable", human, s.enableToken)
+
 	route("GET /api/v1/backups", read, s.listBackups)
 	route("POST /api/v1/backups", apply, s.createBackup)
 
@@ -346,7 +350,9 @@ func (s *Server) authenticate(r *http.Request) (*principal, error) {
 				tok, want = t, t.Hash
 			}
 		}
-		if subtle.ConstantTimeCompare([]byte(sha256Hex(sec)), []byte(want)) != 1 || tok.ID == "" {
+		// A token that a restore disabled gets 401 until a person enables
+		// it (D-303); it counts like a bad bearer.
+		if subtle.ConstantTimeCompare([]byte(sha256Hex(sec)), []byte(want)) != 1 || tok.ID == "" || !tok.DisabledAt.IsZero() {
 			s.bearers.fail(pair)
 			s.bearerIP.fail(client)
 			return nil, nil
@@ -363,7 +369,7 @@ func (s *Server) authenticate(r *http.Request) (*principal, error) {
 		return nil, nil
 	}
 	u, err := s.st.UserByID(ctx, sess.UserID)
-	if err != nil {
+	if err != nil || !u.LockedAt.IsZero() {
 		return nil, nil
 	}
 	return &principal{name: "user:" + u.Name, tier: TierAdmin, user: &u, session: &sess, mustChange: u.MustChangePassword}, nil

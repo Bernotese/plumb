@@ -110,6 +110,27 @@ func (s *Store) LastBackupRun(ctx context.Context, trigger string) (BackupRun, e
 	return r, nil
 }
 
+// BackupRunIDs maps the file name of every good or running backup run
+// (the run that calls the retention is still running) to its id,
+// the order in which the backups were made.
+func (s *Store) BackupRunIDs(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, id FROM backup_run WHERE result IN ('ok', 'running')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var name string
+		var id int64
+		if err := rows.Scan(&name, &id); err != nil {
+			return nil, err
+		}
+		out[name] = id
+	}
+	return out, rows.Err()
+}
+
 // Snapshot writes a consistent copy of the database to path (VACUUM INTO,
 // D-302). path must not exist; the file gets mode 0600.
 func (s *Store) Snapshot(ctx context.Context, path string) error {

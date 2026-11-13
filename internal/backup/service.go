@@ -259,7 +259,7 @@ func (s *Service) newName() (string, error) {
 func (s *Service) finish(ctx context.Context, run store.BackupRun) store.BackupRun {
 	err := s.write(ctx, run.Name)
 	if err == nil {
-		if rerr := s.retain(); rerr != nil {
+		if rerr := s.retain(ctx); rerr != nil {
 			// The backup itself is good; the run still says what failed.
 			s.cfg.Logger.Warn("backup retention failed", "err", rerr)
 		}
@@ -449,13 +449,19 @@ func randHex() string {
 // file is one backup in the directory.
 type file struct {
 	name  string
+	run   int64     // id of its backup_run row; 0: no row (an older file)
 	mtime time.Time // when the file was written
 }
 
-// files lists the backups, newest first by the time the file was written,
-// not by the time in its name: after a clock step back a new backup has
-// an older name (review L3 of #220).
-func (s *Service) files() ([]file, error) {
+// files lists the backups, newest first by the order of their runs
+// (backup_run.id): neither the time in the name nor the file time
+// survives a clock step back (review L3 of #220). A file without a run
+// row sorts after them, by file time.
+func (s *Service) files(ctx context.Context) ([]file, error) {
+	runs, err := s.cfg.Store.BackupRunIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	ents, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, err
@@ -470,9 +476,21 @@ func (s *Service) files() ([]file, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, file{name: name, mtime: info.ModTime()})
+		out = append(out, file{name: name, run: runs[name], mtime: info.ModTime()})
 	}
 	slices.SortFunc(out, func(a, b file) int {
+		if a.run != b.run {
+			if a.run == 0 || b.run == 0 {
+				if a.run == 0 {
+					return 1
+				}
+				return -1
+			}
+			if a.run > b.run {
+				return -1
+			}
+			return 1
+		}
 		if c := b.mtime.Compare(a.mtime); c != 0 {
 			return c
 		}
@@ -496,8 +514,8 @@ func (s *Service) pointer() (Pointer, bool) {
 
 // retain keeps the newest Keep backups, scheduled and manual together,
 // and never removes the one that the pointer names.
-func (s *Service) retain() error {
-	list, err := s.files()
+func (s *Service) retain(ctx context.Context) error {
+	list, err := s.files(ctx)
 	if err != nil {
 		return err
 	}
@@ -526,8 +544,8 @@ type Item struct {
 
 // Items lists the backups, newest first. The hash comes from the sum
 // file; a backup without a good sum file is hashed now.
-func (s *Service) Items() ([]Item, error) {
-	list, err := s.files()
+func (s *Service) Items(ctx context.Context) ([]Item, error) {
+	list, err := s.files(ctx)
 	if err != nil {
 		return nil, err
 	}

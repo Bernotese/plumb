@@ -239,10 +239,21 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		}
 	}
 
+	// Restored mode (D-303): read before the link, the driver guard and
+	// the engine use it.
+	restore := &plan.RestoreMode{}
+	if err := restore.Load(ctx, st); err != nil {
+		return err
+	}
+	if restore.Active() {
+		log.Warn("restored mode: Plumb observes but changes nothing until a person confirms that the old controller is off (POST /restore/confirm)")
+	}
+
 	var eng *plan.Engine
 	var iss *issue.Service
 	lk, err := link.New(link.Config{
-		Dir: filepath.Join(f.data, "link"), Hosts: f.hosts, Store: st, Events: events, Logger: log,
+		Restored: restore.Active,
+		Dir:      filepath.Join(f.data, "link"), Hosts: f.hosts, Store: st, Events: events, Logger: log,
 		AgentBinary:  agentBinary(),
 		OnReport:     func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
 		Sensitive:    func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
@@ -259,8 +270,13 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 			log.Warn("LXC Images are off", "err", err)
 		}
 	}
+	// The second line of restored mode: no Proxmox write (D-303).
+	// rawDrv is the unwrapped driver, for the dev agents of the fake one.
+	rawDrv := drv
+	drv = driver.ReadOnlyWhen(drv, restore.Active)
 	eng, err = plan.New(plan.Config{
-		Store: st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
+		Restore: restore,
+		Store:   st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
 		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
 		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 		AddrStable: devAddrStable(f.devDemo), DiskLimitPercent: limit,
@@ -330,8 +346,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	errc := make(chan error, 2) // one send each: agent listener, API listener
 	goBG(func() { errc <- lk.Serve(ctx, f.agentListen) })
 	goBG(func() { eng.PollGuests(ctx, time.Minute) })
-	goBG(func() { eng.RunSchedules(ctx, time.Minute) })         // scheduled image builds (T-063)
-	goBG(func() { backups.RunSchedule(ctx, time.Minute, nil) }) // daily backup (T-112)
+	goBG(func() { eng.RunSchedules(ctx, time.Minute) })                    // scheduled image builds (T-063)
+	goBG(func() { backups.RunSchedule(ctx, time.Minute, restore.Active) }) // daily backup (T-112); waits in restored mode
 
 	ln, err := net.Listen("tcp", f.listen)
 	if err != nil {
@@ -383,7 +399,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		// The simulated agents stop before runServer returns and the store
 		// closes (review T-024 m1).
 		actx, stop := context.WithCancel(ctx)
-		agents := newDevAgents(st, lk, drv.(*fake.Driver), log)
+		agents := newDevAgents(st, lk, rawDrv.(*fake.Driver), log)
 		agentsDone := make(chan struct{})
 		go func() { agents.run(actx, events); close(agentsDone) }()
 		defer func() { stop(); <-agentsDone }()

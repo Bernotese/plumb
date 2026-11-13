@@ -14,6 +14,8 @@ type User struct {
 	PasswordHash       string // argon2id PHC string
 	MustChangePassword bool
 	CreatedAt          time.Time
+	// LockedAt: a restore locked the user (D-303); zero when not locked.
+	LockedAt time.Time
 }
 
 // ErrExists is returned when a unique row exists already.
@@ -46,27 +48,31 @@ func (s *Store) CreateUser(ctx context.Context, u User) (User, error) {
 func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var created string
-	err := row.Scan(&u.ID, &u.Name, &u.PasswordHash, &u.MustChangePassword, &created)
+	var locked sql.NullString
+	err := row.Scan(&u.ID, &u.Name, &u.PasswordHash, &u.MustChangePassword, &created, &locked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
 	if err != nil {
 		return User{}, err
 	}
-	u.CreatedAt, err = parseTime(created)
+	if u.CreatedAt, err = parseTime(created); err != nil {
+		return User{}, err
+	}
+	u.LockedAt, err = nullTime(locked)
 	return u, err
 }
 
 // UserByName returns a user.
 func (s *Store) UserByName(ctx context.Context, name string) (User, error) {
 	return scanUser(s.db.QueryRowContext(ctx,
-		`SELECT id, name, password_hash, must_change_password, created_at FROM user WHERE name = ?`, name))
+		`SELECT id, name, password_hash, must_change_password, created_at, locked_at FROM user WHERE name = ?`, name))
 }
 
 // UserByID returns a user.
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	return scanUser(s.db.QueryRowContext(ctx,
-		`SELECT id, name, password_hash, must_change_password, created_at FROM user WHERE id = ?`, id))
+		`SELECT id, name, password_hash, must_change_password, created_at, locked_at FROM user WHERE id = ?`, id))
 }
 
 // SetPassword stores a new password hash, clears must_change_password and
@@ -138,6 +144,8 @@ type Token struct {
 	CreatedAt  time.Time
 	LastUsedAt time.Time
 	RevokedAt  time.Time
+	// DisabledAt: a restore disabled the token (D-303); zero when enabled.
+	DisabledAt time.Time
 }
 
 // CreateToken stores a token. The database refuses a max_risk for a tier
@@ -158,13 +166,13 @@ func (s *Store) CreateToken(ctx context.Context, t Token) (Token, error) {
 	return t, nil
 }
 
-const tokenCols = `rowid, id, name, hash, tier, COALESCE(max_risk, ''), created_by, created_at, last_used_at, revoked_at`
+const tokenCols = `rowid, id, name, hash, tier, COALESCE(max_risk, ''), created_by, created_at, last_used_at, revoked_at, disabled_at`
 
 func scanToken(row interface{ Scan(...any) error }) (Token, error) {
 	var t Token
 	var created string
-	var lastUsed, revoked sql.NullString
-	err := row.Scan(&t.Seq, &t.ID, &t.Name, &t.Hash, &t.Tier, &t.MaxRisk, &t.CreatedBy, &created, &lastUsed, &revoked)
+	var lastUsed, revoked, disabled sql.NullString
+	err := row.Scan(&t.Seq, &t.ID, &t.Name, &t.Hash, &t.Tier, &t.MaxRisk, &t.CreatedBy, &created, &lastUsed, &revoked, &disabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Token{}, ErrNotFound
 	}
@@ -177,7 +185,10 @@ func scanToken(row interface{ Scan(...any) error }) (Token, error) {
 	if t.LastUsedAt, err = nullTime(lastUsed); err != nil {
 		return Token{}, err
 	}
-	t.RevokedAt, err = nullTime(revoked)
+	if t.RevokedAt, err = nullTime(revoked); err != nil {
+		return Token{}, err
+	}
+	t.DisabledAt, err = nullTime(disabled)
 	return t, err
 }
 

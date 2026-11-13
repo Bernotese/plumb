@@ -320,7 +320,7 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	v := issueView{ID: i.ID, Target: i.Target, Resource: i.Resource, Status: i.Status, Risk: wire.MaxRisk(ch),
 		OpenedAt: i.OpenedAt.UTC(), UpdatedAt: i.UpdatedAt.UTC(), Changes: changes(ch), Actions: []string{},
 		PlanID: nullID(i.PlanID), Comments: []commentView{}}
-	if i.Status == store.IssueOpen && i.Resource == wire.GuestAddressID {
+	if i.Status == store.IssueOpen && issue.IgnoreOnly(i.Resource) {
 		// ip is create-only: Plumb can neither revert nor accept (D-215).
 		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
 	} else if i.Status == store.IssueOpen {

@@ -15,6 +15,9 @@ import (
 
 // POST /images/{name}/build: a Plan of origin build (D-199).
 func (s *Server) buildImage(w http.ResponseWriter, r *http.Request, p *principal) {
+	if s.restoredMode(w) {
+		return
+	}
 	var req reasonRequest
 	if !decode(w, r, &req, true) {
 		return

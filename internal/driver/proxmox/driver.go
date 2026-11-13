@@ -183,6 +183,23 @@ const (
 	typeCT = "lxc"
 )
 
+// ListGuests implements driver.Driver: the pool list, read only.
+func (d *Driver) ListGuests(ctx context.Context) ([]driver.PoolGuest, error) {
+	ms, err := d.guests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]driver.PoolGuest, 0, len(ms))
+	for _, m := range ms {
+		kind := wire.KindVM
+		if m.Type == typeCT {
+			kind = wire.KindLXC
+		}
+		out = append(out, driver.PoolGuest{ID: driver.GuestID(strconv.Itoa(m.VMID)), Name: m.Name, Kind: kind, Template: m.Template == 1})
+	}
+	return out, nil
+}
+
 // members lists the qemu guests in the pool.
 func (d *Driver) members(ctx context.Context) ([]member, error) {
 	all, err := d.guests(ctx)

@@ -64,7 +64,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, _ *principal) {
 		tooMany(w, time.Second)
 		return
 	}
-	if !good || err != nil {
+	// A user that a restore locked cannot log in (D-303).
+	if !good || err != nil || !u.LockedAt.IsZero() {
 		s.loginPair.fail(pair)
 		s.loginIP.fail(ip)
 		if err == nil { // only real users get a user key (review m4)
