@@ -30,7 +30,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-105 service stopped + enabled with an absent unit: the Plan now shows the enable (follow-up of T-103) | pl-codex-fix | merged (PR #205) |
 | T-106 second short host run (2026-11-13): controller on main e909458; T-102 (75 s lost link), T-103, T-104, T-105 passed on the real host; finding F3 → T-108; host clean | pl-backend | done (log PR #207) |
 | T-108 a short link drop (30 s) during an agent update no longer fails the Run with a false "old binary" (T-106 F3) | pl-backend | merged (PR #209, D-297, D-298); CI test replays the host timeline |
-| T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **approved by the user 2026-11-13** (all 6 recommendations; D-287 … D-296 accepted; plan PR #206). No new token right. Child cards T-110 … T-122 |
+| T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **Done 2026-11-13.** All cards T-110 … T-137 are on main (63790b7); real-host acceptance T-122 passed (restore proven on the third try, after the fixes T-130 and T-132). No new token right. The test controller runs bf42f61 (before T-133 … T-137; none of them was re-run on the host). Left for later: user management (no way to make a second user), `network` and more NICs, guest adoption |
 | T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | both merged (PR #211, D-299 … D-301; PR #214, D-302 … D-304, D-311: a restore sets a new admin password) |
 | T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | T-116 merged (PR #213, D-305 … D-307; CI guest job with unprivileged LXC + VM); T-112 merged (PR #220, D-315 … D-317); T-113 merged (PR #222, D-318 … D-320; three review rounds) |
 | T-126 restore follow-ups: one-time password for locked users (human only), renamed guests, durable mark for a foreign guest on a reused VMID (never deleted) | pl-backend | merged (PR #224, D-321, D-322; three review rounds) |
@@ -46,9 +46,9 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-130 `--restore` failed on every host: the installer put the backup into the data dir (T-122 F5). Now a dir of its own; a test runs the real `plumb` on the installer layout | pl-backend | merged (PR #231); main build green after it (24eb562) |
 | T-132 installer: `pct exec` without a tty, bounded wait for the boot of the LXC, checksum check after a failed push (T-122 F7); complete dry-run of a restore rerun (F6) | pl-backend | merged (PR #233) |
 | T-134 host-run findings F8, F9; also: a schema error never repeats a rejected value (a pasted private key came back in the 422) | pl-backend | merged (PR #236, D-325) |
-| T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | PR #237, review passed |
+| T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | merged (PR #237) |
 | T-136 CI: install tests run in parallel, each script run bounded; "lint, test, build" needs 8 min of 15 (was 11.7–13.6, cancelled on slow runners) | pl-backend | merged (PR #239) |
-| T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | PR #238, review passed |
+| T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | merged (PR #238) |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-131 screenshots for the README: 7 pictures of the dev demo (light theme, 52–132 KB), each checked by pl-reviewer and pl-lead; demo data on the documentation range | pl-frontend | merged (PR #232) |
@@ -120,6 +120,7 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
+- **Next slice?** Slice 5 needs a plan and the user's approval first. Candidates: user management, `network` + more NICs (new ACL per bridge), guest adoption, signed image checksums, MCP / AI help.
 - **First release?** The release workflow is ready (T-124). It runs only when the user says yes and names the version. pl-lead recommends: after the slice 4 acceptance run.
 - Slice 4, user question 1: a real install needs the name of the backup storage from the user (`--backup-storage`). For the test host pl-lead proposes one (T-122).
 - Guests made before slice 3 need one manual root command per guest so that their agent can update itself (`docs/ARCHITECTURE.md` §5).
