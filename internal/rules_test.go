@@ -23,7 +23,7 @@ const module = "github.com/Bernotese/plumb"
 // A new package or a new arrow needs a change of ARCHITECTURE §2 first.
 var mayImport = map[string][]string{
 	"api":      {"plan", "issue", "state", "secret", "event", "store", "backup"},
-	"plan":     {"state", "link", "driver", "secret", "event", "store"},
+	"plan":     {"state", "link", "driver", "secret", "event", "store", "trust"},
 	"issue":    {"plan", "state", "event", "store"},
 	"state":    {"resource", "store"},
 	"link":     {"event", "store"},
@@ -35,6 +35,7 @@ var mayImport = map[string][]string{
 	"agent":    {"resource"},
 	"wire":     {},
 	"backup":   {"secret", "event", "store"},
+	"trust":    {},
 }
 
 // cmdMayImport lists what each binary may link. The agent binary must stay
@@ -52,7 +53,8 @@ var directDeps = []string{
 	"github.com/santhosh-tekuri/jsonschema/",
 	"golang.org/x/crypto",
 	"golang.org/x/sys",
-	"github.com/klauspost/compress", // zstd decoder only, internal/driver/proxmox/ctpack (D-225)
+	"github.com/klauspost/compress",   // zstd decoder only, internal/driver/proxmox/ctpack (D-225)
+	"github.com/ProtonMail/go-crypto", // detached-signature verify only, internal/trust (D-336)
 }
 
 // imports returns the import paths of all non-test Go files below dir,

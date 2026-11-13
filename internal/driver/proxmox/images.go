@@ -95,7 +95,7 @@ func isVersionOf(description, image string, version int, digest string) bool {
 
 // isBaseOf checks the description lines of a base template (FetchImage).
 func isBaseOf(description, image, sum string) bool {
-	return hasLine(description, baseOwner+image) && hasLine(description, "sha256="+sum)
+	return hasLine(description, baseOwner+image) && hasLine(description, pinLine(sum))
 }
 
 // --- CreateBuild ---
@@ -624,8 +624,8 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 			}
 			obj.Kind, obj.Version, obj.Digest = driver.ImageVersionTemplate, n, dg
 		} else {
-			sum := lineValue(desc, "sha256=")
-			if !sha256Hex.MatchString(sum) || sum[:12] != sm[1] || !isBaseOf(desc, image, sum) {
+			sum := pinOf(desc)
+			if sum == "" || sum[:12] != sm[1] || !isBaseOf(desc, image, sum) {
 				continue
 			}
 			obj.Kind, obj.Digest = driver.ImageBaseTemplate, sum
@@ -681,7 +681,7 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 	if err := checkImageName(obj.Image); err != nil {
 		return err
 	}
-	if !sha256Hex.MatchString(obj.Digest) {
+	if !sha256Hex.MatchString(obj.Digest) && (obj.Kind != driver.ImageBaseTemplate || !sha512Hex.MatchString(obj.Digest)) {
 		return fmt.Errorf("proxmox: %s: RemoveImage needs the full digest or checksum", obj.Name)
 	}
 	var want string
@@ -730,7 +730,7 @@ func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error 
 	case obj.Kind == driver.ImageVersionTemplate && !isVersionOf(desc, obj.Image, obj.Version, obj.Digest):
 		return fmt.Errorf("proxmox: template %d does not name image %s v%d with build=%s in its description; not removed", id, obj.Image, obj.Version, obj.Digest)
 	case obj.Kind == driver.ImageBaseTemplate && !isBaseOf(desc, obj.Image, obj.Digest):
-		return fmt.Errorf("proxmox: template %d does not name image %s with sha256=%s in its description; not removed", id, obj.Image, obj.Digest)
+		return fmt.Errorf("proxmox: template %d does not name image %s with %s in its description; not removed", id, obj.Image, pinLine(obj.Digest))
 	}
 	if linked := scan.linkedClones(id); len(linked) > 0 {
 		return driver.InUse("proxmox: template %s (VMID %d) has linked clones in the pool (VMIDs %v); Proxmox would delete it under them: remove them or make them full clones first", want, id, linked)

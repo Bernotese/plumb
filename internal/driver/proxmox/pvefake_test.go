@@ -541,7 +541,8 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if op == "download-url" && r.Method == "POST" {
 			p := r.Form
-			if p.Get("content") != "import" || p.Get("checksum-algorithm") != "sha256" || len(p.Get("checksum")) != 64 ||
+			if p.Get("content") != "import" || !(p.Get("checksum-algorithm") == "sha256" && len(p.Get("checksum")) == 64 ||
+				p.Get("checksum-algorithm") == "sha512" && len(p.Get("checksum")) == 128) ||
 				!strings.HasSuffix(p.Get("filename"), ".qcow2") || !strings.HasPrefix(p.Get("url"), "https://") {
 				fail(w, 400, "Parameter verification failed.", map[string]string{"download-url": "bad parameters"})
 				return
