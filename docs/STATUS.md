@@ -39,7 +39,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-118 web slice 4 · T-119 starter Block `firewall` | pl-frontend | T-118 in work (filter, raw mode, power/tags/disk done locally; backups wait for T-110) |
 | T-120 QA slice 4 | pl-codex-qa | per card |
 | T-122 slice 4 real-host acceptance | pl-backend | last |
-| T-123 `README.md` for users (user order 2026-11-13; no development docs; backup part after slice 4) | pl-frontend | in work |
+| T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
+| T-124 GitHub releases with ready binaries and checksums: prepare only; **a release needs the user's own yes** | pl-codex-qa | in work |
 | T-109 flaky `TestAgentUpdateCommand` (test asserted too early; product safe) | pl-codex-qa | merged (PR #208) |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
