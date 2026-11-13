@@ -44,7 +44,8 @@
   );
 
   // D-296: Accept on a Block resource makes it a raw resource of the Target.
-  const raw = $derived(issue ? offersRaw(issue.resource) : false);
+  // `raw` and `source` come from the server (D-301); an older one sends neither.
+  const raw = $derived(issue ? (issue.raw ?? offersRaw(issue.resource)) : false);
 
   const changedAttrs = $derived([...new Set(issue?.changes.map((c) => c.attr) ?? [])]);
   const canIgnore = $derived(
@@ -189,9 +190,12 @@
           {/if}
         </div>
         {#if raw && issue.actions.includes("accept") && !hidden}<p class="muted" id="raw-help">
-            Accept as raw keeps the guest value for this Target only. The Block does not set these
-            attributes on it any more. The Target page lists it under "Raw resources", where you can
-            edit it or go back to the Block.
+            Accept as raw keeps the guest value for this Target only.
+            {#if issue.source}The Block <span class="mono">{issue.source.block}</span>
+              {#if issue.source.use !== issue.source.block}(use
+                <span class="mono">{issue.source.use}</span>){/if} does not set these attributes on it
+              any more.{:else}The Block does not set these attributes on it any more.{/if} The Target
+            page lists it under "Raw resources", where you can edit it or go back to the Block.
           </p>{/if}
         <p class="muted">
           {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a

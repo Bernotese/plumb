@@ -125,6 +125,24 @@ const keyAttr: Record<string, string> = {
   symlink: "path",
 };
 
+/** The Block use that renders a resource, or null (D-301: Issue.source, RawResource.source). */
+export function sourceOf(
+  spec: TargetDoc["spec"],
+  blocks: Map<string, BlockDoc>,
+  resource: string,
+): { block: string; use: string } | null {
+  if (resource.startsWith("guest:") || resource.startsWith("agent:")) return null;
+  for (const u of spec.blocks ?? []) {
+    try {
+      const ids = render({ ...spec, blocks: [u], overrides: {} }, blocks).map((r) => r.id);
+      if (ids.includes(resource)) return { block: u.use, use: u.id ?? u.use };
+    } catch {
+      // A use alone can fail its `after` check; it is then not the source.
+    }
+  }
+  return null;
+}
+
 /**
  * Renders the Blocks of a Target into a flat resource list: Blocks, the
  * `restarts`, overrides, the `after` check (D-168, D-172).
@@ -254,7 +272,33 @@ export function planTarget(
           ],
         });
       }
-      changes.push({ attr, from: og[attr], to: g[attr], risk: "disruptive" });
+      // D-291, D-299: the disk only grows (a grow cannot be undone).
+      if (attr === "disk" && Number(g[attr]) < Number(og[attr])) {
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [
+            {
+              pointer: `/put/0/spec/guest/disk`,
+              message: `disk can only grow: ${String(og[attr])} GiB now, ${String(g[attr])} GiB asked.`,
+            },
+          ],
+        });
+      }
+      // A start and a tag change are reversible; a stop and a grow are disruptive.
+      const risk: Risk =
+        attr === "tags" || (attr === "power" && g[attr] !== "stopped")
+          ? "reversible"
+          : "disruptive";
+      changes.push({ attr, from: og[attr], to: g[attr], risk });
+    }
+    if (g["power"] === "stopped" && next.allow_restart !== true) {
+      throw problem("validation", "Validation failed", 422, undefined, {
+        errors: [
+          {
+            pointer: `/put/0/spec/guest/power`,
+            message: "power: stopped needs allow_restart (D-291).",
+          },
+        ],
+      });
     }
     // T-056 (D-194), for a running VM: off, cores and memory wait; on, the
     // Plan has the restart. A stopped VM takes them at its next start. The
@@ -574,6 +618,23 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   // example undone; revision 5 is a seed with the old memory of db1 (the
   // reason of revision 6). An older base is the empty state (from: null).
   type Snapshot = Map<string, StateDocument>;
+
+  // D-301: raw resources of a Target and the raw offer of an Issue.
+  const withRaw = (t: TargetView): TargetView => ({
+    ...t,
+    raw: Object.entries(t.document.spec.overrides ?? {})
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([resource, o]) => ({
+        resource,
+        attrs: Object.keys(o ?? {}).sort(),
+        source: sourceOf(t.document.spec, blocks, resource),
+      })),
+  });
+  const withSource = (i: Issue): Issue => {
+    const t = targets.get(i.target);
+    const source = t ? sourceOf(t.document.spec, blocks, i.resource) : null;
+    return { ...i, source, raw: source !== null && i.actions.includes("accept") };
+  };
   const docKey = (d: { kind: string; name: string }) => `${d.kind}/${d.name}`;
   const headDocs: Snapshot = new Map();
   for (const d of [
@@ -1516,13 +1577,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async listTargets() {
       auth();
-      return structuredClone([...targets.values()]);
+      return structuredClone([...targets.values()].map(withRaw));
     },
     async getTarget(name) {
       auth();
       const t = targets.get(name);
       if (!t) throw new ApiError(example("getTarget", 404));
-      return structuredClone(t);
+      return structuredClone(withRaw(t));
     },
     async createPlan(proposal: Proposal) {
       auth();
@@ -1841,13 +1902,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           (!filter?.target || i.target === filter.target) &&
           (!filter?.status || i.status === filter.status),
       );
-      return structuredClone(list.sort((a, b) => b.id - a.id));
+      return structuredClone(list.sort((a, b) => b.id - a.id).map(withSource));
     },
     async getIssue(id) {
       auth();
       const i = issues.get(id);
       if (!i) throw new ApiError(example("getIssue", 404));
-      return structuredClone(i);
+      return structuredClone(withSource(i));
     },
     async resolveIssue(id, action, reason, rule) {
       auth();

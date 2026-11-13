@@ -18,6 +18,7 @@ describe("raw resources on the Target page", () => {
     const card = text(el('section[aria-labelledby="raw-title"]'));
     expect(card).toContain("file:/etc/motd");
     expect(card).toContain("content");
+    expect(text(el("#raw-file-etc-motd-source"))).toBe("From the Block motd.");
     expect(el("#raw-file-etc-motd-value").textContent).toBe(
       "Maintenance window: Sunday 02:00 UTC\n",
     );
@@ -84,6 +85,9 @@ describe("raw mode on an Issue", () => {
       status: "open",
       plan_id: null,
       actions: ["accept", "revert"],
+      ...(resource.startsWith("guest:")
+        ? { source: null, raw: false }
+        : { source: { block: "motd", use: "motd" }, raw: true }),
     });
     return api;
   };
@@ -93,6 +97,7 @@ describe("raw mode on an Issue", () => {
     await until(() => text().includes("Resolve"));
     expect(button("Accept as raw for this Target")).toBeDefined();
     expect(text(el("#raw-help"))).toContain('lists it under "Raw resources"');
+    expect(text(el("#raw-help"))).toContain("The Block motd does not set these attributes");
   });
 
   it("keeps the plain Accept for the guest config", async () => {
@@ -100,5 +105,25 @@ describe("raw mode on an Issue", () => {
     await until(() => text().includes("Resolve"));
     expect(button("Accept: keep the guest value")).toBeDefined();
     expect(document.querySelector("#raw-help")).toBeNull();
+  });
+});
+
+describe("raw mode with an older controller", () => {
+  it("falls back to the resource id when Issue.raw is missing", async () => {
+    const api = adminApi();
+    const issue = await api.getIssue(7);
+    const old: Partial<typeof issue> = { ...issue };
+    delete old.raw;
+    delete old.source;
+    vi.spyOn(api, "getIssue").mockResolvedValue({
+      ...(old as typeof issue),
+      status: "open",
+      plan_id: null,
+      actions: ["accept", "revert"],
+    });
+    show(IssueView, { api, id: 7 });
+    await until(() => text().includes("Resolve"));
+    expect(button("Accept as raw for this Target")).toBeDefined();
+    expect(text(el("#raw-help"))).toContain("The Block does not set these attributes");
   });
 });

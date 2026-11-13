@@ -51,3 +51,9 @@ describe("offersRaw", () => {
     expect(offersRaw("guest:address")).toBe(false);
   });
 });
+
+describe("offersRaw for agent resources", () => {
+  it("does not offer raw mode for agent:*", () => {
+    expect(offersRaw("agent:silent")).toBe(false);
+  });
+});

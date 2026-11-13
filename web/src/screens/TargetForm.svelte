@@ -106,9 +106,18 @@
   // The schema texts speak of VMs and cloud-init; a container field gets
   // its own help (review N1 of #165).
   const LXC_FIELD_HELP: Record<string, string> = {
-    disk: "GiB: the size of the root file system, at least 2. Create-only.",
+    disk: "GiB: the size of the root file system, at least 2. Grow only: a grow cannot be undone.",
     ip: "dhcp or an IPv4 address in CIDR form. Create-only. Proxmox writes it into the container at every start.",
     ssh_keys: "Public keys for root; a container has no bootstrap user (D-226). Create-only.",
+  };
+
+  // Slice 4 fields (D-291, D-299): short help for people; the schema texts
+  // are written for the contract.
+  const DAY2_HELP: Record<string, string> = {
+    disk: "GiB. Grow only: a grow cannot be undone. The guest must run.",
+    power:
+      "running or stopped. (none): Plumb does not start or stop the guest. A stop needs the restart setting below.",
+    tags: "Proxmox tags, lower case. Plumb keeps exactly these. No entries on a new Target: Plumb does not touch the tags.",
   };
 
   // The type follows the Image (T-038 §8); a stored Target keeps its own.
@@ -132,17 +141,20 @@
       : 0,
   );
   const usesDeployUser = $derived(uses.some((u) => u.use === "deploy-user"));
+  const day2Fields = guestFields.map((f) =>
+    DAY2_HELP[f.name] ? { ...f, description: DAY2_HELP[f.name] } : f,
+  );
   // A container has no bootstrap user; its SSH keys go to root (D-226).
   const kindFields = $derived(
     kind === "lxc"
-      ? guestFields
+      ? day2Fields
           .filter((f) => f.name !== "user" && !(builtLxc && f.name === "ssh_keys"))
           .map((f) => {
             const description = LXC_FIELD_HELP[f.name];
             const label = f.name === "ssh_keys" ? "SSH keys for root" : f.label;
             return description ? { ...f, label, description } : { ...f, label };
           })
-      : guestFields,
+      : day2Fields,
   );
   // A container takes cores and memory live: no "Restart needed" (D-248).
   const waitingFrom = $derived(
@@ -226,6 +238,8 @@
             disk: 20,
             bridge: "vmbr0",
             ip: "dhcp",
+            // D-299: a new Target is managed as running; a stored one keeps "not managed".
+            power: "running",
           });
         }
         loaded = true;
@@ -262,6 +276,23 @@
         ...guestErrors,
         disk: `At least ${min} GiB: the template of image ${image} has ${min} GiB, and a disk cannot shrink.`,
       };
+    // D-291, D-299: the disk only grows; a stop needs allow_restart.
+    const storedDisk = existing?.document.spec.guest.disk;
+    if (
+      editing &&
+      storedDisk !== undefined &&
+      !guestErrors["disk"] &&
+      Number(guest["disk"]) < storedDisk
+    )
+      guestErrors = {
+        ...guestErrors,
+        disk: `A disk only grows: at least ${storedDisk} GiB, the size it has now.`,
+      };
+    if (guest["power"] === "stopped" && !allowRestart && !guestErrors["power"])
+      guestErrors = {
+        ...guestErrors,
+        power: `A stop needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below.`,
+      };
     const seen: string[] = [];
     for (const u of uses) {
       u.errors = validate(u.fields, u.values);
@@ -292,18 +323,22 @@
       );
       return;
     }
+    const guestSpec = mergeParams(
+      existing?.document.spec.guest ?? {},
+      // On an existing target the create-only fields keep their stored
+      // value: a schema default the form shows must not become a change.
+      editing
+        ? kindFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
+        : kindFields,
+      guest,
+    );
+    // D-299: a missing `tags` means "not managed"; an emptied list means "no tags".
+    if (existing?.document.spec.guest.tags !== undefined && guestSpec["tags"] === undefined)
+      guestSpec["tags"] = [];
     const spec: TargetSpec = {
       type: kind,
       image,
-      // On an existing target the create-only fields keep their stored
-      // value: a schema default the form shows must not become a change.
-      guest: mergeParams(
-        existing?.document.spec.guest ?? {},
-        editing
-          ? kindFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
-          : kindFields,
-        guest,
-      ) as TargetSpec["guest"],
+      guest: guestSpec as TargetSpec["guest"],
       blocks: uses.map((u) => ({
         use: u.use,
         ...(u.id.trim() ? { id: u.id.trim() } : {}),

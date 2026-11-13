@@ -10,6 +10,8 @@
   let { api, target }: { api: PlumbApi; target: TargetView } = $props();
 
   const rows = $derived(rawResources(target.document.spec));
+  // D-301: the server names the Block use of each raw resource.
+  const sourceOf = (id: string) => target.raw?.find((r) => r.resource === id)?.source ?? null;
   let editing = $state<string | null>(null);
   let draft = $state("");
   let reason = $state("");
@@ -61,8 +63,14 @@
   </p>
   {#each rows as r (r.id)}
     {@const s = slug(r.id)}
+    {@const src = sourceOf(r.id)}
     <article class="raw" aria-labelledby="raw-{s}-title">
       <h3 class="mono" id="raw-{s}-title">{r.id}</h3>
+      {#if src}<p class="muted" id="raw-{s}-source">
+          From the Block <span class="mono">{src.block}</span>{#if src.use !== src.block}, use <span
+              class="mono">{src.use}</span
+            >{/if}.
+        </p>{/if}
       {#if r.attrs.length}
         <dl class="facts">
           {#each r.attrs as a (a.name)}
@@ -130,6 +138,9 @@
     border-top: 1px solid var(--color-border);
     padding-top: var(--space-3);
     margin-bottom: var(--space-4);
+  }
+  .raw > p.muted {
+    margin: 0 0 var(--space-2);
   }
   .raw h3 {
     margin: 0 0 var(--space-2);

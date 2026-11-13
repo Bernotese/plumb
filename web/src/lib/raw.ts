@@ -49,7 +49,10 @@ export function withRaw(spec: TargetSpec, id: string, content: string | null): T
   return { ...spec, overrides };
 }
 
-/** An Issue on a resource that a Block renders offers raw mode (D-296). */
+/**
+ * The raw offer of an Issue from an older controller without `Issue.raw`
+ * (D-301): every resource that is not `guest:*` or `agent:*` comes from a Block.
+ */
 export function offersRaw(resource: string): boolean {
-  return !resource.startsWith("guest:");
+  return !resource.startsWith("guest:") && !resource.startsWith("agent:");
 }
