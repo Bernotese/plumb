@@ -17,6 +17,8 @@ A restored Plumb knows its guests again and changes nothing until a person confi
 - [ ] After the confirm: `guest:missing`, `agent:silent` (no hello in 10 min), unknown guests listed and never touched
 - [ ] Tests for each stopped writer and for the token/session rules; `make lint test build` green
 
+- [ ] Migration numbers: 0013 is T-116 (PR #213); T-112 takes 0014, T-113 takes 0015. The loader refuses gaps: merge main first
+
 ## Out of scope
 - Installer flags (T-114); adoption of guests
 - No new token right (D-081)

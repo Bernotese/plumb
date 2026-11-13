@@ -17,6 +17,8 @@ The controller writes a scheduled, encrypted backup of its whole state.
 - [ ] No secret, key or plain data in logs; the Proxmox token secret and the master key are not in the file
 - [ ] Tests incl. a wrong key, a cut file, a changed chunk; `make lint test build` green
 
+- [ ] Migration numbers: 0013 is T-116 (PR #213); T-112 takes 0014, T-113 takes 0015. The loader refuses gaps: merge main first
+
 ## Out of scope
 - Restore (T-113), installer (T-114)
 - No new token right (D-081)

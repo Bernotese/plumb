@@ -73,6 +73,7 @@ const maxCommandBytes = 16 << 20
 // client talks to the agent listener. It trusts only the pinned Plumb CA.
 type client struct {
 	base string
+	tr   *http.Transport
 	http *http.Client
 	dl   *http.Client // the binary download: same pin, a longer timeout
 }
@@ -92,6 +93,7 @@ func newClient(cfg Config, pollWait time.Duration) (*client, error) {
 	}
 	return &client{
 		base: strings.TrimSuffix(cfg.URL, "/"),
+		tr:   tr,
 		http: &http.Client{Transport: tr, Timeout: pollWait + 30*time.Second},
 		dl:   &http.Client{Transport: tr, Timeout: downloadTimeout},
 	}, nil
@@ -100,6 +102,11 @@ func newClient(cfg Config, pollWait time.Duration) (*client, error) {
 // do sends a JSON request. A non-nil out is filled from a 200 answer.
 // It returns the status code.
 func (c *client) do(ctx context.Context, method, path, cred string, in, out any) (int, error) {
+	return c.doWith(ctx, c.http, method, path, cred, in, out)
+}
+
+// doWith is do with another HTTP client.
+func (c *client) doWith(ctx context.Context, hc *http.Client, method, path, cred string, in, out any) (int, error) {
 	if brokenLink {
 		return 0, errBrokenLink
 	}
@@ -121,7 +128,7 @@ func (c *client) do(ctx context.Context, method, path, cred string, in, out any)
 	if cred != "" {
 		req.Header.Set("Authorization", "Bearer "+cred)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -183,6 +190,19 @@ func (c *client) report(ctx context.Context, cred string, r wire.Report) error {
 		r = wire.Report{Type: r.Type, CommandID: r.CommandID, Error: "report too large; items dropped"}
 	}
 	_, err := c.do(ctx, http.MethodPost, wire.PathReport, cred, r, nil)
+	return err
+}
+
+// confirm sends the confirm report of a safe apply (D-300) over a new TCP
+// and TLS connection: the round trip must prove the network after the
+// change, not an old connection that a new rule lets through
+// (established,related). Idle connections are closed first.
+func (c *client) confirm(ctx context.Context, cred string, r wire.Report, timeout time.Duration) error {
+	c.http.CloseIdleConnections()
+	tr := c.tr.Clone()
+	tr.DisableKeepAlives = true
+	defer tr.CloseIdleConnections()
+	_, err := c.doWith(ctx, &http.Client{Transport: tr, Timeout: timeout}, http.MethodPost, wire.PathReport, cred, r, nil)
 	return err
 }
 

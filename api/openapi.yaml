@@ -3344,6 +3344,7 @@ components:
         guest in Proxmox), `tags` (someone changed the tags) and `disk` (someone grew the disk in
         Proxmox). For a disk that is bigger than desired, `revert` is not in `actions` (Proxmox
         cannot shrink): `accept` takes the bigger size into the Target, or ignore it.
+
         After a restore (D-290, D-303), `system` opens two kinds. `guest:missing`: the Target is
         bound to a guest that Proxmox no longer has (it was deleted after the backup). One change
         `{attr: guest_id, from: null, to: "<the bound VMID>", risk: destructive}`. Plumb never

@@ -277,6 +277,17 @@ func (s *stepper) set(ctx context.Context, resource string, status wire.Status, 
 		map[string]any{"target": s.target, "resource": resource, "status": status, "action": wire.ActionOf(changes)})
 }
 
+// rolledBack marks a failed step of a safe apply as rolled back (D-300).
+func (s *stepper) rolledBack(ctx context.Context, resource string) {
+	seq, known := s.seq[resource]
+	if !known {
+		return
+	}
+	if err := s.e.st.MarkStepRolledBack(context.WithoutCancel(ctx), s.run.ID, seq); err != nil {
+		s.e.log.Error("mark step rolled back", "err", err)
+	}
+}
+
 // failRest marks every step that did not finish as failed.
 func (s *stepper) failRest(ctx context.Context, output string) {
 	for res := range s.seq {
@@ -446,6 +457,9 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		})
 	for _, it := range rep.Items {
 		s.set(ctx, it.Resource, it.Status, it.Changes, it.Output)
+		if it.RolledBack && it.Status == wire.StatusFailed {
+			s.rolledBack(ctx, it.Resource)
+		}
 	}
 	if err != nil {
 		s.failRest(ctx, err.Error())

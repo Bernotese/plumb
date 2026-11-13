@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,7 +105,11 @@ type targetState struct {
 	queue       []wire.Command
 	wake        chan struct{}               // closed and replaced when a command is queued
 	outstanding map[string]wire.CommandType // command id → type, until its result
-	sensitive   map[string][]string         // resource id → sensitive attributes; a key means "known"
+	// safe lists, per apply command, its resources with safe apply
+	// (wire.SafeApplyTypes): a confirm report must name one (D-300).
+	// Only applies that have one are in it; it ends with the result.
+	safe      map[string][]string
+	sensitive map[string][]string // resource id → sensitive attributes; a key means "known"
 	// secrets holds the sensitive desired values that link sent, per
 	// resource. They are masked in Output and Error (defence in depth).
 	secrets  map[string][]string
@@ -250,7 +255,7 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 	l.mu.Lock()
 	if ts := l.target(target); ts != nil {
 		ts.lastPoll = time.Time{}
-		ts.outstanding = map[string]wire.CommandType{}
+		ts.resetOutstanding()
 		ts.agentID = revokedAgent
 		close(ts.wake) // waiting polls of the old agent end now (with 401)
 		ts.wake = make(chan struct{})
@@ -276,7 +281,7 @@ func (l *Link) Revoke(ctx context.Context, target string) error {
 	ts := l.target(target)
 	ts.agentID = revokedAgent
 	ts.queue = nil
-	ts.outstanding = map[string]wire.CommandType{}
+	ts.resetOutstanding()
 	ts.sensitive = map[string][]string{}
 	ts.secrets = map[string][]string{}
 	ts.lastPoll = time.Time{}
@@ -395,7 +400,7 @@ func (l *Link) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	l.mu.Lock()
 	ts := l.target(agent.Target)
-	ts.outstanding = map[string]wire.CommandType{}
+	ts.resetOutstanding()
 	ts.agentID = agent.ID
 	l.mu.Unlock()
 	l.emit(r.Context(), "target.status", agent.Target, "agent:"+agent.Target,
@@ -430,11 +435,24 @@ func (l *Link) current(ts *targetState, agentID string) bool {
 	return ts.agentID == agentID
 }
 
+// resetOutstanding forgets the commands that the agent took. The safe
+// lists of queued commands stay: a new agent polls them.
+func (ts *targetState) resetOutstanding() {
+	ts.outstanding = map[string]wire.CommandType{}
+	safe := map[string][]string{}
+	for _, c := range ts.queue {
+		if ids, ok := ts.safe[c.ID]; ok {
+			safe[c.ID] = ids
+		}
+	}
+	ts.safe = safe
+}
+
 // target returns the state of a target. The caller holds l.mu.
 func (l *Link) target(name string) *targetState {
 	ts, ok := l.targets[name]
 	if !ok {
-		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]wire.CommandType{},
+		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]wire.CommandType{}, safe: map[string][]string{},
 			sensitive: map[string][]string{}, secrets: map[string][]string{}}
 		l.targets[name] = ts
 	}
@@ -561,6 +579,9 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 			values = append(values, withValues[i].SecretValues...)
 		}
 		ts.secrets[res.ID] = values
+		if typ == wire.CommandApply && slices.Contains(wire.SafeApplyTypes, res.Type) {
+			ts.safe[id] = append(ts.safe[id], res.ID)
+		}
 	}
 	ts.queue = append(ts.queue, wire.Command{ID: id, Type: typ, Body: raw})
 	close(ts.wake)
@@ -622,6 +643,10 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateReport(rep, strings.HasPrefix(agent.Target, wire.BuildLinkPrefix)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if rep.Type == wire.ReportConfirm {
+		l.confirm(w, agent, rep)
 		return
 	}
 	// A bad address list in a Hello makes the list unknown; the Hello
@@ -698,6 +723,7 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		}
 		if rep.Type == wire.ReportResult {
 			delete(ts.outstanding, rep.CommandID)
+			delete(ts.safe, rep.CommandID)
 		}
 	}
 	// D-062: a change loses its values when the head revision, the sent
@@ -757,6 +783,28 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "try again")
 			return
 		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// confirm answers the round trip of a safe apply (D-300): 204 when the
+// command is an apply of this agent that has no result yet and the
+// resource is one of its safe-apply resources, else 409. It stores and
+// forwards nothing; the Run step stays running.
+func (l *Link) confirm(w http.ResponseWriter, agent store.Agent, rep wire.Report) {
+	l.mu.Lock()
+	ts := l.target(agent.Target)
+	if !l.current(ts, agent.ID) {
+		l.mu.Unlock()
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	open := ts.outstanding[rep.CommandID] == wire.CommandApply &&
+		slices.Contains(ts.safe[rep.CommandID], rep.Items[0].Resource)
+	l.mu.Unlock()
+	if !open {
+		writeError(w, http.StatusConflict, "no open apply with this resource")
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -862,6 +910,16 @@ func validateReport(rep wire.Report, build bool) error {
 				return errors.New("bad hello field")
 			}
 		}
+	case wire.ReportConfirm:
+		if rep.CommandID == "" || rep.Hello != nil || rep.Error != "" || len(rep.Items) != 1 {
+			return errors.New("confirm has command_id and one item")
+		}
+		it := rep.Items[0]
+		typ, _, _ := wire.SplitID(it.Resource)
+		if !slices.Contains(wire.SafeApplyTypes, typ) || it.Status != wire.StatusRunning ||
+			len(it.Changes) > 0 || it.Output != "" || it.RolledBack {
+			return errors.New("confirm item: a safe-apply resource, running, nothing else")
+		}
 	case wire.ReportAddrs:
 		if rep.CommandID != "" || rep.Hello != nil || len(rep.Items) > 0 || rep.Error != "" {
 			return errors.New("addrs has only the addrs fields")
@@ -899,6 +957,10 @@ func validateReport(rep wire.Report, build bool) error {
 		}
 		if !agentStatuses[it.Status] {
 			return fmt.Errorf("item %d: bad status %q", i, it.Status)
+		}
+		// rolled_back only on a failed safe apply (D-300).
+		if it.RolledBack && (it.Status != wire.StatusFailed || !slices.Contains(wire.SafeApplyTypes, typ)) {
+			return fmt.Errorf("item %d: rolled_back only on a failed safe-apply resource", i)
 		}
 		if len(it.Output) > maxOutput {
 			return fmt.Errorf("item %d: output too long", i)

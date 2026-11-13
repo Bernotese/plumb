@@ -64,6 +64,8 @@ type Step struct {
 	Output     string
 	StartedAt  time.Time
 	FinishedAt time.Time
+	// RolledBack: a safe apply put the confirmed state back (D-300).
+	RolledBack bool
 }
 
 // ErrPlanNotPending is returned when a Plan cannot be approved because it
@@ -360,10 +362,17 @@ func (s *Store) UpdateStep(ctx context.Context, runID, seq int64, status string,
 	return err
 }
 
+// MarkStepRolledBack records that a failed step of a safe apply put the
+// confirmed state back (D-300).
+func (s *Store) MarkStepRolledBack(ctx context.Context, runID, seq int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE run_step SET rolled_back = 1 WHERE run_id = ? AND seq = ? AND status = 'failed'`, runID, seq)
+	return err
+}
+
 // Steps returns the steps of a Run in order.
 func (s *Store) Steps(ctx context.Context, runID int64) ([]Step, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT run_id, seq, target, resource, status, changes, output, started_at, finished_at
+		`SELECT run_id, seq, target, resource, status, changes, output, started_at, finished_at, rolled_back
 		 FROM run_step WHERE run_id = ? ORDER BY seq`, runID)
 	if err != nil {
 		return nil, err
@@ -374,7 +383,7 @@ func (s *Store) Steps(ctx context.Context, runID int64) ([]Step, error) {
 		var st Step
 		var changes string
 		var started, finished sql.NullString
-		if err := rows.Scan(&st.RunID, &st.Seq, &st.Target, &st.Resource, &st.Status, &changes, &st.Output, &started, &finished); err != nil {
+		if err := rows.Scan(&st.RunID, &st.Seq, &st.Target, &st.Resource, &st.Status, &changes, &st.Output, &started, &finished, &st.RolledBack); err != nil {
 			return nil, err
 		}
 		st.Changes = json.RawMessage(changes)
