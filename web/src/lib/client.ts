@@ -37,6 +37,11 @@ export interface PlumbApi {
   listTargets(): Promise<TargetView[]>;
   getTarget(name: string): Promise<TargetView>;
   createPlan(proposal: Proposal): Promise<Plan>;
+  /**
+   * Proposes an agent update (origin `agent_update`, D-257). 409 `nothing-to-do` when the agent
+   * is current; 422 for `manual` or `unknown`.
+   */
+  updateTargetAgent(name: string, reason?: string): Promise<Plan>;
   /** Plans a re-enrollment of a target (D-038). 422 for a running VM with allow_restart off (D-194). */
   reenrollTarget(name: string, reason: string): Promise<Plan>;
   getPlan(id: number): Promise<Plan>;

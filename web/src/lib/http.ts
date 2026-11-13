@@ -140,6 +140,12 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     createPlan: (proposal) => call<Plan>("POST", "/plans", proposal),
     reenrollTarget: (name, reason) =>
       call<Plan>("POST", `/targets/${encodeURIComponent(name)}/reenroll`, reason ? { reason } : {}),
+    updateTargetAgent: (name, reason) =>
+      call<Plan>(
+        "POST",
+        `/targets/${encodeURIComponent(name)}/agent-update`,
+        reason ? { reason } : {},
+      ),
     getPlan: (id) => call<Plan>("GET", `/plans/${id}`),
     approvePlan: (id, comment) =>
       call<Run>("POST", `/plans/${id}/approve`, comment ? { comment } : {}),

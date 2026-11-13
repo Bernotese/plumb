@@ -31,6 +31,7 @@
     waitingSince,
   } from "../lib/view";
   import { smallestDisk } from "../lib/images";
+  import AgentCard from "../ui/AgentCard.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
@@ -353,6 +354,14 @@
     <p class="hint" id="addr-help">{REPORTED_TITLE}</p>
   </section>
 {/if}
+{#if existing?.status.agent_update === "required"}
+  <p class="banner danger" id="agent-required">
+    Plumb refuses every plan for this Target until its agent is updated.
+    <a href={href({ name: "target-agent", target: existing.document.name })}
+      >Update the agent of {existing.document.name}</a
+    >
+  </p>
+{/if}
 {#if existing?.status.ignored_drift?.length}
   {@const drift = existing.status.ignored_drift}
   <section class="card" aria-labelledby="ignored-title">
@@ -561,6 +570,7 @@
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
 {#if loaded && existing}
+  <AgentCard {api} target={existing} />
   <form class="card" onsubmit={reenroll} aria-labelledby="reenroll-title">
     <h2 id="reenroll-title">Re-enroll the agent</h2>
     <p>

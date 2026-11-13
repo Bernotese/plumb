@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { agentState } from "../lib/agent";
   import type { PlumbApi } from "../lib/client";
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
@@ -78,6 +79,7 @@
           {@const g = t.document.spec.guest}
           {@const since = waitingSince(t.status.waiting ?? [])}
           {@const reported = reportedAddrs(t.status)}
+          {@const agent = agentState(t.status)}
           <tr>
             <th scope="row">
               <a class="mono" href={href({ name: "target-edit", target: t.document.name })}
@@ -98,6 +100,13 @@
                   >waiting for {ageText(since)}</span
                 >{/if}{#if t.status.ignored_drift?.length}<span class="ignored"
                   >{t.status.ignored_drift.length} ignored by rule</span
+                >{/if}{#if t.status.agent_version || agent?.label}<span class="ignored agent"
+                  >agent <span class="mono">{t.status.agent_version ?? "?"}</span>{#if agent?.label}
+                    <a
+                      href={href({ name: "target-agent", target: t.document.name })}
+                      aria-label="Agent of {t.document.name}: {agent.label}"
+                      ><Badge tone={agent.tone} label={agent.label} /></a
+                    >{/if}</span
                 >{/if}</td
             >
             <td class="mono"

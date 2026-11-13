@@ -330,6 +330,44 @@ export function planTarget(
   return out;
 }
 
+/** The agent this mock controller serves (T-097). */
+export const MOCK_AGENT_VERSION = "v0.4.0";
+
+/**
+ * Agent versions and update states (D-257 … D-259): web1 can update,
+ * cache1 must (its state needs `unit`; its last update went back),
+ * backup1 is older than slice 3 (manual), every other agent is current.
+ */
+function seedAgents(targets: Map<string, TargetView>): void {
+  for (const t of targets.values()) {
+    const s = t.status;
+    const seen = s.agent !== "none";
+    Object.assign(s, {
+      agent_version: seen ? MOCK_AGENT_VERSION : null,
+      agent_update: seen ? "none" : "unknown",
+      agent_missing: [],
+      agent_reverted: null,
+    });
+  }
+  const set = (name: string, status: Partial<TargetView["status"]>) => {
+    const t = targets.get(name);
+    if (t) Object.assign(t.status, status);
+  };
+  set("web1", { agent_version: "v0.3.0", agent_update: "available" });
+  set("cache1", {
+    agent_version: "v0.3.0",
+    agent_update: "required",
+    agent_missing: ["unit"],
+    agent_reverted: {
+      from: "v0.3.0",
+      to: MOCK_AGENT_VERSION,
+      reason: "no-hello",
+      at: "2026-11-12T21:40:00Z",
+    },
+  });
+  set("backup1", { agent_version: "v0.2.0", agent_update: "manual" });
+}
+
 export function createMockApi(opts: MockOptions = {}): MockApi {
   const stepDelay = opts.stepDelayMs ?? 600;
   let session: Session | null = null;
@@ -359,6 +397,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   );
   seedTargets(targets);
   seedLxc(images, targets);
+  seedAgents(targets);
 
   // Slice 2 demo data that the examples of the list operations do not show
   // (D-140): the Block "app" with a secret parameter, as in the
@@ -1586,6 +1625,22 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
             ];
         planTargets.push({ target: name, ...(used.length ? { secrets: used } : {}), resources });
       }
+      // The gate (D-259): a Target whose agent lacks what its state needs.
+      const outdated = planTargets
+        .map((p) => targets.get(p.target))
+        .filter((t): t is TargetView => t?.status.agent_update === "required");
+      if (outdated.length) {
+        throw problem(
+          "agent-outdated",
+          "Agent too old",
+          409,
+          "update the agent first: the desired state needs what the agent does not know.",
+          {
+            targets: outdated.map((t) => t.document.name),
+            missing: [...new Set(outdated.flatMap((t) => t.status.agent_missing ?? []))].sort(),
+          },
+        );
+      }
       for (const d of [...(proposal.put ?? []), ...(proposal.delete ?? [])])
         if (d.kind === "Rule") humanOnly.add("rule-change");
       planTargets.forEach(markIgnored);
@@ -1683,6 +1738,19 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       emit("revision.committed", `revision:${head}`, { plan_id: p.id });
       const job = simulate(run, p, () => {
+        // T-097: the updated agent says hello with the served binary.
+        if (p.origin === "agent_update") {
+          for (const tp of p.targets) {
+            const t = targets.get(tp.target);
+            if (t)
+              Object.assign(t.status, {
+                agent_version: MOCK_AGENT_VERSION,
+                agent_update: "none",
+                agent_missing: [],
+                agent_reverted: null,
+              });
+          }
+        }
         applyImageDocs(proposal);
         for (const ref of proposal?.delete ?? [])
           if (ref.kind === "Target") targets.delete(ref.name);
@@ -1905,6 +1973,46 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         to: n,
         changes: diffDocs(before?.docs ?? new Map(), to.docs),
       };
+    },
+    async updateTargetAgent(name, reason) {
+      auth();
+      const t = targets.get(name);
+      if (!t) throw problem("not-found", "Not found", 404, `Target ${name} does not exist.`);
+      const u = t.status.agent_update;
+      if (u === "none") {
+        throw problem("nothing-to-do", "Nothing to do", 409, `The agent of ${name} is current.`);
+      }
+      if (u === "manual" || u === "unknown") {
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          u === "manual"
+            ? `The agent of ${name} is older than slice 3: run the one-time install in the guest.`
+            : `The agent of ${name} has not said hello yet.`,
+        );
+      }
+      return newPlan({
+        origin: "agent_update",
+        issue_id: null,
+        reason: reason || `update the agent of ${name}`,
+        targets: [
+          {
+            target: name,
+            resources: [
+              resourcePlan("agent:binary", "update", [
+                {
+                  attr: "version",
+                  from: t.status.agent_version,
+                  to: MOCK_AGENT_VERSION,
+                  risk: "disruptive",
+                },
+              ]),
+            ],
+          },
+        ],
+        warnings: [],
+      });
     },
     async reenrollTarget(name, reason) {
       auth();

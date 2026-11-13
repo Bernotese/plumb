@@ -62,6 +62,7 @@
     revert: "Revert drift of an issue",
     reenroll: "Re-enroll a target",
     build: "Image build (no document change)",
+    agent_update: "Agent update (no document change)",
   };
   const actionLabel = {
     create: "Create",
