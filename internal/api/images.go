@@ -111,7 +111,11 @@ func (s *Server) imageStatus(ctx context.Context, d store.DocRow) (*imageStatus,
 		if lxc {
 			unused, err = s.cfg.Plans.UnusedTemplateFiles(ctx, d.Name, doc.Spec.URL, doc.Spec.SHA512)
 		} else {
-			unused, err = s.cfg.Plans.UnusedImports(ctx, d.Name, doc.Spec.SHA256)
+			pin := doc.Spec.SHA256
+			if doc.Spec.SHA512 != "" { // a vm pin from a Debian list (D-345)
+				pin = doc.Spec.SHA512
+			}
+			unused, err = s.cfg.Plans.UnusedImports(ctx, d.Name, pin)
 		}
 		if err != nil {
 			s.log.Warn("image status: unused files", "image", d.Name, "err", err)

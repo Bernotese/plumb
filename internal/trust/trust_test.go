@@ -270,7 +270,7 @@ func TestParseSums(t *testing.T) {
 	}{
 		{h + "  x.img\n", nil},
 		{h + " *x.img\r\n", nil},
-		{h + " x.img\n", ErrFormat},       // one space, no mode char
+		{h + " x.img\n", ErrFormat}, // one space, no mode char
 		{"zz" + h[2:] + "  x.img\n", ErrFormat},
 		{h[:63] + "  x.img\n", ErrFormat},
 		{h + "  y.img\n", ErrNoEntry},

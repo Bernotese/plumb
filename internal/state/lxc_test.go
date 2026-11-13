@@ -39,7 +39,7 @@ func TestImageTypeRules(t *testing.T) {
 		{"lxc without pin", `{"type":"lxc","url":"` + ctURL + `"}`, "/spec", "needs sha512"},
 		{"lxc build disk", `{"type":"lxc","url":"` + ctURL + `","sha512":"` + sha512 + `"` + strings.Replace(build, `"disk":10`, `"disk":1`, 1) + `}`, "/spec/build/guest/disk", "at least 2 GiB"},
 		{"vm over http", `{"type":"vm","url":"http://example.org/x.img","sha256":"` + sha + `"}`, "/spec/url", "needs an https:// url"},
-		{"vm with sha512", `{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","sha512":"` + sha512 + `"}`, "/spec/sha512", "pins sha256, not sha512"},
+		{"vm with both pins", `{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","sha512":"` + sha512 + `"}`, "/spec/sha512", "not both (D-345)"},
 		{"vm without pin", `{"type":"vm","url":"https://example.org/x.img"}`, "/spec", "needs sha256"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
