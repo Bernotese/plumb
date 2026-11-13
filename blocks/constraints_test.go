@@ -106,6 +106,11 @@ func TestParametersRejectUnsafeValues(t *testing.T) {
 		{"nginx-site", "server_name", []any{"_; return 200;", "ok\ninjected", ""}},
 		{"nginx-site", "root", []any{"relative", "/var/www/../../etc", "/var/www/./x", "/a b", "/x;", "/x\ny"}},
 		{"nginx-site", "state", []any{"enabled"}},
+		{"firewall", "tcp_ports", []any{"80;drop", "80 443", "80,", "-80", "80\n", 80}},
+		{"firewall", "udp_ports", []any{"53;", "a"}},
+		{"firewall", "sources", []any{"10.0.0.0", "any", "10.0.0.0/8;", "10.0.0.0/8\n"}},
+		{"firewall", "ssh_port", []any{"0", "65536", "022", "22,23", "", 22}},
+		{"firewall", "ssh_sources", []any{"0.0.0.0", "x/8"}},
 	} {
 		t.Run(tc.block+"/"+tc.param, func(t *testing.T) {
 			raw, err := os.ReadFile(tc.block + ".yaml")

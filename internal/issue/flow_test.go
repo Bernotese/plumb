@@ -178,10 +178,17 @@ func TestOfflineAndCreateOnly(t *testing.T) {
 	if !errors.As(err, &pe) || !errors.Is(err, plan.ErrOffline) || pe.Target != "web2" || !strings.Contains(err.Error(), "offline") {
 		t.Errorf("offline target: %v", err)
 	}
-	// A create-only change is refused with a clear message.
+	// The disk grows only (D-299): a smaller disk is refused at save, and
+	// a grow of a VM needs an agent with the command grow.
+	_, err = e.eng.Propose(e.ctx, plan.Input{Proposal: plan.Proposal{Put: []state.Doc{target("web1", "hello web1", 5)}}, Author: "user:admin"})
+	var se state.Errors
+	if !errors.As(err, &se) || se[0].Path != "/spec/guest/disk" || !strings.Contains(err.Error(), "cannot shrink") {
+		t.Errorf("shrink: %v", err)
+	}
 	_, err = e.eng.Propose(e.ctx, plan.Input{Proposal: plan.Proposal{Put: []state.Doc{target("web1", "hello web1", 40)}}, Author: "user:admin"})
-	if !errors.Is(err, plan.ErrCreateOnly) || !strings.Contains(err.Error(), `"disk"`) || !strings.Contains(err.Error(), "40") {
-		t.Errorf("create-only: %v", err)
+	var ao *plan.AgentOutdatedError
+	if !errors.As(err, &ao) || len(ao.Missing) != 1 || ao.Missing[0] != "command:grow" {
+		t.Errorf("grow without the agent command: %v", err)
 	}
 	// An invalid document is refused before anything is observed.
 	_, err = e.eng.Propose(e.ctx, plan.Input{Proposal: plan.Proposal{Put: []state.Doc{doc(state.KindBlock, "motd", `{"resources":[]}`)}}, Author: "user:admin"})
@@ -388,12 +395,16 @@ func TestGuestDrift(t *testing.T) {
 	if got, _ := e.st.GetIssue(e.ctx, iss.ID); got.Status != store.IssueResolved {
 		t.Errorf("guest issue: %+v", got)
 	}
-	// A create-only change outside Plumb is drift too, with risk destructive.
+	// A disk grown outside Plumb is drift too, risk disruptive (D-299);
+	// no Plan shrinks it back.
 	e.drv.Tamper(driver.GuestID(b.Ref), func(s *driver.GuestSpec) { s.DiskGB = 50 })
 	e.eng.CheckGuests(e.ctx)
 	iss, _ = e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID)
-	if !strings.Contains(string(iss.Changes), `"disk"`) || !strings.Contains(string(iss.Changes), `"destructive"`) {
+	if !strings.Contains(string(iss.Changes), `"disk"`) || !strings.Contains(string(iss.Changes), `"disruptive"`) {
 		t.Errorf("disk drift: %s", iss.Changes)
+	}
+	if _, err := e.iss.Resolve(e.ctx, iss.ID, issue.ActionRevert, "user:admin"); !errors.Is(err, plan.ErrShrink) {
+		t.Errorf("revert of a grown disk: %v", err)
 	}
 }
 

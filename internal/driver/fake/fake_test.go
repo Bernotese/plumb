@@ -98,7 +98,9 @@ func TestUpdateRules(t *testing.T) {
 	ctx := context.Background()
 	d, id, _ := setup(t)
 	for name, c := range map[string]wire.Change{
-		"create-only":      {Attr: driver.AttrDisk, From: 20, To: 40, Risk: wire.RiskDestructive},
+		"create-only":      {Attr: driver.AttrIP, From: "dhcp", To: "10.0.0.2/24", Risk: wire.RiskDestructive},
+		"shrink":           {Attr: driver.AttrDisk, From: 20, To: 2, Risk: wire.RiskDisruptive},
+		"power":            {Attr: driver.AttrPower, From: "running", To: "stopped"},
 		"unknown":          {Attr: "vga", To: "std"},
 		"token with value": {Attr: driver.AttrEnrollToken, To: "secret", Sensitive: true},
 		"bad cores":        {Attr: driver.AttrCores, To: "four"},
@@ -261,5 +263,33 @@ func TestPendingModel(t *testing.T) {
 	}
 	if st, _ := d.Observe(ctx, id); st.Power != driver.PowerRunning {
 		t.Errorf("after the hook: %s", st.Power)
+	}
+}
+
+// Slice 4 (D-299): tags and a disk grow, also on a stopped guest.
+func TestUpdateDay2(t *testing.T) {
+	ctx := context.Background()
+	d, id, _ := setup(t)
+	if err := d.Power(ctx, id, driver.PowerStop); err != nil {
+		t.Fatal(err)
+	}
+	ch := []wire.Change{{Attr: driver.AttrTags, To: []any{"web", "Prod"}}, {Attr: driver.AttrDisk, From: 20, To: 30}}
+	if err := d.Update(ctx, id, ch, nil); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := d.Observe(ctx, id)
+	if st.Spec.DiskGB != 30 || len(st.Spec.Tags) != 2 || st.Spec.Tags[0] != "prod" || st.Pending != nil {
+		t.Errorf("after the update: %+v pending %+v", st.Spec, st.Pending)
+	}
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrTags, To: nil}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := d.Observe(ctx, id); st.Spec.Tags != nil {
+		t.Errorf("tags after a removal: %v", st.Spec.Tags)
+	}
+	refused := errors.New("403 Forbidden")
+	d.RefuseTags(refused)
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrTags, To: []string{"x"}}}, nil); !errors.Is(err, refused) {
+		t.Errorf("refused tags: %v", err)
 	}
 }

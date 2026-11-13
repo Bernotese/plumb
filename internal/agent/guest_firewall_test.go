@@ -304,6 +304,35 @@ func TestGuestFirewall(t *testing.T) {
 		t.Fatalf("boot unit:\n%s\nwant\n%s", got, confirmed)
 	}
 
+	// 6. The starter Block firewall (T-119), rendered by the controller's own
+	// code: package nftables, then the table with SSH and the listed port.
+	list := starterRender(t, []any{map[string]any{"use": "firewall", "params": map[string]any{"tcp_ports": "8081"}}}, nil)
+	if len(list) != 2 || list[0].ID != "package:nftables" || list[1].ID != "firewall:main" {
+		t.Fatalf("rendered: %+v", list)
+	}
+	id, err := ctl.Send("guest", wire.CommandApply, wire.ApplyBody{PlanID: 2, Resources: list,
+		Planned: unverified(list...), MaxRisk: wire.RiskDisruptive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep := result(id)
+	if rep.Error != "" || len(rep.Items) != 2 {
+		t.Fatalf("starter Block: %+v", rep)
+	}
+	for _, it := range rep.Items {
+		if it.Status != wire.StatusApplied && it.Status != wire.StatusUnchanged {
+			t.Fatalf("starter Block item: %+v", it)
+		}
+	}
+	waitReach("8081", true)
+	waitReach("8080", false)
+	// The boot file holds the confirmed rules in the form the agent writes.
+	boot, err = os.ReadFile(resource.FirewallBootFile)
+	if err != nil || !strings.Contains(string(boot), "tcp dport { 22 } accept") ||
+		!strings.Contains(string(boot), "tcp dport { 8081 } accept") {
+		t.Fatalf("starter Block boot file: %v\n%s", err, boot)
+	}
+
 	// 5. state absent: no table, no boot file, unit disabled.
 	if it := apply(map[string]any{"state": "absent"}); it.Status != wire.StatusApplied {
 		t.Fatalf("absent: %+v", it)
