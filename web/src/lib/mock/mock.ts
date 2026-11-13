@@ -32,6 +32,9 @@ import type {
   Session,
   StateDocument,
   Token,
+  BackupList,
+  BackupRun,
+  RestoreState,
   TokenCreated,
   TargetDoc,
   TargetView,
@@ -59,6 +62,8 @@ export interface MockOptions {
   firstLogin?: boolean;
   /** Start as an API token of tier `plan` (no access to the settings, T-035). */
   token?: boolean;
+  /** Start as a restored controller in restored mode (D-290, D-303). */
+  restored?: boolean;
 }
 
 export interface MockApi extends PlumbApi {
@@ -721,6 +726,31 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   // Tokens and secrets (T-035). The mock keeps secret values only to show
   // conflicts on import; the API never returns them.
   const tokens = new Map(exampleItems<Token>(example("listTokens", 200)).map((t) => [t.id, t]));
+
+  // T-118: backups and the restore state (D-288 … D-290, D-302 … D-304).
+  const backups: BackupList = structuredClone(example("listBackups", 200));
+  const restore: RestoreState = opts.restored
+    ? structuredClone(example("getRestore", 200))
+    : { restored: false, restored_mode: false };
+  if (opts.restored) {
+    let n = 0;
+    for (const t of tokens.values())
+      if (!t.revoked_at) {
+        t.disabled_at = restore.restored_at ?? now();
+        n++;
+      }
+    restore.disabled_tokens = n;
+  }
+  /** 409 `restored-mode` for the writers that wait for the confirm (D-303). */
+  function writable(): void {
+    if (restore.restored_mode)
+      throw problem(
+        "restored-mode",
+        "Restored mode",
+        409,
+        "This Plumb was restored from a backup. Confirm that the old controller is off first.",
+      );
+  }
   const secrets = new Map(
     exampleItems<SecretInfo>(example("listSecrets", 200)).map((x) => [x.name, x]),
   );
@@ -1535,6 +1565,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async buildImage(name, reason) {
       auth();
+      writable();
       const view = findImage(name);
       if (!view) throw new ApiError(example("getImage", 404));
       if (!view.document.spec.build)
@@ -1743,6 +1774,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async approvePlan(id) {
       const s = auth();
+      writable();
       const p = findPlan(id);
       // Only a person approves a human-only Plan (D-099; QA T-036 F2).
       if (p.status === "pending" && (p.human_only?.length ?? 0) > 0 && s.tier !== "admin") {
@@ -2097,6 +2129,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async reenrollTarget(name, reason) {
       auth();
+      writable();
       const t = targets.get(name);
       if (!t) throw problem("not-found", "Not found", 404, `Target ${name} does not exist.`);
       // D-194: a running VM with allow_restart off is not restarted.
@@ -2210,6 +2243,69 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       const bearer = `${id}.${[...rnd].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
       const out: TokenCreated = { token: structuredClone(token), bearer };
       return out;
+    },
+    async enableToken(id) {
+      human();
+      const t = tokens.get(id);
+      if (!t) throw problem("not-found", "Not found", 404, `Token ${id} does not exist.`);
+      if (t.revoked_at)
+        throw problem("token-revoked", "Token revoked", 409, `Token ${id} is revoked.`);
+      if (t.disabled_at) {
+        t.disabled_at = null;
+        restore.disabled_tokens = Math.max(0, (restore.disabled_tokens ?? 1) - 1);
+        emit("token.enabled", `token:${id}`, {});
+      }
+      return structuredClone(t);
+    },
+    async listBackups() {
+      auth();
+      return structuredClone(backups);
+    },
+    async createBackup() {
+      const s = auth();
+      writable();
+      if (backups.running)
+        throw problem("backup-running", "Backup running", 409, "A backup runs already.");
+      const run: BackupRun = {
+        started_at: now(),
+        finished_at: null,
+        result: "running",
+        by: s.principal,
+        name: null,
+        message: "",
+      };
+      backups.running = true;
+      backups.last_run = run;
+      void sleep(stepDelay * 2).then(() => {
+        const at = now();
+        const name = `plumb-${at.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}.pbk`;
+        backups.items.unshift({
+          name,
+          created_at: at,
+          size: 2621440 + backups.items.length * 4096,
+          sha256: "0".repeat(56) + String(backups.items.length).padStart(8, "0"),
+        });
+        backups.items = backups.items.slice(0, backups.schedule.keep);
+        backups.running = false;
+        backups.last_run = { ...run, finished_at: at, result: "ok", name };
+        emit("backup.finished", `backup:${name}`, { result: "ok" });
+      });
+      return structuredClone(run);
+    },
+    async getRestore() {
+      auth();
+      return structuredClone(restore);
+    },
+    async confirmRestore(reason) {
+      const s = human();
+      void reason;
+      if (!restore.restored_mode)
+        throw problem("nothing-to-do", "Nothing to do", 409, "This Plumb is not in restored mode.");
+      restore.restored_mode = false;
+      restore.confirmed_at = now();
+      restore.confirmed_by = s.principal;
+      emit("restore.confirmed", "restore:1", {});
+      return structuredClone(restore);
     },
     async revokeToken(id) {
       human();

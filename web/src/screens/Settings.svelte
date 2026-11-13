@@ -1,18 +1,30 @@
 <script lang="ts">
-  // Settings (T-035): API tokens, secrets, export and import. Only a person
+  // Settings (T-035): API tokens, secrets, export and import, backups (T-118). Only a person
   // who logged in (tier admin) manages these (D-046, D-087, D-095).
   import type { PlumbApi } from "../lib/client";
   import { href, type SettingsTab } from "../lib/router";
-  import type { Session } from "../lib/types";
+  import type { RestoreState, Session } from "../lib/types";
+  import Backups from "./Backups.svelte";
   import ExportImport from "./ExportImport.svelte";
   import Secrets from "./Secrets.svelte";
   import Tokens from "./Tokens.svelte";
 
-  let { api, session, tab }: { api: PlumbApi; session: Session; tab: SettingsTab } = $props();
+  let {
+    api,
+    session,
+    tab,
+    onRestore,
+  }: {
+    api: PlumbApi;
+    session: Session;
+    tab: SettingsTab;
+    onRestore?: (r: RestoreState) => void;
+  } = $props();
   const tabs: { tab: SettingsTab; label: string }[] = [
     { tab: "tokens", label: "API tokens" },
     { tab: "secrets", label: "Secrets" },
     { tab: "export", label: "Export and import" },
+    { tab: "backups", label: "Backups" },
   ];
 </script>
 
@@ -35,6 +47,8 @@
     <Tokens {api} />
   {:else if tab === "secrets"}
     <Secrets {api} />
+  {:else if tab === "backups"}
+    <Backups {api} {onRestore} />
   {:else}
     <ExportImport {api} />
   {/if}

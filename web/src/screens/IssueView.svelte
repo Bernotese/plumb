@@ -107,6 +107,20 @@
 <ProblemBox {error} />
 {#if issue}
   <div class="card">
+    {#if issue.resource === "guest:missing"}
+      <p class="hint-box" id="restore-hint">
+        After a restore: the guest of this Target is gone from Proxmox (it was deleted after the
+        backup). Plumb never makes it again by itself. Delete the Target, or delete it and add it
+        again by a Plan.
+      </p>
+    {:else if issue.resource === "agent:silent"}
+      <p class="hint-box" id="restore-hint">
+        After a restore: the guest runs, but its agent did not say hello within 10 minutes. It may
+        have enrolled again after the backup, so Plumb does not know its credential.
+        <a href={href({ name: "target-edit", target: issue.target })}>Re-enroll the agent</a> on the Target
+        page.
+      </p>
+    {/if}
     {#if isAddress}
       <p id="address-text">{addressIssueText(issue)}</p>
       <p>
