@@ -33,19 +33,41 @@ type GuestValueMatch struct {
 // known row only moves last_seen (and takes the open Issue of its
 // resource). A new row is stored only below GuestValueCap; overflow
 // reports that at least one value was not stored.
+//
+// Work per report (review L1 of #248): repeats are dropped in memory;
+// then one Issue lookup per resource and at most two statements per
+// value, in one transaction. A report with more distinct values than
+// GuestValueCap writes nothing and reports overflow at once (fail
+// closed), so one report costs at most about 2 × GuestValueCap statements.
 func (s *Store) RecordGuestValues(ctx context.Context, target string, vals []GuestValue) (overflow bool, err error) {
+	seen := make(map[GuestValue]bool, len(vals))
+	uniq := vals[:0:0]
+	for _, v := range vals {
+		if !seen[v] {
+			seen[v] = true
+			uniq = append(uniq, v)
+		}
+	}
+	vals = uniq
 	if len(vals) == 0 {
 		return false, nil
+	}
+	if len(vals) > GuestValueCap {
+		return true, nil
 	}
 	now := s.now()
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		count := -1
+		openOf := map[string]sql.NullInt64{}
 		for _, v := range vals {
-			var open sql.NullInt64
-			if err := tx.QueryRowContext(ctx,
-				`SELECT MAX(id) FROM issue WHERE target = ? AND resource = ? AND status <> 'resolved'`,
-				target, v.Resource).Scan(&open); err != nil {
-				return err
+			open, ok := openOf[v.Resource]
+			if !ok {
+				if err := tx.QueryRowContext(ctx,
+					`SELECT MAX(id) FROM issue WHERE target = ? AND resource = ? AND status <> 'resolved'`,
+					target, v.Resource).Scan(&open); err != nil {
+					return err
+				}
+				openOf[v.Resource] = open
 			}
 			res, err := tx.ExecContext(ctx,
 				`UPDATE guest_value SET last_seen = ?, issue_id = COALESCE(?, issue_id)
@@ -156,6 +178,24 @@ func (s *Store) GuestValueFlagged(ctx context.Context, targets []string, now tim
 		}
 	}
 	return out, nil
+}
+
+// GuestValueFlags returns every Target that is flagged at now, sorted.
+func (s *Store) GuestValueFlags(ctx context.Context, now time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT target FROM guest_value_flag WHERE until > ? ORDER BY target`, formatTime(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // EndGuestValueFlags removes the flags that ended at now and returns their

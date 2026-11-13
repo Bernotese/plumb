@@ -232,6 +232,12 @@ func TestCopyRuleCapFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no agent:values Issue: %v", err)
 	}
+	// D-353 (K2 of #248): while web1 is flagged, a new value on another
+	// Target is human-only too, and names the agent:values Issue.
+	other := e.proposeDocs(e.token(TierPlan, ""), targetDoc("web2", "after-the-cap"))
+	if !slices.Contains(other.HumanOnly, plan.HumanOnlyAcceptGuestData) || !slices.Equal(other.Issues, []int64{vals.ID}) || other.Matches != nil {
+		t.Fatalf("a new value on another Target while web1 is flagged: %+v", other)
+	}
 	rc := &recorder{t: t}
 	_, body := rc.do(adm, "GET", "/api/v1/issues/"+itoa(vals.ID), "/issues/{id}", nil)
 	if !strings.Contains(string(body), `"actions":["ignore_once","ignore_rule"]`) || !strings.Contains(string(body), `"cap reached"`) {
@@ -256,5 +262,98 @@ func TestCopyRuleCapFailsClosed(t *testing.T) {
 	}
 	if flagged, _ := e.st.GuestValueFlagged(e.ctx, []string{"web1"}, later); len(flagged) != 0 {
 		t.Errorf("still flagged: %v", flagged)
+	}
+}
+
+// keysDocs is a Block "keys" that gives user bob the keys, and a VM web2
+// that uses it.
+func keysDocs(list ...string) []state.Doc {
+	b, _ := json.Marshal(list)
+	return []state.Doc{doc(state.KindBlock, "keys", `{"resources":[{"user":{"name":"bob","ssh_keys":`+string(b)+`}}]}`),
+		doc(state.KindTarget, "web2", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"keys"}]}`)}
+}
+
+func junkKeys(n int) []any {
+	out := make([]any, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("ssh-ed25519 AAAAjunk%05d", i)
+	}
+	return out
+}
+
+// K1 of #248: a reported value past state.MaxGuestElems fails closed. 4096
+// junk keys and then key K in one report flag the Target, so a copy of K
+// is human-only although K was not hashed.
+func TestCopyRuleElementLimitFailsClosed(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	const evil = "ssh-ed25519 AAAAzzzzevil"
+	from := append(junkKeys(state.MaxGuestElems), evil)
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: "user:alice", Status: wire.StatusDiffers,
+		Changes: []wire.Change{{Attr: "ssh_keys", From: from, To: []any{}, Risk: wire.RiskDisruptive}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if flagged, _ := e.st.GuestValueFlagged(e.ctx, []string{"web1"}, time.Now()); len(flagged) != 1 {
+		t.Fatal("a value past the element limit did not flag the Target")
+	}
+	vals, err := e.st.OpenIssue(e.ctx, "web1", issue.GuestValuesID)
+	if err != nil {
+		t.Fatalf("no agent:values Issue: %v", err)
+	}
+	p := e.proposeDocs(e.token(TierPlan, ""), keysDocs("ssh-ed25519 AAAAmine", evil)...)
+	if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) || !slices.Contains(p.Issues, vals.ID) {
+		t.Fatalf("copy of the key after the element limit: %+v", p)
+	}
+	e.tokenRefused(p.ID)
+}
+
+// K1 of #248, Plan side: a planned value past the limit is human-only.
+func TestCopyRulePlannedElementLimit(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	var keys []string
+	for _, k := range junkKeys(state.MaxGuestElems + 1) {
+		keys = append(keys, k.(string))
+	}
+	p := e.proposeDocs(e.token(TierPlan, ""), keysDocs(keys...)...)
+	if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) {
+		t.Fatalf("a planned value past the element limit: %+v", p.HumanOnly)
+	}
+	small := e.proposeDocs(e.token(TierPlan, ""), keysDocs(keys[:10]...)...)
+	if len(small.HumanOnly) != 0 {
+		t.Fatalf("a small list: %+v", small.HumanOnly)
+	}
+}
+
+// K3 of #248 (#218 M1): a hand-made SSH source in the guest's firewall,
+// copied later into ssh_sources of another Target, is human-only.
+func TestCopyRuleFirewallSSHSource(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: "firewall:main", Status: wire.StatusDiffers,
+		Changes: []wire.Change{{Attr: "ssh", From: "tcp/22 from 203.0.113.7/32", To: "tcp/22 from everywhere", Risk: wire.RiskDisruptive}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	iss, err := e.st.OpenIssue(e.ctx, "web1", "firewall:main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw := func(src string) []state.Doc {
+		return []state.Doc{doc(state.KindBlock, "fw", `{"resources":[{"firewall":{"name":"main","ssh_sources":"`+src+`"}}]}`),
+			doc(state.KindTarget, "web3", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"fw"}]}`)}
+	}
+	p := e.proposeDocs(e.token(TierPlan, ""), fw("198.51.100.0/24,203.0.113.7/32")...)
+	want := plan.GuestDataMatch{IssueID: iss.ID, Target: "web3", Resource: "firewall:main", Attr: "ssh_sources", Element: "203.0.113.7/32"}
+	if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) || !slices.Equal(p.Matches, []plan.GuestDataMatch{want}) {
+		t.Fatalf("copied SSH source: %+v", p)
+	}
+	if code, body := adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil); code >= 300 {
+		t.Fatalf("drop: %d %s", code, body)
+	}
+	if q := e.proposeDocs(e.token(TierPlan, ""), fw("198.51.100.0/24")...); len(q.HumanOnly) != 0 {
+		t.Fatalf("own SSH source: %+v", q)
 	}
 }

@@ -13,8 +13,8 @@ import (
 // plan package calls it (it must not import resource, ARCHITECTURE §2).
 
 // MaxGuestElems bounds the elements taken from one value, so a huge list
-// cannot make a report or a check slow. A reported value past it adds
-// nothing more; the per-Target cap (store.GuestValueCap) is the real limit.
+// cannot make a report or a check slow. Past it the caller fails closed
+// (review K1 of #248): a report flags its Target, a Plan is human-only.
 const MaxGuestElems = 4096
 
 type attrRule struct {
@@ -54,21 +54,35 @@ func loadAttrRules() {
 // duplicates: nothing for a boolean, a number, null or an attribute with
 // enum or const in its schema; each element of a list (an object as
 // canonical JSON); each element of a list-like string (x-plumb-list),
-// after the normalization of Diff; else the string itself.
-func GuestValueElems(typ, attr string, v any) []string {
+// after the normalization of Diff; the source elements of an observed
+// text that shows a list (resource.ObservedList); else the string itself.
+// over reports more than MaxGuestElems distinct elements: elems then
+// holds only the first ones, and the caller must fail closed.
+func GuestValueElems(typ, attr string, v any) (elems []string, over bool) {
 	attrRulesOnce.Do(loadAttrRules)
 	rule := attrRules[typ][attr]
 	if rule.skip {
-		return nil
+		return nil, false
 	}
 	set := map[string]bool{}
 	add := func(s string) {
-		if s != "" && len(set) < MaxGuestElems {
-			set[s] = true
+		if s == "" || set[s] {
+			return
 		}
+		if len(set) >= MaxGuestElems {
+			over = true
+			return
+		}
+		set[s] = true
 	}
 	switch v := v.(type) {
 	case string:
+		if list, ok := resource.ObservedList(typ, attr, v); ok {
+			for e := range strings.SplitSeq(list, ",") {
+				add(strings.TrimSpace(e))
+			}
+			break
+		}
 		if rule.sep == "" {
 			add(v)
 			break
@@ -99,5 +113,5 @@ func GuestValueElems(typ, attr string, v any) []string {
 		out = append(out, s)
 	}
 	sort.Strings(out)
-	return out
+	return out, over
 }

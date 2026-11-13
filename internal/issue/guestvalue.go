@@ -9,24 +9,28 @@ import (
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
-// GuestValuesID is the Issue of a Target whose stored reported values
-// reached store.GuestValueCap (D-331, review F1 of #243). Only system opens
-// and resolves it; the link refuses the type agent in a drift report.
-const GuestValuesID = "agent:values"
+// GuestValuesID is the Issue of a flagged Target (plan.GuestValuesID).
+const GuestValuesID = plan.GuestValuesID
 
 // recordGuestValues stores the keyed hashes of the reported values of a
 // drift report (D-331), before Rules and "ignore once" look at it: drift
 // that a Rule covers or that is ignored counts too. Past the cap nothing
-// new is stored (no row is evicted); the Target is flagged for
-// plan.GuestValueWindow and agent:values opens.
+// new is stored (no row is evicted), and a value with more elements than
+// state.MaxGuestElems is stored only in part (review K1 of #248); both
+// flag the Target for plan.GuestValueWindow and open agent:values.
 func (s *Service) recordGuestValues(ctx context.Context, target string, rep wire.Report) error {
 	var vals []store.GuestValue
+	over := false
 	for _, it := range rep.Items {
-		vals = append(vals, s.plans.GuestValues(it)...)
+		v, more := s.plans.GuestValues(it)
+		vals, over = append(vals, v...), over || more
 	}
 	overflow, err := s.st.RecordGuestValues(ctx, target, vals)
-	if err != nil || !overflow {
+	if err != nil {
 		return err
+	}
+	if !overflow && !over {
+		return nil
 	}
 	if err := s.st.FlagGuestValues(ctx, target, s.st.Now().Add(plan.GuestValueWindow)); err != nil {
 		return err

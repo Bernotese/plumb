@@ -26,8 +26,15 @@ func TestGuestValueElems(t *testing.T) {
 		{"empty", "file", "content", "", nil},
 		{"object", "guest", "x", map[string]any{"b": 1, "a": "x"}, []string{`{"a":"x","b":1}`}},
 		{"unknown type", "nope", "x", "v", []string{"v"}},
+		// K3 of #248: the observed SSH rule gives the ssh_sources elements.
+		{"ssh sources", "firewall", "ssh", "tcp/22 from 203.0.113.7/32,10.0.0.5/24", []string{"10.0.0.0/24", "203.0.113.7/32"}},
+		{"ssh everywhere", "firewall", "ssh", "tcp/2222 from everywhere", nil},
+		{"ssh closed", "firewall", "ssh", "closed (allow_no_ssh)", nil},
 	} {
-		got := GuestValueElems(c.typ, c.attr, c.v)
+		got, over := GuestValueElems(c.typ, c.attr, c.v)
+		if over {
+			t.Errorf("%s: over the limit", c.name)
+		}
 		if len(got) == 0 && len(c.want) == 0 {
 			continue
 		}
@@ -42,7 +49,11 @@ func TestGuestValueElemsBounded(t *testing.T) {
 	for i := range list {
 		list[i] = string(rune('a'+i%26)) + string(rune(0x100+i))
 	}
-	if n := len(GuestValueElems("user", "ssh_keys", list)); n != MaxGuestElems {
-		t.Fatalf("%d elements, want %d", n, MaxGuestElems)
+	got, over := GuestValueElems("user", "ssh_keys", list)
+	if len(got) != MaxGuestElems || !over {
+		t.Fatalf("%d elements, over %v; want %d and over (K1 of #248)", len(got), over, MaxGuestElems)
+	}
+	if _, over := GuestValueElems("user", "ssh_keys", list[:MaxGuestElems]); over {
+		t.Fatal("exactly the limit is not over")
 	}
 }

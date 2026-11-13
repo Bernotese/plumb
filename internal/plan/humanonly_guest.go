@@ -45,14 +45,24 @@ type GuestDataMatch struct {
 	Element  string `json:"element,omitempty"`
 }
 
+// GuestValuesID is the Issue of a Target whose reported values passed a
+// limit of the copy rule (D-331, review F1 of #243, K1 of #248). Only
+// system opens and resolves it; the link refuses the type agent in a
+// drift report.
+const GuestValuesID = "agent:values"
+
 // guestData is the result of the copy rule for one Plan.
 type guestData struct {
-	flagged []string // touched Targets whose cap was reached
-	issues  []int64
-	matches []GuestDataMatch
+	flagged  []string // touched Targets that are flagged
+	anyFlag  bool     // some Target is flagged and the Plan adds or changes a value (D-353)
+	overSize bool     // a planned value has more elements than state.MaxGuestElems (K1)
+	issues   []int64
+	matches  []GuestDataMatch
 }
 
-func (g guestData) humanOnly() bool { return len(g.flagged) > 0 || len(g.matches) > 0 }
+func (g guestData) humanOnly() bool {
+	return len(g.flagged) > 0 || g.anyFlag || g.overSize || len(g.matches) > 0
+}
 
 // fallbackGuestKey keys the hashes when the engine has no secret store
 // (tests only; serve always has one). Hashes then do not outlive the
@@ -76,34 +86,37 @@ func (e *Engine) guestHash(v string) string {
 
 // GuestValues returns the hashed values of a drift item that the copy
 // rule stores: for each change that is not sensitive, the elements of the
-// reported value that the desired value does not have. Only items that a
+// reported value that the desired value does not have. over reports a
+// value with more elements than state.MaxGuestElems: the caller flags the
+// Target (fail closed, review K1 of #248). Only items that a
 // guest reports count: agent resources and guest:address (its list comes
 // from the agent); guest:config comes from Proxmox, and the controller's
 // own items (agent:values, the Issues of a restore) carry no guest data.
-func (e *Engine) GuestValues(it wire.Item) []store.GuestValue {
+func (e *Engine) GuestValues(it wire.Item) (vals []store.GuestValue, over bool) {
 	typ, _, ok := wire.SplitID(it.Resource)
 	if !ok || it.Status != wire.StatusDiffers || !wire.AgentType(typ) && it.Resource != wire.GuestAddressID {
-		return nil
+		return nil, false
 	}
-	var out []store.GuestValue
 	seen := map[store.GuestValue]bool{}
 	for _, c := range it.Changes {
 		if c.Sensitive || c.From == nil {
 			continue
 		}
-		want := state.GuestValueElems(typ, c.Attr, c.To)
-		for _, el := range state.GuestValueElems(typ, c.Attr, c.From) {
+		want, _ := state.GuestValueElems(typ, c.Attr, c.To)
+		got, more := state.GuestValueElems(typ, c.Attr, c.From)
+		over = over || more
+		for _, el := range got {
 			if _, found := slices.BinarySearch(want, el); found {
 				continue // the desired state has it: not guest data
 			}
 			v := store.GuestValue{Resource: it.Resource, Attr: c.Attr, Hash: e.guestHash(el)}
 			if !seen[v] {
 				seen[v] = true
-				out = append(out, v)
+				vals = append(vals, v)
 			}
 		}
 	}
-	return out
+	return vals, over
 }
 
 // planElem is a new value of the planned state.
@@ -114,14 +127,14 @@ type planElem struct {
 // newElems returns the values of the render of target in next that its
 // render in base does not have, keyed by hash. Sensitive attributes are
 // skipped: their value is a secret, never guest data the controller knows.
-func (e *Engine) newElems(base, next *state.Set, target string, out map[string][]planElem) error {
+func (e *Engine) newElems(base, next *state.Set, target string, out map[string][]planElem) (over bool, err error) {
 	before, err := renderOrNil(base, target)
 	if err != nil {
-		return err
+		return false, err
 	}
 	after, err := renderOrNil(next, target)
 	if err != nil || after == nil {
-		return err
+		return false, err
 	}
 	old := map[string]wire.Resource{}
 	if before != nil {
@@ -141,9 +154,11 @@ func (e *Engine) newElems(base, next *state.Set, target string, out map[string][
 			}
 			var was []string
 			if had && !slices.Contains(prev.Sensitive, attr) {
-				was = state.GuestValueElems(prev.Type, attr, prev.Attrs[attr])
+				was, _ = state.GuestValueElems(prev.Type, attr, prev.Attrs[attr])
 			}
-			for _, el := range state.GuestValueElems(r.Type, attr, v) {
+			now, more := state.GuestValueElems(r.Type, attr, v)
+			over = over || more
+			for _, el := range now {
 				if _, found := slices.BinarySearch(was, el); found {
 					continue
 				}
@@ -152,25 +167,47 @@ func (e *Engine) newElems(base, next *state.Set, target string, out map[string][
 			}
 		}
 	}
-	return nil
+	return over, nil
 }
 
 // checkGuestData runs the copy rule for a Plan from base to next that
 // touches targets.
 func (e *Engine) checkGuestData(ctx context.Context, base, next *state.Set, targets []string) (guestData, error) {
 	var g guestData
-	flagged, err := e.st.GuestValueFlagged(ctx, targets, e.cfg.Now())
+	elems := map[string][]planElem{}
+	for _, t := range targets {
+		over, err := e.newElems(base, next, t, elems)
+		if err != nil {
+			return g, err
+		}
+		g.overSize = g.overSize || over
+	}
+	// A flagged Target (D-331, D-353): a Plan that touches it, and while
+	// any Target is flagged every Plan that adds or changes a value, is
+	// human-only; guest_data_issues names the open agent:values Issues.
+	flagged, err := e.st.GuestValueFlags(ctx, e.cfg.Now())
 	if err != nil {
 		return g, err
 	}
-	g.flagged = flagged
-	elems := map[string][]planElem{}
-	for _, t := range targets {
-		if err := e.newElems(base, next, t, elems); err != nil {
-			return g, err
+	for _, f := range flagged {
+		if slices.Contains(targets, f) {
+			g.flagged = append(g.flagged, f)
+		}
+	}
+	g.anyFlag = len(flagged) > 0 && (len(elems) > 0 || g.overSize)
+	if len(g.flagged) > 0 || g.anyFlag {
+		for _, f := range flagged {
+			iss, err := e.st.OpenIssue(ctx, f, GuestValuesID)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return g, err
+			}
+			if err == nil && !slices.Contains(g.issues, iss.ID) {
+				g.issues = append(g.issues, iss.ID)
+			}
 		}
 	}
 	if len(elems) == 0 {
+		slices.Sort(g.issues)
 		return g, nil
 	}
 	hashes := make([]string, 0, len(elems))

@@ -14,7 +14,7 @@ func TestGuestValuesOfReport(t *testing.T) {
 		return wire.Item{Resource: id, Status: wire.StatusDiffers, Changes: c}
 	}
 	keys := wire.Change{Attr: "ssh_keys", From: []any{"good", "evil"}, To: []any{"good"}}
-	if got := e.GuestValues(differs("user:alice", keys)); len(got) != 1 || got[0].Hash != e.guestHash("evil") || got[0].Attr != "ssh_keys" {
+	if got, _ := e.GuestValues(differs("user:alice", keys)); len(got) != 1 || got[0].Hash != e.guestHash("evil") || got[0].Attr != "ssh_keys" {
 		t.Errorf("user keys: %+v", got)
 	}
 	for name, it := range map[string]wire.Item{
@@ -25,12 +25,12 @@ func TestGuestValuesOfReport(t *testing.T) {
 		"unchanged":    {Resource: "file:/etc/x", Status: wire.StatusUnchanged, Changes: []wire.Change{{Attr: "content", From: "x"}}},
 		"enum":         differs("firewall:main", wire.Change{Attr: "policy", From: "accept", To: "drop"}),
 	} {
-		if got := e.GuestValues(it); len(got) != 0 {
+		if got, _ := e.GuestValues(it); len(got) != 0 {
 			t.Errorf("%s: stored %+v", name, got)
 		}
 	}
 	addr := differs(wire.GuestAddressID, wire.Change{Attr: "ip", From: []any{"192.0.2.9"}, To: "192.0.2.10"})
-	if got := e.GuestValues(addr); len(got) != 1 {
+	if got, _ := e.GuestValues(addr); len(got) != 1 {
 		t.Errorf("guest:address: %+v", got)
 	}
 }
