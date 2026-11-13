@@ -26,7 +26,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-101 server checks Block resource attributes at save (found in T-096) | pl-architect | merged (PR #193) |
 | T-102 update result lost at the swap: Run waits 15 min (T-100 F1) | pl-backend | PR #202 in review |
 | T-103 first apply of a unit + its service is refused, a 2nd Plan is needed (T-100 F2) | pl-reviewer (pl-architect reviews) | started |
-| T-104 `docker-engine` also for LXC (D-262: T-100 passed without new rights) | pl-frontend | started |
+| T-104 `docker-engine` also for LXC (D-262: T-100 passed without new rights) | pl-frontend | PR #203 in review (guest tests ok) |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
