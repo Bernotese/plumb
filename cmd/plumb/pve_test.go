@@ -522,10 +522,25 @@ func TestServeTLSFailureNotRetried(t *testing.T) {
 
 // QA gap: no answer at all, end to end: exit 1 (systemd starts it again).
 func TestServeNoAnswer(t *testing.T) {
-	h := newFakeHost(t)
-	url := h.srv.URL
-	h.srv.Close()
-	setPVE(t, url, h.ca)
+	// Keep the port reserved: closing a fake host lets another test server
+	// reuse its address and answer our request (for example, with a 401).
+	// Close each connection without a TLS or HTTP answer.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	url := "https://" + listener.Addr().String()
+	setPVE(t, url, "")
 	pveStartWait, pveStartPoll = 100*time.Millisecond, 10*time.Millisecond
 	t.Cleanup(func() { pveStartWait, pveStartPoll = 0, 0 })
 	runFailing(t, 1, "cannot reach Proxmox at "+url)
