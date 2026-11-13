@@ -175,6 +175,20 @@ func (e *Engine) growRoot(ctx context.Context, planID int64, target string, gib 
 	return fmt.Errorf(textGrowAgent, gib, "the agent did not report "+wire.GrowItemID)
 }
 
+// RevertShrinks reports whether a revert of these guest:config drift
+// changes would shrink a disk (a disk grown in Proxmox): the Issue then
+// offers no revert (D-299).
+func RevertShrinks(changes []wire.Change) bool {
+	for _, c := range changes {
+		from, err1 := driver.IntValue(c.From)
+		to, err2 := driver.IntValue(c.To)
+		if c.Attr == driver.AttrDisk && err1 == nil && err2 == nil && to < from {
+			return true
+		}
+	}
+	return false
+}
+
 // pollKey is what the guest poll compares (CheckGuests): the config
 // digest and the power state, so that a start or a stop outside Plumb is
 // seen as drift of power (D-299, D-309). A Binding stores it as Digest.

@@ -1129,7 +1129,7 @@ func tagRefusal(err error, params url.Values) error {
 	if !tags && params.Get("delete") != "tags" || !errors.As(err, &ae) || ae.Status != 403 {
 		return err
 	}
-	return fmt.Errorf("Proxmox refused the tags: the datacenter option user-tag-access (other than free) or a registered tag can refuse a tag write, "+
+	return fmt.Errorf("proxmox: the tags were refused: the datacenter option user-tag-access (other than free) or a registered tag can refuse a tag write, "+
 		"and Plumb gets no new right for it (D-081). Allow the tags in Datacenter → Options → Tag Style or User Tag Access, or remove them from the Target: %w", err)
 }
 
