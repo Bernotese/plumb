@@ -16,6 +16,8 @@ Slice 5, child card **C9b** of T-138. The UI for the new server features of slic
 - [ ] New decisions (only if needed): ask `pl-lead` for numbers; write them to `docs/decisions/T-154.md`.
 - [ ] No new token right. Tests: `make lint test` passes; `origin/main` merged; PR to `main`; report to `pl-lead`.
 
+- [ ] From the review of PR #245: your row also owns `web/src/lib/http.ts`, `web/src/lib/mock/mock.ts`, `web/src/ui/DeleteDocument.svelte` and their tests; hide "Drop" (and every other write button) for the role `read`.
+
 ## Out of scope
 - Everything of other rows. Any release step.
 
