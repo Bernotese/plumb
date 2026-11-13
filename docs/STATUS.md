@@ -34,7 +34,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | both merged (PR #211, D-299 … D-301; PR #214, D-302 … D-304, D-311: a restore sets a new admin password) |
 | T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | T-116 merged (PR #213, D-305 … D-307; CI guest job with unprivileged LXC + VM); T-112 in work, then T-113 |
 | T-125 raw mode in the API (`Issue.source`, `Issue.raw`, `TargetView.raw`). Also closed: Accept could adopt forged firewall drift without the SSH rule; every Accept on `firewall:*` is refused now | pl-backend | merged (PR #218) |
-| T-114 installer (copy timer, `--remove --keep-guests`, `--restore`) · T-115 Proxmox day 2 | pl-reviewer (pl-architect reviews) | T-115 merged (PR #217, D-308 … D-310; main build green after it); T-114: PR #221, review fixes M1, M2 in work |
+| T-114 installer (copy timer, `--remove --keep-guests`, `--restore`) · T-115 Proxmox day 2 | pl-reviewer (pl-architect reviews) | T-115 merged (PR #217, D-308 … D-310; main build green after it); T-114 merged (PR #221, D-312 … D-314; no host run yet, T-122 does it) |
 | T-117 agent command `grow` | pl-codex-fix | merged (PR #212) |
 | T-121 flaky `TestServeNoAnswer` (a freed port was reused by another test; test-only fix) | pl-codex-fix | merged (PR #210) |
 | T-118 web slice 4 · T-119 starter Block `firewall` | pl-frontend | T-118: UI complete locally, e2e waits for T-112, T-113; T-119 merged (PR #219) |
