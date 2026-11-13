@@ -11,8 +11,7 @@ func TestSlice4GuestSchema(t *testing.T) {
 	}
 	ok := []string{
 		``,
-		`,"power":"running"`,
-		`,"power":"stopped"`,
+		`,"power":"running"`, // "stopped" needs allow_restart: TestStopNeedsAllowRestart
 		`,"tags":[]`,
 		`,"tags":["web","prod","k8s_node-1.2+x"]`,
 	}
@@ -34,6 +33,28 @@ func TestSlice4GuestSchema(t *testing.T) {
 	for _, e := range bad {
 		if _, err := Validate(fixture(g(e))); err == nil {
 			t.Errorf("%q: accepted", e)
+		}
+	}
+}
+
+// T-115 (D-291): power: stopped needs allow_restart, also by an override.
+func TestStopNeedsAllowRestart(t *testing.T) {
+	tgt := func(extra string) Doc {
+		return doc(KindTarget, "t1", `{"type":"vm","image":"img","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0"`+extra)
+	}
+	for _, tc := range []struct {
+		extra string
+		ok    bool
+	}{
+		{`,"power":"stopped"}}`, false},
+		{`,"power":"stopped"},"allow_restart":true}`, true},
+		{`,"power":"running"}}`, true},
+		{`},"overrides":{"guest:config":{"power":"stopped"}}}`, false},
+		{`},"allow_restart":true,"overrides":{"guest:config":{"power":"stopped"}}}`, true},
+	} {
+		_, err := Validate(fixture(tgt(tc.extra)))
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: %v", tc.extra, err)
 		}
 	}
 }

@@ -290,11 +290,25 @@ func (s *stepper) rolledBack(ctx context.Context, resource string) {
 
 // failRest marks every step that did not finish as failed.
 func (s *stepper) failRest(ctx context.Context, output string) {
+	s.failRestExcept(ctx, output, "")
+}
+
+// failRestExcept is failRest without the step keep (the guest step that
+// waits for the stop, D-299).
+func (s *stepper) failRestExcept(ctx context.Context, output, keep string) {
 	for res := range s.seq {
-		if !s.final[res] {
+		if !s.final[res] && res != keep {
 			s.set(ctx, res, wire.StatusFailed, nil, output)
 		}
 	}
+}
+
+// skip marks a step skipped on purpose (a stopped Target, D-299): the
+// Run does not fail for it.
+func (s *stepper) skip(ctx context.Context, resource, output string) {
+	ok := s.ok
+	s.set(ctx, resource, wire.StatusSkipped, nil, output)
+	s.ok = ok
 }
 
 // runTarget runs the guest step, waits for the agent and applies the
@@ -357,6 +371,16 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 
 	// 1. Guest step; for a new container, the template first.
 	newAgent := false
+	var gres guestResult // the guest step; open while gres.grow or gres.stop wait
+	open := false
+	// failAll ends every open step: the guest step keeps its changes.
+	failAll := func(output string) {
+		if open {
+			s.set(ctx, wire.GuestConfigID, wire.StatusFailed, gres.changes, output)
+			open = false
+		}
+		s.failRest(ctx, output)
+	}
 	hellos := e.hellos(tp.Target)
 	var ref driver.ImageRef
 	if fetch {
@@ -372,11 +396,14 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	if guestChange != nil {
 		s.set(ctx, wire.GuestConfigID, wire.StatusRunning, nil, "")
 		res, err := e.guestStep(ctx, run, set, tp, r, *guestChange, ref)
+		gres = res
 		switch {
 		case errors.Is(err, errRefused):
 			s.set(ctx, wire.GuestConfigID, wire.StatusRefused, res.changes, err.Error())
 		case err != nil:
 			s.set(ctx, wire.GuestConfigID, wire.StatusFailed, res.changes, err.Error())
+		case res.grow > 0 || res.stop:
+			open = true // ends after the root grow or the stop (D-299)
 		default:
 			s.set(ctx, wire.GuestConfigID, wire.StatusApplied, res.changes, res.output)
 		}
@@ -392,6 +419,17 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		return s.ok
 	}
 
+	// A Target that stays stopped (D-299): its agent is off on purpose, so
+	// its agent steps are skipped. A hello after its next start gets the
+	// watch list.
+	if !reenroll && !gres.stop && desiredPower(r) == driver.PowerStopped && e.guestStopped(ctx, tp.Target) {
+		for _, res := range r.Resources {
+			s.skip(ctx, res.ID, textStoppedSkip)
+		}
+		watched = true
+		return s.ok
+	}
+
 	// 2. Wait for the agent.
 	if newAgent || !e.cfg.Agents.Online(tp.Target) {
 		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"phase": "enrolling", "run": run.ID})
@@ -400,7 +438,11 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 			after = hellos
 		}
 		if err := e.waitOnline(ctx, tp.Target, after); err != nil {
-			s.failRest(ctx, err.Error())
+			if gres.grow > 0 { // the disk grew already (review L3 of #217)
+				failAll(fmt.Sprintf(textGrowAgent, gres.grow, err.Error()))
+			} else {
+				failAll(err.Error())
+			}
 			return false
 		}
 		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"agent": "online", "run": run.ID})
@@ -411,6 +453,23 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// next Run of the target tries again (D-231).
 	if clear {
 		e.clearStep(ctx, s, tp.Target)
+	}
+
+	// The root file system of a grown VM disk, before the agent steps
+	// (D-299): the agent is online now.
+	if gres.grow > 0 {
+		if err := e.growRoot(ctx, p.ID, tp.Target, gres.grow); err != nil {
+			failAll(err.Error())
+			return false
+		}
+		if err := e.setRootGrow(ctx, tp.Target, 0); err != nil {
+			failAll("the root file system grew, but the binding cannot be stored: " + err.Error())
+			return false
+		}
+		if !gres.stop {
+			s.set(ctx, wire.GuestConfigID, wire.StatusApplied, gres.changes, gres.output)
+			open = false
+		}
 	}
 
 	// A re-enrollment only gives the new agent its watch list. What
@@ -433,14 +492,14 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// resource that the agent lacks.
 	if gateOrigin(p.Origin) {
 		if err := e.runGate(ctx, tp.Target, r.Resources); err != nil {
-			s.failRest(ctx, err.Error())
+			failAll(err.Error())
 			return false
 		}
 	}
 	// Exactly the planned secret versions, or no apply at all (D-089).
 	body, _, err := e.withSecrets(ctx, r.Resources, plannedOrEmpty(tp.Secrets))
 	if err != nil {
-		s.failRest(ctx, "not applied: "+err.Error()+"; plan again")
+		failAll("not applied: " + err.Error() + "; plan again")
 		return false
 	}
 	rep, err := e.command(ctx, tp.Target, wire.CommandApply,
@@ -462,12 +521,64 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		}
 	}
 	if err != nil {
-		s.failRest(ctx, err.Error())
+		s.failRestExcept(ctx, err.Error(), wire.GuestConfigID)
 	} else {
-		s.failRest(ctx, "the agent did not report this resource")
+		s.failRestExcept(ctx, "the agent did not report this resource", wire.GuestConfigID)
 	}
-	// 4. The agent watches the new desired list for drift (the deferred send).
+	// 4. The stop of power: stopped, after the agent steps (D-299). A
+	// failed agent step keeps the guest running, so it can be planned again.
+	if open {
+		if !s.ok {
+			s.set(ctx, wire.GuestConfigID, wire.StatusFailed, gres.changes, fmt.Sprintf(textNotStopped, "an agent step of this Run failed"))
+		} else if err := e.stopGuest(ctx, tp.Target); err != nil {
+			s.set(ctx, wire.GuestConfigID, wire.StatusFailed, gres.changes, err.Error())
+		} else {
+			s.set(ctx, wire.GuestConfigID, wire.StatusApplied, gres.changes, gres.output)
+		}
+		open = false
+	}
+	// 5. The agent watches the new desired list for drift (the deferred
+	// send; a stopped agent gets it with the hello of its next start).
 	return s.ok
+}
+
+// desiredPower is the rendered power of a Target, "" when not managed.
+func desiredPower(r *state.Rendered) driver.Power {
+	p, _ := r.Guest.Attrs[driver.AttrPower].(string)
+	return driver.Power(p)
+}
+
+// guestStopped reports whether the guest of a target is stopped now. An
+// error reads as no: the agent steps then run and fail as before.
+func (e *Engine) guestStopped(ctx context.Context, target string) bool {
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		return false
+	}
+	st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+	return err == nil && st.Power == driver.PowerStopped
+}
+
+// stopGuest stops the guest of a target at the end of its Run (D-299)
+// and stores the new poll key, so the stop is no drift.
+func (e *Engine) stopGuest(ctx context.Context, target string) error {
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		return err
+	}
+	id := driver.GuestID(b.Ref)
+	if err := e.cfg.Driver.Power(ctx, id, driver.PowerStop); err != nil {
+		return fmt.Errorf("the stop failed: %w", err)
+	}
+	st, err := e.cfg.Driver.Observe(ctx, id)
+	if err != nil {
+		return fmt.Errorf("the guest cannot be read after the stop: %w", err)
+	}
+	if st.Power != driver.PowerStopped {
+		return fmt.Errorf("the guest still runs after the stop; %s", forKind("check the VM in Proxmox", st.Spec.Kind))
+	}
+	b.Digest = pollKey(st)
+	return e.st.PutBinding(ctx, b)
 }
 
 var errRefused = errors.New("refused: the guest changed since the Plan; its changes are above the approved risk")
@@ -507,6 +618,12 @@ type guestResult struct {
 	changes   []wire.Change // recorded in the step
 	output    string
 	restarted bool // the guest had a new boot
+	// grow: a VM disk grew to this many GiB; the agent grows the root
+	// file system once it is online (D-299). The step stays running.
+	grow int
+	// stop: the Run stops the guest after its agent steps (D-299). The
+	// step stays running until then.
+	stop bool
 }
 
 // guestStep does the driver part of a target. It returns the changes it made.
@@ -570,9 +687,10 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		keep := context.WithoutCancel(ctx)
 		digest := ""
 		if st, err := e.cfg.Driver.Observe(keep, id); err == nil {
-			digest = st.Digest
+			digest = pollKey(st)
 		}
 		res.changes = createChanges(spec)
+		res.stop = spec.Power == driver.PowerStopped // created, enrolled and applied, then stopped (D-299)
 		return res, e.st.PutBinding(keep, store.Binding{Kind: state.KindTarget, Name: tp.Target, Ref: string(id), Digest: digest})
 
 	case "update", "reenroll":
@@ -609,7 +727,16 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	if reenroll && running && !r.AllowRestart {
 		return res, errors.New(forKind(textReenrollRuns, desired.Kind))
 	}
-	recorded, restart, err := restartRule(desired.Kind, changes, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
+	// Day 2 (D-299): the Plan checks again with the guest as it is now.
+	if !reenroll {
+		if powerTo(changes) == driver.PowerStopped && !r.AllowRestart {
+			return res, errors.New(textStopNeedsRestart)
+		}
+		if driver.Grow(changes) != nil && !runsAfter(desired, observed) {
+			return res, errors.New(textGrowNotRunning)
+		}
+	}
+	recorded, restart, err := restartRule(desired.Kind, changes, driver.WaitingGuest(desired, observed), rulePower(desired, observed, reenroll), r.AllowRestart, reenroll)
 	if err != nil {
 		return res, err
 	}
@@ -635,7 +762,13 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 		recorded = append(recorded, wire.Change{Attr: driver.AttrEnrollToken, Sensitive: true, Risk: wire.RiskDisruptive})
 		res.changes = recorded
 	}
-	if write := driverChanges(recorded); len(write) > 0 {
+	// The config first, also on a stopped guest: a start then makes the
+	// new values active with no restart. The disk grows after the start,
+	// so a VM's agent can grow its file system (D-308).
+	write := driverChanges(recorded)
+	grow := driver.Grow(write)
+	write = slices.DeleteFunc(write, func(c wire.Change) bool { return c.Attr == driver.AttrDisk })
+	if len(write) > 0 {
 		if err := e.cfg.Driver.Update(ctx, id, write, boot); err != nil {
 			return res, err
 		}
@@ -682,14 +815,70 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 			recorded = slices.DeleteFunc(recorded, func(c wire.Change) bool { return c.Attr == wire.AttrRestart })
 		}
 	}
+	if !reenroll && desired.Power == driver.PowerRunning && after.Power != driver.PowerRunning {
+		if err := e.cfg.Driver.Power(ctx, id, driver.PowerStart); err != nil {
+			return res, err
+		}
+		res.restarted = true
+		if after, err = e.cfg.Driver.Observe(ctx, id); err != nil {
+			return res, err
+		}
+	}
+	if grow != nil {
+		if err := e.growDisk(ctx, tp.Target, id, *grow, after); err != nil {
+			return res, err
+		}
+		if after, err = e.cfg.Driver.Observe(ctx, id); err != nil {
+			return res, err
+		}
+		if desired.Kind == wire.KindVM {
+			res.grow = desired.DiskGB
+		}
+	}
+	// A root grow that failed in an earlier Run (review M1 of #217): the
+	// Plan shows root_fs, the disk has its size, the agent grows again.
+	if grow == nil && !reenroll && hasAttr(planned.Changes, AttrRootFS) && b.RootGrow > 0 && desired.Kind == wire.KindVM {
+		if after.Power != driver.PowerRunning {
+			return res, errors.New(textGrowNotRunning)
+		}
+		res.grow = b.RootGrow
+		recorded = append(recorded, rootFSChange(b.RootGrow))
+	}
+	if res.grow > 0 {
+		b.RootGrow = res.grow // pending until the agent grew the root file system
+	}
 	recorded, err = checkWritten(recorded, desired, after)
 	res.changes = recorded
 	if err != nil {
 		return res, err
 	}
+	if err := checkDay2Written(recorded, desired, after); err != nil {
+		return res, err
+	}
 	res.output = waitingOutput(recorded)
-	b.Digest = after.Digest
+	res.stop = !reenroll && powerTo(planned.Changes) == driver.PowerStopped && powerTo(recorded) == driver.PowerStopped
+	b.Digest = pollKey(after)
 	return res, e.st.PutBinding(ctx, b)
+}
+
+// growDisk grows the disk of a running guest by the change c, inside the
+// disk gate of D-219 (T-074): the added bytes count until the resize is
+// done.
+func (e *Engine) growDisk(ctx context.Context, target string, id driver.GuestID, c wire.Change, now driver.GuestState) error {
+	if now.Power != driver.PowerRunning {
+		return errors.New(textGrowNotRunning)
+	}
+	from, _ := driver.IntValue(c.From)
+	to, err := driver.IntValue(c.To)
+	if err != nil {
+		return err
+	}
+	release, err := e.disk.Reserve(ctx, DiskBytes(to-from), fmt.Sprintf("the %d GiB disk grow of %s", to-from, target))
+	if err != nil {
+		return fmt.Errorf("%w; the disk was not grown: free space on the storage or grow less", err)
+	}
+	defer release()
+	return e.cfg.Driver.Update(ctx, id, []wire.Change{c}, nil)
 }
 
 // Step ids of a container target (T-038 §4).
@@ -745,7 +934,7 @@ func (e *Engine) clearStep(ctx context.Context, s *stepper, target string) {
 		fail(errors.New("the config still shows it after the clear"))
 		return
 	}
-	b.Digest = st.Digest
+	b.Digest = pollKey(st)
 	if err := e.st.PutBinding(ctx, b); err != nil {
 		fail(err)
 		return

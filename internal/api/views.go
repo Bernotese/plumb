@@ -321,7 +321,11 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		// ip is create-only: Plumb can neither revert nor accept (D-215).
 		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
 	} else if i.Status == store.IssueOpen {
-		v.Actions = append(v.Actions, "revert")
+		// A disk grown in Proxmox cannot be reverted: Proxmox cannot
+		// shrink it (D-299). Accept takes the bigger size.
+		if !(i.Resource == wire.GuestConfigID && plan.RevertShrinks(ch)) {
+			v.Actions = append(v.Actions, "revert")
+		}
 		accept := true
 		for _, c := range ch {
 			if c.Sensitive || (i.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind")) {

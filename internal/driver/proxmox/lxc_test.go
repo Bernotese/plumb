@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -148,8 +149,8 @@ func TestCTUpdateLive(t *testing.T) {
 		t.Errorf("net0 %q", n)
 	}
 	var co *driver.CreateOnlyError
-	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrDisk, To: 9}}, nil); !errors.As(err, &co) {
-		t.Errorf("disk change: %v", err)
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "10.0.0.9/24"}}, nil); !errors.As(err, &co) {
+		t.Errorf("create-only: %v", err)
 	}
 }
 
@@ -602,5 +603,28 @@ func TestCTOutsideAdditionsIndividually(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Slice 4 (D-299): a container grows rootfs and changes its tags.
+func TestCTUpdateDay2(t *testing.T) {
+	f, d, id := newCT(t)
+	ctx := context.Background()
+	f.resizes = nil
+	err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrDisk, To: 12}, {Attr: driver.AttrTags, To: []any{"ct"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := d.Observe(ctx, id)
+	if st.Spec.DiskGB != 12 || !slices.Equal(st.Spec.Tags, []string{"ct"}) || !slices.Equal(f.resizes, []string{"9000 rootfs 12G"}) {
+		t.Errorf("state %+v resizes %v", st.Spec, f.resizes)
+	}
+	var se *driver.ShrinkError
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrDisk, To: 9}}, nil); !errors.As(err, &se) {
+		t.Errorf("shrink: %v", err)
+	}
+	f.refuseTags = true
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrTags, To: nil}}, nil); err == nil || !strings.Contains(err.Error(), "user-tag-access") {
+		t.Errorf("refused tags: %v", err)
 	}
 }

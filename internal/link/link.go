@@ -534,6 +534,16 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 		default:
 			return "", fmt.Errorf("link: seal needs a wire.SealBody, got %T", body)
 		}
+	case wire.CommandGrow:
+		// The root file system of a Target VM after a disk grow (D-299).
+		if build {
+			return "", fmt.Errorf("link: no grow for the build guest %q", target)
+		}
+		switch body.(type) {
+		case wire.GrowBody, *wire.GrowBody:
+		default:
+			return "", fmt.Errorf("link: grow needs a wire.GrowBody, got %T", body)
+		}
 	case wire.CommandUpdate:
 		// A build guest runs the agent of this controller and never updates
 		// (T-092): its seal does not remove plumb-agent.prev.
@@ -951,8 +961,10 @@ func validateReport(rep wire.Report, build bool) error {
 		// a seal command for it.
 		// The Item agent:binary only in a result; checkItemKinds then needs
 		// an update command for it (T-092).
+		// The Item grow:root only in a result of a grow command (D-299).
 		if !wire.AgentType(typ) && !(typ == wire.SealItemType && build && rep.Type == wire.ReportResult) &&
-			!(typ == wire.AgentItemType && !build && rep.Type == wire.ReportResult) {
+			!(typ == wire.AgentItemType && !build && rep.Type == wire.ReportResult) &&
+			!(typ == wire.GrowItemType && !build && rep.Type == wire.ReportResult) {
 			return fmt.Errorf("item %d: resource type %q is not an agent resource", i, typ)
 		}
 		if !agentStatuses[it.Status] {
@@ -997,6 +1009,25 @@ func checkUpdateItems(rep wire.Report) error {
 	return nil
 }
 
+// checkGrowItems: the result of a grow command has at most one Item,
+// grow:root, applied, unchanged or failed, without changes, and no
+// progress (D-299). A result with an error and no Item is allowed.
+func checkGrowItems(rep wire.Report) error {
+	if rep.Type != wire.ReportResult {
+		return errors.New("grow has no progress reports")
+	}
+	if len(rep.Items) > 1 {
+		return errors.New("grow has one item")
+	}
+	for _, it := range rep.Items {
+		if it.Resource != wire.GrowItemID || len(it.Changes) > 0 ||
+			(it.Status != wire.StatusApplied && it.Status != wire.StatusUnchanged && it.Status != wire.StatusFailed) {
+			return fmt.Errorf("bad grow item %q %q", it.Resource, it.Status)
+		}
+	}
+	return nil
+}
+
 // sealItemStatuses are the states of a seal step (wire.SealSteps).
 var sealItemStatuses = map[wire.Status]bool{
 	wire.StatusApplied: true, wire.StatusSkipped: true, wire.StatusFailed: true, wire.StatusRefused: true,
@@ -1007,8 +1038,11 @@ var sealItemStatuses = map[wire.Status]bool{
 // step at most once and without changes, and no progress; every other
 // command has no seal step (review of #119).
 func checkItemKinds(rep wire.Report, cmd wire.CommandType) error {
-	if cmd == wire.CommandUpdate {
+	switch cmd {
+	case wire.CommandUpdate:
 		return checkUpdateItems(rep)
+	case wire.CommandGrow:
+		return checkGrowItems(rep)
 	}
 	if cmd != wire.CommandSeal {
 		for i, it := range rep.Items {
@@ -1017,6 +1051,8 @@ func checkItemKinds(rep wire.Report, cmd wire.CommandType) error {
 				return fmt.Errorf("item %d: a seal step answers only a seal command", i)
 			case wire.AgentItemType:
 				return fmt.Errorf("item %d: %s answers only an update command", i, wire.AgentBinaryID)
+			case wire.GrowItemType:
+				return fmt.Errorf("item %d: %s answers only a grow command", i, wire.GrowItemID)
 			}
 		}
 		return nil

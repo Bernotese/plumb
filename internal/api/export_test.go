@@ -315,7 +315,8 @@ func (e *env) storeState() map[string]string {
 func TestImportRefusedWritesNothing(t *testing.T) {
 	e, adm := exportEnv(t, "file-value")
 	_, _, file := e.export(adm, exportPass)
-	createOnly := strings.Replace(file, "disk: 10", "disk: 20", 1)
+	// A smaller disk: refused at save, a disk cannot shrink (D-299).
+	createOnly := strings.Replace(file, "disk: 10", "disk: 5", 1)
 	if createOnly == file {
 		t.Fatal("the test file has no disk: 10")
 	}
@@ -338,7 +339,7 @@ func TestImportRefusedWritesNothing(t *testing.T) {
 		before := e.storeState()
 		last, _ := e.st.LastEventSeq(e.ctx)
 		code, body := e.importFile(adm, c.req)
-		if code != 422 || !strings.Contains(string(body), "create") {
+		if code != 422 || !strings.Contains(string(body), "cannot shrink") {
 			t.Fatalf("%s: %d %s", c.name, code, body)
 		}
 		if after := e.storeState(); len(after) != len(before) || after["app-db"] != before["app-db"] {
