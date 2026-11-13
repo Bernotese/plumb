@@ -1629,6 +1629,11 @@ remove_copy_timer() {
 check_copy_setting() {
 	if [[ -z $BACKUP_STORAGE && -n $(state_get backup_storage) ]]; then
 		BACKUP_STORAGE=$(state_get backup_storage)
+		if [[ -n $RESTORE_FILE ]]; then
+			say "Using kept backup storage $BACKUP_STORAGE for the restored controller."
+			check_backup_storage
+			return 0
+		fi
 		if ! (check_backup_storage) 2>/dev/null; then
 			say "WARNING: the backup copy storage $BACKUP_STORAGE fails its checks now; the copy timer is kept as it is."
 			BACKUP_STORAGE=""
@@ -2091,7 +2096,7 @@ do_install() {
 		say "Restored from $RESTORE_FILE. Log in as admin with the password that plumb restore showed. Plumb is in"
 		say "restored mode: it observes, and changes nothing until you confirm that the old controller is off (D-290)."
 		if [[ -z $BACKUP_STORAGE_SET ]]; then
-			say "No backup copy timer is set. Add one with a repair run: install.sh --plumb-binary FILE --backup-storage ID"
+			say "No off-host backup copy is configured. Add one with a repair run: install.sh --plumb-binary FILE --backup-storage ID"
 		fi
 		return 0
 	fi
@@ -2230,7 +2235,9 @@ check_state_file() {
 # remove_token) go.
 do_remove_keep() {
 	NODE=$(query hostname -s)
-	local lxc keyvol addr
+	local lxc keyvol addr kept_backup_storage restore_copy_arg
+	kept_backup_storage=$(state_get backup_storage)
+	restore_copy_arg=${kept_backup_storage:+ --backup-storage $kept_backup_storage}
 	lxc=$(state_get lxc_id)
 	[[ -n $lxc && $(lxc_state "$lxc") == ours ]] || die "no Plumb LXC of this script on this host; there is no controller to replace. Nothing was removed."
 	LXC_ID=$lxc
@@ -2272,7 +2279,7 @@ do_remove_keep() {
 	say "     and the token $PVE_USER!$TOKEN_NAME with its ACLs"
 	say "  It keeps: pool $POOL with its guests and templates, user $PVE_USER and its ACLs, the roles, the storages,"
 	say "  $SNIPPET_STORAGE with the vendor snippet, and $STATE_FILE (install $INSTALL_ID, pool, node, address $addr${gw:+, gateway $gw})."
-	say "  Then: install.sh --plumb-binary FILE --restore BACKUP --lxc-ip $addr --lxc-gw ${gw:-<gateway>}"
+	say "  Then: install.sh --plumb-binary FILE --restore BACKUP --lxc-ip $addr --lxc-gw ${gw:-<gateway>}$restore_copy_arg"
 	confirm "Replace the controller and keep the guests?" keep-guests || die "stopped; nothing was removed"
 
 	run pct exec "$lxc" -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb backup now --data /var/lib/plumb </dev/null ||
@@ -2299,12 +2306,12 @@ do_remove_keep() {
 	# The kept state: no LXC, the install id, pool, node and old address.
 	local tmp
 	new_tmp tmp
-	printf 'lxc_id=\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s\n' \
-		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$NODE" "$addr" "$gw" >"$tmp"
+	printf 'lxc_id=\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=%s\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s\n' \
+		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$kept_backup_storage" "$NODE" "$addr" "$gw" >"$tmp"
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"
 	say "The controller is removed; the guests run on. Restore with:"
-	say "  install.sh --plumb-binary FILE --restore $COPY_RESULT --lxc-ip $addr --lxc-gw ${gw:-<gateway>}"
+	say "  install.sh --plumb-binary FILE --restore $COPY_RESULT --lxc-ip $addr --lxc-gw ${gw:-<gateway>}$restore_copy_arg"
 }
 
 main() {
