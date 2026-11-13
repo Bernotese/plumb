@@ -140,7 +140,8 @@ func normalCaps(c wire.Capabilities) wire.Capabilities {
 
 // agentHello is a checked hello for the waiters of an update step.
 // afterResult: the hello came after a result of the target, so it is not
-// a reconnect of the old agent before the swap. taken: the agent had
+// a reconnect of the old agent before the swap (it can still be the old
+// process before its exit, T-108). taken: the agent had
 // taken the update command when the hello came (T-102). The agent drops
 // its reverted marker when it starts the command and sends its reports
 // one after the other, so a reverted hello with taken set is of this
@@ -586,7 +587,9 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 	// One wait for the result and the hellos (T-102). The result can be
 	// lost when the link breaks at the swap: the old agent exits after
 	// restartWait without it. Then the hellos tell the outcome: the
-	// served sha (passed), or a revert of this update (failed). When the
+	// served sha (passed), or a revert of this update (failed); a hello
+	// with the old sha after the result only names the failure when no
+	// hello of the new binary follows (T-108). When the
 	// agent took the command and stays silent (no poll) for
 	// UpdateHelloWait, the step fails as with no hello after a result.
 	// ApplyTimeout stays the limit while the command waits untaken.
@@ -601,9 +604,7 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 	for {
 		select {
 		case rep := <-results:
-			if rep.Type == wire.ReportProgress || gotResult {
-				// A second result is the old agent sending its result
-				// again after a lost reply (T-108): the first decides.
+			if rep.Type == wire.ReportProgress {
 				continue
 			}
 			if rep.Error != "" {

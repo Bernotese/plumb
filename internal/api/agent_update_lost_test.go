@@ -266,9 +266,10 @@ func TestAgentUpdateLateOldHello(t *testing.T) {
 			}
 			// 2. The old process reconnects: hello with the old sha.
 			e.hello(wire.Hello{BinarySHA256: oldSHA, Capabilities: &caps})
-			// 3. It sends the result again (the real link answered 409
-			// once the step had failed; any answer is fine here).
-			if code := a.Report(e.ctx, result); code != 204 && code != 409 {
+			// 3. It sends the result again: the link took the first one
+			// and forgot the command, so 409 (as on the host); the old
+			// process then exits.
+			if code := a.Report(e.ctx, result); code != 409 {
 				t.Fatalf("resent result: %d", code)
 			}
 			time.Sleep(200 * time.Millisecond)
