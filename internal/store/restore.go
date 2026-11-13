@@ -137,3 +137,8 @@ func MaxSchemaVersion() (int, error) {
 	}
 	return ms[len(ms)-1].version, nil
 }
+
+// TokenRow returns a token, revoked or not.
+func (s *Store) TokenRow(ctx context.Context, id string) (Token, error) {
+	return scanToken(s.db.QueryRowContext(ctx, `SELECT `+tokenCols+` FROM api_token WHERE id = ?`, id))
+}

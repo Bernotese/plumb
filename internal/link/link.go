@@ -50,6 +50,9 @@ type Config struct {
 	Dir string
 	// Hosts are the host names and IPs of the agent listener certificate.
 	Hosts []string
+	// Restored reports restored mode (D-303): Send refuses every command
+	// but observe while it is true. nil: never.
+	Restored func() bool
 	Store *store.Store
 	// Events gets the enrollment events. It may be nil in tests.
 	Events *event.Log
@@ -516,6 +519,10 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 // build guest (prefix wire.BuildLinkPrefix, D-207): one of the two
 // independent guards that keep seal away from a real Target.
 func (l *Link) Send(target string, typ wire.CommandType, body any) (string, error) {
+	// Restored mode: the only command is observe (D-303).
+	if typ != wire.CommandObserve && l.cfg.Restored != nil && l.cfg.Restored() {
+		return "", fmt.Errorf("%w: no %s command to %s", ErrRestoredMode, typ, target)
+	}
 	build := strings.HasPrefix(target, wire.BuildLinkPrefix)
 	switch typ {
 	case wire.CommandObserve, wire.CommandApply:
@@ -884,6 +891,10 @@ func reportHasText(rep wire.Report) bool {
 	}
 	return false
 }
+
+// ErrRestoredMode: link sends no command but observe in restored mode
+// (D-303).
+var ErrRestoredMode = errors.New("link: restored mode")
 
 // ErrTooOften is returned by OnReport for a report that changes stored
 // data more often than its limit allows (an address list, D-212). link

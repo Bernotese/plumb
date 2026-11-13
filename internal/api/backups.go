@@ -106,7 +106,7 @@ func (s *Server) listBackups(w http.ResponseWriter, r *http.Request, _ *principa
 }
 
 func (s *Server) createBackup(w http.ResponseWriter, r *http.Request, p *principal) {
-	if s.noBackups(w) {
+	if s.noBackups(w) || s.restoredMode(w) {
 		return
 	}
 	run, err := s.cfg.Backups.Start(r.Context(), p.name)

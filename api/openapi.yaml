@@ -2080,7 +2080,6 @@ paths:
     get:
       tags: [backup]
       operationId: getRestore
-      x-plumb-planned: T-113
       summary: Restore state of this controller
       description: |
         `restored: false` on a controller that was never restored. After `plumb restore`: the
@@ -2109,7 +2108,6 @@ paths:
     post:
       tags: [backup]
       operationId: confirmRestore
-      x-plumb-planned: T-113
       summary: End restored mode
       description: |
         A person confirms that the old controller is off (D-290). Human session only: a token
@@ -2151,7 +2149,6 @@ paths:
     post:
       tags: [tokens]
       operationId: enableToken
-      x-plumb-planned: T-113
       summary: Enable a token that a restore disabled
       description: |
         Human session only (D-303). Works also in restored mode, so a person can give one client

@@ -61,6 +61,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		problem(w, http.StatusConflict, "issue-not-open", "Issue is not open", "Another Plan resolves it, or it is resolved.")
 	case errors.Is(err, issue.ErrAcceptSensitive), errors.Is(err, issue.ErrAcceptImage), errors.Is(err, issue.ErrAddressFix):
 		problem(w, http.StatusConflict, "action-not-allowed", "Action not allowed", err.Error())
+	case errors.Is(err, plan.ErrRestoredMode):
+		problem(w, http.StatusConflict, "restored-mode", "Restored mode", err.Error())
 	case errors.Is(err, plan.ErrOffline):
 		problem(w, http.StatusConflict, "target-offline", "Target is offline", err.Error())
 	case errors.Is(err, store.ErrBuildRunning):
@@ -388,6 +390,9 @@ func (s *Server) writePlan(w http.ResponseWriter, r *http.Request, status int, p
 }
 
 func (s *Server) reenroll(w http.ResponseWriter, r *http.Request, p *principal) {
+	if s.restoredMode(w) {
+		return
+	}
 	var req reasonRequest
 	if !decode(w, r, &req, true) {
 		return

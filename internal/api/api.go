@@ -225,6 +225,10 @@ func (s *Server) Handler() http.Handler {
 
 	route("GET /api/v1/events", read, s.events)
 
+	route("GET /api/v1/restore", read, s.getRestore)
+	route("POST /api/v1/restore/confirm", human, s.confirmRestore)
+	route("POST /api/v1/tokens/{id}/enable", human, s.enableToken)
+
 	route("GET /api/v1/backups", read, s.listBackups)
 	route("POST /api/v1/backups", apply, s.createBackup)
 

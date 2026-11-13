@@ -221,3 +221,6 @@ func (e *Engine) UnknownGuests(ctx context.Context) ([]driver.PoolGuest, error) 
 	e.restore.mu.Unlock()
 	return slices.Clone(out), nil
 }
+
+// RestoredMode reports whether restored mode holds (for the API).
+func (e *Engine) RestoredMode() bool { return e.restoreActive() }
