@@ -24,9 +24,10 @@ import (
 
 // nftRunner simulates nft with one table (inet plumb) and systemd.
 type nftRunner struct {
-	mu    sync.Mutex
-	table string
-	calls [][]string
+	mu          sync.Mutex
+	table       string
+	calls       [][]string
+	failRestore bool // nft -f of the boot file fails
 }
 
 func (r *nftRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -40,6 +41,9 @@ func (r *nftRunner) Run(_ context.Context, name string, args ...string) ([]byte,
 		}
 		return []byte(r.table), nil
 	case name == "nft" && len(args) == 2 && args[0] == "-f":
+		if r.failRestore && strings.HasSuffix(args[1], resource.FirewallBootFile) {
+			return nil, &resource.ExitError{Name: "nft", Code: 1, Stderr: "Error: cannot load"}
+		}
 		b, err := os.ReadFile(args[1])
 		if err != nil {
 			return nil, err
@@ -222,7 +226,7 @@ func TestSafeApplyMarkerAtStart(t *testing.T) {
 		write(t, filepath.Join(root, resource.FirewallBootFile), "table inet plumb\ndelete table inet plumb\ntable inet plumb {\n\tchain input {\n\t}\n}\n")
 	})
 	rep := ctl.result(t, "c9")
-	if rep.Error == "" || len(rep.Items) != 1 || rep.Items[0].Status != wire.StatusFailed || !rep.Items[0].RolledBack {
+	if rep.Error != restartedError || len(rep.Items) != 1 || rep.Items[0].Status != wire.StatusFailed || !rep.Items[0].RolledBack {
 		t.Fatalf("result after restart: %+v", rep)
 	}
 	if !strings.Contains(nft.live(), "chain input") {
@@ -322,5 +326,25 @@ func TestSafeApplyRealLink(t *testing.T) {
 		case <-deadline:
 			t.Fatal("no result")
 		}
+	}
+}
+
+// rolled_back only when the confirmed state is really back (S2 of #213).
+func TestSafeApplyRestoreFails(t *testing.T) {
+	ca := newCA(t)
+	ctl := newController(t, ca, "tok")
+	ctl.confirmCode = http.StatusConflict
+	ta, nft := firewallAgent(t, ctl, ca, 5*time.Second, nil)
+	nft.mu.Lock()
+	nft.failRestore = true
+	nft.mu.Unlock()
+	ctl.send(t, "c1", wire.CommandApply, fwApply(fwResource(nil)))
+	it := ctl.result(t, "c1").Items[0]
+	if it.Status != wire.StatusFailed || it.RolledBack || !strings.Contains(it.Output, "restore failed") {
+		t.Fatalf("item: %+v", it)
+	}
+	// The marker stays: the next start tries the restore again.
+	if _, err := os.Stat(filepath.Join(ta.cfg.StateDir, safeApplyMarker)); err != nil {
+		t.Errorf("marker: %v", err)
 	}
 }

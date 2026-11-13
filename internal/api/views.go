@@ -101,6 +101,8 @@ type resourcePlanView struct {
 	RestartBy  []string      `json:"restart_by,omitempty"` // D-171
 	// ConfirmSeconds: the safe apply window (D-300).
 	ConfirmSeconds int `json:"confirm_seconds,omitempty"`
+	// Summary: lines for the approver (D-300).
+	Summary []string `json:"summary,omitempty"`
 }
 
 type targetPlanView struct {
@@ -169,7 +171,7 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 			}
 			tv.Resources = append(tv.Resources, resourcePlanView{Resource: rc.Resource, Action: action, Risk: rc.Risk,
 				Changes: changes(rc.Changes), Unverified: rc.Unverified, After: rc.After, RestartBy: rc.RestartBy,
-				ConfirmSeconds: rc.ConfirmSeconds})
+				ConfirmSeconds: rc.ConfirmSeconds, Summary: rc.Summary})
 			if rc.Unverified {
 				unverified++
 			}

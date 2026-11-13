@@ -383,18 +383,29 @@ func (e *Engine) planTarget(ctx context.Context, before *state.Rendered, next *s
 	if err == nil && r != nil {
 		showOrder(&tp, r)
 	}
-	showConfirm(&tp)
+	showSafeApply(&tp, r)
 	return tp, err
 }
 
-// showConfirm names the window of a safe apply on each resource of
-// wire.SafeApplyTypes that the Plan changes (D-293, D-300).
-func showConfirm(tp *TargetPlan) {
+// showSafeApply names the window of a safe apply on each resource of
+// wire.SafeApplyTypes that the Plan changes (D-293, D-300), and its
+// summary lines from the desired attributes (r nil: the Target goes).
+func showSafeApply(tp *TargetPlan, r *state.Rendered) {
+	desired := map[string]wire.Resource{}
+	if r != nil {
+		for _, res := range r.Resources {
+			desired[res.ID] = res
+		}
+	}
 	for i := range tp.Resources {
 		rc := &tp.Resources[i]
 		typ, _, _ := wire.SplitID(rc.Resource)
-		if slices.Contains(wire.SafeApplyTypes, typ) && (rc.Unverified || len(rc.Changes) > 0) {
-			rc.ConfirmSeconds = wire.SafeApplySeconds
+		if !slices.Contains(wire.SafeApplyTypes, typ) || !rc.Unverified && len(rc.Changes) == 0 {
+			continue
+		}
+		rc.ConfirmSeconds = wire.SafeApplySeconds
+		if res, ok := desired[rc.Resource]; ok {
+			rc.Summary = state.Summary(res)
 		}
 	}
 }

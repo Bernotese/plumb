@@ -19,18 +19,18 @@ import (
 // unit are agent paths (wire.IsAgentPath, wire.IsAgentUnit), so no Block
 // can write them and bypass the checks of this file (review F2 of T-111).
 const (
-	// FirewallBootFile holds the confirmed rules. plumb-firewall.service
+	// FirewallBootFile holds the confirmed rules. plumb-agent-firewall.service
 	// loads it at boot; the rollback timer and a restore load it too.
 	FirewallBootFile = "/etc/plumb-agent/firewall.nft"
 	// firewallNextFile is the script of a live apply.
 	firewallNextFile = "/etc/plumb-agent/firewall.next"
 	// FirewallUnit loads the boot file before the network comes up.
-	FirewallUnit     = "plumb-firewall.service"
+	FirewallUnit     = "plumb-agent-firewall.service"
 	firewallUnitPath = unitDir + FirewallUnit
 	// FirewallRollback is the transient timer of a safe apply (review F1
 	// of T-111): it loads the boot file when the agent dies in the window
 	// and does not come back. Unit names: <name>.timer, <name>.service.
-	FirewallRollback = "plumb-firewall-rollback"
+	FirewallRollback = "plumb-agent-firewall-rollback"
 	nftPath          = "/usr/sbin/nft"
 )
 
@@ -42,7 +42,7 @@ var firewallRollbackAfter = wire.SafeApplySeconds + 30
 // firewallTable is the only nftables table that the agent reads or changes.
 const firewallTable = "inet plumb"
 
-// firewallUnitContent is plumb-firewall.service. It runs early and only
+// firewallUnitContent is plumb-agent-firewall.service. It runs early and only
 // when a boot file exists (review F4). After nftables.service: that unit
 // loads /etc/nftables.conf, which starts with "flush ruleset".
 const firewallUnitContent = `# Managed by the Plumb agent. Do not edit.
@@ -205,6 +205,9 @@ func sshPort(raw json.RawMessage) (int, error) {
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
+		if strings.HasPrefix(s, "0") {
+			return 0, errors.New("ssh_port must be 1 … 65535")
+		}
 		raw = json.RawMessage(s)
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(string(raw)))
@@ -592,7 +595,7 @@ func (f *firewall) Prepare(ctx context.Context) error {
 	return nil
 }
 
-// installFirewallUnit writes and enables plumb-firewall.service when it
+// installFirewallUnit writes and enables plumb-agent-firewall.service when it
 // differs.
 func installFirewallUnit(ctx context.Context, env Env) error {
 	cur, err := readManaged(env.Root, firewallUnitPath)
@@ -665,6 +668,33 @@ func restoreFirewall(ctx context.Context, env Env) error {
 // Watch: nft has no file event; the periodic check covers the table. The
 // boot file is the agent's own.
 func (f *firewall) Watch() []string { return nil }
+
+// Summary returns the lines that a Plan shows for a desired firewall
+// (ResourcePlan.summary, D-300): the effective SSH rule, then the policy.
+// nil for another type, state absent or an attribute that the agent
+// would refuse.
+func Summary(r wire.Resource) []string {
+	if r.Type != "firewall" {
+		return nil
+	}
+	a := firewallAttrs{Policy: "drop", State: wire.StatePresent}
+	if err := decode(r, "firewall", &a, func() string { return a.Name }); err != nil {
+		return nil
+	}
+	s, err := checkFirewall(r, a)
+	if err != nil || s.State != wire.StatePresent {
+		return nil
+	}
+	ssh := "no SSH rule (allow_no_ssh)"
+	if port, src, ok := fwSSHRule(s.SSH); ok {
+		ssh = "SSH tcp/" + port + " open from " + orEverywhere(src)
+	}
+	policy := "policy drop: other input is dropped"
+	if s.Policy == "accept" {
+		policy = "policy accept: other input is accepted"
+	}
+	return []string{ssh, policy}
+}
 
 // SafeApplier is a resource of wire.SafeApplyTypes (D-293, D-300). The
 // agent calls Prepare, then Apply (live only), then after the controller

@@ -40,6 +40,8 @@ const (
 	rolledBackText  = "no round trip to the controller within %d s after the change; the confirmed state is back"
 	restoreFailText = "no round trip to the controller within %d s after the change, and the restore failed: %s (the rollback timer and the next boot load the confirmed state)"
 	restartedText   = "the agent stopped during the safe apply of %s; it put the confirmed state back at its start"
+	// restartedError fails the other resources of that apply (D-300).
+	restartedError = "the agent restarted during the apply"
 )
 
 // isSafeApply reports whether r gets safe apply.
@@ -62,8 +64,11 @@ func (a *Agent) safeApply(ctx context.Context, cmdID string, r wire.Resource, rs
 	if err := sa.Prepare(ctx); err != nil {
 		return fail(err.Error(), false)
 	}
+	// The window starts when the timer is armed, so the agent always
+	// ends before the timer fires (review L1 of #213).
 	window := a.opt.ConfirmWindow
-	m := safeMarker{Version: 1, Resource: r.ID, Type: r.Type, Command: cmdID, Deadline: time.Now().Add(window)}
+	deadline := time.Now().Add(window)
+	m := safeMarker{Version: 1, Resource: r.ID, Type: r.Type, Command: cmdID, Deadline: deadline}
 	if err := a.writeMarker(m); err != nil {
 		a.restore(ctx, sa)
 		return fail("store the safe apply marker: "+err.Error(), false)
@@ -76,12 +81,13 @@ func (a *Agent) safeApply(ctx context.Context, cmdID string, r wire.Resource, rs
 		}
 		return fail(err.Error(), false)
 	}
-	deadline := time.Now().Add(window)
 	if a.confirmRoundTrip(ctx, cmdID, r.ID, deadline) {
 		if err := sa.Commit(ctx); err != nil {
-			if a.restore(ctx, sa) {
-				a.removeMarker()
+			if !a.restore(ctx, sa) {
+				// rolled_back only when the confirmed state is back (S2).
+				return fail("keep the new state: "+err.Error()+"; the restore failed too (the rollback timer and the next boot load the confirmed state)", false)
 			}
+			a.removeMarker()
 			return fail("keep the new state: "+err.Error()+"; the confirmed state is back", true)
 		}
 		a.removeMarker()
@@ -94,7 +100,7 @@ func (a *Agent) safeApply(ctx context.Context, cmdID string, r wire.Resource, rs
 	defer cancel()
 	if err := sa.Restore(rctx); err != nil {
 		a.log.Error("safe apply: restore failed", "resource", r.ID, "err", err)
-		return fail(fmt.Sprintf(restoreFailText, secs, err), true)
+		return fail(fmt.Sprintf(restoreFailText, secs, err), false) // not back (S2)
 	}
 	a.removeMarker()
 	a.log.Warn("safe apply: no round trip; confirmed state restored", "resource", r.ID)
@@ -193,6 +199,6 @@ func (a *Agent) restoreAtStart(ctx context.Context) *wire.Report {
 		return nil
 	}
 	text := fmt.Sprintf(restartedText, m.Resource)
-	return &wire.Report{Type: wire.ReportResult, CommandID: m.Command, Error: text,
+	return &wire.Report{Type: wire.ReportResult, CommandID: m.Command, Error: restartedError,
 		Items: []wire.Item{{Resource: m.Resource, Status: wire.StatusFailed, RolledBack: true, Output: text}}}
 }

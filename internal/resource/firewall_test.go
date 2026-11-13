@@ -119,6 +119,7 @@ func TestFirewallChecks(t *testing.T) {
 		{"ssh_port": "99999"},
 		{"ssh_port": 0},
 		{"ssh_port": "22a"},
+		{"ssh_port": "022"},
 		{"allow_no_ssh": true, "ssh_port": 22},
 		{"allow_no_ssh": true, "ssh_sources": "10.0.0.0/8"},
 		{"state": "absent", "policy": "drop"},
