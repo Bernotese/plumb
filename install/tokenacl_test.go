@@ -68,6 +68,7 @@ func tokenACLDeletesBefore(t *testing.T, calls []string) {
 }
 
 func TestTokenACLsKeepGuestsAndRestore(t *testing.T) {
+	t.Parallel()
 	b := installedWithGuests(t)
 	checkTokenACLs(t, b.host, "install")
 	userACLs := aclLines(t, b.host, "plumb@pve")
@@ -102,6 +103,7 @@ func TestTokenACLsKeepGuestsAndRestore(t *testing.T) {
 // (one more than planned): the next install sets the token ACLs itself and
 // removes the extra line.
 func TestTokenACLLeftoverCleaned(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	acl := filepath.Join(h.state, "acl")
@@ -135,6 +137,7 @@ func TestTokenACLLeftoverCleaned(t *testing.T) {
 }
 
 func TestTokenACLsFullRemove(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	// The dry run shows the new steps.
