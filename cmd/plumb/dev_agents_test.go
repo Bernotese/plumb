@@ -202,6 +202,18 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "Hello from web3"}}},
 	}}}})
 	eventually(t, "agent of web3", 5*time.Second, func() bool { return devAgentRuns() == 4 })
+	// T-126: the simulated agent says hello after a power start and
+	// answers the grow command, so these Runs end in --dev too.
+	web3 := func(power string, disk int) map[string]any {
+		return map[string]any{"put": []any{map[string]any{"kind": "Target", "name": "web3", "spec": map[string]any{
+			"type": "vm", "image": "ubuntu-26.04", "allow_restart": true,
+			"guest":  map[string]any{"cores": 1, "memory": 1024, "disk": disk, "bridge": "vmbr0", "power": power},
+			"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "Hello from web3"}}},
+		}}}}
+	}
+	apply("stop web3", web3("stopped", 10))
+	apply("start web3", web3("running", 10))
+	apply("grow web3", web3("running", 20))
 	apply("delete web3", map[string]any{"delete": []any{map[string]any{"kind": "Target", "name": "web3"}}})
 	eventually(t, "agent of web3 stops", 5*time.Second, func() bool { return devAgentRuns() == 3 })
 

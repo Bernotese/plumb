@@ -144,6 +144,7 @@ type devAgent struct {
 	ref    string // the guest the agent stands for
 	a      *linktest.Agent
 	cancel context.CancelFunc
+	boots  int // cold starts of the guest seen; a new one sends a hello
 }
 
 func newDevAgents(st *store.Store, lk *link.Link, drv *fake.Driver, log *slog.Logger) *devAgents {
@@ -226,6 +227,20 @@ func (d *devAgents) sync(ctx context.Context) error {
 		if d.agents[t] == nil {
 			d.start(ctx, t, ref)
 			d.log.Info("dev agent started", "target", t)
+			continue
+		}
+		// Like the real agent, a hello after each cold start of the guest
+		// (a power start or a restart), so a Run that waits for it ends.
+		a := d.agents[t]
+		if n := d.drv.Boots(driver.GuestID(ref)); n > a.boots {
+			a.boots = n
+			if a.a.Enrolls() > 0 {
+				d.wg.Add(1)
+				go func() {
+					defer d.wg.Done()
+					a.a.SendHello(ctx)
+				}()
+			}
 		}
 	}
 	return nil
@@ -257,8 +272,12 @@ func (d *devAgents) start(ctx context.Context, target, ref string) {
 	// proposal, and the gate passes.
 	served := servedAgent()
 	a.SetHello(wire.Hello{BinarySHA256: served.SHA256, Capabilities: &served.Capabilities})
+	// The simulated guest grows its root file system at once (T-115).
+	a.OnGrow(func(wire.GrowBody) wire.Item {
+		return wire.Item{Resource: wire.GrowItemID, Status: wire.StatusApplied, Output: "grown (simulated)"}
+	})
 	actx, cancel := context.WithCancel(ctx)
-	d.agents[target] = &devAgent{ref: ref, a: a, cancel: cancel}
+	d.agents[target] = &devAgent{ref: ref, a: a, cancel: cancel, boots: d.drv.Boots(driver.GuestID(ref))}
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()

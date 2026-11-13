@@ -77,18 +77,33 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			// The VMID may hold another guest now (review H2 of #222):
 			// then the bound guest is missing, and the other one is
 			// unknown.
-			// It counts while restored mode holds, and after it only
-			// until the first good check (while that Issue is open);
-			// later a rename is the normal create-only drift. Writes to
-			// such a guest are refused either way (checkOwnGuest).
-			if observed.Spec.Name != b.Name && (e.restoreActive() || e.openRestoreIssue(ctx, b.Name, GuestMissingID)) {
-				e.setForeign(b.Ref, true)
+			// In restored mode a guest of another name is marked foreign
+			// (D-322); the mark holds until the name matches again. An
+			// unmarked mismatch after the confirm is a rename: the
+			// normal create-only drift. checkOwnGuest refuses writes to
+			// a marked VMID.
+			foreign := false
+			if observed.Spec.Name != b.Name {
+				if e.restoreActive() {
+					err = e.markForeign(ctx, b)
+					foreign = err == nil
+				} else {
+					foreign, err = e.st.IsForeign(ctx, b.Name, b.Ref)
+				}
+				if err != nil {
+					errs = append(errs, err)
+					continue
+				}
+			} else if err := e.clearForeign(ctx, b.Name); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if foreign {
 				if err := e.guestMissing(ctx, b, false); err != nil {
 					errs = append(errs, err)
 				}
 				continue
 			}
-			e.setForeign(b.Ref, false)
 			if err := e.restoreIssue(ctx, b.Name, GuestMissingID, wire.StatusUnchanged, nil); err != nil {
 				errs = append(errs, err)
 			}

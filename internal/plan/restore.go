@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -67,12 +66,8 @@ const interruptedByRestore = "interrupted by a restore"
 
 // restoreState is what the engine keeps of a restore.
 type restoreState struct {
-	mu      sync.Mutex
-	revoked map[string]bool // targets whose agent a guest:missing revoked
-	// foreign are VMIDs of bindings whose guest has another name: the old
-	// controller deleted the bound guest and Proxmox gave the VMID to a
-	// new one (review H2 of #222). Unknown guests list them.
-	foreign  map[string]bool
+	mu       sync.Mutex
+	revoked  map[string]bool // targets whose agent a guest:missing revoked
 	unknown  []driver.PoolGuest
 	unknownT time.Time
 }
@@ -83,6 +78,11 @@ func (e *Engine) restoreActive() bool { return e.cfg.Restore.Active() }
 // the switch, the event, and the current watch list to every online agent
 // (until now they keep the one of the old controller).
 func (e *Engine) ConfirmRestore(ctx context.Context, by, reason string) (store.RestoreState, error) {
+	if e.restoreActive() {
+		if err := e.checkBeforeConfirm(ctx); err != nil {
+			return store.RestoreState{}, err
+		}
+	}
 	r, err := e.st.ConfirmRestore(ctx, by, reason)
 	if err != nil {
 		return r, err
@@ -104,6 +104,40 @@ func (e *Engine) ConfirmRestore(ctx context.Context, by, reason string) (store.R
 		}
 	}
 	return r, nil
+}
+
+// ErrRestoreCheck: the guest check before the confirm could not observe
+// a bound guest; restored mode stays (409 restore-check-failed).
+var ErrRestoreCheck = errors.New("plan: the guest check before the confirm failed")
+
+// checkBeforeConfirm observes the guest of every Target once before
+// restored mode ends (review H1 of #224): a gone guest and a guest of
+// another name open guest:missing now and a guest of another name is
+// marked foreign (D-322), so the mark holds after the confirm. A guest that Proxmox
+// does not answer for fails the confirm: a mismatch it hides would count
+// as a rename afterwards.
+func (e *Engine) checkBeforeConfirm(ctx context.Context) error {
+	binds, err := e.st.Bindings(ctx, state.KindTarget)
+	if err != nil {
+		return err
+	}
+	for _, b := range binds {
+		observed, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+		switch {
+		case errors.Is(err, driver.ErrNotFound):
+			err = e.guestMissing(ctx, b, true)
+		case err != nil:
+			return fmt.Errorf("%w: Proxmox did not answer for %s (%v); try again", ErrRestoreCheck, b.Name, err)
+		case observed.Spec.Name != b.Name:
+			if err = e.markForeign(ctx, b); err == nil {
+				err = e.guestMissing(ctx, b, false)
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // guestMissing reports the Issue guest:missing of a Target whose bound
@@ -161,29 +195,29 @@ func (e *Engine) checkSilent(ctx context.Context, target string, observed driver
 		[]wire.Change{{Attr: "hello", From: nil, To: "any", Risk: wire.RiskRead}})
 }
 
-// openRestoreIssue reports whether the Issue of a restore is open for a
-// target.
-func (e *Engine) openRestoreIssue(ctx context.Context, target, id string) bool {
-	iss, err := e.st.OpenIssue(ctx, target, id)
-	return err == nil && iss.Status == store.IssueOpen
+// markForeign marks the bound VMID of a Target as foreign (D-322): it
+// holds a guest of another name after a restore. Only a matching name or
+// the end of the binding clears it.
+func (e *Engine) markForeign(ctx context.Context, b store.Binding) error {
+	if err := e.st.MarkForeign(ctx, b.Name, b.Ref); err != nil {
+		return err
+	}
+	e.restore.mu.Lock()
+	e.restore.unknownT = time.Time{} // list the guests again
+	e.restore.mu.Unlock()
+	return nil
 }
 
-// setForeign records whether the VMID of a binding belongs to another
-// guest now.
-func (e *Engine) setForeign(ref string, foreign bool) {
-	e.restore.mu.Lock()
-	defer e.restore.mu.Unlock()
-	if e.restore.foreign == nil {
-		e.restore.foreign = map[string]bool{}
+// clearForeign drops the foreign mark of a Target whose guest has its
+// name again.
+func (e *Engine) clearForeign(ctx context.Context, target string) error {
+	cleared, err := e.st.ClearForeign(ctx, target)
+	if cleared {
+		e.restore.mu.Lock()
+		e.restore.unknownT = time.Time{}
+		e.restore.mu.Unlock()
 	}
-	if foreign != e.restore.foreign[ref] {
-		e.restore.unknownT = time.Time{} // list the guests again
-	}
-	if foreign {
-		e.restore.foreign[ref] = true
-	} else {
-		delete(e.restore.foreign, ref)
-	}
+	return err
 }
 
 // ErrForeignGuest: after a restore the VMID of a Target belongs to
@@ -191,8 +225,10 @@ func (e *Engine) setForeign(ref string, foreign bool) {
 var ErrForeignGuest = errors.New("plan: after the restore this VMID holds another guest; Plumb does not touch it (the Issue guest:missing tells)")
 
 // checkOwnGuest is the guard of a Run on the guest of a Target after a
-// restore: the bound VMID must still hold a guest with the name of the
-// Target. A guest that is gone is no error here.
+// restore: a VMID marked foreign (D-322) is refused while it holds a
+// guest of another name. An unmarked name mismatch is a rename, written
+// to as on a never restored controller.
+// A guest that is gone is no error here.
 func (e *Engine) checkOwnGuest(ctx context.Context, target string) error {
 	if !e.cfg.Restore.Restored() {
 		return nil
@@ -211,10 +247,13 @@ func (e *Engine) checkOwnGuest(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
-	if observed.Spec.Name != target {
-		return fmt.Errorf("%w (VMID %s, name %q, Target %s)", ErrForeignGuest, b.Ref, observed.Spec.Name, target)
+	if observed.Spec.Name == target {
+		return nil
 	}
-	return nil
+	if foreign, err := e.st.IsForeign(ctx, target, b.Ref); err != nil || !foreign {
+		return err // a rename (D-322)
+	}
+	return fmt.Errorf("%w (VMID %s, name %q, Target %s)", ErrForeignGuest, b.Ref, observed.Spec.Name, target)
 }
 
 // unknownTTL is how long the list of unknown guests is kept.
@@ -236,9 +275,10 @@ func (e *Engine) UnknownGuests(ctx context.Context) ([]driver.PoolGuest, error) 
 		return nil, err
 	}
 	known := map[string]bool{}
-	e.restore.mu.Lock()
-	foreign := maps.Clone(e.restore.foreign)
-	e.restore.mu.Unlock()
+	foreign, err := e.st.ForeignRefs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, kind := range []string{state.KindTarget, state.KindImage} {
 		binds, err := e.st.Bindings(ctx, kind)
 		if err != nil {
