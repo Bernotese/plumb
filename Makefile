@@ -12,7 +12,7 @@ GO_FILES     = $(shell find . -name '*.go' -not -path '*/node_modules/*')
 # npm ci runs only when the lock file changed; npm writes this file on every install.
 WEB_DEPS     = web/node_modules/.package-lock.json
 
-.PHONY: build check-embed build-web test test-go test-race test-web test-e2e lint lint-go lint-sh lint-web vuln test-guest test-pve clean
+.PHONY: build check-embed build-web test test-go test-race test-web test-e2e lint lint-go lint-sh lint-web vuln test-guest test-guest-lxd test-pve clean
 
 ## build: web UI and both static binaries → bin/
 build: build-web
@@ -56,7 +56,7 @@ lint: lint-go lint-sh lint-web
 
 ## lint-sh: shellcheck for the shell scripts. CI must have shellcheck; on a
 ## machine without it the check is skipped with a warning.
-SH_FILES = scripts/package-release.sh install/install.sh install/testdata/fakepve scripts/check-embed.sh scripts/test-slice-pve.sh
+SH_FILES = scripts/package-release.sh install/install.sh install/testdata/fakepve scripts/check-embed.sh scripts/test-slice-pve.sh test/guest/lxd.sh
 lint-sh:
 	@for f in $(SH_FILES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then shellcheck -x $(SH_FILES); \
@@ -80,6 +80,10 @@ lint-web: $(WEB_DEPS)
 ## test-guest: resource tests in privileged Debian/Ubuntu containers (tags removed; layer cache kept)
 test-guest:
 	bash test/guest/run.sh
+
+## test-guest-lxd: firewall test in unprivileged LXC containers and VMs of LXD (T-116)
+test-guest-lxd:
+	bash test/guest/lxd.sh
 
 ## test-pve: driver tests on the real test host (scripts/test-pve.sh). The test
 ## binary runs inside the Plumb LXC with its plumb.env, so the token never

@@ -48,3 +48,8 @@ func CommandTime(rs []wire.Resource) time.Duration {
 	}
 	return total
 }
+
+// Summary returns the lines that a Plan shows for a desired resource
+// (ResourcePlan.summary, D-300): for firewall the effective SSH rule and
+// the policy; nil for other types.
+func Summary(r wire.Resource) []string { return resource.Summary(r) }

@@ -30,7 +30,7 @@ func compile(t *testing.T, typ Type) *jsonschema.Schema {
 }
 
 func TestTypeTable(t *testing.T) {
-	want := []string{"apt_repository", "command", "directory", "file", "package", "service", "symlink", "sysctl", "unit", "user"}
+	want := []string{"apt_repository", "command", "directory", "file", "firewall", "package", "service", "symlink", "sysctl", "unit", "user"}
 	if got := Names(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
@@ -61,8 +61,10 @@ func TestTypeTable(t *testing.T) {
 	}
 	for _, name := range Names() {
 		typ, _ := Lookup(name)
-		if want := name == "command"; typ.NoDrift != want || typ.Destructive != want || typ.NotInImage != want {
-			t.Errorf("%s: NoDrift, Destructive, NotInImage = %v, %v, %v; only command has them", name, typ.NoDrift, typ.Destructive, typ.NotInImage)
+		// firewall is not in an Image either (T-116): seal removes its
+		// boot file with /etc/plumb-agent.
+		if want := name == "command"; typ.NoDrift != want || typ.Destructive != want || typ.NotInImage != (want || name == "firewall") {
+			t.Errorf("%s: NoDrift, Destructive, NotInImage = %v, %v, %v; only command has them (and NotInImage firewall)", name, typ.NoDrift, typ.Destructive, typ.NotInImage)
 		}
 	}
 }

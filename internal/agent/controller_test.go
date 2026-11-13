@@ -87,6 +87,7 @@ type controller struct {
 	driftTries  int            // drift reports answered with driftCode
 	addrsCode   int            // when set, answer every addrs report with it
 	addrsTries  int            // addrs reports answered with addrsCode
+	confirmCode int            // when set, answer every confirm report with it
 	build       bool           // the enrollment answer says build (image build guest)
 	binary      []byte         // served at wire.PathBinary
 	pollTimes   []time.Time
@@ -190,6 +191,12 @@ func (c *controller) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if rep.Type == wire.ReportDrift && (c.linkLimits && overLinkLimits(rep) || c.rejectRes != "" && holds(rep, c.rejectRes)) {
 			w.WriteHeader(http.StatusBadRequest)
+			c.mu.Unlock()
+			return
+		}
+		if c.confirmCode != 0 && rep.Type == wire.ReportConfirm {
+			c.reports = append(c.reports, rep)
+			w.WriteHeader(c.confirmCode)
 			c.mu.Unlock()
 			return
 		}

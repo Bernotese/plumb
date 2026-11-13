@@ -56,6 +56,12 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) wire.Report {
 			return fail(fmt.Errorf("seal body: %w", err))
 		}
 		rep.Items = a.seal(ctx, cmd.ID, body)
+	case wire.CommandGrow:
+		var body wire.GrowBody
+		if err := json.Unmarshal(cmd.Body, &body); err != nil {
+			return fail(fmt.Errorf("grow body: %w", err))
+		}
+		rep.Items = []wire.Item{a.grow(ctx, body)}
 	case wire.CommandUpdate:
 		var body wire.UpdateBody
 		if err := json.Unmarshal(cmd.Body, &body); err != nil {
@@ -178,7 +184,7 @@ func (a *Agent) apply(ctx context.Context, cmdID string, body wire.ApplyBody) ([
 				if cause != "" {
 					s.item = skipped(s, cause)
 				} else {
-					a.applyStep(ctx, s, body.MaxRisk, planned)
+					a.applyStep(ctx, cmdID, s, body.MaxRisk, planned)
 					if st := s.item.Status; !succeeded(st) {
 						cause = fmt.Sprintf("%s was %s", s.r.ID, st)
 					}
@@ -225,7 +231,7 @@ func plannedByID(body wire.ApplyBody) (map[string]wire.Planned, error) {
 // (or the entry is unverified) and stay within max_risk, else refused and
 // nothing of the resource changes. The agent never fixes a difference that
 // the Plan does not show; the drift check reports it.
-func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk, planned map[string]wire.Planned) {
+func (a *Agent) applyStep(ctx context.Context, cmdID string, s *step, maxRisk wire.Risk, planned map[string]wire.Planned) {
 	// wait returns false when ctx ends first; the step is then skipped.
 	wait := func(dep *step) bool {
 		select {
@@ -278,6 +284,12 @@ func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk, plann
 				Output: resource.SafeOutput(s.r, fmt.Sprintf("change of %s has risk %s, above the approved %s", c.Attr, c.Risk, maxRisk))}
 			return
 		}
+	}
+	if isSafeApply(s.r) {
+		// D-300: live apply, round trip, then commit or restore.
+		s.item = a.safeApply(ctx, cmdID, s.r, rs, item.Changes)
+		s.changed = s.item.Status == wire.StatusApplied
+		return
 	}
 	if err := rs.Apply(ctx, item.Changes); err != nil {
 		s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusFailed, Changes: item.Changes, Output: resource.SafeOutput(s.r, err.Error())}

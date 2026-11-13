@@ -63,6 +63,10 @@ type Options struct {
 	// DefaultUnitDir), SelfExe the running binary that BinarySHA256 hashes
 	// (default /proc/self/exe).
 	ConfigPath, BinaryPath, UnitDir, SelfExe string
+
+	// ConfirmWindow is the time of a safe apply for its round trip
+	// (D-300); default wire.SafeApplySeconds. Tests shorten it.
+	ConfirmWindow time.Duration
 }
 
 // Agent is one agent process.
@@ -80,6 +84,8 @@ type Agent struct {
 	// applyLock: an apply holds it for writing, a drift check for reading,
 	// so a check never observes a half-applied resource (D-055).
 	applyLock sync.RWMutex
+	// safeMu: one safe apply at a time (D-300).
+	safeMu sync.Mutex
 
 	mu       sync.Mutex
 	desired  []wire.Resource
@@ -168,6 +174,9 @@ func New(opt Options) (*Agent, error) {
 	if opt.UnitDir == "" {
 		opt.UnitDir = DefaultUnitDir
 	}
+	if opt.ConfirmWindow <= 0 {
+		opt.ConfirmWindow = wire.SafeApplySeconds * time.Second
+	}
 	if opt.SelfExe == "" {
 		opt.SelfExe = "/proc/self/exe"
 	}
@@ -212,6 +221,10 @@ func New(opt Options) (*Agent, error) {
 // Run enrolls when needed, polls for commands and watches for drift until
 // ctx ends. It never gives up: every failure is retried with backoff.
 func (a *Agent) Run(ctx context.Context) error {
+	// A marker of a safe apply: the agent stopped inside the window. It
+	// restores before anything else and sends the result of that apply
+	// (D-300).
+	restored := a.restoreAtStart(ctx)
 	w, err := newWatcher()
 	if err != nil {
 		return fmt.Errorf("inotify: %w", err)
@@ -227,7 +240,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// pending is a command result that the controller has not accepted
 	// yet. It is sent again until a call succeeds; after a 401 the link has
 	// forgotten the command, so the result is dropped.
-	var pending *wire.Report
+	pending := restored
 	for ctx.Err() == nil {
 		// After an update: exit once the controller took the result, or
 		// after restartWait without that (D-258).
