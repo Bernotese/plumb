@@ -40,7 +40,7 @@ func starterRender(t *testing.T, uses []any, secrets map[string]string) []wire.R
 		}
 		docs = append(docs, doc)
 	}
-	for _, name := range []string{"ssh-hardening", "common-tools", "shell", "docker-engine", "docker-compose", "deploy-user"} {
+	for _, name := range []string{"ssh-hardening", "common-tools", "shell", "docker-engine", "docker-compose", "deploy-user", "firewall"} {
 		raw, err := blocks.FS.ReadFile(name + ".yaml")
 		if err != nil {
 			t.Fatal(err)
