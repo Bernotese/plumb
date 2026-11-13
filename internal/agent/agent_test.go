@@ -318,15 +318,15 @@ func TestLoadConfig(t *testing.T) {
 	ca := newCA(t)
 	dir := t.TempDir()
 	good := filepath.Join(dir, "agent.json")
-	b, _ := json.Marshal(map[string]any{"url": "https://10.0.0.5:8444", "ca": ca.pem, "full_check": "5m"})
+	b, _ := json.Marshal(map[string]any{"url": "https://192.0.2.5:8444", "ca": ca.pem, "full_check": "5m"})
 	write(t, good, string(b))
 	cfg, err := LoadConfig(good)
 	if err != nil || cfg.TokenFile != DefaultTokenFile || cfg.StateDir != DefaultStateDir || time.Duration(cfg.FullCheck) != 5*time.Minute {
 		t.Fatalf("LoadConfig = %+v, %v", cfg, err)
 	}
 	for name, v := range map[string]map[string]any{
-		"http":  {"url": "http://10.0.0.5:8444", "ca": ca.pem},
-		"no ca": {"url": "https://10.0.0.5:8444", "ca": "x"},
+		"http":  {"url": "http://192.0.2.5:8444", "ca": ca.pem},
+		"no ca": {"url": "https://192.0.2.5:8444", "ca": "x"},
 	} {
 		p := filepath.Join(dir, name+".json")
 		b, _ := json.Marshal(v)

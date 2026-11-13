@@ -248,14 +248,14 @@ func TestLXCAddress(t *testing.T) {
 	if !strings.Contains(out, "WARNING: the LXC gets its address by DHCP") {
 		t.Errorf("no DHCP warning:\n%s", out)
 	}
-	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--lxc-ip", "192.168.1.60/24", "--lxc-gw", "192.168.1.1")
+	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--lxc-ip", "192.0.2.60/24", "--lxc-gw", "192.0.2.1")
 	if code != 0 {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
 	if strings.Contains(out, "DHCP") {
 		t.Error("DHCP warning with a static address")
 	}
-	for _, want := range []string{`--net0 name=eth0\,bridge=vmbr0\,ip=192.168.1.60/24\,gw=192.168.1.1 `, `"url": "https://192.168.1.60:8444"`} {
+	for _, want := range []string{`--net0 name=eth0\,bridge=vmbr0\,ip=192.0.2.60/24\,gw=192.0.2.1 `, `"url": "https://192.0.2.60:8444"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("static address: missing %q", want)
 		}

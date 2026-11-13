@@ -4,7 +4,7 @@
   "spec": {
     "type": "vm",
     "image": "ubuntu-26.04",
-    "guest": {"cores": 1, "memory": 512, "disk": 8, "bridge": "vmbr1", "ip": "10.0.0.9/24", "gateway": "10.0.0.1"},
+    "guest": {"cores": 1, "memory": 512, "disk": 8, "bridge": "vmbr1", "ip": "192.0.2.9/24", "gateway": "192.0.2.1"},
     "blocks": [
       {"use": "motd"},
       {"use": "motd", "id": "issue", "params": {"path": "/etc/issue", "text": "Hello"}}

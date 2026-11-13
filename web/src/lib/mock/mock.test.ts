@@ -124,7 +124,7 @@ describe("mock api", () => {
   it("refuses a change of a create-only field", async () => {
     const api = createMockApi({ signedIn: true });
     const t = await api.getTarget("web1");
-    const spec = { ...t.document.spec, guest: { ...t.document.spec.guest, ip: "10.0.0.99/24" } };
+    const spec = { ...t.document.spec, guest: { ...t.document.spec.guest, ip: "192.0.2.99/24" } };
     await expect(
       api.createPlan({ reason: "grow", put: [{ ...t.document, spec }] }),
     ).rejects.toSatisfy(

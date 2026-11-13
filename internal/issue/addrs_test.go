@@ -492,7 +492,7 @@ func TestAddrIssueRuleDoesNotLook(t *testing.T) {
 	// web3: an old agent, no list.
 	var many []string
 	for i := 1; i <= wire.MaxAddrs; i++ {
-		many = append(many, fmt.Sprintf("10.0.0.%d", i))
+		many = append(many, fmt.Sprintf("198.51.100.%d", i))
 	}
 	e.mu.Lock()
 	a4 := e.agents["web4"]
@@ -577,7 +577,7 @@ func TestAddrIssueIgnore(t *testing.T) {
 func TestAddrsForeignAddressIsOnlyDisplay(t *testing.T) {
 	e := addrEnv(t, "web1="+staticIP, "web2=192.0.2.42")
 	e.send("web2", "192.0.2.42")
-	if code := e.send("web1", "10.0.0.1", "192.0.2.42"); code != http.StatusNoContent { // a controller address and web2's
+	if code := e.send("web1", "192.0.2.42", "198.51.100.1"); code != http.StatusNoContent { // web2's address and a controller address
 		t.Fatalf("addrs: %d", code)
 	}
 	for range 4 {

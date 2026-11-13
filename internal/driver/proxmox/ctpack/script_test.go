@@ -28,7 +28,7 @@ func runScript(t *testing.T, failInstall bool) (bin string, out []byte, err erro
 		// A full disk: half the file is written, then install fails.
 		w("install", `eval "dst=\${$#}"; printf 'agent' >"$dst"; echo "install: No space left on device" >&2; exit 1`+"\n")
 	}
-	script := strings.ReplaceAll(FirstBootScript("https://10.0.0.5:8444"), "/usr/local/bin", bin)
+	script := strings.ReplaceAll(FirstBootScript("https://192.0.2.5:8444"), "/usr/local/bin", bin)
 	if strings.Count(script, bin) < 2 {
 		t.Fatal("the script does not use /usr/local/bin")
 	}
@@ -70,8 +70,8 @@ func TestFirstBootScriptInstalls(t *testing.T) {
 }
 
 func TestFirstBootScriptShape(t *testing.T) {
-	s := FirstBootScript("https://10.0.0.5:8444")
-	for _, want := range []string{"url='https://10.0.0.5:8444/agent/v1/binary'", "--cacert", "is-active --quiet plumb-agent.service"} {
+	s := FirstBootScript("https://192.0.2.5:8444")
+	for _, want := range []string{"url='https://192.0.2.5:8444/agent/v1/binary'", "--cacert", "is-active --quiet plumb-agent.service"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("script misses %q", want)
 		}

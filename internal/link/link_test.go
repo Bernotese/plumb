@@ -92,7 +92,7 @@ func (f *fixture) do(method, path, cred string, body any) (int, []byte) {
 		r = bytes.NewReader(raw)
 	}
 	req := httptest.NewRequest(method, path, r)
-	req.RemoteAddr = "10.0.0.7:5000"
+	req.RemoteAddr = "192.0.2.7:5000"
 	if cred != "" {
 		req.Header.Set("Authorization", "Bearer "+cred)
 	}

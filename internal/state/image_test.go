@@ -117,8 +117,8 @@ func TestRecipeHash(t *testing.T) {
 		"memory":  {builtImage(t, func(s map[string]any) { guest(s)["memory"] = 4096 }), motdBlock("hi")},
 		"bridge":  {builtImage(t, func(s map[string]any) { guest(s)["bridge"] = "vmbr1" }), motdBlock("hi")},
 		"ip": {builtImage(t, func(s map[string]any) {
-			guest(s)["ip"] = "192.168.1.50/24"
-			guest(s)["gateway"] = "192.168.1.1"
+			guest(s)["ip"] = "192.0.2.50/24"
+			guest(s)["gateway"] = "192.0.2.1"
 		}), motdBlock("hi")},
 		"block": {builtImage(t, nil), motdBlock("hello")},
 		"params": {builtImage(t, func(s map[string]any) {

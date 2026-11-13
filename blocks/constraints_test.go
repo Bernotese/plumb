@@ -108,7 +108,7 @@ func TestParametersRejectUnsafeValues(t *testing.T) {
 		{"nginx-site", "state", []any{"enabled"}},
 		{"firewall", "tcp_ports", []any{"80;drop", "80 443", "80,", "-80", "80\n", 80}},
 		{"firewall", "udp_ports", []any{"53;", "a"}},
-		{"firewall", "sources", []any{"10.0.0.0", "any", "10.0.0.0/8;", "10.0.0.0/8\n"}},
+		{"firewall", "sources", []any{"198.51.100.0", "any", "198.51.100.0/24;", "198.51.100.0/24\n"}},
 		{"firewall", "ssh_port", []any{"0", "65536", "022", "22,23", "", 22}},
 		{"firewall", "ssh_sources", []any{"0.0.0.0", "x/8"}},
 	} {

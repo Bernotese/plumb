@@ -163,7 +163,7 @@ func TestFetchAndCreateInParallel(t *testing.T) {
 			}
 			g := guest(ref)
 			g.Name = []string{"web1", "web2"}[i]
-			g.IP = []string{"10.0.0.5/24", "10.0.0.6/24"}[i]
+			g.IP = []string{"192.0.2.5/24", "192.0.2.6/24"}[i]
 			ids[i], errs[i] = d.Create(context.Background(), g, driver.Bootstrap{Token: "tok"})
 		}()
 	}

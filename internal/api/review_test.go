@@ -24,21 +24,21 @@ func (e *env) loginFrom(ip, user, password string) int {
 func TestLoginLockoutIsPerClient(t *testing.T) {
 	e := newEnv(t, true)
 	for i := 0; i < 5; i++ {
-		if code := e.loginFrom("10.1.1.1", "admin", "wrong"); code != 401 {
+		if code := e.loginFrom("203.0.113.1", "admin", "wrong"); code != 401 {
 			t.Fatalf("attempt %d: %d", i, code)
 		}
 	}
-	if code := e.loginFrom("10.1.1.1", "admin", e.password); code != 429 {
+	if code := e.loginFrom("203.0.113.1", "admin", e.password); code != 429 {
 		t.Errorf("the guessing client: %d, want 429", code)
 	}
-	if code := e.loginFrom("10.2.2.2", "admin", e.password); code != 200 {
+	if code := e.loginFrom("203.0.113.2", "admin", e.password); code != 200 {
 		t.Errorf("the real user from another client: %d, want 200", code)
 	}
 	// One client cannot try many names quickly either (20/min per client).
 	for i := 0; i < 20; i++ {
-		e.loginFrom("10.3.3.3", "user"+strconv.Itoa(i), "x")
+		e.loginFrom("203.0.113.3", "user"+strconv.Itoa(i), "x")
 	}
-	if code := e.loginFrom("10.3.3.3", "someone", "x"); code != 429 {
+	if code := e.loginFrom("203.0.113.3", "someone", "x"); code != 429 {
 		t.Errorf("many names from one client: %d, want 429", code)
 	}
 	// Unknown names leave no per-user key (review m4).
@@ -62,7 +62,7 @@ func TestHashSlots(t *testing.T) {
 	for i := 0; i < hashSlotCount; i++ {
 		<-e.srv.hashSlots
 	}
-	if code := e.loginFrom("10.9.9.9", "admin", e.password); code != 200 {
+	if code := e.loginFrom("203.0.113.9", "admin", e.password); code != 200 {
 		t.Errorf("free slots: %d", code)
 	}
 }

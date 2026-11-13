@@ -68,7 +68,7 @@ func TestDevSafety(t *testing.T) {
 	if f.listen != ":8443" || f.agentListen != ":8444" {
 		t.Errorf("production listens on %s and %s", f.listen, f.agentListen)
 	}
-	if !loopback("127.0.0.1:1") || !loopback("[::1]:1") || !loopback("localhost:1") || loopback(":8443") || loopback("10.0.0.5:1") {
+	if !loopback("127.0.0.1:1") || !loopback("[::1]:1") || !loopback("localhost:1") || loopback(":8443") || loopback("192.0.2.5:1") {
 		t.Error("loopback")
 	}
 	prod := t.TempDir()
