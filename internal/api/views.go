@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -328,13 +329,7 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		if !(i.Resource == wire.GuestConfigID && plan.RevertShrinks(ch)) {
 			v.Actions = append(v.Actions, "revert")
 		}
-		accept := true
-		for _, c := range ch {
-			if c.Sensitive || (i.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind")) {
-				accept = false
-			}
-		}
-		if accept {
+		if issue.AcceptRefused(i.Resource, ch) == nil {
 			v.Actions = append([]string{"accept"}, v.Actions...)
 		}
 		// The list does not depend on the caller; the server checks who

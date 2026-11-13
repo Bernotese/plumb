@@ -44,6 +44,36 @@ var containerAttrs = map[string]bool{"features": true, "mounts": true, "devices"
 // ErrAcceptOutside is returned for accept of the features, mount points,
 // devices or raw lxc lines of a container: a Target cannot hold them
 // (D-227, T-038 §3).
+// firewallNoAccept are the firewall attributes that Accept never takes
+// from guest drift (D-300, review L2 of #219): the SSH rule comes only from
+// the document, so drift (or a forged report of an agent) can never write
+// allow_no_ssh, move the SSH port or narrow its sources. "ssh" and "table"
+// are display attributes of the agent, no schema attributes.
+var firewallNoAccept = map[string]bool{"allow_no_ssh": true, "ssh_port": true, "ssh_sources": true, "ssh": true, "table": true}
+
+// ErrAcceptFirewall: an Issue of a firewall touches its SSH rule or its
+// table.
+var ErrAcceptFirewall = errors.New("issue: accept is not possible for the SSH rule or the table of a firewall: the SSH rule comes only from the document (D-300); revert the drift or change the Block")
+
+// AcceptRefused returns why Accept cannot take the changes of an Issue of
+// resource, or nil. The Issue view offers "accept" only when it is nil.
+func AcceptRefused(resource string, changes []wire.Change) error {
+	typ, _, _ := wire.SplitID(resource)
+	for _, c := range changes {
+		switch {
+		case c.Sensitive:
+			return ErrAcceptSensitive
+		case resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind"):
+			return ErrAcceptImage
+		case resource == wire.GuestConfigID && containerAttrs[c.Attr]:
+			return ErrAcceptOutside
+		case typ == "firewall" && firewallNoAccept[c.Attr]:
+			return ErrAcceptFirewall
+		}
+	}
+	return nil
+}
+
 var ErrAcceptOutside = errors.New("issue: accept is not possible for container features, mount points, devices or raw lxc lines; Plumb runs only unprivileged containers with nesting (D-227): revert the features, remove the rest on the Proxmox host, or ignore the Issue")
 
 // ErrAddressFix is returned for revert and accept of a guest:address
@@ -296,16 +326,10 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 	if attrs == nil {
 		attrs = map[string]any{}
 	}
+	if err := AcceptRefused(iss.Resource, changes); err != nil {
+		return state.Doc{}, err
+	}
 	for _, c := range changes {
-		if c.Sensitive {
-			return state.Doc{}, ErrAcceptSensitive
-		}
-		if iss.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind") {
-			return state.Doc{}, ErrAcceptImage
-		}
-		if iss.Resource == wire.GuestConfigID && containerAttrs[c.Attr] {
-			return state.Doc{}, ErrAcceptOutside
-		}
 		if c.Attr == wire.AttrRestart {
 			continue
 		}

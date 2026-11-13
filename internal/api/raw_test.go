@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -103,4 +104,57 @@ func TestToSourceView(t *testing.T) {
 			t.Errorf("%s: %+v", id, v)
 		}
 	}
+}
+
+// Accept of a firewall Issue, also "accept as raw", can never adopt
+// allow_no_ssh or drop the SSH rule from guest drift (D-300, review L2 of
+// #219). The Issue comes from a report that a compromised agent could
+// forge: the agent of T-116 never reports these attributes.
+func TestRawAcceptFirewallSSH(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	rc := &recorder{t: t}
+	before, _ := e.st.Head(e.ctx)
+	for _, c := range []wire.Change{
+		{Attr: "allow_no_ssh", From: true, To: false, Risk: wire.RiskDisruptive},
+		{Attr: "ssh_port", From: "2222", To: "22", Risk: wire.RiskDisruptive},
+		{Attr: "ssh_sources", From: "192.0.2.1/32", To: "", Risk: wire.RiskDisruptive},
+		{Attr: "ssh", From: "closed (allow_no_ssh)", To: "tcp/22 from everywhere", Risk: wire.RiskDisruptive},
+		{Attr: "table", From: "changed outside Plumb", To: "as Plumb wrote it", Risk: wire.RiskDisruptive},
+	} {
+		raw, _ := json.Marshal([]wire.Change{{Attr: "policy", From: "accept", To: "drop", Risk: wire.RiskDisruptive}, c})
+		iss, _, err := e.st.UpsertIssue(e.ctx, "web1", "firewall:main", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body := rc.do(adm, "GET", "/api/v1/issues/"+itoa(iss.ID), "/issues/{id}", nil)
+		var iv struct {
+			Actions []string `json:"actions"`
+			Raw     bool     `json:"raw"`
+		}
+		json.Unmarshal(body, &iv)
+		if slices.Contains(iv.Actions, "accept") || iv.Raw {
+			t.Errorf("%s: accept offered: %s", c.Attr, body)
+		}
+		code, body := rc.do(adm, "POST", "/api/v1/issues/"+itoa(iss.ID)+"/resolve", "/issues/{id}/resolve", resolveBody(issue.ActionAccept))
+		if code != 409 || problemType(body) != "action-not-allowed" {
+			t.Errorf("%s: accept: %d %s", c.Attr, code, body)
+		}
+		if head, _ := e.st.Head(e.ctx); head.ID != before.ID {
+			t.Fatalf("%s: the accept changed the document", c.Attr)
+		}
+		// Clean up for the next case: the Issue goes.
+		if err := e.st.ResolveIssue(e.ctx, iss.ID, "gone", "system"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A firewall change without the SSH rule can be accepted.
+	raw, _ := json.Marshal([]wire.Change{{Attr: "tcp_ports", From: "80", To: "80,443", Risk: wire.RiskDisruptive}})
+	iss, _, _ := e.st.UpsertIssue(e.ctx, "web1", "firewall:main", raw)
+	_, body := rc.do(adm, "GET", "/api/v1/issues/"+itoa(iss.ID), "/issues/{id}", nil)
+	if !strings.Contains(string(body), `"actions":["accept"`) {
+		t.Errorf("tcp_ports: %s", body)
+	}
+	rc.check()
 }
