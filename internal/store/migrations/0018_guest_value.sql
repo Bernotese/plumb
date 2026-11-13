@@ -1,5 +1,4 @@
--- 0017_guest_value (T-148; D-331, D-337, D-352). The copy rule. Planned as 0018;
--- it holds 0017 until the users migration (T-147) merges (D-337: rename at merge).
+-- 0018_guest_value (T-148; D-331, D-337, D-352, D-353). The copy rule.
 --
 -- guest_value: a keyed hash (HMAC-SHA256, own key label) of every value,
 -- and of every element of a list value, that a guest reported as drift.

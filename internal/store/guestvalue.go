@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// The copy rule (D-331, D-352; migration 0017_guest_value).
+// The copy rule (D-331, D-352; migration 0018_guest_value).
 
 // GuestValueCap is the most rows that guest_value keeps per Target. A
 // report past it stores nothing new and flags the Target; no row is ever
