@@ -29,6 +29,7 @@ func index(calls []string, prefix string) int {
 }
 
 func TestKeyVolumeAndKeyInit(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -90,6 +91,7 @@ func TestKeyVolumeAndKeyInit(t *testing.T) {
 }
 
 func TestKeyInitNeedsTerminal(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	noTTY := append(asRoot, "PLUMB_INSTALL_ASSUME_TTY=0")
 	code, _, errOut := h.run(noTTY, "--yes", "--plumb-binary", h.plumb)
@@ -119,6 +121,7 @@ func TestKeyInitNeedsTerminal(t *testing.T) {
 }
 
 func TestPreflightPctExecDoesNotConsumeConfirmation(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	config := "hostname: plumb\ndescription: plumb-installer-lxc Plumb controller\nmp0: local-lvm:vm-105-disk-1,mp=/var/lib/plumb/key,backup=0\n"
 	if err := os.WriteFile(filepath.Join(h.state, "lxc.105"), []byte(config), 0o644); err != nil {
@@ -141,6 +144,7 @@ func TestPreflightPctExecDoesNotConsumeConfirmation(t *testing.T) {
 }
 
 func TestKeyInitWaitsForRecoveryKeyAcknowledgement(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, output, errors := h.runTTY(t, "y\n\n", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -153,6 +157,7 @@ func TestKeyInitWaitsForRecoveryKeyAcknowledgement(t *testing.T) {
 }
 
 func TestKeyInitEOFStillRestartsService(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, output, errors := h.runTTY(t, "y\n\x04", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -167,6 +172,7 @@ func TestKeyInitEOFStillRestartsService(t *testing.T) {
 }
 
 func TestKeyInitFailureStopsBeforeStart(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, _, errOut := h.run(append(asRoot, "FAKE_KEYINIT_FAIL=1"), "--yes", "--plumb-binary", h.plumb)
 	if code == 0 || !strings.Contains(errOut, "plumb key init failed") {
@@ -179,6 +185,7 @@ func TestKeyInitFailureStopsBeforeStart(t *testing.T) {
 
 // An LXC of an older install.sh has no key volume: refused before any change.
 func TestLXCWithoutKeyVolume(t *testing.T) {
+	t.Parallel()
 	for name, mp := range map[string]string{
 		"none":      "",
 		"in backup": "mp0: local-lvm:vm-105-disk-1,mp=/var/lib/plumb/key\n",
@@ -204,6 +211,7 @@ func TestLXCWithoutKeyVolume(t *testing.T) {
 }
 
 func TestRemoveKeyVolume(t *testing.T) {
+	t.Parallel()
 	for _, keep := range []bool{false, true} {
 		h := newHost(t)
 		env := asRoot
@@ -234,19 +242,20 @@ func TestRemoveKeyVolume(t *testing.T) {
 }
 
 func TestLXCAddress(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	_, out, _ := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
 	if !strings.Contains(out, "WARNING: the LXC gets its address by DHCP") {
 		t.Errorf("no DHCP warning:\n%s", out)
 	}
-	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--lxc-ip", "192.168.1.60/24", "--lxc-gw", "192.168.1.1")
+	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--lxc-ip", "192.0.2.60/24", "--lxc-gw", "192.0.2.1")
 	if code != 0 {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
 	if strings.Contains(out, "DHCP") {
 		t.Error("DHCP warning with a static address")
 	}
-	for _, want := range []string{`--net0 name=eth0\,bridge=vmbr0\,ip=192.168.1.60/24\,gw=192.168.1.1 `, `"url": "https://192.168.1.60:8444"`} {
+	for _, want := range []string{`--net0 name=eth0\,bridge=vmbr0\,ip=192.0.2.60/24\,gw=192.0.2.1 `, `"url": "https://192.0.2.60:8444"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("static address: missing %q", want)
 		}
@@ -256,6 +265,7 @@ func TestLXCAddress(t *testing.T) {
 // Proxmox refuses an ACL for a token that does not exist yet (test host,
 // T-013 step 3): the token is made before any ACL.
 func TestTokenBeforeACLs(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
 		t.Fatalf("install: %d %s %s", code, out, errOut)
@@ -305,6 +315,7 @@ func seedHalfInstalled(t *testing.T, h *host, imagesPath string) {
 // The dry run on the half-installed host lists only what is missing, and
 // the real run repairs it and adopts plumb-images, so --remove removes it.
 func TestRepairHalfInstalledHost(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	seedHalfInstalled(t, h, h.images())
 	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
@@ -356,6 +367,7 @@ func TestRepairHalfInstalledHost(t *testing.T) {
 // A plumb-images that differs from what install.sh makes is used, not
 // adopted: --remove keeps it.
 func TestForeignImagesNotAdopted(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	other := filepath.Join(t.TempDir(), "someone-elses-images")
 	os.MkdirAll(other, 0o755)
@@ -377,6 +389,7 @@ func TestForeignImagesNotAdopted(t *testing.T) {
 // A run that stops halfway has already written the state, so --remove
 // removes what it made (T-013 step 3b, minor 5).
 func TestStoppedRunLeavesState(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, _, _ := h.run(append(asRoot, "FAKE_FAIL=pveum user token add"), "--yes", "--plumb-binary", h.plumb)
 	if code == 0 {
@@ -400,6 +413,7 @@ func TestStoppedRunLeavesState(t *testing.T) {
 // Review S1: a failed pct start leaves an LXC that the state names; the
 // next run starts it and makes no second LXC.
 func TestFailedStartKeepsOneLXC(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	if code, _, _ := h.run(append(asRoot, "FAKE_FAIL=pct start"), "--yes", "--plumb-binary", h.plumb); code == 0 {
 		t.Fatal("the run did not stop")
@@ -431,6 +445,7 @@ func TestFailedStartKeepsOneLXC(t *testing.T) {
 // on the test host. The next run removes it; a directory with files stays
 // and the run stops before pct create.
 func TestStaleLXCDir(t *testing.T) {
+	t.Parallel()
 	for _, withFile := range []bool{false, true} {
 		h := newHost(t)
 		lxcDir := filepath.Join(filepath.Dir(h.state), "lxc", "105")
@@ -461,6 +476,7 @@ func TestStaleLXCDir(t *testing.T) {
 // snippet_dir into the state, so --remove never deletes a snippet that
 // this script did not write.
 func TestStateNamesSnippetDirOnlyAfterSetup(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	foreign := filepath.Join(h.snippet, "snippets", "plumb-vendor.yaml")
 	os.MkdirAll(filepath.Dir(foreign), 0o755)
@@ -484,6 +500,7 @@ func TestStateNamesSnippetDirOnlyAfterSetup(t *testing.T) {
 // with more options than install.sh sets is not adopted; an unsafe image
 // directory stops the run before any change.
 func TestImagesAdoptRules(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	seedHalfInstalled(t, h, h.images())
 	_, out, _ := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
@@ -530,6 +547,7 @@ func TestImagesAdoptRules(t *testing.T) {
 
 // Review S4: --remove without a state entry keeps plumb-images and says so.
 func TestRemoveKeepsUnrecordedImages(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	seedHalfInstalled(t, h, h.images())
 	code, out, errOut := h.runRemove()
@@ -544,6 +562,7 @@ func TestRemoveKeepsUnrecordedImages(t *testing.T) {
 // D-183: plumb serve exits 78 for a start failure that a restart cannot
 // fix; systemd must not restart it then.
 func TestUnitStopsOnExit78(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
 		t.Fatalf("%d %s %s", code, out, errOut)
@@ -557,6 +576,7 @@ func TestUnitStopsOnExit78(t *testing.T) {
 // Review nits 1 and 2: an empty stale dir without rootfs is removed; a
 // symbolic link stops the run.
 func TestStaleLXCDirNits(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	dir := filepath.Join(filepath.Dir(h.state), "lxc", "105")
 	os.MkdirAll(dir, 0o700)
@@ -580,7 +600,7 @@ func (h *host) runRemove(env ...string) (int, string, string) {
 	cmd.Env = append(append(append([]string{}, h.env...), asRoot...), env...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	err := cmd.Run()
+	err := bounded(h.t, cmd)
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
@@ -592,6 +612,7 @@ func (h *host) runRemove(env ...string) (int, string, string) {
 
 // D-187: plumb.env gets the DNS of new VMs from the host resolver.
 func TestDNSFromHost(t *testing.T) {
+	t.Parallel()
 	envOf := func(h *host) string {
 		b, _ := os.ReadFile(filepath.Join(h.state, "push", "_etc_plumb_plumb.env"))
 		return string(b)
@@ -645,6 +666,7 @@ func TestDNSFromHost(t *testing.T) {
 // D-187 on a repair run: an env file of an older install gets the two
 // lines; an env file that has them is not changed.
 func TestDNSAddedOnRepair(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
 		t.Fatalf("%d %s %s", code, out, errOut)
@@ -686,6 +708,7 @@ func TestDNSAddedOnRepair(t *testing.T) {
 // Review S1 of the PR #26 delta: a value with a newline (or any other bad
 // character) never reaches plumb.env; strict address checks.
 func TestDNSValuesAreChecked(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		{"--nameserver", "192.0.2.53\nPLUMB_PVE_URL=https://evil.example:8006"},
 		{"--nameserver", "192.0.2.53\n"},
@@ -731,6 +754,7 @@ func TestDNSValuesAreChecked(t *testing.T) {
 // an empty passthrough/ in /var/lib/lxc/<id>. --remove cleans them and the
 // empty state dir; the next install with the same id works.
 func TestRemoveThenInstallSameID(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
 		t.Fatalf("install: %d %s %s", code, out, errOut)
@@ -754,6 +778,7 @@ func TestRemoveThenInstallSameID(t *testing.T) {
 // container, a state file without lxc_id. The install removes exactly the
 // known set; any other entry, or a symbolic link, stops it before a change.
 func TestStaleLXCDirKnownSet(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		make func(dir string)
@@ -816,6 +841,7 @@ func TestStaleLXCDirKnownSet(t *testing.T) {
 // Review nit: an lxc_id in the state file that is not a number stops every
 // mode before a change (it goes into pct commands and paths).
 func TestStateLXCIDMustBeNumber(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{{"--yes", "--plumb-binary", ""}, {"--dry-run", "--plumb-binary", ""}, {"--remove", "--yes"}} {
 		h := newHost(t)
 		if args[len(args)-1] == "" {
@@ -838,6 +864,7 @@ func TestStateLXCIDMustBeNumber(t *testing.T) {
 // Review nit: the leftover cleanup never touches the dir of an id whose
 // container still exists (here: a pct destroy that left it).
 func TestStaleCleanupNeedsNoContainer(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	if code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb); code != 0 {
 		t.Fatalf("install: %d %s %s", code, out, errOut)

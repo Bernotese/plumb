@@ -47,7 +47,7 @@ stat) # stat -c '%U %a' -- DIR: the tests run as a normal user; root unless FAKE
 	;;
 systemctl) ;; # the call is in $st/calls
 mountpoint) [[ ${FAKE_MOUNTED:-0} == 1 ]] ;;
-ip) echo "5: vmbr0    inet 192.168.1.5/24 brd 192.168.1.255 scope global vmbr0\\       valid_lft forever preferred_lft forever" ;;
+ip) echo "5: vmbr0    inet 192.0.2.5/24 brd 192.0.2.255 scope global vmbr0\\       valid_lft forever preferred_lft forever" ;;
 install)
 	args=()
 	while [[ $# -gt 0 ]]; do
@@ -317,7 +317,7 @@ pct)
 		if [[ -t 0 || -p /dev/stdin ]]; then IFS= read -r _ || true; fi
 		[[ -n ${FAKE_EXEC_FAIL:-} && "$*" == "$FAKE_EXEC_FAIL" ]] && exit 3
 		case "$*" in
-		"hostname -I") echo "fd00::50 192.168.1.50" ;;
+		"hostname -I") echo "2001:db8::50 192.0.2.50" ;;
 		"dd if="*)
 			# A file of the fake LXC in $st/ct/ID/PATH; iflag=nofollow
 			# refuses a link, like GNU dd.

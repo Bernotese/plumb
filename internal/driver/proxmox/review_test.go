@@ -151,7 +151,7 @@ func TestReviewMinors(t *testing.T) {
 	// #5: property-string injection is refused before any call.
 	for name, mutate := range map[string]func(*driver.GuestSpec){
 		"bridge":  func(s *driver.GuestSpec) { s.Bridge = "vmbr0,firewall=0" },
-		"ip":      func(s *driver.GuestSpec) { s.IP = "10.0.0.5/24,gw=1.1.1.1" },
+		"ip":      func(s *driver.GuestSpec) { s.IP = "192.0.2.5/24,gw=1.1.1.1" },
 		"gateway": func(s *driver.GuestSpec) { s.Gateway = "1.1.1.1,ip6=auto" },
 		"user":    func(s *driver.GuestSpec) { s.User = "root,x" },
 	} {

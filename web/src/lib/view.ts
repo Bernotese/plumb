@@ -316,7 +316,7 @@ export function reportedAddrs(s: Status): { ips: string[]; more: boolean } | nul
   return { ips: s.reported_ips ?? [], more: s.reported_ips_more === true };
 }
 
-/** "192.0.2.107, fd00::41 + more", or "no address". */
+/** "192.0.2.107, 2001:db8::41 + more", or "no address". */
 export function reportedText(r: { ips: string[]; more: boolean }): string {
   if (r.ips.length === 0) return r.more ? "+ more" : "no address";
   return r.ips.join(", ") + (r.more ? " + more" : "");

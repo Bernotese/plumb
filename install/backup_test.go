@@ -103,7 +103,7 @@ func (b *backupHost) runCopy(env ...string) (int, string, string) {
 	cmd.Env = append(append([]string{}, b.env...), env...)
 	var out, errOut strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	err := cmd.Run()
+	err := bounded(b.t, cmd)
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
@@ -126,6 +126,7 @@ func (b *backupHost) copyStatus() map[string]any {
 // D-304: every install has an install id in the state and in plumb.env,
 // and the backup settings of serve; a repair run keeps the id.
 func TestInstallID(t *testing.T) {
+	t.Parallel()
 	b := newBackupHost(t)
 	b.install("--backup-time", "04:15", "--backup-keep", "9")
 	id := b.stateFile()["install_id"]
@@ -158,6 +159,7 @@ func TestInstallID(t *testing.T) {
 // the timer, and the root-owned status directory in the LXC; "none"
 // removes them; --remove removes them.
 func TestCopyTimer(t *testing.T) {
+	t.Parallel()
 	b := newBackupHost(t)
 	b.install("--backup-storage", "backups", "--backup-time", "23:45", "--backup-copy-keep", "3", "--backup-max-size", "2G")
 	for _, f := range []string{filepath.Join(b.sbin, "plumb-backup-copy"), b.conf, filepath.Join(b.units, "plumb-backup-copy.service"), filepath.Join(b.units, "plumb-backup-copy.timer")} {
@@ -218,6 +220,7 @@ func TestCopyTimer(t *testing.T) {
 // D-289 N3: a storage of another type, an inactive storage and a share
 // that is not mounted are refused before any change.
 func TestCopyStorageRefused(t *testing.T) {
+	t.Parallel()
 	b := newBackupHost(t)
 	b.addStorage("pbs", "pbs", "")
 	b.addStorage("share", "nfs", "")
@@ -257,6 +260,7 @@ func TestCopyStorageRefused(t *testing.T) {
 
 // The config directory stays private, even if writing the config fails.
 func TestCopyConfigDirectoryPrivate(t *testing.T) {
+	t.Parallel()
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
 			b := newBackupHost(t)
@@ -298,9 +302,10 @@ func TestCopyConfigDirectoryPrivate(t *testing.T) {
 
 // D-289 N1–N3, D-312: one run of the copy script.
 func TestCopyRun(t *testing.T) {
+	t.Parallel()
 	b := newBackupHost(t)
 	b.install("--backup-storage", "backups", "--backup-copy-keep", "2", "--backup-max-size", "1M")
-	data := backupFile(testInstallID, "pve1", "plumb", "https://192.168.1.50:8444")
+	data := backupFile(testInstallID, "pve1", "plumb", "https://192.0.2.50:8444")
 	sum := b.serveBackup("plumb-20261113T030000Z.pbk", data)
 	code, out, errOut := b.runCopy()
 	copyPath := filepath.Join(b.store, "plumb-backups", "plumb-20261113T030000Z.pbk")
@@ -437,8 +442,8 @@ func TestCopyRun(t *testing.T) {
 // pool and a backup that serve has written.
 func installedWithGuests(t *testing.T) *backupHost {
 	b := newBackupHost(t)
-	b.install("--backup-storage", "backups", "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1")
-	b.serveBackup("plumb-20261113T030000Z.pbk", backupFile(b.stateFile()["install_id"], "pve1", "plumb", "https://192.168.1.50:8444"))
+	b.install("--backup-storage", "backups", "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
+	b.serveBackup("plumb-20261113T030000Z.pbk", backupFile(b.stateFile()["install_id"], "pve1", "plumb", "https://192.0.2.50:8444"))
 	b.env = append(b.env, `FAKE_POOL_MEMBERS=[{"poolid":"plumb","members":[{"vmid":9000,"type":"qemu"}]}]`)
 	return b
 }
@@ -450,6 +455,7 @@ func (b *backupHost) keepGuests(env []string, args ...string) (int, string, stri
 // D-290, D-304: --remove --keep-guests takes a backup, copies it off,
 // checks it with the recovery key, then removes only the controller.
 func TestRemoveKeepGuests(t *testing.T) {
+	t.Parallel()
 	b := installedWithGuests(t)
 	id := b.stateFile()["install_id"]
 	b.resetCalls()
@@ -491,10 +497,10 @@ func TestRemoveKeepGuests(t *testing.T) {
 		t.Error("the copy timer stays without an LXC")
 	}
 	st := b.stateFile()
-	if st["lxc_id"] != "" || st["kept_guests"] != "1" || st["install_id"] != id || st["node"] != "pve1" || st["pool"] != "plumb" || st["old_address"] != "192.168.1.50/24" || st["old_gateway"] != "192.168.1.1" {
+	if st["lxc_id"] != "" || st["kept_guests"] != "1" || st["install_id"] != id || st["node"] != "pve1" || st["pool"] != "plumb" || st["old_address"] != "192.0.2.50/24" || st["old_gateway"] != "192.0.2.1" {
 		t.Errorf("kept state %v", st)
 	}
-	if !strings.Contains(out, "--restore "+copyPath+" --lxc-ip 192.168.1.50/24 --lxc-gw 192.168.1.1") {
+	if !strings.Contains(out, "--restore "+copyPath+" --lxc-ip 192.0.2.50/24 --lxc-gw 192.0.2.1") {
 		t.Errorf("no exact restore line:\n%s", out)
 	}
 	// A plain install into the kept pool is refused.
@@ -506,6 +512,7 @@ func TestRemoveKeepGuests(t *testing.T) {
 
 // Every failure before the removal changes nothing (D-290 N4).
 func TestRemoveKeepGuestsStopsEarly(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		env  []string
@@ -523,6 +530,7 @@ func TestRemoveKeepGuestsStopsEarly(t *testing.T) {
 		{"backup-to in vz", nil, []string{"--backup-to", "/var/lib/vz"}, nil, "not an existing directory"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			b := installedWithGuests(t)
 			if tc.prep != nil {
 				tc.prep(b)
@@ -546,6 +554,7 @@ func TestRemoveKeepGuestsStopsEarly(t *testing.T) {
 
 // --backup-to: a directory on this host, with a warning.
 func TestRemoveKeepGuestsBackupTo(t *testing.T) {
+	t.Parallel()
 	b := installedWithGuests(t)
 	b.install("--backup-storage", "none")
 	to := t.TempDir()
@@ -579,10 +588,11 @@ func (b *backupHost) restore(env []string, file string, args ...string) (int, st
 
 // D-290, D-304: --restore into the kept pool.
 func TestRestore(t *testing.T) {
+	t.Parallel()
 	b, file := keptHost(t)
 	id := b.stateFile()["install_id"]
 	b.resetCalls()
-	code, out, errOut := b.restore(nil, file, "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1", "--backup-storage", "backups")
+	code, out, errOut := b.restore(nil, file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1", "--backup-storage", "backups")
 	if code != 0 {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}
@@ -623,12 +633,13 @@ func TestRestore(t *testing.T) {
 
 // D-290 N7, D-304: each wrong restore is refused before any change.
 func TestRestoreRefused(t *testing.T) {
+	t.Parallel()
 	b, file := keptHost(t)
 	other := filepath.Join(t.TempDir(), "other.pbk")
 	write := func(id, node, pool, url string) {
 		os.WriteFile(other, backupFile(id, node, pool, url), 0o600)
 	}
-	net := []string{"--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1"}
+	net := []string{"--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1"}
 	for _, tc := range []struct {
 		name string
 		prep func()
@@ -638,10 +649,10 @@ func TestRestoreRefused(t *testing.T) {
 		want string
 	}{
 		{"dhcp", nil, file, nil, nil, "--restore needs --lxc-ip CIDR"},
-		{"other address", nil, file, []string{"--lxc-ip", "192.168.1.51/24", "--lxc-gw", "192.168.1.1"}, nil, "differs from the address in the backup"},
-		{"other install", func() { write(testInstallID, "pve1", "plumb", "https://192.168.1.50:8444") }, other, net, nil, "belong to install"},
-		{"other node", func() { write(testInstallID, "pve9", "plumb", "https://192.168.1.50:8444") }, other, net, nil, "made on node pve9"},
-		{"other pool", func() { write(testInstallID, "pve1", "lab", "https://192.168.1.50:8444") }, other, net, nil, "of pool lab"},
+		{"other address", nil, file, []string{"--lxc-ip", "192.0.2.51/24", "--lxc-gw", "192.0.2.1"}, nil, "differs from the address in the backup"},
+		{"other install", func() { write(testInstallID, "pve1", "plumb", "https://192.0.2.50:8444") }, other, net, nil, "belong to install"},
+		{"other node", func() { write(testInstallID, "pve9", "plumb", "https://192.0.2.50:8444") }, other, net, nil, "made on node pve9"},
+		{"other pool", func() { write(testInstallID, "pve1", "lab", "https://192.0.2.50:8444") }, other, net, nil, "of pool lab"},
 		{"no backup file", func() { os.WriteFile(other, []byte("PLUMB_PVE_SECRET=x"), 0o600) }, other, net, nil, "not a Plumb backup file"},
 		{"bad url", func() { write(testInstallID, "pve1", "plumb", "https://evil;rm:8444") }, other, net, nil, "no agent URL"},
 		{"wrong key", nil, file, net, []string{"FAKE_VERIFY_EXIT=3"}, "wrong recovery key"},
@@ -672,8 +683,9 @@ func TestRestoreRefused(t *testing.T) {
 // Review M2 of #221: a restore that failed in its LXC; the same
 // --restore again removes that LXC first and passes.
 func TestRestoreAgainAfterFailure(t *testing.T) {
+	t.Parallel()
 	b, file := keptHost(t)
-	net := []string{"--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1"}
+	net := []string{"--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1"}
 	code, _, errOut := b.restore([]string{"FAKE_RESTORE_FAIL=1"}, file, net...)
 	if code == 0 || !strings.Contains(errOut, "Run the same install.sh --restore again") {
 		t.Fatalf("failed restore: %d %s", code, errOut)
@@ -719,10 +731,11 @@ func TestRestoreAgainAfterFailure(t *testing.T) {
 
 // A restore while the Plumb LXC still runs is refused.
 func TestRestoreNeedsKeptLXCGone(t *testing.T) {
+	t.Parallel()
 	b := installedWithGuests(t)
 	file := filepath.Join(t.TempDir(), "b.pbk")
-	os.WriteFile(file, backupFile(b.stateFile()["install_id"], "pve1", "plumb", "https://192.168.1.50:8444"), 0o600)
-	code, _, errOut := b.restore(nil, file, "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1")
+	os.WriteFile(file, backupFile(b.stateFile()["install_id"], "pve1", "plumb", "https://192.0.2.50:8444"), 0o600)
+	code, _, errOut := b.restore(nil, file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
 	if code == 0 || !strings.Contains(errOut, "a Plumb LXC (105) exists") {
 		t.Errorf("%d %s", code, errOut)
 	}
@@ -730,6 +743,7 @@ func TestRestoreNeedsKeptLXCGone(t *testing.T) {
 
 // Dry runs of each path change nothing and list the steps.
 func TestBackupDryRuns(t *testing.T) {
+	t.Parallel()
 	b := installedWithGuests(t)
 	b.resetCalls()
 	code, out, errOut := b.keepGuests(nil, "--dry-run")
@@ -743,7 +757,7 @@ func TestBackupDryRuns(t *testing.T) {
 	}
 	b2, file := keptHost(t)
 	b2.resetCalls()
-	code, out, errOut = b2.restore(nil, file, "--dry-run", "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1", "--backup-storage", "backups")
+	code, out, errOut = b2.restore(nil, file, "--dry-run", "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1", "--backup-storage", "backups")
 	if code != 0 || !strings.Contains(out, "plumb key restore") || !strings.Contains(out, "systemctl enable --now plumb-backup-copy.timer") {
 		t.Fatalf("restore dry run: %d\n%s\n%s", code, out, errOut)
 	}

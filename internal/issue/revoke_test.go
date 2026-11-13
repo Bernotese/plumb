@@ -29,7 +29,7 @@ func (e *env) call(method, path, cred string, body any) (int, []byte) {
 		r = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequestWithContext(e.ctx, method, path, r)
-	req.RemoteAddr = "10.99.0.66:4000"
+	req.RemoteAddr = "203.0.113.66:4000"
 	if cred != "" {
 		req.Header.Set("Authorization", "Bearer "+cred)
 	}

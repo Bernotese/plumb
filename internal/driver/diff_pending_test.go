@@ -94,10 +94,10 @@ func TestDriftGuestTableB(t *testing.T) {
 func TestDriftGuestCreateOnlyPending(t *testing.T) {
 	desired := spec()
 	next := spec()
-	next.IP = "10.0.0.9/24"
+	next.IP = "192.0.2.9/24"
 	st := GuestState{Spec: spec(), Pending: &next}
 	got := DriftGuest(desired, st)
-	want := []wire.Change{{Attr: AttrIP, From: "10.0.0.9/24", To: "dhcp", Risk: wire.RiskDestructive, Pending: true}}
+	want := []wire.Change{{Attr: AttrIP, From: "192.0.2.9/24", To: "dhcp", Risk: wire.RiskDestructive, Pending: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("pending ip: %+v, want %+v", got, want)
 	}
@@ -107,11 +107,11 @@ func TestDriftGuestCreateOnlyPending(t *testing.T) {
 	}
 	// R ≠ D, P = D for a create-only input: drift with also_pending.
 	run := spec()
-	run.IP = "10.0.0.9/24"
+	run.IP = "192.0.2.9/24"
 	d := spec()
 	st = GuestState{Spec: run, Pending: &d}
 	got = DriftGuest(desired, st)
-	want = []wire.Change{{Attr: AttrIP, From: "10.0.0.9/24", To: "dhcp", Risk: wire.RiskDestructive, AlsoPending: "dhcp"}}
+	want = []wire.Change{{Attr: AttrIP, From: "192.0.2.9/24", To: "dhcp", Risk: wire.RiskDestructive, AlsoPending: "dhcp"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ip R≠D P=D: %+v, want %+v", got, want)
 	}

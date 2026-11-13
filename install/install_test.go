@@ -84,7 +84,7 @@ func (h *host) run(env []string, args ...string) (int, string, string) {
 	cmd.Env = append(append([]string{}, h.env...), env...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	err := cmd.Run()
+	err := bounded(h.t, cmd)
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
@@ -110,7 +110,7 @@ func (h *host) runTTY(t *testing.T, input string, args ...string) (int, string, 
 	cmd.Stdin = strings.NewReader(input)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	err = cmd.Run()
+	err = bounded(t, cmd)
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
@@ -132,6 +132,7 @@ var mutating = regexp.MustCompile(`^(pveum (pool (add|delete)|role (add|modify|d
 	`pvesm (add|set|remove|free)|pveam (update|download)|pct (create|start|stop|destroy|push|pull|exec [0-9]+ -- (install|sh|chown|chmod|systemctl))|install |lxc-attach )`)
 
 func TestDryRunChangesNothing(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -186,6 +187,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 // The rights are printed before any change and are exactly those of D-081
 // and D-240.
 func TestRights(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	_, out, _ := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
 	rights := out[:strings.Index(out, "+ ")]
@@ -247,6 +249,7 @@ func TestRights(t *testing.T) {
 // PlumbAudit and its ACL on / (propagate 0), for user and token. An ACL on
 // / that is inherited is set back to propagate 0.
 func TestRepairAddsSysAudit(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	acl := filepath.Join(h.state, "acl")
@@ -335,6 +338,7 @@ func TestRepairAddsSysAudit(t *testing.T) {
 
 // Audit privileges must stay exact even when repairing an existing install.
 func TestAuditRoleRepair(t *testing.T) {
+	t.Parallel()
 	for _, appendRights := range []bool{false, true} {
 		t.Run(map[bool]string{false: "replace", true: "refuse-append"}[appendRights], func(t *testing.T) {
 			h := newHost(t)
@@ -372,6 +376,7 @@ func TestAuditRoleRepair(t *testing.T) {
 }
 
 func TestAuditACLRepairAndRemove(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	acl := filepath.Join(h.state, "acl")
@@ -419,6 +424,7 @@ func TestAuditACLRepairAndRemove(t *testing.T) {
 }
 
 func TestOldProxmoxIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, v := range []string{"9.0.11", "8.4.1", "7.4-3"} {
 		h := newHost(t)
 		code, _, errOut := h.run([]string{"FAKE_PVE_VERSION=" + v}, "--dry-run", "--plumb-binary", h.plumb)
@@ -432,6 +438,7 @@ func TestOldProxmoxIsRefused(t *testing.T) {
 }
 
 func TestNeedsRootAndTerminal(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("runs as root")
 	}
@@ -455,6 +462,7 @@ func TestNeedsRootAndTerminal(t *testing.T) {
 // writes it only to the env file in the LXC (0600), and a second run
 // changes nothing that exists.
 func TestInstallAndRunAgain(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := []string{"PLUMB_INSTALL_ASSUME_ROOT=1"}
 	code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb)
@@ -471,11 +479,11 @@ func TestInstallAndRunAgain(t *testing.T) {
 	if opts, _ := os.ReadFile(filepath.Join(h.state, "push", "_etc_plumb_plumb.env.opts")); !strings.Contains(string(opts), "--perms 0600") {
 		t.Errorf("env file mode: %s", opts)
 	}
-	if !strings.Contains(out, "https://192.168.1.50:8443") || !strings.Contains(out, "password pw-from-journal") {
+	if !strings.Contains(out, "https://192.0.2.50:8443") || !strings.Contains(out, "password pw-from-journal") {
 		t.Errorf("end of install: %s", out)
 	}
 	snippet, err := os.ReadFile(filepath.Join(h.snippet, "snippets", "plumb-vendor.yaml"))
-	if err != nil || !strings.Contains(string(snippet), "https://192.168.1.50:8444") || strings.Contains(string(snippet), fakeSecret) {
+	if err != nil || !strings.Contains(string(snippet), "https://192.0.2.50:8444") || strings.Contains(string(snippet), fakeSecret) {
 		t.Fatalf("snippet: %v\n%s", err, snippet)
 	}
 	if st, _ := os.ReadFile(h.stateF); !strings.Contains(string(st), "lxc_id=105") || strings.Contains(string(st), fakeSecret) {
@@ -501,6 +509,7 @@ func TestInstallAndRunAgain(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := []string{"PLUMB_INSTALL_ASSUME_ROOT=1"}
 	if code, out, errOut := h.run(root, "--yes", "--plumb-binary", h.plumb); code != 0 {
@@ -542,8 +551,9 @@ func snippetFile(t *testing.T, h *host, url string) (int, string, string) {
 // The snippet is valid cloud-config with valid agent.json, no secret, and
 // an install command that is valid sh and idempotent.
 func TestSnippet(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
-	code, out, errOut := snippetFile(t, h, "https://10.0.0.5:8444")
+	code, out, errOut := snippetFile(t, h, "https://192.0.2.5:8444")
 	if code != 0 {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
@@ -578,7 +588,7 @@ func TestSnippet(t *testing.T) {
 	if err := json.Unmarshal([]byte(files["/etc/plumb-agent/agent.json"]), &cfg); err != nil {
 		t.Fatalf("agent.json: %v\n%s", err, files["/etc/plumb-agent/agent.json"])
 	}
-	if cfg.URL != "https://10.0.0.5:8444" || !strings.Contains(cfg.CA, "MIIBplumbCAline1\nline2+/=\n") || files["/etc/plumb-agent/ca.pem"] != cfg.CA {
+	if cfg.URL != "https://192.0.2.5:8444" || !strings.Contains(cfg.CA, "MIIBplumbCAline1\nline2+/=\n") || files["/etc/plumb-agent/ca.pem"] != cfg.CA {
 		t.Errorf("agent.json = %+v", cfg)
 	}
 	script := files["/usr/local/sbin/plumb-agent-install"]
@@ -598,7 +608,7 @@ func TestSnippet(t *testing.T) {
 	}
 	// One source of behaviour (T-038 §9): an LXC template gets the same
 	// script and agent unit as the vendor snippet.
-	if want := ctpack.FirstBootScript("https://10.0.0.5:8444"); script != want {
+	if want := ctpack.FirstBootScript("https://192.0.2.5:8444"); script != want {
 		t.Errorf("the snippet script and ctpack.FirstBootScript differ:\n--- snippet\n%s\n--- ctpack\n%s", script, want)
 	}
 	if files["/etc/systemd/system/plumb-agent.service"] != ctpack.AgentUnit {
@@ -611,7 +621,7 @@ func TestSnippet(t *testing.T) {
 		}
 	}
 	// A URL that could break the YAML or the script is refused.
-	for _, bad := range []string{"http://10.0.0.5:8444", "https://x'; rm -rf /; '", "https://a b", "https://x\n- evil", "https://x/path"} {
+	for _, bad := range []string{"http://192.0.2.5:8444", "https://x'; rm -rf /; '", "https://a b", "https://x\n- evil", "https://x/path"} {
 		h := newHost(t)
 		if code, _, _ := snippetFile(t, h, bad); code == 0 {
 			t.Errorf("url %q accepted", bad)
@@ -620,6 +630,7 @@ func TestSnippet(t *testing.T) {
 }
 
 func TestBashSyntax(t *testing.T) {
+	t.Parallel()
 	for _, f := range []string{"install.sh", "testdata/fakepve"} {
 		if out, err := exec.Command("bash", "-n", f).CombinedOutput(); err != nil {
 			t.Errorf("%s: %v %s", f, err, out)
@@ -657,6 +668,7 @@ func (h *host) changed() []string {
 // Review T-013 #1: --remove never deletes a directory from the command
 // line, and keeps a directory that holds other files.
 func TestRemoveSnippetDir(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	code, out, errOut := h.run(root, "--remove", "--yes", "--dry-run", "--snippet-dir", "/etc")
@@ -670,7 +682,7 @@ func TestRemoveSnippetDir(t *testing.T) {
 	os.WriteFile(other, []byte("x"), 0o644)
 	cmd := exec.Command("bash", "install.sh", "--remove", "--yes") // no --snippet-dir: from the state file
 	cmd.Env = append(append([]string{}, h.env...), root...)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := boundedOutput(t, cmd); err != nil {
 		t.Fatalf("remove: %v %s", err, out)
 	}
 	if _, err := os.Stat(other); err != nil {
@@ -689,6 +701,7 @@ func TestRemoveSnippetDir(t *testing.T) {
 // Review T-013 #2: a container that this script did not make is neither
 // destroyed nor given the token.
 func TestForeignLXC(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	// Someone replaced container 105 (stale state file, id reused).
@@ -718,6 +731,7 @@ func TestForeignLXC(t *testing.T) {
 
 // Review T-013 #3: the pool guard fails closed.
 func TestRemovePoolGuardFailsClosed(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	if code, _, errOut := h.run(append(root, "FAKE_POOLS_FAIL=1"), "--remove", "--yes"); code == 0 || !strings.Contains(errOut, "cannot read the members") {
@@ -734,6 +748,7 @@ func TestRemovePoolGuardFailsClosed(t *testing.T) {
 // Review T-013 #4 and host item 6: old rights are printed and removed;
 // a role with extra rights stops the install.
 func TestOldRights(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	env := []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "FAKE_EXTRA_ACL=/ plumb@pve Plumb user"}
 	code, out, errOut := h.run(env, "--yes", "--plumb-binary", h.plumb)
@@ -761,6 +776,7 @@ func TestOldRights(t *testing.T) {
 
 // Review T-013 #6: a lost LXC gets a new token, not an LXC without one.
 func TestLostLXCGetsNewToken(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	root := h.installed()
 	os.Remove(filepath.Join(h.state, "lxc.105"))
@@ -785,6 +801,7 @@ func TestLostLXCGetsNewToken(t *testing.T) {
 
 // Review T-013 #7, #9, #10, #13.
 func TestInstallerMinors(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	h.installed()
 	if left, _ := os.ReadDir(h.tmpDir()); len(left) != 0 {
@@ -793,11 +810,11 @@ func TestInstallerMinors(t *testing.T) {
 	for _, bad := range []string{"\"", "\\", "x\" , \"evil\": \"1"} {
 		ca := filepath.Join(t.TempDir(), "ca.pem")
 		os.WriteFile(ca, []byte("-----BEGIN CERTIFICATE-----\nMIIB"+bad+"\n-----END CERTIFICATE-----\n"), 0o644)
-		if code, _, errOut := h.run(nil, "--dry-run", "--snippet-only", "--ca", ca, "--url", "https://10.0.0.5:8444"); code == 0 || !strings.Contains(errOut, "more than PEM") {
+		if code, _, errOut := h.run(nil, "--dry-run", "--snippet-only", "--ca", ca, "--url", "https://192.0.2.5:8444"); code == 0 || !strings.Contains(errOut, "more than PEM") {
 			t.Errorf("CA with %q: %d %q", bad, code, errOut)
 		}
 	}
-	_, out, _ := snippetFile(t, newHost(t), "https://10.0.0.5:8444")
+	_, out, _ := snippetFile(t, newHost(t), "https://192.0.2.5:8444")
 	if !strings.Contains(out, "--connect-timeout 10 --max-time 300") || !strings.Contains(out, "--timeout=60") {
 		t.Error("downloads without timeouts")
 	}
@@ -815,6 +832,7 @@ func TestInstallerMinors(t *testing.T) {
 
 // D-081: package floor and storage rules, all refused before any change.
 func TestStorageAndVersionRules(t *testing.T) {
+	t.Parallel()
 	refused := func(name string, env []string, setup func(h *host), want string, args ...string) {
 		t.Helper()
 		h := newHost(t)
@@ -855,6 +873,7 @@ func TestStorageAndVersionRules(t *testing.T) {
 
 // Review T-013 n1, n2, n3.
 func TestReReviewMinors(t *testing.T) {
+	t.Parallel()
 	// n1: an unreadable ACL list stops the install before any change.
 	h := newHost(t)
 	code, _, errOut := h.run([]string{"FAKE_ACL_FAIL=1"}, "--dry-run", "--plumb-binary", h.plumb)

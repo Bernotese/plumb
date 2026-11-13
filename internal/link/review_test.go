@@ -213,7 +213,7 @@ func TestFailedAuthLimit(t *testing.T) {
 	// A valid agent sharing the blocked IP must back off, not re-enroll.
 	for method, path := range map[string]string{"GET": wire.PathPoll, "POST": wire.PathReport} {
 		req := httptest.NewRequest(method, path, nil)
-		req.RemoteAddr = "10.0.0.7:5000"
+		req.RemoteAddr = "192.0.2.7:5000"
 		req.Header.Set("Authorization", "Bearer "+good)
 		rec := httptest.NewRecorder()
 		f.srv.ServeHTTP(rec, req)
@@ -223,7 +223,7 @@ func TestFailedAuthLimit(t *testing.T) {
 	}
 	// Another client is not affected.
 	req := httptest.NewRequest("GET", wire.PathPoll, nil)
-	req.RemoteAddr = "10.0.0.8:1"
+	req.RemoteAddr = "192.0.2.8:1"
 	req.Header.Set("Authorization", "Bearer "+good)
 	rec := httptest.NewRecorder()
 	f.srv.ServeHTTP(rec, req)
@@ -246,7 +246,7 @@ func TestLimiterCap(t *testing.T) {
 		l.allow(r)
 	}
 	r := httptest.NewRequest("GET", "/", nil)
-	r.RemoteAddr = "192.168.0.1:1"
+	r.RemoteAddr = "203.0.113.1:1"
 	if l.allow(r) {
 		t.Error("a new client was admitted with a full, active map")
 	}

@@ -117,7 +117,7 @@ func TestSealInGuest(t *testing.T) {
 	}
 	go sleeper.Wait()
 	write(t, "/var/lib/cloud/instances/iid-build/obj.pkl", "state")
-	write(t, "/var/log/cloud-init.log", "hostname plumb-build-debian-v1 10.0.0.9")
+	write(t, "/var/log/cloud-init.log", "hostname plumb-build-debian-v1 192.0.2.9")
 	write(t, "/var/log/syslog.1", "old")
 	write(t, "/var/log/plumb-test/deep/x.log", "plumb-build")
 	write(t, "/tmp/build-file", "x")

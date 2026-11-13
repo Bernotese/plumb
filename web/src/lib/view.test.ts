@@ -194,7 +194,7 @@ describe("reported addresses (T-071)", () => {
 
   it.each([
     [[], false, "no address"],
-    [["192.0.2.1", "fd00::1"], false, "192.0.2.1, fd00::1"],
+    [["192.0.2.1", "2001:db8::1"], false, "192.0.2.1, 2001:db8::1"],
     [["192.0.2.1"], true, "192.0.2.1 + more"],
   ])("%#: %j more=%s", (ips, more, out) => {
     const r = reportedAddrs(

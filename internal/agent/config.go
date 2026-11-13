@@ -27,7 +27,7 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 // Config is /etc/plumb-agent/agent.json. The installer's static snippet
 // writes it; it holds no secret.
 type Config struct {
-	// URL of the agent listener, for example "https://192.168.1.10:8444".
+	// URL of the agent listener, for example "https://192.0.2.10:8444".
 	URL string `json:"url"`
 	// CA is the PEM of the Plumb CA. The agent trusts only certificates it signed.
 	CA string `json:"ca"`

@@ -132,32 +132,32 @@ func TestSelectAddrsFromDump(t *testing.T) {
 		addrMsg(2, "2001:db8::dead", syscall.IFA_F_DEPRECATED, ""),
 		addrMsg(2, "2001:db8::beef", syscall.IFA_F_TENTATIVE, ""),
 		addrMsg(2, "2001:db8::bad", syscall.IFA_F_DADFAILED, ""),
-		addrMsg(2, "fd00::41", 0x200, ""), // IFA_F_MANAGETEMPADDR, only in IFA_FLAGS: kept
-		addrMsg(3, "10.1.0.1", 0, ""),
-		addrMsg(4, "10.2.0.1", 0, ""),
+		addrMsg(2, "2001:db8::42", 0x200, ""), // IFA_F_MANAGETEMPADDR, only in IFA_FLAGS: kept
+		addrMsg(3, "198.51.100.11", 0, ""),
+		addrMsg(4, "198.51.100.12", 0, ""),
 		addrMsg(5, "172.17.0.1", 0, ""),
 		addrMsg(6, "172.18.0.1", 0, ""),
 		addrMsg(7, "172.17.0.5", 0, ""),
 		addrMsg(8, "100.64.0.7", 0, ""),
-		addrMsg(9, "10.99.0.1", 0, ""),
-		addrMsg(10, "10.98.0.1", 0, ""),
-		addrMsg(11, "10.97.0.1", 0, ""),
-		addrMsg(12, "10.96.0.1", 0, ""),
-		addrMsg(13, "10.95.0.1", 0, ""),
+		addrMsg(9, "203.0.113.99", 0, ""),
+		addrMsg(10, "203.0.113.98", 0, ""),
+		addrMsg(11, "203.0.113.97", 0, ""),
+		addrMsg(12, "203.0.113.96", 0, ""),
+		addrMsg(13, "203.0.113.95", 0, ""),
 		addrMsg(14, "192.168.122.1", 0, ""),
-		addrMsg(15, "10.3.0.1", 0, ""),
-		addrMsg(16, "10.20.0.1", 0, ""),
-		addrMsg(17, "10.30.0.1", 0, ""),
-		addrMsg(18, "10.94.0.1", 0, ""),
+		addrMsg(15, "203.0.113.3", 0, ""),
+		addrMsg(16, "198.51.100.20", 0, ""),
+		addrMsg(17, "198.51.100.30", 0, ""),
+		addrMsg(18, "203.0.113.94", 0, ""),
 		addrMsg(19, "10.88.0.1", 0, ""),
-		addrMsg(20, "10.93.0.1", 0, ""),
-		addrMsg(21, "10.92.0.1", 0, ""),
-		addrMsg(22, "10.91.0.1", 0, ""),
-		addrMsg(23, "10.90.0.1", 0, ""),
-		addrMsg(24, "10.89.0.1", 0, ""),
-		addrMsg(25, "fd99::1", 0, ""),
-		addrMsg(26, "fd98::1", 0, ""),
-		addrMsg(27, "10.87.0.1", 0, ""),
+		addrMsg(20, "203.0.113.93", 0, ""),
+		addrMsg(21, "203.0.113.92", 0, ""),
+		addrMsg(22, "203.0.113.91", 0, ""),
+		addrMsg(23, "203.0.113.90", 0, ""),
+		addrMsg(24, "203.0.113.89", 0, ""),
+		addrMsg(25, "2001:db8:99::1", 0, ""),
+		addrMsg(26, "2001:db8:98::1", 0, ""),
+		addrMsg(27, "203.0.113.87", 0, ""),
 		addrMsg(2, "224.0.0.251", 0, ""),
 		addrMsg(2, "0.0.0.0", 0, ""),
 	)
@@ -170,7 +170,7 @@ func TestSelectAddrsFromDump(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, cut := selectAddrs(l, a)
-	want := []string{"10.1.0.1", "10.2.0.1", "10.20.0.1", "10.30.0.1", "192.0.2.41", "192.0.2.42", "2001:db8::41", "fd00::41"}
+	want := []string{"192.0.2.41", "192.0.2.42", "198.51.100.11", "198.51.100.12", "198.51.100.20", "198.51.100.30", "2001:db8::41", "2001:db8::42"}
 	if !slices.Equal(got, want) || cut {
 		t.Fatalf("selectAddrs = %q, %v\nwant %q", got, cut, want)
 	}
@@ -189,8 +189,8 @@ func TestParseLinkKindAndPeer(t *testing.T) {
 		t.Fatalf("parseLinks = %+v", l)
 	}
 	// Point-to-point IPv4: IFA_LOCAL is the own address, IFA_ADDRESS the peer.
-	a, err := parseAddrs(dump(addrMsg(2, "10.8.0.2", 0, "10.8.0.1")))
-	if err != nil || len(a) != 1 || a[0].Addr != netip.MustParseAddr("10.8.0.2") {
+	a, err := parseAddrs(dump(addrMsg(2, "203.0.113.82", 0, "203.0.113.81")))
+	if err != nil || len(a) != 1 || a[0].Addr != netip.MustParseAddr("203.0.113.82") {
 		t.Fatalf("parseAddrs = %+v, %v", a, err)
 	}
 	if _, err := parseLinks(nlmsg(syscall.RTM_NEWLINK, []byte{1, 2})); err == nil {
@@ -230,10 +230,10 @@ func TestSelectAddrsTruncated(t *testing.T) {
 	links := []nlLink{{Index: 2, Name: "eth0", Up: true}}
 	var addrs []nlAddr
 	for i := 20; i > 0; i-- {
-		addrs = append(addrs, nlAddr{Index: 2, Addr: netip.AddrFrom4([4]byte{10, 0, 0, byte(i)})})
+		addrs = append(addrs, nlAddr{Index: 2, Addr: netip.AddrFrom4([4]byte{192, 0, 2, byte(i)})})
 	}
 	got, cut := selectAddrs(links, addrs)
-	if len(got) != wire.MaxAddrs || !cut || got[0] != "10.0.0.1" {
+	if len(got) != wire.MaxAddrs || !cut || got[0] != "192.0.2.1" {
 		t.Fatalf("selectAddrs = %q, %v", got, cut)
 	}
 }
@@ -352,7 +352,7 @@ func TestAddrsReportPeriodic(t *testing.T) {
 func TestAddrsReportGap(t *testing.T) {
 	ca := newCA(t)
 	ctl := newController(t, ca, "tok")
-	src := &fakeAddrs{list: []string{"10.0.0.1"}}
+	src := &fakeAddrs{list: []string{"192.0.2.1"}}
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -362,7 +362,7 @@ func TestAddrsReportGap(t *testing.T) {
 			case <-stop:
 				return
 			case <-time.After(5 * time.Millisecond):
-				src.set([]string{fmt.Sprintf("10.0.0.%d", i%250+1)}, nil)
+				src.set([]string{fmt.Sprintf("192.0.2.%d", i%250+1)}, nil)
 			}
 		}
 	}()

@@ -206,7 +206,7 @@ func (c *client) raw(method, path string, body any) *httptest.ResponseRecorder {
 	}
 	req := httptest.NewRequest(method, path, r)
 	req.Host = host
-	req.RemoteAddr = "10.0.0.9:1234"
+	req.RemoteAddr = "192.0.2.9:1234"
 	scheme := "https"
 	if c.e.srv.cfg.Dev {
 		scheme = "http"

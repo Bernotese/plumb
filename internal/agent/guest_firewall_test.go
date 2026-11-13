@@ -30,8 +30,8 @@ import (
 // through lo, which the table always accepts).
 const (
 	fwNetns = "plumbfwpeer"
-	fwHost  = "10.99.0.1"
-	fwPeer  = "10.99.0.2"
+	fwHost  = "198.51.100.1"
+	fwPeer  = "198.51.100.2"
 )
 
 func fwSh(t *testing.T, name string, args ...string) string {

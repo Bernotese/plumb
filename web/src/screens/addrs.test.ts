@@ -17,11 +17,11 @@ describe("target list", () => {
     show(Targets, { api: adminApi() });
     const r = await until(() => rows().length > 1 && rows());
     const db1 = r.find((x) => x.startsWith("db1"));
-    expect(db1).toContain("192.168.1.20");
-    expect(db1).toContain(`192.168.1.107 ${REPORTED_MARK}`);
+    expect(db1).toContain("192.0.2.20");
+    expect(db1).toContain(`192.0.2.107 ${REPORTED_MARK}`);
     // A DHCP Target shows its address for the first time.
     const web1 = r.find((x) => x.startsWith("web1"));
-    expect(web1).toContain(`Configured: DHCP192.168.1.41, fd00::41 ${REPORTED_MARK}`);
+    expect(web1).toContain(`Configured: DHCP192.0.2.41, 2001:db8::41 ${REPORTED_MARK}`);
   });
 
   it("shows no reported list when Plumb has none", async () => {
@@ -44,7 +44,7 @@ describe("target list", () => {
     );
     show(Targets, { api });
     const r = await until(() => rows().length > 1 && rows());
-    expect(r.find((x) => x.startsWith("db1"))).toContain(`192.168.1.107 + more ${REPORTED_MARK}`);
+    expect(r.find((x) => x.startsWith("db1"))).toContain(`192.0.2.107 + more ${REPORTED_MARK}`);
   });
 
   it("escapes a list that the guest chose", async () => {
@@ -68,14 +68,14 @@ describe("target page", () => {
   it("shows the mismatch line with a link to the Issue", async () => {
     show(TargetForm, { api: adminApi(), name: "db1" });
     const line = await until(() => document.querySelector("#addr-mismatch"));
-    expect(text(line)).toContain("Configured: 192.168.1.20 — the guest reports 192.168.1.107");
+    expect(text(line)).toContain("Configured: 192.0.2.20 — the guest reports 192.0.2.107");
     expect(el<HTMLAnchorElement>("#addr-mismatch a").getAttribute("href")).toBe("#/issues/10");
     expect(text()).toContain("Reported by the guest");
   });
 
   it("shows no mismatch line on a Target without an address Issue", async () => {
     show(TargetForm, { api: adminApi(), name: "web1" });
-    await until(() => text().includes("192.168.1.41, fd00::41"));
+    await until(() => text().includes("192.0.2.41, 2001:db8::41"));
     expect(document.querySelector("#addr-mismatch")).toBeNull();
     expect(text()).toContain("DHCP");
   });
@@ -86,7 +86,7 @@ describe("Issue on guest:address", () => {
     show(IssueView, { api: adminApi(), id: 10 });
     await until(() => document.querySelector("#address-text"));
     expect(text(el("#address-text"))).toBe(
-      "The guest does not use the configured address 192.168.1.20. It reports: 192.168.1.107.",
+      "The guest does not use the configured address 192.0.2.20. It reports: 192.0.2.107.",
     );
     expect(text()).toContain("in the address list that the agent in the guest reports");
     expect(text(el("#address-hint"))).toBe(ADDRESS_HINT);

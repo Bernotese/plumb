@@ -112,17 +112,17 @@ func TestFirewallChecks(t *testing.T) {
 		{"tcp_ports": "90-80"},
 		{"tcp_ports": "80,"},
 		{"udp_ports": "1-99999"},
-		{"sources": "10.0.0.0/33"},
+		{"sources": "198.51.100.0/33"},
 		{"sources": "::/999"},
 		{"sources": "fe80::1%eth0/64"},
-		{"sources": "::ffff:10.0.0.1/128"},
-		{"ssh_sources": "10.0.0.0"},
+		{"sources": "::ffff:192.0.2.1/128"},
+		{"ssh_sources": "198.51.100.0"},
 		{"ssh_port": "99999"},
 		{"ssh_port": 0},
 		{"ssh_port": "22a"},
 		{"ssh_port": "022"},
 		{"allow_no_ssh": true, "ssh_port": 22},
-		{"allow_no_ssh": true, "ssh_sources": "10.0.0.0/8"},
+		{"allow_no_ssh": true, "ssh_sources": "198.51.100.0/24"},
 		{"state": "absent", "policy": "drop"},
 		{"policy": "reject"},
 		{"name": "other"},
@@ -135,10 +135,10 @@ func TestFirewallChecks(t *testing.T) {
 	}
 	good := map[string]fwState{
 		`{}`: {State: "present", Policy: "drop", SSH: "tcp/22 from everywhere", Ping: true},
-		`{"tcp_ports":"443,80,80,8000-8100,8050-8200,81","sources":"10.1.2.3/8,2001:db8::1/32,10.1.0.0/16,192.168.1.0/24"}`: {State: "present",
-			Policy: "drop", TCPPorts: "80-81,443,8000-8200", Sources: "10.0.0.0/8,192.168.1.0/24,2001:db8::/32", SSH: "tcp/22 from everywhere", Ping: true},
-		`{"ssh_port":"2222","ssh_sources":"192.168.0.0/16","ping":false,"policy":"accept"}`: {State: "present",
-			Policy: "accept", SSH: "tcp/2222 from 192.168.0.0/16"},
+		`{"tcp_ports":"443,80,80,8000-8100,8050-8200,81","sources":"198.51.100.3/24,2001:db8::1/32,198.51.100.128/25,192.0.2.0/24"}`: {State: "present",
+			Policy: "drop", TCPPorts: "80-81,443,8000-8200", Sources: "192.0.2.0/24,198.51.100.0/24,2001:db8::/32", SSH: "tcp/22 from everywhere", Ping: true},
+		`{"ssh_port":"2222","ssh_sources":"203.0.113.0/24","ping":false,"policy":"accept"}`: {State: "present",
+			Policy: "accept", SSH: "tcp/2222 from 203.0.113.0/24"},
 		`{"ssh_port":2200}`:      {State: "present", Policy: "drop", SSH: "tcp/2200 from everywhere", Ping: true},
 		`{"allow_no_ssh":true}`:  {State: "present", Policy: "drop", SSH: "closed (allow_no_ssh)", Ping: true},
 		`{"state":"absent"}`:     {State: "absent"},
@@ -159,8 +159,8 @@ func TestFirewallChecks(t *testing.T) {
 }
 
 func TestFirewallScript(t *testing.T) {
-	s := fwState{State: "present", Policy: "drop", TCPPorts: "80,443", UDPPorts: "53", Sources: "10.0.0.0/8,fd00::/8",
-		SSH: "tcp/2222 from 192.168.0.0/16", Ping: true}
+	s := fwState{State: "present", Policy: "drop", TCPPorts: "80,443", UDPPorts: "53", Sources: "198.51.100.0/24,2001:db8::/32",
+		SSH: "tcp/2222 from 203.0.113.0/24", Ping: true}
 	want := `table inet plumb
 delete table inet plumb
 table inet plumb {
@@ -172,11 +172,11 @@ table inet plumb {
 		ip6 saddr fe80::/10 udp dport 546 accept
 		icmp type echo-request accept
 		icmpv6 type echo-request accept
-		ip saddr { 192.168.0.0/16 } tcp dport { 2222 } accept
-		ip saddr { 10.0.0.0/8 } tcp dport { 80, 443 } accept
-		ip6 saddr { fd00::/8 } tcp dport { 80, 443 } accept
-		ip saddr { 10.0.0.0/8 } udp dport { 53 } accept
-		ip6 saddr { fd00::/8 } udp dport { 53 } accept
+		ip saddr { 203.0.113.0/24 } tcp dport { 2222 } accept
+		ip saddr { 198.51.100.0/24 } tcp dport { 80, 443 } accept
+		ip6 saddr { 2001:db8::/32 } tcp dport { 80, 443 } accept
+		ip saddr { 198.51.100.0/24 } udp dport { 53 } accept
+		ip6 saddr { 2001:db8::/32 } udp dport { 53 } accept
 	}
 }
 `

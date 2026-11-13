@@ -47,8 +47,8 @@ describe("address display QA", () => {
     });
     show(TargetForm, { api, name: "db1" });
     const card = await until(() => document.querySelector(".addr-card"));
-    expect(text(card)).toContain("Configured 192.168.1.20");
-    expect(text(card)).toContain("Reported by the guest 192.168.1.107 + more");
+    expect(text(card)).toContain("Configured 192.0.2.20");
+    expect(text(card)).toContain("Reported by the guest 192.0.2.107 + more");
   });
 
   it.each(["target", "issue"])("renders guest values as text on the %s page", async (screen) => {

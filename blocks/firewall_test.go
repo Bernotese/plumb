@@ -42,11 +42,11 @@ func TestFirewallBlockRender(t *testing.T) {
 			"ssh_port": "22", "ssh_sources": "",
 		}},
 		{"web", map[string]any{
-			"tcp_ports": "80,443,8000-8100", "udp_ports": "51820", "sources": "192.168.1.0/24,fd00::/8",
-			"ssh_port": "2222", "ssh_sources": "10.0.0.0/8",
+			"tcp_ports": "80,443,8000-8100", "udp_ports": "51820", "sources": "192.0.2.0/24,2001:db8::/32",
+			"ssh_port": "2222", "ssh_sources": "198.51.100.0/24",
 		}, map[string]any{
 			"name": "main", "policy": "drop", "tcp_ports": "80,443,8000-8100", "udp_ports": "51820",
-			"sources": "192.168.1.0/24,fd00::/8", "ssh_port": "2222", "ssh_sources": "10.0.0.0/8",
+			"sources": "192.0.2.0/24,2001:db8::/32", "ssh_port": "2222", "ssh_sources": "198.51.100.0/24",
 		}},
 	} {
 		for _, kind := range []string{"vm", "lxc"} {

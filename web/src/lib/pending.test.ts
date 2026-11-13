@@ -26,7 +26,7 @@ describe("changeNotes", () => {
   it("tells how to remove a pending create-only input", () => {
     const c = {
       attr: "ip",
-      from: "10.0.0.9/24",
+      from: "192.0.2.9/24",
       to: "dhcp",
       risk: "destructive",
       pending: true,
