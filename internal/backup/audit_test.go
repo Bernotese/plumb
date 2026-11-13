@@ -22,9 +22,7 @@ func TestBackupHeaderLimits(t *testing.T) {
 	for _, field := range []string{"kdf", "cipher", "chunk_size", "unknown", "oversize", "salt", "nonce_prefix"} {
 		t.Run(field, func(t *testing.T) {
 			var obj map[string]any
-			if err := json.Unmarshal(pre[len(Magic)+4:], &obj); err != nil {
-				t.Fatal(err)
-			}
+			auditCheck(t, json.Unmarshal(pre[len(Magic)+4:], &obj))
 			switch field {
 			case "kdf", "cipher":
 				obj[field] = "unsupported"
@@ -69,6 +67,11 @@ func TestBackupChunkLimits(t *testing.T) {
 			ct := w.g.Seal(nil, nonce(w.prefix, 0, tc.last), make([]byte, tc.size), w.aad)
 			buf.Write(binary.BigEndian.AppendUint32(nil, uint32(len(ct))))
 			buf.Write(ct)
+			if !tc.last {
+				last := w.g.Seal(nil, nonce(w.prefix, 1, true), nil, w.aad)
+				buf.Write(binary.BigEndian.AppendUint32(nil, uint32(len(last))))
+				buf.Write(last)
+			}
 			if _, err := decrypt(buf.Bytes(), k); !errors.Is(err, ErrCorrupt) {
 				t.Fatalf("accepted invalid chunk: %v", err)
 			}
@@ -96,13 +99,13 @@ func TestBackupTarContract(t *testing.T) {
 				auditCheck(t, err)
 				body, err := io.ReadAll(tr)
 				auditCheck(t, err)
-				if hd.Name == EntryManifest && (mutation == "manifest" || mutation == "size") {
+				if hd.Name == EntryManifest && (mutation == "manifest" || mutation == "size" || mutation == "type") {
 					var m Manifest
-					if err := json.Unmarshal(body, &m); err != nil {
-						t.Fatal(err)
-					}
+					auditCheck(t, json.Unmarshal(body, &m))
 					if mutation == "manifest" {
 						m.InstallID += "-other"
+					} else if mutation == "type" {
+						m.Sizes[EntryDB] = 0
 					} else {
 						m.Sizes[EntryDB]++
 					}
@@ -121,30 +124,22 @@ func TestBackupTarContract(t *testing.T) {
 						body = nil
 					}
 				}
-				if err := tw.WriteHeader(hd); err != nil {
-					t.Fatal(err)
-				}
+				auditCheck(t, tw.WriteHeader(hd))
 				if _, err := tw.Write(body); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if mutation == "extra" {
-				if err := tw.WriteHeader(&tar.Header{Name: "extra", Mode: 0600, Size: 0}); err != nil {
-					t.Fatal(err)
-				}
+				auditCheck(t, tw.WriteHeader(&tar.Header{Name: "extra", Mode: 0600, Size: 0}))
 			}
-			if err := tw.Close(); err != nil {
-				t.Fatal(err)
-			}
+			auditCheck(t, tw.Close())
 			var encrypted bytes.Buffer
 			w, err := newWriter(&encrypted, f.key, h)
 			auditCheck(t, err)
 			if _, err := w.Write(buf.Bytes()); err != nil {
 				t.Fatal(err)
 			}
-			if err := w.Close(); err != nil {
-				t.Fatal(err)
-			}
+			auditCheck(t, w.Close())
 			if _, _, err := Read(bytes.NewReader(encrypted.Bytes()), f.key, nil); !errors.Is(err, ErrCorrupt) {
 				t.Fatalf("accepted invalid tar: %v", err)
 			}
@@ -156,5 +151,16 @@ func auditCheck(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBackupAuthenticatesHeaderBytes(t *testing.T) {
+	k := secret.NewKey()
+	raw := encrypt(t, k, []byte("payload"))
+	h, pre, err := ReadHeader(bytes.NewReader(raw))
+	auditCheck(t, err)
+	h.PlumbVersion += "-changed"
+	if _, err := decrypt(reheader(t, raw, pre, h), k); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("accepted changed header: %v", err)
 	}
 }
