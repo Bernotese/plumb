@@ -258,7 +258,9 @@ export function humanOnlyReasons(plan: Plan): string[] {
       continue;
     }
     if (reason === "accept-guest-data") {
-      out.push("It adopts values that the guest reported. A person must check them.");
+      out.push(
+        "It accepts values from the guest: Plumb keeps what the guest reported. A person must check them.",
+      );
       continue;
     }
     if (reason === "image-recipe") {
