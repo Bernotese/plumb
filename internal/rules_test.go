@@ -260,6 +260,14 @@ func TestSharedSchemaPatterns(t *testing.T) {
 			"resource/schema/apt_repository.json#/properties/name/pattern",
 			"resource/schema/command.json#/properties/name/pattern",
 		},
+		"port list": {
+			"resource/schema/firewall.json#/properties/tcp_ports/pattern",
+			"resource/schema/firewall.json#/properties/udp_ports/pattern",
+		},
+		"cidr list": {
+			"resource/schema/firewall.json#/properties/sources/pattern",
+			"resource/schema/firewall.json#/properties/ssh_sources/pattern",
+		},
 		"resource id": {
 			"resource/schema/service.json#/properties/restart_on/items/pattern",
 			"state/schema/target.json#/properties/spec/properties/overrides/propertyNames/pattern",

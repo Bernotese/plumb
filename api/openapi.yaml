@@ -2481,9 +2481,10 @@ components:
         missing:
           type: array
           description: |
-            For `agent-outdated`: what the agents lack, `<type>` for a resource type or
-            `<type>.<attr>` for an attribute, sorted, over all Targets in `targets`.
-          items: { type: string, examples: ["unit", "file.acl"] }
+            For `agent-outdated`: what the agents lack, `<type>` for a resource type,
+            `<type>.<attr>` for an attribute, or `command:<name>` for a command (D-299: a disk
+            grow of a VM needs `command:grow`), sorted, over all Targets in `targets`.
+          items: { type: string, examples: ["unit", "file.acl", "command:grow"] }
         plans:
           type: array
           description: Pending Plans that use the secret, for `secret-in-use`.
@@ -2739,6 +2740,12 @@ components:
           description: The revision that last changed this document.
         document: { $ref: "#/components/schemas/Target" }
         status: { $ref: "#/components/schemas/TargetStatus" }
+        raw:
+          type: array
+          description: |
+            The overrides of the Target as raw resources (D-301), sorted by `resource`. Empty when
+            the Target has none. Missing on an older controller.
+          items: { $ref: "#/components/schemas/RawResource" }
     TargetStatus:
       type: object
       additionalProperties: false
@@ -2747,13 +2754,16 @@ components:
       properties:
         phase:
           type: string
-          enum: [pending, provisioning, enrolling, ready, applying, drifted, restart_needed, error]
+          enum: [pending, provisioning, enrolling, ready, applying, drifted, stopped, restart_needed, error]
           description: |
             `pending`: no guest yet. `provisioning`: the driver creates it. `enrolling`: waiting
             for the agent. `ready`: matches the head revision. `applying`: a Run is active.
             `drifted`: open issues. `restart_needed`: no open issue, but `waiting` is not empty
-            (D-195). `error`: the last Run failed. The order of precedence is `provisioning`,
-            `pending`, `applying`, `enrolling`, `error`, `drifted`, `restart_needed`, `ready`.
+            (D-195). `stopped`: the desired `guest.power` is `stopped`, the guest is stopped and no
+            issue is open (D-299); its agent is offline on purpose. `error`: the last Run failed.
+            The order of precedence is `provisioning`, `pending`, `applying`, `enrolling`, `error`,
+            `drifted`, `stopped`, `restart_needed`, `ready`. A client that does not know `stopped`
+            shows the word as it is.
             The phase is one word for a list; `waiting` is the truth and can be non-empty in
             every phase. An LXC Target never has `restart_needed`: cores and memory change live on
             a container.
@@ -2785,8 +2795,9 @@ components:
         agent_missing:
           type: array
           description: |
-            What the desired state needs and the agent lacks: `<type>` or `<type>.<attr>`, sorted.
-            Empty when nothing is missing. Missing on an older controller.
+            What the desired state needs and the agent lacks: `<type>`, `<type>.<attr>` or
+            `command:<name>` (D-299), sorted. Empty when nothing is missing. Missing on an older
+            controller.
           items: { type: string }
         agent_reverted:
           oneOf:
@@ -3191,6 +3202,24 @@ components:
           uniqueItems: true
           items: { type: string }
           examples: [["file:/etc/nginx/sites-available/a", "symlink:/etc/nginx/sites-enabled/a"]]
+        confirm_seconds:
+          type: integer
+          const: 90
+          description: |
+            Safe apply (D-293, D-300), only for a `firewall` resource with a change: after the
+            change the agent needs a fresh round trip to the controller within this many seconds;
+            else it puts the confirmed state back and the step is `failed` with `rolled_back`.
+            Missing for every other resource.
+        summary:
+          type: array
+          description: |
+            Lines for the person who approves, derived from the desired attributes (D-300). For
+            `firewall`: the effective SSH rule, for example "SSH tcp/22 open from everywhere",
+            "SSH tcp/2222 open from 192.0.2.0/24" or "no SSH rule (allow_no_ssh)", then the policy.
+            Missing when there is nothing to say. Display only.
+          maxItems: 8
+          items: { type: string, maxLength: 200 }
+          examples: [["SSH tcp/22 open from everywhere", "policy drop: other input is dropped"]]
 
     RunStatus:
       type: string
@@ -3277,6 +3306,12 @@ components:
         output:
           type: string
           description: Short output of the agent or driver, `""` when empty. Untrusted; the UI escapes it.
+        rolled_back:
+          type: boolean
+          description: |
+            Only with `failed`: a safe apply (D-300) changed the resource, got no round trip to the
+            controller within `confirm_seconds`, and put the confirmed state back. The guest has the
+            state from before the Run. Missing means `false`.
         started_at: { $ref: "#/components/schemas/NullableTime" }
         finished_at: { $ref: "#/components/schemas/NullableTime" }
 
@@ -3304,6 +3339,11 @@ components:
         `accept` and `revert` get 409. It is resolved as `gone` by `system` when the address has
         been in the reported list for 2 minutes. A new mismatch within 1 hour after that opens
         the same Issue again.
+
+        `guest:config` with slice 4 settings (D-299): `power` (someone started or stopped the
+        guest in Proxmox), `tags` (someone changed the tags) and `disk` (someone grew the disk in
+        Proxmox). For a disk that is bigger than desired, `revert` is not in `actions` (Proxmox
+        cannot shrink): `accept` takes the bigger size into the Target, or ignore it.
 
         After a restore (D-290, D-303), `system` opens two kinds. `guest:missing`: the Target is
         bound to a guest that Proxmox no longer has (it was deleted after the backup). One change
@@ -3356,6 +3396,46 @@ components:
         comments:
           type: array
           items: { $ref: "#/components/schemas/Comment" }
+        raw:
+          type: boolean
+          description: |
+            Raw mode offer (D-296, D-301). `true` when a Block renders the resource (`source` is
+            set) and `accept` is in `actions`: Accept then fixes the observed values as an override
+            of this Target ("Accept as raw for this Target"); the Block and its parameters do not
+            change, and the resource no longer follows them for these attributes until "Back to the
+            Block" (`TargetView.raw`). `false` for `guest:*` (Accept writes the Proxmox settings of
+            the Target). Missing on an older controller.
+        source:
+          $ref: "#/components/schemas/ResourceSource"
+    ResourceSource:
+      type: [object, "null"]
+      additionalProperties: false
+      description: |
+        The Block use that renders the resource (D-301): `block` is the Block document, `use` the
+        id of the use in `spec.blocks` (default the Block name). `null` for `guest:*` and
+        `agent:*`. Missing on an older controller.
+      required: [block, use]
+      properties:
+        block: { $ref: "#/components/schemas/Name" }
+        use: { $ref: "#/components/schemas/Name" }
+    RawResource:
+      type: object
+      additionalProperties: false
+      description: |
+        One entry of `spec.overrides` of the Target, shown as a resource in raw mode (D-296,
+        D-301). The editor changes `spec.overrides[resource]` by a normal proposal (`POST /plans`
+        with the Target in `put`); "Back to the Block" is a proposal without this key. Both go
+        through a Plan that shows the change. An override never holds a secret reference, and the
+        key attribute of the resource cannot be overridden (render refuses both).
+      required: [resource, attrs, source]
+      properties:
+        resource: { type: string, examples: ["file:/etc/nginx/nginx.conf", "guest:config"] }
+        attrs:
+          type: array
+          description: The attributes that the override fixes, sorted. Names only; the values are in the document.
+          items: { type: string }
+        source:
+          $ref: "#/components/schemas/ResourceSource"
     Resolution:
       type: object
       additionalProperties: false

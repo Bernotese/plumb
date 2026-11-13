@@ -73,3 +73,17 @@ func TestCapabilitiesValid(t *testing.T) {
 		}
 	}
 }
+
+func TestLacksCommand(t *testing.T) {
+	if got := BaselineCapabilities().LacksCommand(CommandGrow); got != "command:grow" {
+		t.Errorf("baseline: %q", got)
+	}
+	c := Capabilities{Commands: []CommandType{CommandApply, CommandGrow}}
+	if got := c.LacksCommand(CommandGrow); got != "" {
+		t.Errorf("with grow: %q", got)
+	}
+	// The entry must not look like a resource type of Missing.
+	if capName(GateCommandPrefix + "grow") {
+		t.Error("a command entry can be mistaken for a type name")
+	}
+}
