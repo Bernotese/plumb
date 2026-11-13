@@ -27,10 +27,13 @@ var ErrNotRestoredMode = errors.New("store: not in restored mode")
 
 // Restore marks a restored database (plumb restore), in one transaction:
 // every session goes; every API token that is not revoked is disabled;
-// admin gets adminHash and must change it at the next login; every other
-// user is locked; every unused enrollment token goes; the running backup
+// admin gets adminHash and must change it at the next login, and is an
+// enabled admin again also when the backup had it demoted or disabled
+// (D-351), so the restored controller has exactly one admin who can log
+// in; every other user is locked; every unused enrollment token goes; the running backup
 // run (the one that wrote the file) is ok; the restore record
-// says restored mode. The database must have the user admin.
+// says restored mode. The database must have the user admin: without it
+// the restore fails and changes nothing (no admin could log in).
 func (s *Store) Restore(ctx context.Context, backupCreatedAt time.Time, header json.RawMessage, adminHash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -59,7 +62,7 @@ func (s *Store) Restore(ctx context.Context, backupCreatedAt time.Time, header j
 			return fmt.Errorf("store: restore: %w", err)
 		}
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE user SET password_hash = ?, must_change_password = 1, locked_at = NULL WHERE name = 'admin'`, adminHash)
+	res, err := tx.ExecContext(ctx, `UPDATE user SET password_hash = ?, must_change_password = 1, locked_at = NULL, role = 'admin', disabled_at = NULL WHERE name = 'admin'`, adminHash)
 	if err != nil {
 		return fmt.Errorf("store: restore: %w", err)
 	}

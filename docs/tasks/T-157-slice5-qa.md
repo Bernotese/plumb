@@ -16,6 +16,8 @@ Slice 5, child card **C12** of T-138. Second opinion on slice 5 by tests.
 - [ ] New decisions (only if needed): ask `pl-lead` for numbers; write them to `docs/decisions/T-157.md`.
 - [ ] No new token right. Tests: `make lint test` passes; `origin/main` merged; PR to `main`; report to `pl-lead`.
 
+- [ ] From the review of PR #250: the matrix reads the 'own' operation set from `x-plumb-role` in `api/openapi.yaml`, not from a hard-coded list (L1); one test that the per-user 100/min limiter always ends (L2).
+
 ## Out of scope
 - Everything of other rows. Any release step.
 

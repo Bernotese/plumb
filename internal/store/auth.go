@@ -16,6 +16,15 @@ type User struct {
 	CreatedAt          time.Time
 	// LockedAt: a restore locked the user (D-303); zero when not locked.
 	LockedAt time.Time
+	// Role is read, plan, apply or admin (D-329). CreateUser takes ""
+	// as admin: only the bootstrap paths (installer, dev user) leave it
+	// empty; the users API always sets it.
+	Role string
+	// DisabledAt: a person disabled the user (D-330); zero when enabled.
+	DisabledAt time.Time
+	// CreatedBy is the principal that made the user ("" is system).
+	CreatedBy   string
+	LastLoginAt time.Time
 }
 
 // ErrExists is returned when a unique row exists already.
@@ -29,12 +38,19 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 }
 
 // CreateUser stores a new user.
+// A name that exists, also of a disabled user, is ErrExists (D-330).
 func (s *Store) CreateUser(ctx context.Context, u User) (User, error) {
 	created := s.now()
+	if u.Role == "" {
+		u.Role = "admin"
+	}
+	if u.CreatedBy == "" {
+		u.CreatedBy = "system"
+	}
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO user (name, password_hash, must_change_password, created_at) VALUES (?, ?, ?, ?)
+		`INSERT INTO user (name, password_hash, must_change_password, created_at, role, created_by) VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (name) DO NOTHING RETURNING id`,
-		u.Name, u.PasswordHash, u.MustChangePassword, created).Scan(&u.ID)
+		u.Name, u.PasswordHash, u.MustChangePassword, created, u.Role, u.CreatedBy).Scan(&u.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrExists
 	}
@@ -48,8 +64,9 @@ func (s *Store) CreateUser(ctx context.Context, u User) (User, error) {
 func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 	var created string
-	var locked sql.NullString
-	err := row.Scan(&u.ID, &u.Name, &u.PasswordHash, &u.MustChangePassword, &created, &locked)
+	var locked, disabled, lastLogin sql.NullString
+	err := row.Scan(&u.ID, &u.Name, &u.PasswordHash, &u.MustChangePassword, &created, &locked,
+		&u.Role, &disabled, &u.CreatedBy, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -59,20 +76,28 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	if u.CreatedAt, err = parseTime(created); err != nil {
 		return User{}, err
 	}
-	u.LockedAt, err = nullTime(locked)
+	if u.LockedAt, err = nullTime(locked); err != nil {
+		return User{}, err
+	}
+	if u.DisabledAt, err = nullTime(disabled); err != nil {
+		return User{}, err
+	}
+	u.LastLoginAt, err = nullTime(lastLogin)
 	return u, err
 }
+
+const userCols = `id, name, password_hash, must_change_password, created_at, locked_at, role, disabled_at, created_by, last_login_at`
 
 // UserByName returns a user.
 func (s *Store) UserByName(ctx context.Context, name string) (User, error) {
 	return scanUser(s.db.QueryRowContext(ctx,
-		`SELECT id, name, password_hash, must_change_password, created_at, locked_at FROM user WHERE name = ?`, name))
+		`SELECT `+userCols+` FROM user WHERE name = ?`, name))
 }
 
 // UserByID returns a user.
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	return scanUser(s.db.QueryRowContext(ctx,
-		`SELECT id, name, password_hash, must_change_password, created_at, locked_at FROM user WHERE id = ?`, id))
+		`SELECT `+userCols+` FROM user WHERE id = ?`, id))
 }
 
 // SetPassword stores a new password hash, clears must_change_password and
