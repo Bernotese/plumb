@@ -63,12 +63,16 @@ func TestRoleMatrix(t *testing.T) {
 		sessions[role] = e.newUser(adm, "u"+role, role)
 	}
 	own := map[string]bool{"PUT /api/v1/session/password": true, "DELETE /api/v1/session": true}
-	extra := []endpoint{
-		{"GET", "/api/v1/users", nil, TierAdmin, true},
-		{"POST", "/api/v1/users", map[string]string{"name": "", "role": "x"}, TierAdmin, true},  // allowed → 422
-		{"PATCH", "/api/v1/users/nobody", map[string]string{"role": "read"}, TierAdmin, true}, // allowed → 404
+	var users []endpoint // the user rows of the tier matrix
+	for _, ep := range endpoints {
+		if strings.HasPrefix(ep.path, "/api/v1/users") {
+			users = append(users, ep)
+		}
 	}
-	for _, ep := range append(append([]endpoint{}, endpoints...), extra...) {
+	if len(users) != 4 {
+		t.Fatalf("user rows in the tier matrix: %d", len(users))
+	}
+	for _, ep := range endpoints {
 		key := ep.method + " " + strings.SplitN(ep.path, "?", 2)[0]
 		if key == "DELETE /api/v1/session" {
 			continue // logs the session out; TestOwnSessionForEveryRole covers it
@@ -94,7 +98,7 @@ func TestRoleMatrix(t *testing.T) {
 	// No token reaches user management, whatever its tier (risks.md §1
 	// worst case 2).
 	for _, tok := range []*client{e.token(TierRead, ""), e.token(TierPlan, ""), e.token(TierApply, wire.RiskDisruptive)} {
-		for _, ep := range extra {
+		for _, ep := range users {
 			if code, body := tok.do(ep.method, ep.path, ep.body); code != 403 || problemType(body) != "human-required" {
 				t.Errorf("token %s %s: %d %s", ep.method, ep.path, code, body)
 			}

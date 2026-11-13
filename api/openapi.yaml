@@ -193,7 +193,6 @@ paths:
     get:
       tags: [session]
       operationId: listUsers
-      x-plumb-planned: T-147
       summary: List the human users
       description: |
         Admin session only (D-330). Disabled users stay in the list; their names are never given
@@ -239,7 +238,6 @@ paths:
     post:
       tags: [session]
       operationId: createUser
-      x-plumb-planned: T-147
       summary: Make a new user with a one-time password
       description: |
         Admin session only, never a token (D-330). The server makes a random one-time password,
@@ -282,7 +280,6 @@ paths:
     patch:
       tags: [session]
       operationId: changeUser
-      x-plumb-planned: T-147
       summary: Change the role of a user, or disable or enable it
       description: |
         Admin session only, never a token (D-330). There is no delete: a disabled user cannot log
