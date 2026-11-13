@@ -30,7 +30,15 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-105 service stopped + enabled with an absent unit: the Plan now shows the enable (follow-up of T-103) | pl-codex-fix | merged (PR #205) |
 | T-106 second short host run (2026-11-13): controller on main e909458; T-102 (75 s lost link), T-103, T-104, T-105 passed on the real host; finding F3 → T-108; host clean | pl-backend | done (log PR #207) |
 | T-108 a short link drop (30 s) during an agent update: the guest is fine, but the Run fails with a false "old binary" (T-106 F3) | pl-backend | in work |
-| T-107 plan for slice 4 (PR #206, review passed in 3 rounds) | pl-architect | **waits for the user's approval; no code before that** |
+| T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **approved by the user 2026-11-13** (all 6 recommendations; D-287 … D-296 accepted; plan PR #206). No new token right. Child cards T-110 … T-122 |
+| T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | in work |
+| T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | wait for T-110 / T-111 |
+| T-114 installer (copy timer, `--remove --keep-guests`, `--restore`) · T-115 Proxmox day 2 | pl-reviewer (pl-architect reviews) | wait for T-110 / T-111 |
+| T-117 agent command `grow` · T-121 flaky `TestServeNoAnswer` | pl-codex-fix | T-121 in work; T-117 waits for T-111 |
+| T-118 web slice 4 · T-119 starter Block `firewall` | pl-frontend | T-118 starts on the contract drafts |
+| T-120 QA slice 4 | pl-codex-qa | per card |
+| T-122 slice 4 real-host acceptance | pl-backend | last |
+| T-109 flaky `TestAgentUpdateCommand` (test asserted too early; product safe) | pl-codex-qa | PR #208, review passed, CI pending |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).
 
@@ -96,7 +104,7 @@ Order with the test host: real-host part of T-015 on the running install → `--
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
 ## Open for the user
-- Second short host run for slice 3: the user said yes (2026-11-13); it runs as T-106. The slice 4 plan (T-107) comes to the user for approval after the review.
+- Slice 4, user question 1: a real install needs the name of the backup storage from the user (`--backup-storage`). For the test host pl-lead proposes one (T-122).
 - Guests made before slice 3 need one manual root command per guest so that their agent can update itself (`docs/ARCHITECTURE.md` §5).
 - (Decided 2026-11-12: `nginx` card yes, T-088. pl-lead decided: no card for the double upload of a repacked file by two Images with the same base.)
 - Known limit (D-192, D-220, D-223): a STOCK Ubuntu 26.04 image used directly can stay on DHCP until its first restart; an Ubuntu version built by Plumb does not have the limit.

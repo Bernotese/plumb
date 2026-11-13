@@ -1,0 +1,25 @@
+# T-121 – Fix flaky `cmd/plumb TestServeNoAnswer`
+
+- **Owner:** pl-codex-fix   · **Reviewer:** pl-reviewer   · **QA:** –
+- **Size:** S   · **Depends on:** –   · **Parent:** T-107 (C11)
+
+## Goal
+The test failed once with "token refused" instead of "no answer". Find the race and fix the test or the code.
+
+## Context (read only these)
+- `docs/tasks/T-107-slice-4-plan.md` – the approved plan: row C11, "Token rights", "Risks"; decisions D-287 … D-296 in `docs/DECISIONS.md` (accepted by the user, 2026-11-13)
+- `docs/ARCHITECTURE.md` – only the sections you need
+- New decisions: `docs/decisions/T-121.md`; ask pl-lead for numbers
+
+## Acceptance criteria
+- [ ] Cause named; a product bug is reported to pl-lead before a larger fix
+- [ ] 200 runs green; small diff; `make lint test build` green
+
+## Out of scope
+- Other tests
+- No new token right (D-081)
+
+## Plan (architect, optional)
+
+## Result (owner, max 8 lines)
+branch · commit · tests · notes
