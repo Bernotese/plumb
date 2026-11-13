@@ -595,11 +595,14 @@ func (s *Server) approvePlan(w http.ResponseWriter, r *http.Request, p *principa
 		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "comment is longer than 2000 characters.")
 		return
 	}
-	// The approval rule (ARCHITECTURE §7, D-046): a human approves every
-	// risk; an apply token approves up to its max_risk, never destructive.
+	// The approval rule (ARCHITECTURE §7, D-046, D-329): a session approves
+	// by its role (apply up to disruptive, admin every risk); an apply
+	// token approves up to its max_risk, never destructive.
 	check := func(pl store.Plan) error {
 		if p.human() {
-			return nil
+			// A session approves by its role (D-329): human-only Plans
+			// too, up to the risk that the role allows.
+			return approveAsHuman(p, wire.Risk(pl.Risk))
 		}
 		// D-099: a Plan that changes a Rule (or binds a secret) is for a
 		// human approver only, whatever its risk.
@@ -823,13 +826,13 @@ func checkRuleAttrs(attrs []string) []fieldError {
 	return nil
 }
 
-// ignoreOnce resolves an Issue without a Plan (D-091). A human may; an
-// apply token only when every change is within its max_risk and none is
+// ignoreOnce resolves an Issue without a Plan (D-091). A session with role
+// apply (admin for destructive) may; an apply token only when every change is within its max_risk and none is
 // sensitive or destructive.
 func (s *Server) ignoreOnce(w http.ResponseWriter, r *http.Request, p *principal, id int64) {
 	check := func(changes []wire.Change) error {
 		if p.human() {
-			return nil
+			return ignoreAsHuman(p, changes) // by role (D-329)
 		}
 		if p.tier != TierApply {
 			return &riskError{"human-required", "Human session required",
