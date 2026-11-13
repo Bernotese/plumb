@@ -4,11 +4,18 @@ import { flushSync } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/api";
 import { createMockApi } from "../lib/mock/mock";
+import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
 import Backups from "./Backups.svelte";
+import ImageScreen from "./ImageView.svelte";
+import PlanView from "./PlanView.svelte";
+import TargetForm from "./TargetForm.svelte";
 import Tokens from "./Tokens.svelte";
 import { button, el, reset, show, text, until } from "./testkit";
 
-afterEach(reset);
+afterEach(() => {
+  reset();
+  restored.mode = false;
+});
 const api = (restored = false) => createMockApi({ signedIn: true, stepDelayMs: 0, restored });
 const code = (e: unknown) => (e instanceof ApiError ? e.problem.type : String(e));
 
@@ -49,14 +56,43 @@ describe("Settings → Backups", () => {
 });
 
 describe("restored mode", () => {
-  it("refuses writers with 409 restored-mode until the confirm", async () => {
+  // Review M2 of #227: the screens, not the mock. The e2e covers the 409s
+  // of the real server.
+  it("disables Back up now, Approve, Build now and the re-enrollment with the reason", async () => {
     const a = api(true);
-    await expect(a.createBackup()).rejects.toSatisfy((e) => code(e).includes("restored-mode"));
-    await expect(a.approvePlan(a.orderPlanId ?? 0)).rejects.toSatisfy((e) =>
-      code(e).includes("restored-mode"),
-    );
-    await a.confirmRestore("Old LXC destroyed.");
-    await expect(a.createBackup()).resolves.toMatchObject({ result: "running" });
+    show(Backups, { api: a });
+    await until(() => document.querySelector("#restore-title"));
+    expect(el<HTMLButtonElement>("#backup-now").disabled).toBe(true);
+    expect(text()).toContain("Backups wait until restored mode ends.");
+    reset();
+
+    restored.mode = true;
+    const id = a.orderPlanId ?? 0;
+    expect((await a.getPlan(id)).status).toBe("pending");
+    show(PlanView, { api: a, id });
+    await until(() => button("Approve and apply"));
+    expect(button("Approve and apply")?.disabled).toBe(true);
+    expect(button("Approve and apply")?.getAttribute("aria-describedby")).toBe("approve-restored");
+    expect(text(el("#approve-restored"))).toBe(RESTORED_WAIT);
+    reset();
+
+    show(ImageScreen, { api: a, name: "ubuntu-web" });
+    await until(() => button("Build now"));
+    expect(button("Build now")?.disabled).toBe(true);
+    expect(text(el("#build-restored"))).toBe(RESTORED_WAIT);
+    reset();
+
+    show(TargetForm, { api: a, name: "db1" });
+    await until(() => button("Plan the re-enrollment"));
+    expect(button("Plan the re-enrollment")?.disabled).toBe(true);
+    expect(text(el("#reenroll-restored"))).toBe(RESTORED_WAIT);
+    reset();
+
+    restored.mode = false;
+    show(PlanView, { api: a, id });
+    await until(() => button("Approve and apply"));
+    expect(button("Approve and apply")?.disabled).toBe(false);
+    expect(document.querySelector("#approve-restored")).toBeNull();
   });
 
   it("shows the restore card and ends restored mode only with the checkbox", async () => {
@@ -80,6 +116,8 @@ describe("restored mode", () => {
     button("End restored mode")?.click();
     await until(() => !document.querySelector("#restore-off"));
     expect(confirm).toHaveBeenCalledOnce();
+    // The form is gone: the focus goes to the card heading (review L4).
+    await until(() => document.activeElement?.id === "restore-title");
     expect(onRestore).toHaveBeenLastCalledWith(expect.objectContaining({ restored_mode: false }));
     expect(el<HTMLButtonElement>("#backup-now").disabled).toBe(false);
   });

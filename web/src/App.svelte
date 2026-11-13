@@ -4,6 +4,7 @@
   import { createHttpApi } from "./lib/http";
   import { go, href, isRouteHash, parse, type Route } from "./lib/router";
   import { applyTheme, loadTheme, type Theme } from "./lib/theme";
+  import { restored } from "./lib/restored.svelte";
   import type { Session } from "./lib/types";
   import History from "./screens/History.svelte";
   import ChangePassword from "./screens/ChangePassword.svelte";
@@ -126,33 +127,37 @@
   }
 
   // Restored mode (D-290, D-303): a banner on every screen until a person
-  // confirms that the old controller is off.
-  let restoredMode = $state(false);
+  // confirms that the old controller is off. The forced password change
+  // cannot read GET /restore yet: it shows a static note instead.
   $effect(() => {
     const a = api;
     if (!a || screen !== "app") {
-      restoredMode = false;
+      restored.mode = false;
       return;
     }
     let stale = false;
-    const check = () =>
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const check = (again: boolean) =>
       a.getRestore().then(
         (r) => {
-          if (!stale) restoredMode = r.restored_mode;
+          if (!stale) restored.mode = r.restored_mode;
         },
-        // The banner is extra information; an older controller has no /restore.
-        () => {},
+        // An older controller has no /restore; else try once more (review L1).
+        () => {
+          if (again && !stale) retry = setTimeout(() => void check(false), 5000);
+        },
       );
-    void check();
+    void check(true);
     const stop = a.events(
       undefined,
       (e) => {
-        if (e.type === "restore.confirmed") restoredMode = false;
+        if (e.type === "restore.confirmed") restored.mode = false;
       },
-      () => void check(),
+      () => void check(true),
     );
     return () => {
       stale = true;
+      clearTimeout(retry);
       stop();
     };
   });
@@ -213,7 +218,7 @@
   </div>
 </header>
 {#if banner}<p class="demo">{banner}</p>{/if}
-{#if restoredMode}
+{#if restored.mode}
   <div class="banner warn restored" id="restored-banner">
     <strong>Restored mode.</strong> This Plumb was restored from a backup. It changes nothing until
     a person confirms that the old controller is off.
@@ -275,7 +280,7 @@
         {api}
         {session}
         tab={route.tab}
-        onRestore={(r) => (restoredMode = r.restored_mode)}
+        onRestore={(r) => (restored.mode = r.restored_mode)}
       />{/if}
   {:else}
     <h1 id="page-title" tabindex="-1">Page not found</h1>

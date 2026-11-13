@@ -30,13 +30,13 @@ test("raw mode: accept as raw, edit the raw content, back to the Block", async (
     await page.goto("/#/targets/web2/edit");
     const card = page.getByRole("region", { name: "Raw resources" });
     await expect(card.getByRole("heading", { name: "file:/etc/motd" })).toBeVisible();
-    await expect(card.locator("#raw-file-etc-motd-source")).toHaveText("From the Block motd.");
-    await expect(card.locator("#raw-file-etc-motd-value")).toHaveText("Edited by hand");
+    await expect(card.locator("#raw-0-source")).toHaveText("From the Block motd.");
+    await expect(card.locator("#raw-0-value")).toHaveText("Edited by hand");
 
     // Edit the raw content: a reason is required, then a normal Plan.
     await card.getByRole("button", { name: "Edit content" }).click();
-    await expect(card.locator("#raw-file-etc-motd-content")).toBeFocused();
-    await card.locator("#raw-file-etc-motd-content").fill("Edited in Plumb\n");
+    await expect(card.locator("#raw-0-content")).toBeFocused();
+    await card.locator("#raw-0-content").fill("Edited in Plumb\n");
     await card.getByRole("button", { name: "Show the plan" }).click();
     await expect(card.getByText("Say why you make this change.")).toBeVisible();
     await expect(card.locator("#raw-reason")).toBeFocused();
@@ -46,7 +46,7 @@ test("raw mode: accept as raw, edit the raw content, back to the Block", async (
     await expect(page.getByText("file:/etc/motd").first()).toBeVisible();
     await approveAndRun(page);
     await page.goto("/#/targets/web2/edit");
-    await expect(card.locator("#raw-file-etc-motd-value")).toHaveText("Edited in Plumb");
+    await expect(card.locator("#raw-0-value")).toHaveText("Edited in Plumb");
 
     // Back to the Block: the override goes, the Block sets the motd again.
     await card.locator("#raw-reason").fill("e2e: use the Block again");

@@ -34,6 +34,7 @@
   import { unfitText } from "../lib/blocks";
   import AgentCard from "../ui/AgentCard.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
   import RawResources from "../ui/RawResources.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
@@ -671,7 +672,14 @@
       <textarea id="reenroll-reason" bind:value={reenrollReason} maxlength="2000"></textarea>
     </div>
     <ProblemBox error={reenrollError} />
-    <button class="btn" type="submit" disabled={reenrollBusy}>Plan the re-enrollment</button>
+    <button
+      class="btn"
+      type="submit"
+      disabled={reenrollBusy || restored.mode}
+      aria-describedby={restored.mode ? "reenroll-restored" : undefined}
+      >Plan the re-enrollment</button
+    >
+    {#if restored.mode}<p class="muted" id="reenroll-restored">{RESTORED_WAIT}</p>{/if}
   </form>
 {/if}
 

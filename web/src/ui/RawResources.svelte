@@ -1,6 +1,7 @@
 <script lang="ts">
   // Raw mode on the Target page (T-118, D-296): every override is a raw
   // resource. Edit its content or go back to the Block; each is a proposal.
+  import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
   import { rawResources, withRaw } from "../lib/raw";
   import { go } from "../lib/router";
@@ -19,12 +20,20 @@
   let error = $state<unknown>(null);
   let busy = $state(false);
 
-  const slug = (id: string) => id.replace(/[^a-z0-9]+/giu, "-");
+  // Ids by list index: "file:/etc/a.conf" and "file:/etc/a-conf" never
+  // share one (review L5 of #227).
+  const indexOf = (id: string) => rows.findIndex((r) => r.id === id);
 
   function edit(id: string, content: string) {
     editing = id;
     draft = content;
-    queueMicrotask(() => document.getElementById(`raw-${slug(id)}-content`)?.focus());
+    queueMicrotask(() => document.getElementById(`raw-${indexOf(id)}-content`)?.focus());
+  }
+
+  function cancel(id: string) {
+    editing = null;
+    // The textarea is gone: the focus goes back to its button (review L4).
+    void tick().then(() => document.getElementById(`raw-${indexOf(id)}-edit`)?.focus());
   }
 
   async function propose(id: string, content: string | null) {
@@ -61,8 +70,8 @@
     A raw resource keeps the attributes below on this Target. The Block does not set them any more.
     "Accept as raw" on an Issue makes one. "Back to the Block" removes it.
   </p>
-  {#each rows as r (r.id)}
-    {@const s = slug(r.id)}
+  {#each rows as r, i (r.id)}
+    {@const s = String(i)}
     {@const src = sourceOf(r.id)}
     <article class="raw" aria-labelledby="raw-{s}-title">
       <h3 class="mono" id="raw-{s}-title">{r.id}</h3>
@@ -98,11 +107,14 @@
             disabled={busy}
             onclick={() => propose(r.id, draft)}>Show the plan</button
           >
-          <button class="btn" type="button" onclick={() => (editing = null)}>Cancel</button>
+          <button class="btn" type="button" onclick={() => cancel(r.id)}>Cancel</button>
         {:else}
           {#if r.content !== undefined}
-            <button class="btn" type="button" onclick={() => edit(r.id, r.content ?? "")}
-              >Edit content</button
+            <button
+              class="btn"
+              type="button"
+              id="raw-{s}-edit"
+              onclick={() => edit(r.id, r.content ?? "")}>Edit content</button
             >
           {/if}
           <button class="btn" type="button" disabled={busy} onclick={() => propose(r.id, null)}

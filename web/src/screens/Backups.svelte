@@ -2,6 +2,7 @@
   // Settings → Backups (T-118; D-288 … D-290, D-302 … D-304): the backups of
   // this controller, the off-host copy, "back up now", and the restore state
   // with the confirm that ends restored mode.
+  import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
   import { bytesText } from "../lib/images";
   import { liveSnapshot } from "../lib/live";
@@ -100,6 +101,9 @@
     try {
       restore = await api.confirmRestore(reason);
       onRestore?.(restore);
+      // The form is gone: keep the focus in the card (review L4 of #227).
+      await tick();
+      document.getElementById("restore-title")?.focus();
     } catch (e) {
       confirmError = e;
     } finally {
@@ -112,7 +116,7 @@
 {#if list && restore}
   {#if restore.restored}
     <section class="card" aria-labelledby="restore-title" class:alert={restore.restored_mode}>
-      <h2 id="restore-title">Restore</h2>
+      <h2 id="restore-title" tabindex="-1">Restore</h2>
       <dl class="facts">
         <dt>Backup from</dt>
         <dd>{formatTime(restore.backup_created_at)}</dd>

@@ -29,8 +29,6 @@
   let shown = $state<{ username: string; password: string } | null>(null);
   let copied = $state(false);
 
-  const slug = (u: string) => u.replace(/[^A-Za-z0-9_-]+/g, "-");
-
   async function ask(user: string) {
     error = null;
     asking = user;
@@ -52,8 +50,10 @@
   /** Focus after the confirm step or the shown password closes (after the DOM update). */
   async function refocus(user: string | null) {
     await tick();
+    // Ids by list index: two names never share one (review L5 of #227).
+    const i = user && users ? users.indexOf(user) : -1;
     const target = users
-      ? ((user ? document.getElementById(`${id}-for-${slug(user)}`) : null) ??
+      ? ((i >= 0 ? document.getElementById(`${id}-for-${i}`) : null) ??
         document.getElementById(`${id}-users-title`))
       : document.getElementById(`${id}-name`);
     target?.focus();
@@ -82,6 +82,7 @@
     } catch (e) {
       error = e;
       asking = null;
+      void refocus(user);
     } finally {
       busy = false;
     }
@@ -134,12 +135,7 @@
 {/if}
 
 {#snippet confirmStep(user: string)}
-  <div
-    class="confirm"
-    role="alertdialog"
-    aria-labelledby="{id}-ask"
-    aria-describedby="{id}-ask-text"
-  >
+  <div class="confirm" role="group" aria-labelledby="{id}-ask" aria-describedby="{id}-ask-text">
     <p id="{id}-ask"><strong>Give "{user}" a one-time password?</strong></p>
     <p id="{id}-ask-text">
       The old password stops working, and every session of this user ends. A lock from the restore
@@ -158,14 +154,14 @@
   <ProblemBox {error} />
   {#if users.length}
     <ul class="users" id="{id}-users" aria-labelledby="{id}-users-title">
-      {#each users as u (u)}
+      {#each users as u, i (u)}
         <li>
           <div class="row user">
             <span class="mono">{u}</span>
             <button
               class="btn"
               type="button"
-              id="{id}-for-{slug(u)}"
+              id="{id}-for-{i}"
               aria-label="Give {u} a one-time password"
               disabled={asking !== null}
               onclick={() => ask(u)}>One-time password</button

@@ -8,6 +8,7 @@
   import ChangeTable from "../ui/ChangeTable.svelte";
   import ImagePlanPart from "../ui/ImagePlanPart.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
   import RiskBadge from "../ui/RiskBadge.svelte";
 
   let { api, id }: { api: PlumbApi; id: number } = $props();
@@ -254,9 +255,16 @@
       </div>
       <ProblemBox error={approveError} />
       <div class="row">
-        <button class="btn primary" type="submit" disabled={busy}>Approve and apply</button>
+        <button
+          class="btn primary"
+          type="submit"
+          disabled={busy || restored.mode}
+          aria-describedby={restored.mode ? "approve-restored" : undefined}
+          >Approve and apply</button
+        >
         <a class="btn" href={href({ name: "targets" })}>Not now</a>
       </div>
+      {#if restored.mode}<p class="muted" id="approve-restored">{RESTORED_WAIT}</p>{/if}
     </form>
   {:else}
     <ProblemBox error={approveError} />

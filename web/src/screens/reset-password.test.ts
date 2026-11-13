@@ -21,11 +21,11 @@ describe("one-time password in the restore card", () => {
     expect(users()).toEqual(["alice", "bob"]);
 
     // The confirm step names the user and what ends.
-    el("#restore-otp-for-alice").click();
+    el("#restore-otp-for-0").click();
     await until(() => document.activeElement?.id === "restore-otp-confirm");
     expect(text()).toContain('Give "alice" a one-time password?');
     expect(text()).toContain("every session of this user ends");
-    expect((el("#restore-otp-for-bob") as HTMLButtonElement).disabled).toBe(true);
+    expect((el("#restore-otp-for-1") as HTMLButtonElement).disabled).toBe(true);
     expect(spy).not.toHaveBeenCalled();
 
     button("Make a one-time password")?.click();
@@ -44,11 +44,11 @@ describe("one-time password in the restore card", () => {
     const a = api(true);
     const spy = vi.spyOn(a, "resetUserPassword");
     show(Backups, { api: a });
-    await until(() => document.querySelector("#restore-otp-for-bob"));
-    el("#restore-otp-for-bob").click();
+    await until(() => document.querySelector("#restore-otp-for-1"));
+    el("#restore-otp-for-1").click();
     await until(() => button("Cancel"));
     button("Cancel")?.click();
-    await until(() => document.activeElement?.id === "restore-otp-for-bob");
+    await until(() => document.activeElement?.id === "restore-otp-for-1");
     expect(button("Cancel")).toBeFalsy();
     expect(spy).not.toHaveBeenCalled();
   });

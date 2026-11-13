@@ -1,6 +1,7 @@
 // Raw mode (T-118, D-296): every override of a Target is a raw resource.
 // The person sees the attributes it fixes, edits its `content` and can go
 // back to the Block. Pure functions; the screen stays thin.
+import { secretName } from "./schemaForm";
 import type { TargetSpec } from "./types";
 
 export interface RawResource {
@@ -12,9 +13,26 @@ export interface RawResource {
   content?: string;
 }
 
-/** A value as one line of text: strings as they are, the rest as JSON. */
-function valueText(v: unknown): string {
-  return typeof v === "string" ? v : JSON.stringify(v);
+/**
+ * A value as one line of text: strings as they are, the rest as JSON. A
+ * secret reference shows its name only, like a secret parameter in the
+ * Target form; any other object with a `secret` key is masked (review L3 of
+ * #227). The server refuses secret references in overrides; this is a
+ * second line, so a value of a secret never reaches the page.
+ */
+export function valueText(v: unknown): string {
+  if (typeof v === "string") return v;
+  const name = secretName(v);
+  if (name !== undefined) return `secret ${name}`;
+  if (hasSecret(v)) return "(hidden: holds a secret reference)";
+  return JSON.stringify(v);
+}
+
+/** True when `v` holds an object with a `secret` key at any depth. */
+function hasSecret(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) return false;
+  if (!Array.isArray(v) && "secret" in v) return true;
+  return Object.values(v).some(hasSecret);
 }
 
 /** The raw resources of a Target spec, sorted by id. */

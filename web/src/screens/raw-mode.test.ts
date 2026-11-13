@@ -18,10 +18,8 @@ describe("raw resources on the Target page", () => {
     const card = text(el('section[aria-labelledby="raw-title"]'));
     expect(card).toContain("file:/etc/motd");
     expect(card).toContain("content");
-    expect(text(el("#raw-file-etc-motd-source"))).toBe("From the Block motd.");
-    expect(el("#raw-file-etc-motd-value").textContent).toBe(
-      "Maintenance window: Sunday 02:00 UTC\n",
-    );
+    expect(text(el("#raw-0-source"))).toBe("From the Block motd.");
+    expect(el("#raw-0-value").textContent).toBe("Maintenance window: Sunday 02:00 UTC\n");
   });
 
   it("edits the content as a proposal and keeps the other attributes", async () => {
@@ -32,8 +30,8 @@ describe("raw resources on the Target page", () => {
     button("Edit content")?.click();
     flushSync();
     await Promise.resolve();
-    expect(document.activeElement).toBe(el("#raw-file-etc-motd-content"));
-    type("#raw-file-etc-motd-content", "Closed today.\n");
+    expect(document.activeElement).toBe(el("#raw-0-content"));
+    type("#raw-0-content", "Closed today.\n");
     [...document.querySelectorAll<HTMLButtonElement>(".raw button")]
       .find((b) => b.textContent?.trim() === "Show the plan")
       ?.click();
