@@ -39,8 +39,8 @@ func TestDiffGuest(t *testing.T) {
 	for attr, mutate := range map[string]func(*GuestSpec){
 		AttrKind:    func(s *GuestSpec) { s.Kind = wire.KindLXC },
 		AttrImage:   func(s *GuestSpec) { s.ImageName = "ubuntu" },
-		AttrIP:      func(s *GuestSpec) { s.IP = "10.0.0.5/24" },
-		AttrGateway: func(s *GuestSpec) { s.Gateway = "10.0.0.1" },
+		AttrIP:      func(s *GuestSpec) { s.IP = "192.0.2.5/24" },
+		AttrGateway: func(s *GuestSpec) { s.Gateway = "192.0.2.1" },
 		AttrUser:    func(s *GuestSpec) { s.User = "root" },
 		AttrSSHKeys: func(s *GuestSpec) { s.SSHKeys = nil },
 	} {

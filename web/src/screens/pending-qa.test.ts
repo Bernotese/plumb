@@ -69,7 +69,7 @@ it("renders pending, also-pending and create-only guidance in the change table",
     changes: [
       { attr: "memory", from: 256, to: 1024, risk: "reversible", pending: true },
       { attr: "cores", from: 8, to: 2, risk: "disruptive", also_pending: 4 },
-      { attr: "ip", from: "10.0.0.9/24", to: "dhcp", risk: "destructive", pending: true },
+      { attr: "ip", from: "192.0.2.9/24", to: "dhcp", risk: "destructive", pending: true },
       { attr: "allow_restart", from: false, to: true, risk: "read" },
     ],
   });

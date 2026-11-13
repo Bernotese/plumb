@@ -149,7 +149,7 @@ func TestCTUpdateLive(t *testing.T) {
 		t.Errorf("net0 %q", n)
 	}
 	var co *driver.CreateOnlyError
-	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "10.0.0.9/24"}}, nil); !errors.As(err, &co) {
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "192.0.2.9/24"}}, nil); !errors.As(err, &co) {
 		t.Errorf("create-only: %v", err)
 	}
 }

@@ -141,3 +141,20 @@ func TestExportDecodeRefuses(t *testing.T) {
 		t.Errorf("valid file: %+v %v", f, err)
 	}
 }
+
+// Review of #236: a refused value of an import file never shows in the
+// error (a numeric PIN, a hex token, a custom tag); a standard tag is named.
+func TestExportDecodeNoValueEcho(t *testing.T) {
+	head := "kind: Export\nformat: 1\nrevision: 1\nexported_at: \"2026-11-10T09:30:00Z\"\nversion: x\nsecrets: []\n"
+	for name, c := range map[string]struct{ text, secret, want string }{
+		"hex token":  {head + "---\nkind: Image\nname: a\nspec: {pin: 0x5ec7e7a1b2}\n", "5ec7e7a1b2", "not a JSON number"},
+		"custom tag": {head + "---\nkind: Image\nname: a\nspec: !pw-hunter2 {type: vm}\n", "hunter2", "a custom YAML tag is not allowed"},
+		"format":     {strings.Replace(head, "format: 1", "format: 918273645", 1), "918273645", "unknown format"},
+		"std tag":    {head + "---\nkind: Image\nname: a\nspec: {a: !!set {x: null}}\n", "x:", "the YAML tag !!set is not allowed"},
+	} {
+		_, err := Decode([]byte(c.text))
+		if err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), c.secret) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

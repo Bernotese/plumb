@@ -136,7 +136,7 @@ func TestFetchImage(t *testing.T) {
 
 func guest(ref driver.ImageRef) driver.GuestSpec {
 	return driver.GuestSpec{Name: "web1", Kind: wire.KindVM, ImageName: "debian", Image: ref, Cores: 2, MemoryMB: 2048, DiskGB: 20, Bridge: "vmbr0",
-		IP: "10.0.0.5/24", Gateway: "10.0.0.1", User: "plumb",
+		IP: "192.0.2.5/24", Gateway: "192.0.2.1", User: "plumb",
 		SSHKeys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOm me@laptop", "ssh-rsa AAAAB3Nza+/= other key"}}
 }
 
@@ -162,7 +162,7 @@ func TestCreateObserveRoundTrip(t *testing.T) {
 	}
 	vm := f.vms[9001]
 	cfg := vm.cfg
-	if cfg["cicustom"] != "vendor=plumb-snippets:snippets/plumb-vendor.yaml" || cfg["ipconfig0"] != "ip=10.0.0.5/24,gw=10.0.0.1" ||
+	if cfg["cicustom"] != "vendor=plumb-snippets:snippets/plumb-vendor.yaml" || cfg["ipconfig0"] != "ip=192.0.2.5/24,gw=192.0.2.1" ||
 		cfg["ciuser"] != "plumb" || cfg["net0"] != "virtio,bridge=vmbr0" || cfg["cores"] != "2" || cfg["memory"] != "2048" || !vm.running {
 		t.Errorf("config: %v", cfg)
 	}
@@ -188,7 +188,7 @@ func TestCreateObserveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Power != driver.PowerRunning || st.Digest == "" || len(st.IPs) != 1 || st.IPs[0] != "10.0.0.5" {
+	if st.Power != driver.PowerRunning || st.Digest == "" || len(st.IPs) != 1 || st.IPs[0] != "192.0.2.5" {
 		t.Errorf("state: %+v", st)
 	}
 	if changes, err := d.Diff(spec, st); err != nil || len(changes) != 0 {
@@ -270,7 +270,7 @@ func TestUpdate(t *testing.T) {
 		t.Error("token change without Bootstrap")
 	}
 	var co *driver.CreateOnlyError
-	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "10.0.0.9/24"}}, nil); !errors.As(err, &co) {
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "192.0.2.9/24"}}, nil); !errors.As(err, &co) {
 		t.Errorf("create-only: %v", err)
 	}
 	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrBridge, To: "vmbr0,firewall=0"}}, nil); err == nil {

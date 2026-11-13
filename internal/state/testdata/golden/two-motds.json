@@ -10,8 +10,8 @@
       "bridge": "vmbr1",
       "cores": 1,
       "disk": 8,
-      "gateway": "10.0.0.1",
-      "ip": "10.0.0.9/24",
+      "gateway": "192.0.2.1",
+      "ip": "192.0.2.9/24",
       "memory": 512,
       "ssh_keys": [],
       "user": "plumb"

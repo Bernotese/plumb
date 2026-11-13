@@ -82,7 +82,7 @@ func TestLXCTargetRules(t *testing.T) {
 		errAt(t, err, KindTarget, "/spec/guest/disk", "at least 2 GiB")
 	})
 	t.Run("keys, static ip and allow_restart", func(t *testing.T) {
-		tgt := doc(KindTarget, "c1", `{"type":"lxc","image":"ct","allow_restart":true,"guest":{"cores":1,"memory":512,"disk":2,"bridge":"vmbr0","ip":"10.0.0.7/24","gateway":"10.0.0.1","ssh_keys":["ssh-ed25519 AAAA me"]}}`)
+		tgt := doc(KindTarget, "c1", `{"type":"lxc","image":"ct","allow_restart":true,"guest":{"cores":1,"memory":512,"disk":2,"bridge":"vmbr0","ip":"192.0.2.7/24","gateway":"192.0.2.1","ssh_keys":["ssh-ed25519 AAAA me"]}}`)
 		set, err := Validate([]Doc{lxcImage(""), tgt})
 		if err != nil {
 			t.Fatal(err)

@@ -115,7 +115,7 @@ func TestEnvTokenBoundaries(t *testing.T) {
 
 func TestConfigTokenEnv(t *testing.T) {
 	ca := newCA(t)
-	base := Config{URL: "https://10.0.0.5:8444", CA: ca.pem}
+	base := Config{URL: "https://192.0.2.5:8444", CA: ca.pem}
 	c := base
 	c.TokenEnv = "PLUMB_ENROLL_TOKEN"
 	if err := c.check(); err != nil || c.TokenFile != "" {
