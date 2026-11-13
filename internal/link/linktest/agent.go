@@ -55,6 +55,7 @@ type Agent struct {
 	sealStuck bool                                           // the guest does not power off after seal
 	noMark    bool                                           // the agent does not take the build mark
 	loseRes   bool                                           // update: the result never reaches the controller
+	updateID  string                                         // id of the last update command
 	paused    bool                                           // Run does not poll (see Pause)
 	inPoll    bool                                           // a poll is in flight
 	pollDone  *sync.Cond                                     // signalled when a poll ends (lazy, on a.mu)
@@ -210,6 +211,14 @@ func (a *Agent) Enrolls() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.enrolls
+}
+
+// UpdateCommandID returns the id of the last update command ("" before
+// one), so a test can send its result itself (T-108).
+func (a *Agent) UpdateCommandID() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.updateID
 }
 
 // Commands returns the types of the commands the agent received.
@@ -390,6 +399,9 @@ func (a *Agent) update(ctx context.Context, cmd wire.Command) {
 	}
 	var body wire.UpdateBody
 	_ = json.Unmarshal(cmd.Body, &body)
+	a.mu.Lock()
+	a.updateID = cmd.ID
+	a.mu.Unlock()
 	item, after := fn(body)
 	a.mu.Lock()
 	lose := a.loseRes

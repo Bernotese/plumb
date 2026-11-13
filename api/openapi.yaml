@@ -3025,6 +3025,16 @@ components:
             change the agent needs a fresh round trip to the controller within this many seconds;
             else it puts the confirmed state back and the step is `failed` with `rolled_back`.
             Missing for every other resource.
+        summary:
+          type: array
+          description: |
+            Lines for the person who approves, derived from the desired attributes (D-300). For
+            `firewall`: the effective SSH rule, for example "SSH tcp/22 open from everywhere",
+            "SSH tcp/2222 open from 192.0.2.0/24" or "no SSH rule (allow_no_ssh)", then the policy.
+            Missing when there is nothing to say. Display only.
+          maxItems: 8
+          items: { type: string, maxLength: 200 }
+          examples: [["SSH tcp/22 open from everywhere", "policy drop: other input is dropped"]]
 
     RunStatus:
       type: string

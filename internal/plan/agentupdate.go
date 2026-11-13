@@ -140,7 +140,8 @@ func normalCaps(c wire.Capabilities) wire.Capabilities {
 
 // agentHello is a checked hello for the waiters of an update step.
 // afterResult: the hello came after a result of the target, so it is not
-// a reconnect of the old agent before the swap. taken: the agent had
+// a reconnect of the old agent before the swap (it can still be the old
+// process before its exit, T-108). taken: the agent had
 // taken the update command when the hello came (T-102). The agent drops
 // its reverted marker when it starts the command and sends its reports
 // one after the other, so a reverted hello with taken set is of this
@@ -586,7 +587,9 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 	// One wait for the result and the hellos (T-102). The result can be
 	// lost when the link breaks at the swap: the old agent exits after
 	// restartWait without it. Then the hellos tell the outcome: the
-	// served sha (passed), or a revert of this update (failed). When the
+	// served sha (passed), or a revert of this update (failed); a hello
+	// with the old sha after the result only names the failure when no
+	// hello of the new binary follows (T-108). When the
 	// agent took the command and stays silent (no poll) for
 	// UpdateHelloWait, the step fails as with no hello after a result.
 	// ApplyTimeout stays the limit while the command waits untaken.
@@ -596,6 +599,7 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 	check := time.NewTicker(min(5*time.Second, max(e.cfg.UpdateHelloWait/4, 10*time.Millisecond)))
 	defer check.Stop()
 	gotResult := false
+	oldAfterResult := false // a hello with the old sha came after the result
 	var silentSince time.Time
 	for {
 		select {
@@ -631,9 +635,13 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 				s.set(ctx, wire.AgentBinaryID, wire.StatusApplied, planned, "")
 				return true
 			case h.afterResult && oldSHA != "" && h.sha == oldSHA:
-				// Not a reconnect of the old agent before its result: it
-				// restarted on the old binary.
-				return fail("the agent came back with its old binary")
+				// Either the agent restarted on the old binary, or the old
+				// process reconnects before it exits: its result reached
+				// us but the reply did not, so it says hello and sends the
+				// result again (T-106 F3). The hello cannot tell the two
+				// apart, so it decides nothing: the new binary's hello
+				// passes the step, else helloTimeout fails it (T-108).
+				oldAfterResult = true
 			}
 			// Before a result and without a revert: a reconnect of the old
 			// agent; its result follows.
@@ -650,6 +658,9 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 					e.cfg.UpdateHelloWait))
 			}
 		case <-helloTimeout:
+			if oldAfterResult {
+				return fail(fmt.Sprintf("the agent came back with its old binary (no hello of the new agent within %v)", e.cfg.UpdateHelloWait))
+			}
 			return fail(fmt.Sprintf("no hello of the new agent within %v; the guest goes back to the old binary by itself", e.cfg.UpdateHelloWait))
 		case <-cmdTimeout.C:
 			return fail(fmt.Errorf("%w (%s, %v)", ErrTimeout, tp.Target, e.cfg.ApplyTimeout).Error())
