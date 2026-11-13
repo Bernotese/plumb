@@ -77,6 +77,21 @@ func TestApprovePlan(t *testing.T) {
 	if len(steps) != 1 || steps[0].Status != "applied" || steps[0].Output != "ok" || steps[0].FinishedAt.IsZero() || steps[0].StartedAt.IsZero() {
 		t.Errorf("steps = %+v", steps)
 	}
+	// rolled_back (D-300) only on a failed step.
+	if err := s.MarkStepRolledBack(ctx, run.ID, seq); err != nil {
+		t.Fatal(err)
+	}
+	if steps, _ := s.Steps(ctx, run.ID); steps[0].RolledBack {
+		t.Error("an applied step was marked rolled back")
+	}
+	fw, _ := s.AddStep(ctx, Step{RunID: run.ID, Target: "web1", Resource: "firewall:main", Status: "pending"})
+	s.UpdateStep(ctx, run.ID, fw, "failed", nil, "no round trip")
+	if err := s.MarkStepRolledBack(ctx, run.ID, fw); err != nil {
+		t.Fatal(err)
+	}
+	if steps, _ := s.Steps(ctx, run.ID); len(steps) != 2 || !steps[1].RolledBack || steps[0].RolledBack {
+		t.Errorf("rolled back: %+v", steps)
+	}
 	if err := s.FinishRun(ctx, run.ID, "succeeded", 0); err != nil {
 		t.Fatal(err)
 	}
