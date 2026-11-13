@@ -301,6 +301,8 @@ type issueView struct {
 	PlanID     *int64          `json:"plan_id"`
 	Resolution *resolutionView `json:"resolution"`
 	Comments   []commentView   `json:"comments"`
+	Raw        bool            `json:"raw"`    // D-301
+	Source     *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
 }
 
 func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error) {
@@ -331,6 +333,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	}
 	if i.Status == store.IssueResolved {
 		v.Resolution = &resolutionView{Action: i.Resolution, By: i.ResolvedBy, At: i.ResolvedAt.UTC()}
+	}
+	if err := s.issueSource(ctx, &v); err != nil {
+		return v, err
 	}
 	comments, err := s.st.Comments(ctx, i.ID)
 	if err != nil {

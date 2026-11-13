@@ -93,6 +93,9 @@ type docView struct {
 	// Status is a *targetStatus for a Target, an *imageStatus for a built
 	// Image, and missing for every other document.
 	Status any `json:"status,omitempty"`
+	// Raw lists the overrides of a Target (D-301); missing for every
+	// other document.
+	Raw *[]rawView `json:"raw,omitempty"`
 }
 
 type targetStatus struct {
@@ -179,6 +182,11 @@ func (s *Server) docView(ctx context.Context, head int64, d store.DocRow) (docVi
 			return docView{}, err
 		}
 		v.Status = &st
+		raw, err := s.targetRaw(ctx, d.Name)
+		if err != nil {
+			return docView{}, err
+		}
+		v.Raw = &raw
 	}
 	if d.Kind == state.KindImage {
 		st, err := s.imageStatus(ctx, d)

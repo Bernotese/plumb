@@ -11,14 +11,17 @@ The controller serves the raw-mode fields of the contract (D-296, D-301), so the
 - The Accept path that writes `spec.overrides` and the render rules (ARCHITECTURE §3, §6)
 
 ## Acceptance criteria
-- [ ] `Issue.source` ({block, use}; null for `guest:*` / `agent:*`), `Issue.raw` (source set and `accept` allowed), `TargetView.raw` (`{resource, attrs, source}` per override) as the contract says; the planned marks are removed
-- [ ] No new endpoint and no second write path: edit and "Back to the Block" stay normal proposals on `spec.overrides`
-- [ ] Secret values never show in `TargetView.raw` (same masking as the Target view today)
-- [ ] API tests incl. access tiers; `make lint test build` green; small diff
+- [x] `Issue.source` ({block, use}; null for `guest:*` / `agent:*`), `Issue.raw` (source set and `accept` allowed), `TargetView.raw` (`{resource, attrs, source}` per override) as the contract says; the planned marks are removed
+- [x] No new endpoint and no second write path: edit and "Back to the Block" stay normal proposals on `spec.overrides`
+- [x] Secret values never show in `TargetView.raw` (same masking as the Target view today)
+- [x] API tests incl. access tiers; `make lint test build` green; small diff
 
 ## Out of scope
 - Web (T-118)
 - No new token right (D-081)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-backend/T-125-raw-mode-api` · tests: `make lint test build` green; `TestRawMode` (admin + read token, every answer checked against the contract), `TestToSourceView`, `TestSourcesAndOverrides`.
+- `state.Set.Sources` (resource → Block use) and `Overrides`; `api/raw.go` sets `Issue.source`/`Issue.raw` and `TargetView.raw` (names only, never values). Read only: no new endpoint, no write path.
+- The head Set is cached per revision (revisions never change), so issue and target lists load it once.
+- The contract has no planned mark on these fields; "Missing on an older controller" stays (still true).
