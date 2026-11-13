@@ -1889,6 +1889,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           reason:
             reason?.trim() || (action === "revert" ? "Revert drift." : "Accept the guest value."),
           targets: [tp],
+          // D-323: an Accept adopts guest data; only a person approves it.
+          human_only: action === "accept" ? ["accept-guest-data"] : [],
           warnings:
             action === "accept"
               ? [

@@ -316,6 +316,9 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if slices.Contains(binding, true) {
 		humanOnly = append(humanOnly, HumanOnlySecretBinding)
 	}
+	if in.Origin == OriginAccept {
+		humanOnly = append(humanOnly, HumanOnlyAcceptGuestData)
+	}
 
 	// Every check passed: now an import writes its secrets (D-153), and the
 	// Plan records the versions it wrote.
