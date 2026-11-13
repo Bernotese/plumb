@@ -2,6 +2,7 @@
   import targetSchema from "../../../internal/state/schema/target.json";
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
+  import DeleteDocument from "../ui/DeleteDocument.svelte";
   import {
     fieldsOf,
     initialValues,
@@ -681,6 +682,14 @@
     >
     {#if restored.mode}<p class="muted" id="reenroll-restored">{RESTORED_WAIT}</p>{/if}
   </form>
+  <DeleteDocument {api} kind="Target" name={existing.document.name}>
+    <p>
+      The plan deletes the {kind === "lxc" ? "container" : "VM"}
+      {#if existing.status.guest_id}<span class="mono">{existing.status.guest_id}</span>{/if}
+      and its disks in Proxmox, and the Target leaves the desired state. This cannot be undone. A guest
+      that Plumb did not make is never deleted: Plumb only lets it go.
+    </p>
+  </DeleteDocument>
 {/if}
 
 <style>

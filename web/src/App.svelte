@@ -12,6 +12,8 @@
   import Issues from "./screens/Issues.svelte";
   import Login from "./screens/Login.svelte";
   import PlanView from "./screens/PlanView.svelte";
+  import Plans from "./screens/Plans.svelte";
+  import Runs from "./screens/Runs.svelte";
   import Settings from "./screens/Settings.svelte";
   import Rules from "./screens/Rules.svelte";
   import RevisionView from "./screens/RevisionView.svelte";
@@ -194,6 +196,8 @@
       <a href={href({ name: "issues" })} aria-current={navCurrent(["issues", "issue", "rules"])}
         >Issues</a
       >
+      <a href={href({ name: "plans" })} aria-current={navCurrent(["plans", "plan"])}>Plans</a>
+      <a href={href({ name: "runs" })} aria-current={navCurrent(["runs", "run"])}>Runs</a>
       <a href={href({ name: "history" })} aria-current={navCurrent(["history", "revision"])}
         >History</a
       >
@@ -261,12 +265,17 @@
     {#key route.block}<BlockScreen {api} name={route.block} />{/key}
   {:else if route.name === "block-edit"}
     {#key route.block}<BlockForm {api} name={route.block} />{/key}
+  {:else if route.name === "plans"}
+    <Plans {api} />
+  {:else if route.name === "runs"}
+    <Runs {api} />
   {:else if route.name === "plan"}
     {#key route.id}<PlanView {api} id={route.id} />{/key}
   {:else if route.name === "run"}
     {#key route.id}<RunView {api} id={route.id} />{/key}
   {:else if route.name === "issues"}
-    <Issues {api} />
+    <!-- not keyed: the status filter stays when the Target filter changes -->
+    <Issues {api} target={route.target} />
   {:else if route.name === "issue"}
     {#key route.id}<IssueView {api} id={route.id} />{/key}
   {:else if route.name === "rules"}
@@ -274,7 +283,7 @@
   {:else if route.name === "history"}
     <History {api} />
   {:else if route.name === "revision"}
-    {#key route.id}<RevisionView {api} id={route.id} />{/key}
+    {#key `${route.id}/${route.from}`}<RevisionView {api} id={route.id} from={route.from} />{/key}
   {:else if route.name === "settings"}
     {#if session}<Settings
         {api}
@@ -282,7 +291,7 @@
         tab={route.tab}
         onRestore={(r) => (restored.mode = r.restored_mode)}
       />{/if}
-  {:else}
+  {:else if route.name === "not-found"}
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p>
       There is no page at <span class="mono">{route.path}</span>.

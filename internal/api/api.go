@@ -192,6 +192,7 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/images/{name}/build", planTier, s.buildImage)
 	route("GET /api/v1/blocks", read, s.listDocs("Block"))
 	route("GET /api/v1/blocks/{name}", read, s.getDoc("Block"))
+	route("GET /api/v1/catalog/blocks", read, s.listCatalogBlocks)
 	route("GET /api/v1/rules", read, s.listDocs("Rule"))
 	route("GET /api/v1/rules/{name}", read, s.getDoc("Rule"))
 	route("GET /api/v1/targets", read, s.listDocs("Target"))

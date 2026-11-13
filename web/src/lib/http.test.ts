@@ -49,6 +49,29 @@ describe("http api", () => {
     expect(f.calls.map((c) => c.url)).toEqual(["/api/v1/issues?target=db1&status=open&limit=200"]);
   });
 
+  it("calls the plan, run and comment operations (T-153)", async () => {
+    const f = fakeFetch((c) =>
+      c.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : Response.json({ items: [], next: null }),
+    );
+    const api = createHttpApi({ fetch: f.fn });
+    await api.listPlans();
+    await api.listPlans({ status: "pending" }, "a b", 5);
+    await api.discardPlan(14);
+    await api.listRuns();
+    await api.listRuns("c", 3);
+    await api.commentIssue(9, "Looks manual.");
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["GET", "/api/v1/plans?limit=50", undefined],
+      ["GET", "/api/v1/plans?status=pending&limit=5&cursor=a+b", undefined],
+      ["DELETE", "/api/v1/plans/14", undefined],
+      ["GET", "/api/v1/runs?limit=50", undefined],
+      ["GET", "/api/v1/runs?limit=3&cursor=c", undefined],
+      ["POST", "/api/v1/issues/9/comments", { body: "Looks manual." }],
+    ]);
+  });
+
   it("calls the revision operations (T-034)", async () => {
     const f = fakeFetch(() => Response.json({ items: [], next: null }));
     const api = createHttpApi({ fetch: f.fn });

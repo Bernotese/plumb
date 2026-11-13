@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumb.invalid/schema/resource/group.json",
+  "title": "group",
+  "description": "A local group (D-334), made with groupadd and changed with groupmod. Key: name. VM and LXC. Membership stays in user.groups; this resource owns only the group itself. Observe: /etc/group (watched, so a change is seen at once). Risk: create reversible; a gid change disruptive (files keep the old number), destructive when the group is the primary group of a user resource on the Target; absent destructive. Refused (the step fails with nothing changed, and the server refuses it at save when it knows the observed gid): a gid change when the current or the new gid is below 1000 (root, shadow, sudo, adm and the like; review G2 of #244), and absent for a gid below 1000 or for the primary group of a user. Capability for the agent version gate: resource:group.",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+      "description": "Group name."
+    },
+    "gid": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483646,
+      "description": "Wanted group id. Missing: groupadd picks one at create, and a later gid is not drift. A change from or to a gid below 1000 is refused."
+    },
+    "system": {
+      "type": "boolean",
+      "default": false,
+      "description": "Create as a system group (groupadd --system, gid below 1000). Create only: a change is not drift and is not applied."
+    },
+    "state": {
+      "enum": [
+        "present",
+        "absent"
+      ],
+      "default": "present"
+    }
+  }
+}

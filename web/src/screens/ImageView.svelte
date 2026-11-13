@@ -15,11 +15,14 @@
   import type { ImageStatus, ImageVersion, ImageView } from "../lib/types";
   import { KIND_NAME, formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
+  import DeleteDocument from "../ui/DeleteDocument.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
 
   let { api, name }: { api: PlumbApi; name: string } = $props();
   let image = $state<ImageView | null>(null);
+  /** Targets that use this Image: a delete cannot work while there are any. */
+  let usedBy = $state<string[] | null>(null);
   let error = $state<unknown>(null);
   let buildError = $state<unknown>(null);
   let busy = $state(false);
@@ -30,9 +33,15 @@
 
   $effect(() => {
     const live = liveSnapshot({
-      load: () => api.getImage(name),
+      load: () => Promise.all([api.getImage(name), api.listTargets()]),
       subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
-      onSnapshot: (i) => (image = i),
+      onSnapshot: ([i, t]) => {
+        image = i;
+        usedBy = t
+          .filter((x) => x.document.spec.image === name)
+          .map((x) => x.document.name)
+          .sort();
+      },
       onError: (e) => (error = e),
       onEvent: (e, l) => {
         if (e.subject === `image:${name}` || e.type === "revision.committed") l.reloadSoon();
@@ -379,7 +388,23 @@
       fresh packages.
     </p>
   {/if}
-{:else if !error}
+{/if}
+{#if image && usedBy}
+  <DeleteDocument
+    {api}
+    kind="Image"
+    {name}
+    blocked={usedBy.length
+      ? `Used by ${usedBy.join(", ")}. Delete those Targets or move them to another Image first.`
+      : undefined}
+  >
+    <p>
+      The plan removes the Image from the desired state.{image.document.spec.build
+        ? " The plan lists the templates in Proxmox that go with it."
+        : ""} No Target changes: none uses it.
+    </p>
+  </DeleteDocument>
+{:else if !image && !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
 

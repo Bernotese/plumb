@@ -1,15 +1,18 @@
 <script lang="ts">
   import type { PlumbApi } from "../lib/client";
   import { liveSnapshot } from "../lib/live";
-  import { href } from "../lib/router";
+  import { go, href } from "../lib/router";
   import type { Issue } from "../lib/types";
   import { formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import RiskBadge from "../ui/RiskBadge.svelte";
 
-  let { api }: { api: PlumbApi } = $props();
+  let { api, target }: { api: PlumbApi; target?: string } = $props();
   let issues = $state<Issue[] | null>(null);
+  /** Names for the Target filter: the Targets of the head and the given one. */
+  let knownTargets = $state<string[]>([]);
+  const targetNames = $derived([...new Set([...knownTargets, ...(target ? [target] : [])])].sort());
   let error = $state<unknown>(null);
   let filter = $state<"open" | "resolving" | "resolved" | "all">("open");
   const tone: Record<Issue["status"], Tone> = { open: "warn", resolving: "info", resolved: "ok" };
@@ -22,9 +25,12 @@
 
   $effect(() => {
     // The inbox follows the event stream (live.ts): reload on every
-    // (re)open and, coalesced, on every issue event.
+    // (re)open and, coalesced, on every issue event. A new Target filter
+    // starts a new snapshot; the status filter stays.
+    const t = target;
+    error = null;
     const live = liveSnapshot({
-      load: () => api.listIssues(),
+      load: () => api.listIssues(t ? { target: t } : undefined),
       subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
       onSnapshot: (i) => (issues = i),
       onError: (e) => (error = e),
@@ -34,6 +40,16 @@
     });
     return () => live.stop();
   });
+  $effect(() => {
+    api.listTargets().then(
+      (t) => (knownTargets = t.map((x) => x.document.name)),
+      () => (knownTargets = []),
+    );
+  });
+  function pickTarget(e: Event) {
+    const v = (e.currentTarget as HTMLSelectElement).value;
+    go(v ? { name: "issues", target: v } : { name: "issues" });
+  }
   const shown = $derived(issues?.filter((i) => filter === "all" || i.status === filter) ?? []);
 </script>
 
@@ -41,6 +57,11 @@
   <h1 id="page-title" tabindex="-1">Issues</h1>
   <div class="row">
     <a href={href({ name: "rules" })}>Ignore rules</a>
+    <label for="issue-target">Target</label>
+    <select id="issue-target" value={target ?? ""} onchange={pickTarget}>
+      <option value="">All targets</option>
+      {#each targetNames as t (t)}<option value={t}>{t}</option>{/each}
+    </select>
     <label for="issue-filter">Show</label>
     <select id="issue-filter" bind:value={filter}>
       <option value="open">Open</option>
@@ -55,7 +76,10 @@
   <p class="muted" aria-live="polite">Loading…</p>
 {:else if shown.length === 0}
   <p class="muted">
-    No {filter === "all" ? "" : filter} issues. Every managed resource matches its desired state.
+    No {filter === "all" ? "" : filter} issues{#if target}&nbsp;on <span class="mono">{target}</span
+      >{/if}.
+    {#if target}<a href={href({ name: "issues" })}>Show all targets</a>.{:else}Every managed
+      resource matches its desired state.{/if}
   </p>
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
