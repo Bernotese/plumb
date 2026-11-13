@@ -41,12 +41,12 @@ func TestNetplanProbe(t *testing.T) {
 		return string(out)
 	}
 	t.Logf("image facts:\n%s", run("sh", "-c", `cat /etc/os-release; command -v netplan || true; if test -f /etc/netplan/50-cloud-init.yaml; then cat /etc/netplan/50-cloud-init.yaml; else echo '50-cloud-init.yaml absent'; fi`))
+	t.Logf("active renderer:\n%s", run("sh", "-c", `systemctl is-active systemd-networkd NetworkManager || true; networkctl status --no-pager || true`))
 	if strings.TrimSpace(run("sh", "-c", "command -v netplan || true")) == "" {
 		t.Log("NETPLAN_RESULT present=false; apply/link measurement unavailable (package not installed)")
 		return
 	}
 	t.Logf("merged netplan (renderer and match):\n%s", run("netplan", "get"))
-	t.Logf("active renderer:\n%s", run("sh", "-c", `systemctl is-active systemd-networkd NetworkManager || true; networkctl status --no-pager || true`))
 	// The default gateway is the runner's LXD bridge address, not loopback.
 	var routes []struct {
 		Gateway string `json:"gateway"`

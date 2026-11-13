@@ -36,15 +36,18 @@ for image in images:debian/13 ubuntu:26.04; do
   for kind in $kinds; do
     n=$((n + 1))
     name="plumb-fw-$n-$run_id"
-    args=(launch "$image" "$name")
+    source="$image"
+    if [[ "$kind" == vm && "$image" == images:debian/13 ]]; then source=images:debian/13/cloud; fi
+    args=(launch "$source" "$name")
     case "$kind" in
       container) args+=(-c security.privileged=false -c security.nesting=false) ;;
       vm) args+=(--vm -c limits.cpu=2 -c limits.memory=2GiB) ;;
       *) echo "unknown kind $kind" >&2; exit 2 ;;
     esac
     instances+=("$name")
-    echo "== $image $kind ($name)"
+    echo "== $source $kind ($name)"
     lxc "${args[@]}"
+    lxc config get "$name" volatile.base_image
     ready=false
     for ((attempt = 0; attempt < 180; attempt++)); do
       state=$(inst systemctl is-system-running 2>/dev/null || true)
