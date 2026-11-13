@@ -2013,7 +2013,6 @@ paths:
     get:
       tags: [backup]
       operationId: listBackups
-      x-plumb-planned: T-112
       summary: List the backups of this controller and the state of the off-host copy
       description: |
         Backups in the data directory of the controller, newest first (D-288, D-302), the
@@ -2052,7 +2051,6 @@ paths:
     post:
       tags: [backup]
       operationId: createBackup
-      x-plumb-planned: T-112
       summary: Start a backup now
       description: |
         Starts one backup outside the schedule. It counts for the retention like a scheduled one.
