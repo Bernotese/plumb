@@ -26,6 +26,13 @@ const (
 	ActionRevert = "revert"
 )
 
+// IgnoreOnly reports whether an Issue of resource offers only the ignore
+// actions: guest:address (D-215), and guest:missing and agent:silent of a
+// restore (D-303).
+func IgnoreOnly(resource string) bool {
+	return resource == wire.GuestAddressID || resource == plan.GuestMissingID || resource == plan.AgentSilentID
+}
+
 // ErrAcceptSensitive is returned for accept on a sensitive change: the
 // controller never knows the value, so it cannot write it (D-037).
 var ErrAcceptSensitive = errors.New("issue: accept is not possible for a sensitive attribute; revert it or change the secret")
@@ -40,6 +47,31 @@ var ErrAcceptImage = errors.New("issue: accept is not possible for the image or 
 // containerAttrs are the container settings of guest:config that a Target
 // cannot hold (driver.AttrFeatures and driver.Outside).
 var containerAttrs = map[string]bool{"features": true, "mounts": true, "devices": true, "raw_lxc": true}
+
+// ErrAcceptFirewall: Accept never takes guest data into a firewall
+// (D-300, review M1 of #218). The firewall is set only by Block
+// parameters: a forged drift report could otherwise open ports, widen the
+// sources, set policy accept or drop the SSH rule.
+var ErrAcceptFirewall = errors.New("issue: accept is not possible for a firewall: it is set only by the Block parameters; change them, or revert the drift")
+
+// AcceptRefused returns why Accept cannot take the changes of an Issue of
+// resource, or nil. The Issue view offers "accept" only when it is nil.
+func AcceptRefused(resource string, changes []wire.Change) error {
+	if typ, _, _ := wire.SplitID(resource); typ == "firewall" {
+		return ErrAcceptFirewall
+	}
+	for _, c := range changes {
+		switch {
+		case c.Sensitive:
+			return ErrAcceptSensitive
+		case resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind"):
+			return ErrAcceptImage
+		case resource == wire.GuestConfigID && containerAttrs[c.Attr]:
+			return ErrAcceptOutside
+		}
+	}
+	return nil
+}
 
 // ErrAcceptOutside is returned for accept of the features, mount points,
 // devices or raw lxc lines of a container: a Target cannot hold them
@@ -131,7 +163,11 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 			if opened {
 				typ = "issue.opened"
 			}
-			s.emit(ctx, typ, iss.ID, actor, map[string]any{"target": target, "resource": it.Resource, "risk": wire.MaxRisk(kept)})
+			by := actor
+			if IgnoreOnly(it.Resource) && it.Resource != wire.GuestAddressID {
+				by = "system" // the Issues of a restore (D-303)
+			}
+			s.emit(ctx, typ, iss.ID, by, map[string]any{"target": target, "resource": it.Resource, "risk": wire.MaxRisk(kept)})
 		case wire.StatusUnchanged:
 			// No drift: an ignore and its record end (D-091, D-092).
 			if err := s.st.ForgetIgnoreOnce(ctx, target, it.Resource); err != nil {
@@ -195,7 +231,7 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	if iss.Status != store.IssueOpen {
 		return store.Plan{}, ErrNotOpen
 	}
-	if iss.Resource == wire.GuestAddressID && (action == ActionRevert || action == ActionAccept) {
+	if IgnoreOnly(iss.Resource) && (action == ActionRevert || action == ActionAccept) {
 		return store.Plan{}, ErrAddressFix
 	}
 	var changes []wire.Change
@@ -296,16 +332,10 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 	if attrs == nil {
 		attrs = map[string]any{}
 	}
+	if err := AcceptRefused(iss.Resource, changes); err != nil {
+		return state.Doc{}, err
+	}
 	for _, c := range changes {
-		if c.Sensitive {
-			return state.Doc{}, ErrAcceptSensitive
-		}
-		if iss.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind") {
-			return state.Doc{}, ErrAcceptImage
-		}
-		if iss.Resource == wire.GuestConfigID && containerAttrs[c.Attr] {
-			return state.Doc{}, ErrAcceptOutside
-		}
 		if c.Attr == wire.AttrRestart {
 			continue
 		}

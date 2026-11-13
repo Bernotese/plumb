@@ -18,7 +18,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && args[0] == "version" {
+	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
 		fmt.Fprintln(stdout, "plumb", version)
 		return 0
 	}
@@ -27,9 +27,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		defer stop()
 		return serve(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) >= 1 && args[0] == "backup" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return backupCmd(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "restore" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return restoreCmd(ctx, args[1:], osKeyIO(stdout, stderr))
+	}
 	if len(args) >= 1 && args[0] == "key" {
 		return keyCmd(args[1:], osKeyIO(stdout, stderr))
 	}
-	fmt.Fprintln(stderr, "usage: plumb version | plumb serve [--dev] [flags] | plumb key init|restore [flags]")
+	fmt.Fprintln(stderr, "usage: plumb version | plumb serve [--dev] [flags] | plumb key init|restore [flags] | plumb backup now|verify [flags] | plumb restore --data DIR --from FILE")
 	return 2
 }

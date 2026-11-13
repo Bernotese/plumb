@@ -183,6 +183,23 @@ const (
 	typeCT = "lxc"
 )
 
+// ListGuests implements driver.Driver: the pool list, read only.
+func (d *Driver) ListGuests(ctx context.Context) ([]driver.PoolGuest, error) {
+	ms, err := d.guests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]driver.PoolGuest, 0, len(ms))
+	for _, m := range ms {
+		kind := wire.KindVM
+		if m.Type == typeCT {
+			kind = wire.KindLXC
+		}
+		out = append(out, driver.PoolGuest{ID: driver.GuestID(strconv.Itoa(m.VMID)), Name: m.Name, Kind: kind, Template: m.Template == 1})
+	}
+	return out, nil
+}
+
 // members lists the qemu guests in the pool.
 func (d *Driver) members(ctx context.Context) ([]member, error) {
 	all, err := d.guests(ctx)
@@ -760,6 +777,11 @@ func (d *Driver) configureWith(ctx context.Context, id int, spec driver.GuestSpe
 	if len(spec.SSHKeys) > 0 {
 		params.Set("sshkeys", sshKeysParam(spec.SSHKeys))
 	}
+	if tags, err := tagsParam(spec.Tags); err != nil {
+		return err
+	} else if tags != "" {
+		params.Set("tags", tags)
+	}
 	if spec.ImageVersion > 0 {
 		// Information only (D-200): Observe reads it, Diff ignores it.
 		params.Set("description", fmt.Sprintf("%s%s\n%s%d\nManaged by Plumb. Do not change it here.",
@@ -928,6 +950,7 @@ func specOf(name string, cfg map[string]string) driver.GuestSpec {
 		}
 	}
 	s.DiskGB = sizeGB(parseProps(cfg["scsi0"])["size"])
+	s.Tags = parseTags(cfg["tags"])
 	for _, line := range strings.Split(cfg["description"], "\n") {
 		if name, ok := strings.CutPrefix(strings.TrimSpace(line), imageMarker); ok {
 			s.ImageName = name
@@ -1014,9 +1037,11 @@ func (d *Driver) Diff(desired driver.GuestSpec, observed driver.GuestState) ([]w
 
 // --- Update, Power, Delete ---
 
-// Update applies changes of cores, memory and bridge, and for
+// Update applies changes of cores, memory, bridge and tags, and for
 // re-enrollment the new token as SMBIOS serial. A create-only attribute is
 // refused. The serial takes effect at the next cold start (Power restart).
+// A disk change grows the boot disk scsi0 after the config write (resize,
+// D-299); a smaller value is refused before any call.
 func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.Change, boot *driver.Bootstrap) error {
 	// The bridge rule comes first, before any Proxmox call (D-184).
 	for _, c := range changes {
@@ -1039,11 +1064,22 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 		return err
 	}
 	params := url.Values{"digest": {cfg["digest"]}} // refuse when the config changed meanwhile
+	grow := 0
 	for _, c := range changes {
 		if driver.IsCreateOnly(c.Attr) {
 			return &driver.CreateOnlyError{Attr: c.Attr}
 		}
 		switch c.Attr {
+		case driver.AttrTags:
+			if err := setTags(params, c.To); err != nil {
+				return err
+			}
+		case driver.AttrDisk:
+			n, err := growTo(c.To, sizeGB(parseProps(cfg["scsi0"])["size"]))
+			if err != nil {
+				return err
+			}
+			grow = n
 		case driver.AttrCores:
 			n, err := driver.IntValue(c.To)
 			if err != nil || n < 1 {
@@ -1071,17 +1107,117 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 			return fmt.Errorf("proxmox: unknown attribute %q", c.Attr)
 		}
 	}
-	if len(params) == 1 {
-		return nil
+	if len(params) > 1 {
+		if err := checkUpdateParams(cfg, params); err != nil {
+			return err
+		}
+		token := ""
+		if boot != nil {
+			token = boot.Token
+		}
+		if err := scrub(d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params), token); err != nil {
+			return tagRefusal(err, params)
+		}
 	}
-	if err := checkUpdateParams(cfg, params); err != nil {
+	if grow > 0 {
+		return d.resize(ctx, vmPath(d, id), "scsi0", grow)
+	}
+	return nil
+}
+
+// resize grows one disk to size GiB (VM.Config.Disk and
+// Datastore.AllocateSpace, D-081). Proxmox refuses a smaller size itself;
+// the callers check before.
+func (d *Driver) resize(ctx context.Context, path, disk string, size int) error {
+	if err := d.c.MaybeTask(ctx, d.cfg.Node, "PUT", path+"/resize", url.Values{
+		"disk": {disk}, "size": {strconv.Itoa(size) + "G"},
+	}); err != nil {
+		return fmt.Errorf("proxmox: grow disk %s to %d GiB: %w", disk, size, err)
+	}
+	return nil
+}
+
+// tagRefusal explains a 403 of a config write with tags (D-299): the
+// datacenter option user-tag-access (other than free) or a registered tag
+// can refuse a tag that the token may otherwise write (VM.Config.Options).
+func tagRefusal(err error, params url.Values) error {
+	var ae *APIError
+	_, tags := params["tags"]
+	if !tags && params.Get("delete") != "tags" || !errors.As(err, &ae) || ae.Status != 403 {
 		return err
 	}
-	token := ""
-	if boot != nil {
-		token = boot.Token
+	return fmt.Errorf("proxmox: the tags were refused: the datacenter option user-tag-access (other than free) or a registered tag can refuse a tag write, "+
+		"and Plumb gets no new right for it (D-081). Allow the tags in Datacenter → Options → Tag Style or User Tag Access, or remove them from the Target: %w", err)
+}
+
+// growTo checks a new disk size against the size of the guest: grow only.
+// It returns 0 when the size is already right.
+func growTo(v any, have int) (int, error) {
+	n, err := driver.IntValue(v)
+	switch {
+	case err != nil || n < 1:
+		return 0, fmt.Errorf("proxmox: disk %v", v)
+	case n < have:
+		return 0, &driver.ShrinkError{Have: have, Want: n}
+	case n == have:
+		return 0, nil
 	}
-	return scrub(d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params), token)
+	return n, nil
+}
+
+// reTag is a tag that Plumb writes (D-299; the Target schema has the
+// same pattern). Proxmox separates tags by ";".
+var reTag = regexp.MustCompile(`^[a-z0-9_][a-z0-9_+.-]{0,63}$`)
+
+// parseTags reads the tags option ("a;b", Proxmox also takes "," and
+// spaces) in the form of driver.NormTags.
+func parseTags(v string) []string {
+	return driver.NormTags(strings.FieldsFunc(v, func(r rune) bool { return r == ';' || r == ',' || r == ' ' }))
+}
+
+// tagsParam is the tags option of a set: "" for none.
+func tagsParam(tags []string) (string, error) {
+	tags = driver.NormTags(tags)
+	if len(tags) > 32 {
+		return "", fmt.Errorf("proxmox: %d tags; at most 32", len(tags))
+	}
+	for _, t := range tags {
+		if !reTag.MatchString(t) {
+			return "", fmt.Errorf("proxmox: tag %q is not valid", t)
+		}
+	}
+	return strings.Join(tags, ";"), nil
+}
+
+// setTags sets the tags of a change value (a string list) in params: the
+// option, or a delete of it for no tags.
+func setTags(params url.Values, v any) error {
+	var tags []string
+	switch l := v.(type) {
+	case nil:
+	case []string:
+		tags = l
+	case []any:
+		for _, t := range l {
+			s, ok := t.(string)
+			if !ok {
+				return fmt.Errorf("proxmox: tags %v", v)
+			}
+			tags = append(tags, s)
+		}
+	default:
+		return fmt.Errorf("proxmox: tags %v", v)
+	}
+	p, err := tagsParam(tags)
+	if err != nil {
+		return err
+	}
+	if p == "" {
+		params.Set("delete", "tags")
+	} else {
+		params.Set("tags", p)
+	}
+	return nil
 }
 
 // updateKeys are the only config keys that Update may write (D-185).
@@ -1090,7 +1226,8 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 // searchdomain, citype, ciupgrade, cicustom, name, the MAC of net0) starts a
 // new cloud-init instance at the next cold start: first boot again, and new
 // SSH host keys without ssh_deletekeys (test host, T-012 item 19).
-var updateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "smbios1": true}
+// tags (D-299) is no cloud-init input; "delete" may only name it.
+var updateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "smbios1": true, "tags": true, "delete": true}
 
 // checkUpdateParams is the last guard before Update writes: only
 // updateKeys; a new net0 keeps the MAC and every other property except
@@ -1100,6 +1237,9 @@ func checkUpdateParams(cfg map[string]string, params url.Values) error {
 		if !updateKeys[k] {
 			return fmt.Errorf("proxmox: Update must not write %q (cloud-init inputs are create-only, D-185)", k)
 		}
+	}
+	if del, ok := params["delete"]; ok && (len(del) != 1 || del[0] != "tags") {
+		return fmt.Errorf("proxmox: Update may delete only the tags, not %q", del)
 	}
 	if net0, ok := params["net0"]; ok {
 		mac := macOf(cfg["net0"])

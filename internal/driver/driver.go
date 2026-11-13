@@ -44,12 +44,20 @@ type GuestSpec struct {
 	Image    ImageRef
 	Cores    int      // AttrCores
 	MemoryMB int      // AttrMemory
-	DiskGB   int      // AttrDisk; create-only in the first slice
+	DiskGB   int      // AttrDisk; grow only (D-299): Diff refuses a smaller value
 	Bridge   string   // AttrBridge
 	IP       string   // AttrIP: "dhcp" or CIDR; create-only
 	Gateway  string   // AttrGateway; create-only
 	User     string   // AttrUser: bootstrap user; create-only
 	SSHKeys  []string // AttrSSHKeys of the bootstrap user; create-only
+	// Power is the desired power state (AttrPower, D-299): "" means not
+	// managed. Observe leaves it empty: GuestState.Power is what runs.
+	Power Power
+	// Tags are the Proxmox tags (AttrTags), sorted and lower case
+	// (NormTags). TagsSet says that the desired state manages them (D-299:
+	// a missing tags attribute is not managed); Observe always sets it.
+	Tags    []string
+	TagsSet bool
 	// ImageVersion is the version of a built Image that Create cloned, 0
 	// for a stock Image (D-200). Create writes it into the guest
 	// description as "plumb-image-version: <N>", and Observe reads it. It
@@ -78,6 +86,8 @@ const (
 	AttrGateway = "gateway"
 	AttrUser    = "user"
 	AttrSSHKeys = "ssh_keys"
+	AttrPower   = "power" // D-299; never written by Update: the engine runs Power
+	AttrTags    = "tags"  // D-299
 	// AttrEnrollToken is not part of GuestSpec. A Plan for re-enrollment
 	// (D-038) lists it as a sensitive change: {attr, sensitive, risk}.
 	// The token itself is never in a Change. It goes to Update as Bootstrap.
@@ -221,6 +231,19 @@ type Driver interface {
 	// guest that is gone is ErrNotFound; a guest that fails the guard is
 	// left, with an error that names it.
 	RemoveBuild(ctx context.Context, id GuestID, image string, version int) error
+	// ListGuests lists every guest in the pool, also templates and guests
+	// that Plumb did not make. Read only. GET /restore shows the ones that
+	// nothing is bound to (D-303).
+	ListGuests(ctx context.Context) ([]PoolGuest, error)
+}
+
+// PoolGuest is one guest of the pool, as the pool list shows it. The name
+// can be empty or stale for a guest that was made a moment ago.
+type PoolGuest struct {
+	ID       GuestID
+	Name     string
+	Kind     wire.Kind
+	Template bool
 }
 
 // --- Image builds (T-039, D-203, D-208, D-209) ---
@@ -342,6 +365,16 @@ type CreateOnlyError struct {
 
 func (e *CreateOnlyError) Error() string {
 	return fmt.Sprintf("driver: %q can only be set when the guest is created", e.Attr)
+}
+
+// ShrinkError is returned by Diff when the desired disk is smaller than
+// the disk of the guest: Proxmox cannot shrink a disk (D-291, D-299).
+type ShrinkError struct {
+	Have, Want int // GiB
+}
+
+func (e *ShrinkError) Error() string {
+	return fmt.Sprintf("driver: the disk has %d GiB and the desired state has %d GiB; Proxmox cannot shrink a disk", e.Have, e.Want)
 }
 
 // OutsideError is returned by Diff for an addition that a person made on

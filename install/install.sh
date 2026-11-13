@@ -7,6 +7,10 @@
 #   install.sh --plumb-binary ./plumb [options]        install or repair
 #   install.sh --snippet-only --ca FILE --url URL      write only the vendor snippet
 #   install.sh --remove                                remove what this script made
+#   install.sh --remove --keep-guests --plumb-binary ./plumb [--backup-to DIR]
+#                                                      replace the controller, keep the guests (D-290)
+#   install.sh --plumb-binary ./plumb --restore FILE --lxc-ip CIDR --lxc-gw IP
+#                                                      a new controller from a backup (D-290)
 # Add --dry-run to print every pveum/pvesm/pveam/pct command instead of
 # running it. The script downloads no third-party code: the controller
 # binary comes from --plumb-binary, the LXC template from Proxmox's own
@@ -31,6 +35,9 @@
 #   PLUMB_INSTALL_RESOLV=FILE     the resolver file instead of /etc/resolv.conf
 #   PLUMB_INSTALL_ASSUME_TTY=1    skip the terminal check before plumb key init
 #                                 (plumb key init itself still refuses a non-terminal)
+#   PLUMB_INSTALL_SBIN=DIR, PLUMB_INSTALL_UNIT_DIR=DIR, PLUMB_INSTALL_COPY_CONF=FILE,
+#   PLUMB_INSTALL_PVE_MNT=DIR     where the backup copy timer goes (default /usr/local/sbin,
+#                                 /etc/systemd/system, /etc/plumb/backup-copy.conf, /mnt/pve)
 set -euo pipefail
 umask 077
 
@@ -61,6 +68,19 @@ PLUMB_BINARY=""
 CA_FILE=""
 AGENT_URL=""
 MODE=install
+# Backups (D-288, D-289, D-302 … D-304). BACKUP_STORAGE "" keeps the
+# storage of the state file; "none" removes the copy timer.
+BACKUP_STORAGE=""
+BACKUP_TIME=03:00
+BACKUP_KEEP=7
+BACKUP_COPY_TIME=""
+BACKUP_COPY_KEEP=14
+BACKUP_MAX_SIZE=1G
+BACKUP_MAX_BYTES=""
+BACKUP_STORAGE_SET=""
+KEEP_GUESTS=0
+BACKUP_TO=""
+RESTORE_FILE=""
 DRY_RUN=0
 YES=0
 SNIPPET_DIR_SET=0
@@ -82,6 +102,8 @@ Usage:
   install.sh --plumb-binary FILE [options]     install Plumb, or repair an install
   install.sh --snippet-only --ca FILE --url URL
   install.sh --remove [--yes]
+  install.sh --remove --keep-guests --plumb-binary FILE [--backup-to DIR]
+  install.sh --plumb-binary FILE --restore BACKUP --lxc-ip CIDR --lxc-gw IP [options]
 
 Options:
   --plumb-binary FILE    the plumb binary (make build → bin/plumb)
@@ -101,6 +123,20 @@ Options:
   --pool NAME            pool of Plumb guests (default plumb)
   --snippet-dir DIR      directory of the plumb-snippets storage (default /var/lib/plumb-snippets)
   --image-dir DIR        directory of the plumb-images storage (default /var/lib/plumb-images)
+  --backup-time HH:MM    daily backup of serve, UTC (default 03:00)
+  --backup-keep N        backups that serve keeps (default 7)
+  --backup-storage ID|none
+                         copy the newest encrypted backup daily to this storage (dir, nfs, cifs,
+                         cephfs); "none" removes the copy timer, the copies stay (D-289). The path of a
+                         dir storage is read at install time: after a change of it, run a repair run
+  --backup-copy-time HH:MM   time of the copy, UTC (default: backup time + 30 min)
+  --backup-copy-keep N   copies kept on the storage (default 14)
+  --backup-max-size SIZE the largest backup that is copied, e.g. 512M or 2G (default 1G)
+  --keep-guests          with --remove: take a fresh backup, copy it off, check it with the
+                         recovery key, then remove only the controller; the pool, its guests
+                         and the Proxmox objects stay for --restore (D-290)
+  --backup-to DIR        with --keep-guests: copy the backup to DIR on THIS host (not off-host)
+  --restore FILE         install a new controller from a backup file into the kept pool
   --dry-run              print the commands that change the host; change nothing
   --yes                  do not ask before changes
   -h, --help             this text
@@ -210,6 +246,15 @@ parse_args() {
 		--ca) CA_FILE=${2:?}; shift ;;
 		--url) AGENT_URL=${2:?}; shift ;;
 		--remove) MODE=remove ;;
+		--keep-guests) KEEP_GUESTS=1 ;;
+		--backup-to) BACKUP_TO=${2:?}; shift ;;
+		--restore) RESTORE_FILE=${2:?}; shift ;;
+		--backup-storage) BACKUP_STORAGE=${2:?}; shift ;;
+		--backup-time) BACKUP_TIME=${2:?}; shift ;;
+		--backup-keep) BACKUP_KEEP=${2:?}; shift ;;
+		--backup-copy-time) BACKUP_COPY_TIME=${2:?}; shift ;;
+		--backup-copy-keep) BACKUP_COPY_KEEP=${2:?}; shift ;;
+		--backup-max-size) BACKUP_MAX_SIZE=${2:?}; shift ;;
 		--dry-run) DRY_RUN=1 ;;
 		--yes) YES=1 ;;
 		-h | --help)
@@ -233,6 +278,23 @@ parse_args() {
 	[[ -z $LXC_GW || $LXC_GW =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "bad --lxc-gw"
 	[[ $SNIPPET_DIR == /* && $SNIPPET_DIR != *..* ]] || die "bad --snippet-dir"
 	[[ $IMAGE_DIR == /* && $IMAGE_DIR != *..* ]] || die "bad --image-dir"
+	local t
+	for t in "$BACKUP_TIME" "${BACKUP_COPY_TIME:-00:00}"; do
+		[[ $t =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "bad time $t (HH:MM, UTC)"
+	done
+	if [[ -z $BACKUP_COPY_TIME ]]; then # backup time + 30 min
+		local m=$((10#${BACKUP_TIME%:*} * 60 + 10#${BACKUP_TIME#*:} + 30))
+		printf -v BACKUP_COPY_TIME '%02d:%02d' $((m / 60 % 24)) $((m % 60))
+	fi
+	[[ $BACKUP_KEEP =~ ^[1-9][0-9]{0,2}$ && $BACKUP_COPY_KEEP =~ ^[1-9][0-9]{0,2}$ ]] || die "bad --backup-keep or --backup-copy-keep (1 … 999)"
+	[[ $BACKUP_MAX_SIZE =~ ^([1-9][0-9]{0,5})([MG])$ ]] || die "bad --backup-max-size (for example 512M or 2G)"
+	BACKUP_MAX_BYTES=$((BASH_REMATCH[1] << 20))
+	[[ ${BASH_REMATCH[2]} == G ]] && BACKUP_MAX_BYTES=$((BACKUP_MAX_BYTES << 10))
+	[[ -z $BACKUP_STORAGE || $BACKUP_STORAGE == none || $BACKUP_STORAGE =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die "bad --backup-storage"
+	[[ $KEEP_GUESTS == 0 || $MODE == remove ]] || die "--keep-guests works only with --remove"
+	[[ -z $BACKUP_TO || $KEEP_GUESTS == 1 ]] || die "--backup-to works only with --remove --keep-guests"
+	[[ -z $RESTORE_FILE || $MODE == install ]] || die "--restore is an install; use it without --remove or --snippet-only"
+	[[ -z $RESTORE_FILE || $RESTORE_FILE != -* ]] || die "bad --restore"
 }
 
 # --- checks ---
@@ -788,7 +850,24 @@ state_put() {
 	else
 		snippets=$(state_get snippet_dir)
 	fi
-	content=$(printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s' "$lxc" "$POOL" "$SNIPPET_STORAGE" "$snippets" "$images")
+	# install_id names the install in every backup (D-304); backup_storage
+	# the storage of the copy timer.
+	local id=${INSTALL_ID:-$(state_get install_id)} copy
+	if [[ -n $BACKUP_STORAGE_SET || $BACKUP_STORAGE == none ]]; then
+		copy=$BACKUP_STORAGE_SET
+	else
+		copy=$(state_get backup_storage)
+	fi
+	content=$(printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=%s' \
+		"$lxc" "$POOL" "$SNIPPET_STORAGE" "$snippets" "$images" "$id" "$copy")
+	# A kept state (--remove --keep-guests) stays until a restore or an
+	# install made a new LXC that runs; while a restore works, the mark
+	# restoring=1 names its LXC (review M2 of #221).
+	if [[ $(state_get kept_guests) == 1 && ($LXC_OURS != 1 || $RESTORING == 1) ]]; then
+		content+=$(printf '\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s' "$(state_get node)" "$(state_get old_address)" "$(state_get old_gateway)")
+	fi
+	[[ $RESTORING == 1 ]] && content+=$'\nrestoring=1'
+	
 	if [[ $content == "$STATE_WRITTEN" ]] || { [[ -f $STATE_FILE ]] && [[ $content == "$(cat "$STATE_FILE")" ]]; }; then
 		return 0
 	fi
@@ -1085,6 +1164,7 @@ PLUMB_PVE_VMID_RANGE=$VMID_MIN-$VMID_MAX
 PLUMB_PVE_NAMESERVER=$NAMESERVER
 PLUMB_PVE_SEARCHDOMAIN=$SEARCHDOMAIN
 PLUMB_HOSTS=$ip,$LXC_HOSTNAME
+$(env_backup_lines)
 EOF
 	if ! (push_checked "$tmp" /etc/plumb/plumb.env 0600); then
 		rm -f "$tmp"
@@ -1143,6 +1223,8 @@ setup_lxc() {
 		push_env "$host" "$ip"
 	else
 		add_env_dns
+		# shellcheck disable=SC2046 # one word per line: names, numbers, times, a UUID
+		set_env_lines $(env_backup_lines)
 	fi
 	new_tmp tmp
 	printf '%s\n' "$UNIT" >"$tmp"
@@ -1153,7 +1235,11 @@ setup_lxc() {
 	rm -f "$tmp"
 	run pct exec "$LXC_ID" -- systemctl daemon-reload </dev/null
 	run pct exec "$LXC_ID" -- systemctl enable plumb.service </dev/null
-	key_init
+	if [[ -n $RESTORE_FILE ]]; then
+		restore_in_lxc
+	else
+		key_init
+	fi
 	# D-229 order: the new binary is in place (above), then the content,
 	# then the restart.
 	set_image_content
@@ -1251,6 +1337,7 @@ lxc_key_volume() {
 # will run (D-178).
 NEED_KEY_INIT=1
 check_key_preflight() {
+	[[ -z $RESTORE_FILE ]] || return 0 # check_restore: a new LXC, plumb key restore
 	local id=${LXC_ID:-$(state_get lxc_id)} vol
 	if [[ -n $id && $(lxc_state "$id") == ours ]]; then
 		vol=$(lxc_key_volume "$id")
@@ -1313,6 +1400,518 @@ EOF
 	die "plumb did not start in the LXC (see: pct exec $LXC_ID -- journalctl -u plumb)"
 }
 
+# --- install id and backup settings (D-302 … D-304, T-114) ---
+
+# ensure_install_id sets INSTALL_ID: the restored one, else the one of the
+# state file (also of a kept state), else a new random UUID. The backup
+# header names it; --restore compares it (D-290 N7).
+INSTALL_ID=""
+ensure_install_id() {
+	[[ -n $INSTALL_ID ]] && return 0
+	INSTALL_ID=$(state_get install_id)
+	if [[ -z $INSTALL_ID ]]; then
+		INSTALL_ID=$(cat /proc/sys/kernel/random/uuid)
+	fi
+	[[ $INSTALL_ID =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
+		die "$STATE_FILE has an install_id that is not a UUID; check it by hand. Nothing was changed."
+}
+
+# set_env_lines KEY=VALUE … puts each line into plumb.env of a repair run:
+# the old line of the key goes, the new one is added. It writes nothing
+# when every line is there. The values are
+# checked names, numbers, times and UUIDs. serve reads only the keys it
+# knows, so an older binary ignores them.
+set_env_lines() {
+	local kv script="test -f /etc/plumb/plumb.env || exit 0; cp -p /etc/plumb/plumb.env /etc/plumb/.plumb.env.new" same=1
+	if [[ $DRY_RUN != 1 ]]; then
+		for kv in "$@"; do
+			query pct exec "$LXC_ID" -- grep -qx "$kv" /etc/plumb/plumb.env </dev/null || same=0
+		done
+		[[ $same == 0 ]] || return 0
+	fi
+	for kv in "$@"; do
+		script+="; sed -i '/^${kv%%=*}=/d' /etc/plumb/.plumb.env.new; echo '$kv' >>/etc/plumb/.plumb.env.new"
+	done
+	script+="; mv -f /etc/plumb/.plumb.env.new /etc/plumb/plumb.env"
+	run pct exec "$LXC_ID" -- sh -c "$script" </dev/null
+}
+
+# env_backup_lines are the plumb.env lines of the backup in serve (D-302).
+env_backup_lines() {
+	printf '%s\n' "PLUMB_INSTALL_ID=$INSTALL_ID" "PLUMB_BACKUP_TIME=$BACKUP_TIME" "PLUMB_BACKUP_KEEP=$BACKUP_KEEP"
+}
+
+# --- off-host copy of the backups (D-289, D-304, D-312) ---
+
+# The copy script and its units on the host. COPY_SCRIPT is written by
+# copy_script; plumb-backup-copy reads COPY_CONF.
+SBIN_DIR=${PLUMB_INSTALL_SBIN:-/usr/local/sbin}
+UNIT_DIR=${PLUMB_INSTALL_UNIT_DIR:-/etc/systemd/system}
+COPY_CONF=${PLUMB_INSTALL_COPY_CONF:-/etc/plumb/backup-copy.conf}
+PVE_MNT=${PLUMB_INSTALL_PVE_MNT:-/mnt/pve}
+readonly COPY_NAME=plumb-backup-copy COPY_STATUS_DIR=/var/lib/plumb-copy
+
+# storage_field ID FIELD prints one field of the storage config.
+storage_field() {
+	# shellcheck disable=SC2016 # perl code
+	query pvesh get "/storage/$1" --output-format json 2>/dev/null | json_rows 'print $d->{$ARGV[0]} // ""' "$2"
+}
+
+# check_backup_storage checks --backup-storage before any change: type
+# dir, nfs, cifs or cephfs, active, and a share mounted (D-289 N3). It
+# sets COPY_TYPE and COPY_PATH.
+COPY_TYPE="" COPY_PATH=""
+check_backup_storage() {
+	[[ -n $BACKUP_STORAGE && $BACKUP_STORAGE != none ]] || return 0
+	case $BACKUP_STORAGE in
+	"$DISK_STORAGE" | "$SNIPPET_STORAGE" | "$IMAGE_STORAGE")
+		die "--backup-storage $BACKUP_STORAGE is a storage of Plumb itself; use another one. Nothing was changed."
+		;;
+	esac
+	COPY_TYPE=$(storage_field "$BACKUP_STORAGE" type) || COPY_TYPE=""
+	[[ -n $COPY_TYPE ]] || die "storage $BACKUP_STORAGE (--backup-storage) does not exist. Nothing was changed."
+	case $COPY_TYPE in
+	dir) COPY_PATH=$(storage_field "$BACKUP_STORAGE" path) ;;
+	nfs | cifs | cephfs) COPY_PATH=$PVE_MNT/$BACKUP_STORAGE ;;
+	*) die "storage $BACKUP_STORAGE has the type $COPY_TYPE; --backup-storage needs a storage with a path: dir, nfs, cifs or cephfs (a Proxmox Backup Server is not supported, D-289). Nothing was changed." ;;
+	esac
+	[[ $COPY_PATH == /* && $COPY_PATH != *..* ]] || die "storage $BACKUP_STORAGE has no usable path. Nothing was changed."
+	query pvesm status --storage "$BACKUP_STORAGE" 2>/dev/null | awk -v s="$BACKUP_STORAGE" '$1 == s && $3 == "active" { ok = 1 } END { exit !ok }' ||
+		die "storage $BACKUP_STORAGE is not active. Nothing was changed."
+	if [[ $COPY_TYPE != dir ]] && ! query mountpoint -q "$COPY_PATH"; then
+		die "storage $BACKUP_STORAGE is not mounted at $COPY_PATH; a copy would fill the root disk of this host. Nothing was changed."
+	fi
+}
+
+# copy_conf LXC STORAGE TYPE PATH prints the config of plumb-backup-copy.
+copy_conf() {
+	printf 'lxc_id=%s\nstorage=%s\nstorage_type=%s\nstorage_path=%s\nkeep=%s\nmax_bytes=%s\npve_mnt=%s\n' \
+		"$1" "$2" "$3" "$4" "$BACKUP_COPY_KEEP" "$BACKUP_MAX_BYTES" "$PVE_MNT"
+}
+
+# copy_units prints the service or the timer of the copy.
+copy_unit() {
+	if [[ $1 == service ]]; then
+		printf '%s\n' "# Made by Plumb's install.sh (D-289). Do not edit." "[Unit]" "Description=Copy the newest Plumb backup off the Plumb LXC" \
+			"After=pve-cluster.service" "" "[Service]" "Type=oneshot" "ExecStart=$SBIN_DIR/$COPY_NAME --conf $COPY_CONF"
+	else
+		printf '%s\n' "# Made by Plumb's install.sh (D-289). Do not edit." "[Unit]" "Description=Daily copy of the newest Plumb backup" "" \
+			"[Timer]" "OnCalendar=*-*-* $BACKUP_COPY_TIME:00 UTC" "Persistent=true" "" "[Install]" "WantedBy=timers.target"
+	fi
+}
+
+# put_host_file SRC DEST MODE installs a root-owned file on the host.
+put_host_file() {
+	run install -d -o root -g root -m 0755 "$(dirname "$2")"
+	run install -o root -g root -m "$3" "$1" "$2"
+}
+
+# install_copy_timer installs the copy script, its config and its timer,
+# and the root-owned status directory in the LXC (D-289 N2). A repair run
+# writes them again. The token gets no right for it: the timer runs as
+# root on the host.
+install_copy_timer() {
+	local storage=$1 type=$2 path=$3 tmp
+	run pct exec "$LXC_ID" -- install -d -o root -g root -m 0755 "$COPY_STATUS_DIR" </dev/null
+	new_tmp tmp
+	copy_script >"$tmp"
+	put_host_file "$tmp" "$SBIN_DIR/$COPY_NAME" 0755
+	copy_conf "$LXC_ID" "$storage" "$type" "$path" >"$tmp"
+	put_host_file "$tmp" "$COPY_CONF" 0600
+	copy_unit service >"$tmp"
+	put_host_file "$tmp" "$UNIT_DIR/$COPY_NAME.service" 0644
+	copy_unit timer >"$tmp"
+	put_host_file "$tmp" "$UNIT_DIR/$COPY_NAME.timer" 0644
+	rm -f "$tmp"
+	run systemctl daemon-reload
+	run systemctl enable --now "$COPY_NAME.timer"
+	say "The copy timer copies the newest backup daily at $BACKUP_COPY_TIME UTC to storage $storage ($path/plumb-backups, keep $BACKUP_COPY_KEEP)."
+}
+
+# remove_copy_timer removes the timer, the script and the config. The
+# copies stay on the storage.
+remove_copy_timer() {
+	if [[ -e $UNIT_DIR/$COPY_NAME.timer || -e $SBIN_DIR/$COPY_NAME || -e $COPY_CONF ]]; then
+		run systemctl disable --now "$COPY_NAME.timer" || true
+		run rm -f -- "$UNIT_DIR/$COPY_NAME.timer" "$UNIT_DIR/$COPY_NAME.service" "$SBIN_DIR/$COPY_NAME" "$COPY_CONF"
+		run systemctl daemon-reload
+	fi
+}
+
+# check_copy_setting runs before any change. A storage of the state file
+# (a repair run without --backup-storage) that fails its checks only
+# warns: the timer stays as it is, and its own run reports the failure.
+check_copy_setting() {
+	if [[ -z $BACKUP_STORAGE && -n $(state_get backup_storage) ]]; then
+		BACKUP_STORAGE=$(state_get backup_storage)
+		if ! (check_backup_storage) 2>/dev/null; then
+			say "WARNING: the backup copy storage $BACKUP_STORAGE fails its checks now; the copy timer is kept as it is."
+			BACKUP_STORAGE=""
+			return 0
+		fi
+	fi
+	check_backup_storage
+}
+
+# setup_copy_timer is the --backup-storage part of an install or repair run.
+setup_copy_timer() {
+	if [[ $BACKUP_STORAGE == none ]]; then
+		remove_copy_timer
+		BACKUP_STORAGE_SET=""
+		return 0
+	fi
+	[[ -n $BACKUP_STORAGE ]] || return 0
+	install_copy_timer "$BACKUP_STORAGE" "$COPY_TYPE" "$COPY_PATH"
+	BACKUP_STORAGE_SET=$BACKUP_STORAGE
+}
+
+# copy_once DIR|"" runs one copy now with a config of its own (for
+# --remove --keep-guests) and sets COPY_RESULT to the path of the copy.
+COPY_RESULT=""
+copy_once() {
+	local to=$1 script conf
+	new_tmp script
+	new_tmp conf
+	copy_script >"$script"
+	if [[ -n $to ]]; then
+		copy_conf "$LXC_ID" "" dir "$to" >"$conf"
+	else
+		copy_conf "$LXC_ID" "$BACKUP_STORAGE" "$COPY_TYPE" "$COPY_PATH" >"$conf"
+	fi
+	if [[ $DRY_RUN == 1 ]]; then
+		run bash "$SBIN_DIR/$COPY_NAME" --conf "$COPY_CONF" ${to:+--to "$to"}
+		COPY_RESULT=${to:-$COPY_PATH}/plumb-backups/plumb-DRYRUN.pbk
+		return 0
+	fi
+	COPY_RESULT=$(bash "$script" --conf "$conf" ${to:+--to "$to"}) || die "the backup could not be copied off the LXC (see above); nothing was removed"
+	[[ -f $COPY_RESULT ]] || die "the copy did not report a file; nothing was removed"
+}
+
+# check_backup_to checks --backup-to DIR: absolute, an existing directory
+# owned by root, not a link, and outside /var/lib/vz and the storages of
+# Plumb (D-304). It is not an off-host copy.
+check_backup_to() {
+	local d=$BACKUP_TO owner
+	[[ $d == /* && $d != *..* && $d != */ ]] || die "--backup-to needs an absolute directory without .. and without a trailing /"
+	[[ -d $d && ! -L $d ]] || die "--backup-to $d is not an existing directory"
+	owner=$(query stat -c '%U %a' -- "$d")
+	[[ ${owner%% *} == root ]] || die "--backup-to $d is not owned by root"
+	local p
+	for p in /var/lib/vz "$SNIPPET_DIR" "$IMAGE_DIR" "$(state_get snippet_dir)" "$(state_get image_dir)"; do
+		[[ -n $p ]] || continue
+		[[ $d == "$p" || $d == "$p"/* ]] && die "--backup-to $d is inside $p; use a directory outside the storages"
+	done
+	return 0
+}
+
+# need_tty DOES stops before any change when the run has no terminal:
+# the recovery key is typed there (D-178 rules).
+need_tty() {
+	if [[ $DRY_RUN != 1 && ${PLUMB_INSTALL_ASSUME_TTY:-0} != 1 ]] && ! [[ -t 0 && -t 1 ]]; then
+		die "$1 asks for the recovery key on a terminal; run install.sh on a terminal (ssh -t). Nothing was changed."
+	fi
+}
+
+# verify_on_host FILE runs plumb backup verify with the given binary on
+# this terminal: it asks the recovery key and checks the fingerprint
+# before any decrypt (exit 3), then every chunk (D-302).
+verify_on_host() {
+	local rc=0
+	say "plumb backup verify: type the RECOVERY KEY of this Plumb when asked."
+	run "$PLUMB_BINARY" backup verify "$1" || rc=$?
+	case $rc in
+	0) ;;
+	3) die "the recovery key does not match the backup $1 (wrong recovery key); $2" ;;
+	*) die "plumb backup verify failed for $1 (exit $rc); $2" ;;
+	esac
+}
+
+# --- the backup header (D-302) ---
+
+# read_header FILE sets H_INSTALL_ID, H_NODE, H_POOL and H_AGENT_URL from
+# the clear header. It checks only its form: the content is proved by
+# plumb backup verify.
+H_INSTALL_ID="" H_NODE="" H_POOL="" H_AGENT_URL=""
+read_header() {
+	local out
+	out=$(perl -MJSON::PP -e '
+		open(my $f, "<:raw", $ARGV[0]) or exit 2;
+		read($f, my $m, 12) == 12 or exit 3;
+		substr($m, 0, 8) eq "PLUMBBK\0" or exit 3;
+		my $n = unpack("N", substr($m, 8, 4));
+		$n > 0 && $n <= 4096 or exit 3;
+		read($f, my $h, $n) == $n or exit 3;
+		my $d = eval { JSON::PP->new->decode($h) } or exit 3;
+		ref $d eq "HASH" && ($d->{v} // 0) == 1 or exit 4;
+		print join("\n", map { my $v = $d->{$_} // ""; ref $v ? "" : $v } qw(install_id node pool agent_url)), "\n";' "$1") ||
+		die "$1 is not a Plumb backup file of format 1. Nothing was changed."
+	{
+		read -r H_INSTALL_ID
+		read -r H_NODE
+		read -r H_POOL
+		read -r H_AGENT_URL
+	} <<<"$out"
+	[[ $H_INSTALL_ID =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "the backup header has no valid install_id. Nothing was changed."
+	[[ $H_NODE =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$ && $H_POOL =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die "the backup header has no valid node or pool. Nothing was changed."
+	[[ $H_AGENT_URL =~ ^https://([0-9]{1,3}(\.[0-9]{1,3}){3}):8444$ ]] || die "the backup header has no agent URL of the form https://IPv4:8444 ($H_AGENT_URL). Nothing was changed."
+}
+
+# pool_has_guests reports whether the pool exists and holds a guest or a
+# template. It fails closed: a pool that cannot be read counts as full.
+pool_has_guests() {
+	query pveum pool list --output-format json | json_has poolid "$POOL" || return 1
+	local members
+	members=$(query pvesh get /pools --poolid "$POOL" --output-format json 2>/dev/null) || return 0
+	json_has poolid "$POOL" <<<"$members" || return 0
+	[[ $members =~ \"vmid\" ]]
+}
+
+# check_restore runs before any change of --restore FILE (D-290, D-304).
+check_restore() {
+	[[ -f $RESTORE_FILE ]] || die "--restore $RESTORE_FILE: no such file"
+	[[ $LXC_IP != dhcp && -n $LXC_GW ]] ||
+		die "--restore needs --lxc-ip CIDR and --lxc-gw IP: the agents pin the address of the old controller (D-179). Nothing was changed."
+	read_header "$RESTORE_FILE"
+	local ip=${LXC_IP%/*} want=${H_AGENT_URL#https://}
+	want=${want%:8444}
+	[[ $ip == "$want" ]] || die "--lxc-ip $ip differs from the address in the backup ($want): the agents reach only that one. Nothing was changed."
+	[[ $NODE == "$H_NODE" ]] || die "the backup was made on node $H_NODE, this is node $NODE. Nothing was changed."
+	[[ $POOL == "$H_POOL" ]] || die "the backup is of pool $H_POOL, this run has --pool $POOL. Nothing was changed."
+	local id
+	id=$(state_get lxc_id)
+	if [[ -n $id && $(lxc_state "$id") != none ]]; then
+		# A restore that failed in its LXC (review M2 of #221): that LXC
+		# has no database; it goes after the confirm and the host verify.
+		[[ $(state_get restoring) == 1 && $(lxc_state "$id") == ours ]] ||
+			die "a Plumb LXC ($id) exists; replace it with --remove --keep-guests first. Nothing was changed."
+		if query pct exec "$id" -- test -s /var/lib/plumb/plumb.db </dev/null >/dev/null 2>&1; then
+			die "LXC $id of the last --restore has a restored database; run install.sh --plumb-binary FILE (a repair run) to start it. Nothing was changed."
+		fi
+		HALF_LXC=$id
+		say "LXC $id is left from a --restore that did not finish; it has no database. It is destroyed with its key volume first."
+	fi
+	if [[ $(state_get kept_guests) == 1 ]]; then
+		[[ $(state_get install_id) == "$H_INSTALL_ID" ]] ||
+			die "the backup is of install $H_INSTALL_ID, the kept guests belong to install $(state_get install_id). Nothing was changed."
+		[[ $(state_get pool) == "$H_POOL" && $(state_get node) == "$H_NODE" ]] ||
+			die "the kept state names pool $(state_get pool) on node $(state_get node), the backup pool $H_POOL on node $H_NODE. Nothing was changed."
+	elif pool_has_guests; then
+		die "pool $POOL holds guests, and no kept state of --remove --keep-guests names them; nothing is restored into it. Nothing was changed."
+	fi
+	need_tty "--restore"
+	INSTALL_ID=$H_INSTALL_ID
+}
+
+# restore_in_lxc replaces plumb key init on a --restore: the backup file
+# goes into the LXC, then plumb key restore and plumb restore run as user
+# plumb on this terminal, before the first start of plumb.service. The
+# recovery key and the new admin password stay on the terminal (D-178,
+# D-303).
+readonly RESTORE_IN_LXC=/var/lib/plumb/restore.pbk
+RESTORING=0
+HALF_LXC=""
+
+# remove_half_lxc destroys the LXC of a --restore that did not finish:
+# the LXC and its key volume (it holds the key that was typed in again).
+remove_half_lxc() {
+	local id=$HALF_LXC keyvol
+	[[ -n $id ]] || return 0
+	keyvol=$(lxc_key_volume "$id")
+	keyvol=${keyvol#*: }
+	keyvol=${keyvol%%,*}
+	confirm "Destroy LXC $id of the last --restore${keyvol:+ and its key volume $keyvol}?" yes || die "stopped; nothing was changed"
+	run pct stop "$id" || true
+	run pct destroy "$id" --purge 1
+	if [[ -n $keyvol ]] && { query pvesm list "${keyvol%%:*}" --vmid "$id" 2>/dev/null || true; } | grep -q "^$keyvol "; then
+		run pvesm free "$keyvol"
+	fi
+	if [[ $DRY_RUN != 1 ]]; then
+		clean_stale_lxc_dir "$id" keep
+	fi
+}
+restore_in_lxc() {
+	lxc_has_key "$LXC_ID" && die "LXC $LXC_ID has a master key already; a restore needs a new LXC"
+	push_checked "$RESTORE_FILE" "$RESTORE_IN_LXC" 0600
+	run pct exec "$LXC_ID" -- chown plumb:plumb "$RESTORE_IN_LXC" </dev/null
+	say ""
+	say "plumb key restore: type the RECOVERY KEY of the backup."
+	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb ||
+		die "plumb key restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
+	say "plumb restore: it shows the NEW password of the user admin once."
+	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from "$RESTORE_IN_LXC" ||
+		die "plumb restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
+	run pct exec "$LXC_ID" -- rm -f "$RESTORE_IN_LXC" </dev/null
+	if [[ $DRY_RUN != 1 && $YES != 1 && -t 0 ]]; then
+		read -r -p "Write the admin password down, then press Enter" _ || true
+	fi
+}
+
+# copy_script prints plumb-backup-copy (D-312).
+copy_script() {
+	cat <<'COPY_EOF'
+#!/usr/bin/env bash
+# plumb-backup-copy – made by Plumb's install.sh (D-289, D-304, D-312). Do not edit.
+# Copies the newest encrypted Plumb backup out of the Plumb LXC to a
+# storage of this host. It runs as root on the host. Everything that comes
+# from the LXC is data that a compromised user "plumb" may control: the
+# pointer is read with a size limit, the name must match one strict form,
+# the file is read without following a link, with a size limit, and must
+# start with the backup magic; the host builds the name of the copy itself.
+# It never needs the recovery key and never decrypts anything.
+#   plumb-backup-copy [--conf FILE] [--to DIR]
+# --to DIR copies to DIR instead of the storage (install.sh --backup-to).
+# It prints the path of the copy on success.
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+conf=/etc/plumb/backup-copy.conf
+to=""
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--conf) conf=${2:?}; shift ;;
+	--to) to=${2:?}; shift ;;
+	*) echo "plumb-backup-copy: unknown option $1" >&2; exit 2 ;;
+	esac
+	shift
+done
+
+# get KEY: one value of the config file (written by install.sh, root 0600).
+get() { sed -n "s/^$1=//p" "$conf" | head -n1; }
+lxc=$(get lxc_id)
+storage=$(get storage)
+stype=$(get storage_type)
+base=$(get storage_path)
+keep=$(get keep)
+max=$(get max_bytes)
+mnt=$(get pve_mnt)
+[[ $lxc =~ ^[1-9][0-9]*$ && $keep =~ ^[1-9][0-9]*$ && $max =~ ^[1-9][0-9]*$ ]] || {
+	echo "plumb-backup-copy: bad config $conf" >&2
+	exit 2
+}
+
+sid=$storage # the storage id in the status; "" for --to
+[[ -z $to ]] || sid=""
+base=${to:-$base}
+readonly data=/var/lib/plumb/backups status_path=/var/lib/plumb-copy/status.json
+name="" sha=""
+tmpfiles=()
+trap 'rm -f -- "${tmpfiles[@]}"' EXIT
+
+# status RESULT MESSAGE pushes status.json into the LXC (0644 root, in a
+# root-owned directory: user plumb cannot plant a link there, D-289 N2).
+status() {
+	local result=$1 msg=$2 f
+	msg=${msg//[^A-Za-z0-9 .,:;()\/_+=-]/ }
+	msg=${msg:0:512}
+	f=$(mktemp)
+	tmpfiles+=("$f")
+	printf '{"v":1,"at":"%s","result":"%s","name":"%s","sha256":"%s","storage":"%s","message":"%s"}\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$result" "$name" "$sha" "$sid" "$msg" >"$f"
+	pct push "$lxc" "$f" "$status_path" --perms 0644 --user 0 --group 0 >/dev/null 2>&1 || true
+}
+
+fail() {
+	echo "plumb-backup-copy: $*" >&2
+	status failed "$*"
+	exit 1
+}
+
+# read_lxc PATH LIMIT OUT: the file PATH of the LXC, at most LIMIT bytes,
+# never through a link (dd iflag=nofollow runs as root in the LXC).
+read_lxc() {
+	local rc
+	set +o pipefail
+	pct exec "$lxc" -- dd if="$1" iflag=nofollow bs=1M status=none </dev/null 2>/dev/null | head -c "$2" >"$3"
+	rc=${PIPESTATUS[0]}
+	set -o pipefail
+	return "$rc"
+}
+
+# 1. Where the copy goes. A storage must be active, and a share mounted:
+# else the copy would fill the root disk of the host (D-289 N3).
+if [[ -z $to ]]; then
+	pvesm status --storage "$storage" 2>/dev/null | awk -v s="$storage" '$1 == s && $3 == "active" { ok = 1 } END { exit !ok }' ||
+		fail "storage $storage is not active"
+	case $stype in
+	dir) ;;
+	nfs | cifs | cephfs)
+		base=$mnt/$storage
+		mountpoint -q "$base" || fail "storage $storage is not mounted at $base"
+		;;
+	*) fail "storage $storage has the type $stype; only dir, nfs, cifs and cephfs" ;;
+	esac
+fi
+dest=$base/plumb-backups
+[[ ! -L $dest ]] || fail "$dest is a link"
+[[ -d $base ]] || fail "$base does not exist"
+[[ -d $dest ]] || mkdir -m 0700 "$dest" || fail "cannot make $dest"
+chmod 0700 "$dest"
+
+# 2. The pointer: at most 4 KiB, JSON, a strict name, a size under the cap.
+ptr=$(mktemp)
+tmpfiles+=("$ptr")
+read_lxc "$data/latest" 4097 "$ptr" || fail "cannot read the backup pointer in LXC $lxc (no backup yet?)"
+(($(stat -c %s "$ptr") <= 4096)) || fail "the backup pointer is larger than 4 KiB"
+fields=$(perl -MJSON::PP -e '
+	local $/; my $d = eval { decode_json(<STDIN>) };
+	ref $d eq "HASH" or exit 1;
+	for (qw(name size sha256)) { defined $d->{$_} && !ref $d->{$_} or exit 1; print "$d->{$_}\n" }' <"$ptr") ||
+	fail "the backup pointer is not valid JSON"
+{
+	read -r name
+	read -r size
+	read -r sha
+} <<<"$fields"
+re='^plumb-([0-9]{8}T[0-9]{6}Z)(-[0-9]{1,3})?\.pbk$'
+if ! [[ $name =~ $re ]]; then
+	name=""
+	fail "the backup pointer names no valid backup file"
+fi
+# The host builds the name from the checked parts (D-289 N1).
+ts=${BASH_REMATCH[1]}
+final="plumb-${ts}${BASH_REMATCH[2]}.pbk"
+# A time far ahead would name a copy that no later backup replaces
+# (review M1 of #221): at most 1 day ahead of this host's clock.
+when=$(date -u -d "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2}" +%s 2>/dev/null) || fail "the backup pointer has no valid time"
+((when <= $(date -u +%s) + 86400)) || fail "the backup pointer names a time more than 1 day ahead of this host"
+[[ $sha =~ ^[0-9a-f]{64}$ ]] || fail "the backup pointer has no valid sha256"
+[[ $size =~ ^[1-9][0-9]{0,15}$ ]] || fail "the backup pointer has no valid size"
+((size <= max)) || fail "the backup has $size bytes, more than the limit of $max bytes (--backup-max-size)"
+
+# 3. Copied already: nothing to do but the retention. A copy is never
+# replaced: the same name with other content fails (review M1 of #221).
+if [[ -e $dest/$final ]]; then
+	[[ $(sha256sum <"$dest/$final") == "$sha  -" ]] || fail "refuses to overwrite $final: the copy on the storage has other content"
+else
+	# 4. The file: temp name in the target directory, checks, rename.
+	tmp=$(mktemp -p "$dest" .tmp-XXXXXXXX)
+	tmpfiles+=("$tmp")
+	read_lxc "$data/$name" $((size + 1)) "$tmp" || fail "cannot read $name in LXC $lxc"
+	[[ $(stat -c %s "$tmp") == "$size" ]] || fail "$name has another size than the pointer says"
+	printf 'PLUMBBK\0' | cmp -s -n 8 - "$tmp" || fail "$name is not a Plumb backup file"
+	# This proves only the transfer: pointer and file come from the same
+	# LXC. The GCM tags prove the content at the restore (D-288).
+	[[ $(sha256sum <"$tmp") == "$sha  -" ]] || fail "$name has another sha256 than the pointer says"
+	chmod 0600 "$tmp"
+	touch -- "$tmp" # the retention orders by this time of the host
+	mv -n -- "$tmp" "$dest/$final" || true
+	[[ ! -e $tmp ]] || fail "refuses to overwrite $final"
+	sync -f "$dest/$final" 2>/dev/null || true
+fi
+
+# 5. Retention by the time this host made each copy, never by the name
+# (review M1 of #221); only names of the strict form go.
+mapfile -t all < <(find "$dest" -maxdepth 1 -type f -name 'plumb-*.pbk' -printf '%T@ %f\n' | sort -rn | cut -d' ' -f2 | grep -E "$re")
+for old in "${all[@]:keep}"; do
+	rm -f -- "${dest:?}/$old"
+done
+
+status ok "copied to ${to:-storage $storage}"
+echo "$dest/$final"
+COPY_EOF
+}
+
 do_install() {
 	[[ -n $PLUMB_BINARY && -f $PLUMB_BINARY ]] || die "--plumb-binary FILE is required (make build → bin/plumb)"
 	[[ -f $PVE_CA ]] || die "$PVE_CA not found"
@@ -1333,6 +1932,17 @@ do_install() {
 	check_storages
 	check_images
 	check_user_groups
+	local own=${LXC_ID:-$(state_get lxc_id)}
+	if [[ -n $RESTORE_FILE ]]; then
+		check_restore
+		say "It RESTORES the backup $RESTORE_FILE (install $H_INSTALL_ID, agents at $H_AGENT_URL) into a new LXC:"
+		say "plumb backup verify on this host, then plumb key restore and plumb restore in the LXC; each asks on this"
+		say "terminal. The restored Plumb changes nothing until you confirm in its UI that the old controller is off."
+	elif [[ -z $own || $(lxc_state "$own") != ours ]] && pool_has_guests; then
+		die "pool $POOL holds guests or templates, and this host has no Plumb LXC: a plain install does not take them. Use --restore BACKUP (after --remove --keep-guests). Nothing was changed."
+	fi
+	ensure_install_id
+	check_copy_setting
 	check_key_preflight
 	# The id that ensure_lxc will use when it creates the LXC.
 	local new_id=${LXC_ID:-$(state_get lxc_id)}
@@ -1344,6 +1954,11 @@ do_install() {
 		printf '  %s\n' "${STRAY_ACLS//$'\n'/$'\n'  }"
 	fi
 	confirm "Continue?" || die "stopped; nothing was changed"
+	if [[ -n $RESTORE_FILE ]]; then
+		verify_on_host "$RESTORE_FILE" "nothing was changed"
+		remove_half_lxc
+		RESTORING=1
+	fi
 
 	ensure_image_storage
 	state_put # --remove must know plumb-images even if a later step fails
@@ -1358,14 +1973,25 @@ do_install() {
 	local ip ca
 	ip=$(lxc_ip)
 	setup_lxc "$host" "$ip"
+	RESTORING=0 # serve runs with the restored database
 	state_put
 	new_tmp ca
 	fetch_plumb_ca "$ca"
 	write_snippet "$ca" "https://$ip:8444"
 	rm -f "$ca"
+	setup_copy_timer
+	state_put
 
 	say ""
 	say "Plumb runs: https://$ip:8443 (certificate from the Plumb CA)."
+	if [[ -n $RESTORE_FILE ]]; then
+		say "Restored from $RESTORE_FILE. Log in as admin with the password that plumb restore showed. Plumb is in"
+		say "restored mode: it observes, and changes nothing until you confirm that the old controller is off (D-290)."
+		if [[ -z $BACKUP_STORAGE_SET ]]; then
+			say "No backup copy timer is set. Add one with a repair run: install.sh --plumb-binary FILE --backup-storage ID"
+		fi
+		return 0
+	fi
 	if [[ $DRY_RUN == 1 ]]; then
 		say "Initial login: user admin; the password is printed once by the first start."
 		return 0
@@ -1424,7 +2050,9 @@ do_remove() {
 	fi
 	say "  token $PVE_USER!$TOKEN_NAME, user $PVE_USER (with its ACLs), roles ${ROLE_NAMES[*]}"
 	say "  pool $POOL, storage $SNIPPET_STORAGE${dir:+, the snippet $dir/snippets/$SNIPPET and its empty directories}, $STATE_FILE"
+	say "  the backup copy timer, if any (the copies on the storage stay)"
 	confirm "Remove all of it?" remove || die "stopped; nothing was removed"
+	remove_copy_timer
 
 	if [[ -n $lxc && $(lxc_state "$lxc") == ours ]]; then
 		run pct stop "$lxc"
@@ -1490,6 +2118,89 @@ check_state_file() {
 	[[ -z $id || $id =~ ^[0-9]+$ ]] || die "$STATE_FILE has an lxc_id that is not a number; check it by hand. Nothing was changed."
 }
 
+# do_remove_keep replaces the controller and keeps the guests (D-290,
+# D-304, D-313): first a fresh backup, copied off and checked with the
+# recovery key; any failure stops before a change. Then only the LXC, its
+# key volume, the copy timer and the token (with its ACLs) go.
+do_remove_keep() {
+	NODE=$(query hostname -s)
+	local lxc keyvol addr
+	lxc=$(state_get lxc_id)
+	[[ -n $lxc && $(lxc_state "$lxc") == ours ]] || die "no Plumb LXC of this script on this host; there is no controller to replace. Nothing was removed."
+	LXC_ID=$lxc
+	[[ -n $PLUMB_BINARY && -f $PLUMB_BINARY ]] || die "--keep-guests needs --plumb-binary FILE: it checks the backup on this host. Nothing was removed."
+	if [[ -n $BACKUP_TO ]]; then
+		check_backup_to
+	else
+		BACKUP_STORAGE=$(state_get backup_storage)
+		[[ -n $BACKUP_STORAGE ]] || die "--keep-guests needs a copy off the LXC: install with --backup-storage ID first, or give --backup-to DIR. Nothing was removed."
+		check_backup_storage
+	fi
+	need_tty "--remove --keep-guests"
+	ensure_install_id
+	# The address with its prefix and the gateway, for the exact --restore
+	# line (review L2 of #221). A DHCP LXC: the address it has now.
+	local net0 gw
+	net0=$({ query pct config "$lxc" 2>/dev/null || true; } | sed -n 's/^net0: //p' | head -n1)
+	addr=$(sed -n 's/.*\(^\|,\)ip=\([0-9.]*\/[0-9]*\)\(,.*\|$\)/\2/p' <<<"$net0")
+	gw=$(sed -n 's/.*\(^\|,\)gw=\([0-9.]*\)\(,.*\|$\)/\2/p' <<<"$net0")
+	if [[ -z $addr ]]; then
+		addr=$({ query pct exec "$lxc" -- hostname -I </dev/null 2>/dev/null || true; } | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n1 || true)
+		[[ -z $addr ]] || addr+=/24
+		say "NOTE: LXC $lxc has a DHCP address; the restore needs it as a static address ($addr is a guess of the prefix)."
+	fi
+	[[ $addr =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || die "cannot read the address of LXC $lxc; the restore needs it. Nothing was removed."
+	[[ -z $gw || $gw =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || gw=""
+	keyvol=$(lxc_key_volume "$lxc")
+	keyvol=${keyvol#*: }
+	keyvol=${keyvol%%,*}
+
+	say "This replaces the Plumb controller and keeps the guests:"
+	say "  1. plumb backup now in LXC $lxc, then a copy off the LXC to ${BACKUP_TO:-storage $BACKUP_STORAGE}"
+	if [[ -n $BACKUP_TO ]]; then
+		say "     WARNING: $BACKUP_TO is a directory on THIS host, not an off-host copy. If the host disk dies,"
+		say "     the copy dies with it."
+	fi
+	say "  2. plumb backup verify of the copy on this host: type the recovery key (a wrong key stops here)"
+	say "  3. then it removes: the LXC $lxc with its disk${keyvol:+, the key volume $keyvol}, the backup copy timer,"
+	say "     and the token $PVE_USER!$TOKEN_NAME with its ACLs"
+	say "  It keeps: pool $POOL with its guests and templates, user $PVE_USER and its ACLs, the roles, the storages,"
+	say "  $SNIPPET_STORAGE with the vendor snippet, and $STATE_FILE (install $INSTALL_ID, pool, node, address $addr${gw:+, gateway $gw})."
+	say "  Then: install.sh --plumb-binary FILE --restore BACKUP --lxc-ip $addr --lxc-gw ${gw:-<gateway>}"
+	confirm "Replace the controller and keep the guests?" keep-guests || die "stopped; nothing was removed"
+
+	run pct exec "$lxc" -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb backup now --data /var/lib/plumb </dev/null ||
+		die "plumb backup now failed in LXC $lxc; nothing was removed"
+	copy_once "$BACKUP_TO"
+	verify_on_host "$COPY_RESULT" "nothing was removed"
+	say "The backup is at $COPY_RESULT. Keep it with the recovery key."
+
+	remove_copy_timer
+	run pct stop "$lxc"
+	run pct destroy "$lxc" --purge 1
+	if [[ -n $keyvol ]] && { query pvesm list "${keyvol%%:*}" --vmid "$lxc" 2>/dev/null || true; } | grep -q "^$keyvol "; then
+		run pvesm free "$keyvol"
+	fi
+	if [[ $DRY_RUN == 1 ]]; then
+		say "(dry run: would remove the Proxmox leftovers of LXC $lxc in $LXC_DIR/$lxc)"
+	else
+		clean_stale_lxc_dir "$lxc" keep
+	fi
+	if query pveum user token list "$PVE_USER" --output-format json 2>/dev/null | json_has tokenid "$TOKEN_NAME"; then
+		# The ACLs of the token go with it; the user keeps its own (D-304).
+		run pveum user token remove "$PVE_USER" "$TOKEN_NAME"
+	fi
+	# The kept state: no LXC, the install id, pool, node and old address.
+	local tmp
+	new_tmp tmp
+	printf 'lxc_id=\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s\n' \
+		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$NODE" "$addr" "$gw" >"$tmp"
+	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
+	rm -f "$tmp"
+	say "The controller is removed; the guests run on. Restore with:"
+	say "  install.sh --plumb-binary FILE --restore $COPY_RESULT --lxc-ip $addr --lxc-gw ${gw:-<gateway>}"
+}
+
 main() {
 	parse_args "$@"
 	check_host
@@ -1497,7 +2208,13 @@ main() {
 	case $MODE in
 	install) do_install ;;
 	snippet) do_snippet_only ;;
-	remove) do_remove ;;
+	remove)
+		if [[ $KEEP_GUESTS == 1 ]]; then
+			do_remove_keep
+		else
+			do_remove
+		fi
+		;;
 	esac
 }
 

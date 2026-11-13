@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -307,6 +308,8 @@ type issueView struct {
 	PlanID     *int64          `json:"plan_id"`
 	Resolution *resolutionView `json:"resolution"`
 	Comments   []commentView   `json:"comments"`
+	Raw        bool            `json:"raw"`    // D-301
+	Source     *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
 }
 
 func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error) {
@@ -317,18 +320,16 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	v := issueView{ID: i.ID, Target: i.Target, Resource: i.Resource, Status: i.Status, Risk: wire.MaxRisk(ch),
 		OpenedAt: i.OpenedAt.UTC(), UpdatedAt: i.UpdatedAt.UTC(), Changes: changes(ch), Actions: []string{},
 		PlanID: nullID(i.PlanID), Comments: []commentView{}}
-	if i.Status == store.IssueOpen && i.Resource == wire.GuestAddressID {
+	if i.Status == store.IssueOpen && issue.IgnoreOnly(i.Resource) {
 		// ip is create-only: Plumb can neither revert nor accept (D-215).
 		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
 	} else if i.Status == store.IssueOpen {
-		v.Actions = append(v.Actions, "revert")
-		accept := true
-		for _, c := range ch {
-			if c.Sensitive || (i.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind")) {
-				accept = false
-			}
+		// A disk grown in Proxmox cannot be reverted: Proxmox cannot
+		// shrink it (D-299). Accept takes the bigger size.
+		if !(i.Resource == wire.GuestConfigID && plan.RevertShrinks(ch)) {
+			v.Actions = append(v.Actions, "revert")
 		}
-		if accept {
+		if issue.AcceptRefused(i.Resource, ch) == nil {
 			v.Actions = append([]string{"accept"}, v.Actions...)
 		}
 		// The list does not depend on the caller; the server checks who
@@ -337,6 +338,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	}
 	if i.Status == store.IssueResolved {
 		v.Resolution = &resolutionView{Action: i.Resolution, By: i.ResolvedBy, At: i.ResolvedAt.UTC()}
+	}
+	if err := s.issueSource(ctx, &v); err != nil {
+		return v, err
 	}
 	comments, err := s.st.Comments(ctx, i.ID)
 	if err != nil {

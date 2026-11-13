@@ -20,7 +20,7 @@ import (
 const fakeSecret = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
 
 // fakeNames are the commands that testdata/fakepve plays.
-var fakeNames = []string{"pveversion", "dpkg-query", "dpkg", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install", "lxc-attach", "stat"}
+var fakeNames = []string{"pveversion", "dpkg-query", "dpkg", "pveum", "pvesm", "pvesh", "pveam", "pct", "hostname", "ip", "install", "lxc-attach", "stat", "systemctl", "mountpoint"}
 
 type host struct {
 	t       *testing.T

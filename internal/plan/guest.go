@@ -29,7 +29,7 @@ func (e *Engine) PollGuests(ctx context.Context, interval time.Duration) {
 }
 
 // CheckGuests runs one round of the guest poll. It compares only guests
-// whose config digest changed since the last round or whose waiting list
+// whose config digest or power state changed since the last round (pollKey) or whose waiting list
 // is not empty (a cold start need not move the digest, review S8). It
 // writes the waiting list first (D-195), then reports drift on
 // guest:config to OnDrift: "differs" with the changes, or "unchanged"
@@ -39,6 +39,12 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 	binds, err := e.st.Bindings(ctx, state.KindTarget)
 	if err != nil {
 		return err
+	}
+	var restored store.RestoreState // read once per poll (review L3 of #222)
+	if e.cfg.Restore.Restored() {
+		if restored, err = e.st.GetRestore(ctx); err != nil {
+			return err
+		}
 	}
 	var errs []error
 	now := e.cfg.Now()
@@ -55,11 +61,42 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			continue
 		}
 		observed, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+		if errors.Is(err, driver.ErrNotFound) && e.cfg.Restore.Restored() {
+			// After a restore: the guest was deleted after the backup
+			// (D-303). Plumb never makes it again by itself.
+			if err := e.guestMissing(ctx, b, true); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if observed.Digest == b.Digest && len(b.Waiting) == 0 {
+		if restored.Restored {
+			// The VMID may hold another guest now (review H2 of #222):
+			// then the bound guest is missing, and the other one is
+			// unknown.
+			// It counts while restored mode holds, and after it only
+			// until the first good check (while that Issue is open);
+			// later a rename is the normal create-only drift. Writes to
+			// such a guest are refused either way (checkOwnGuest).
+			if observed.Spec.Name != b.Name && (e.restoreActive() || e.openRestoreIssue(ctx, b.Name, GuestMissingID)) {
+				e.setForeign(b.Ref, true)
+				if err := e.guestMissing(ctx, b, false); err != nil {
+					errs = append(errs, err)
+				}
+				continue
+			}
+			e.setForeign(b.Ref, false)
+			if err := e.restoreIssue(ctx, b.Name, GuestMissingID, wire.StatusUnchanged, nil); err != nil {
+				errs = append(errs, err)
+			}
+			if err := e.checkSilent(ctx, b.Name, observed, restored); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if pollKey(observed) == b.Digest && len(b.Waiting) == 0 {
 			continue
 		}
 		r, err := e.headRender(ctx, b.Name)
@@ -91,7 +128,7 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 				continue // keep the old digest, so the next round reports again
 			}
 		}
-		b.Digest = observed.Digest
+		b.Digest = pollKey(observed)
 		if err := e.st.PutBinding(ctx, b); err != nil {
 			errs = append(errs, err)
 		}
@@ -118,6 +155,9 @@ type Live struct {
 	// a stock Image or unknown (D-200).
 	ImageVersion int
 	Busy         bool // a Run works on the target
+	// DesiredPower is guest.power of the head revision: "running",
+	// "stopped", or "" when not managed (D-299).
+	DesiredPower string
 	// Waiting are the values that wait for a stop and start (D-195).
 	Waiting []store.Waiting
 	// Reported is the address list of the agent, only while it is online
@@ -158,6 +198,9 @@ func (e *Engine) Live(ctx context.Context, target string) (Live, error) {
 		return l, err
 	}
 	l.GuestID, l.Waiting = b.Ref, b.Waiting
+	if r, err := e.headRender(ctx, target); err == nil && r != nil {
+		l.DesiredPower = string(desiredPower(r))
+	}
 	if st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); err == nil {
 		l.Power, l.IPs, l.ImageVersion = string(st.Power), st.IPs, st.Spec.ImageVersion
 	}

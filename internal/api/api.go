@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/backup"
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
@@ -33,6 +34,9 @@ type Config struct {
 	Events *event.Log
 	Plans  *plan.Engine
 	Issues *issue.Service
+	// Backups writes and lists the backups (T-112). nil: the backup
+	// routes answer 503.
+	Backups *backup.Service
 	// Version is the Plumb version, for the export header.
 	Version string
 	// Secrets is the encrypted secret store (required).
@@ -75,6 +79,8 @@ type Server struct {
 	streamMu  sync.Mutex
 	streams   map[string]map[uint64]context.CancelFunc // open event streams per principal (review m2)
 	streamSeq uint64
+
+	raw rawCache // raw mode of the head revision (D-301)
 }
 
 // Limits of expensive or long-lived work.
@@ -221,6 +227,13 @@ func (s *Server) Handler() http.Handler {
 
 	route("GET /api/v1/events", read, s.events)
 
+	route("GET /api/v1/restore", read, s.getRestore)
+	route("POST /api/v1/restore/confirm", human, s.confirmRestore)
+	route("POST /api/v1/tokens/{id}/enable", human, s.enableToken)
+
+	route("GET /api/v1/backups", read, s.listBackups)
+	route("POST /api/v1/backups", apply, s.createBackup)
+
 	route("GET /api/v1/tokens", admin, s.listTokens)
 	route("POST /api/v1/tokens", admin, s.createToken)
 	route("DELETE /api/v1/tokens/{id}", admin, s.revokeToken)
@@ -337,7 +350,9 @@ func (s *Server) authenticate(r *http.Request) (*principal, error) {
 				tok, want = t, t.Hash
 			}
 		}
-		if subtle.ConstantTimeCompare([]byte(sha256Hex(sec)), []byte(want)) != 1 || tok.ID == "" {
+		// A token that a restore disabled gets 401 until a person enables
+		// it (D-303); it counts like a bad bearer.
+		if subtle.ConstantTimeCompare([]byte(sha256Hex(sec)), []byte(want)) != 1 || tok.ID == "" || !tok.DisabledAt.IsZero() {
 			s.bearers.fail(pair)
 			s.bearerIP.fail(client)
 			return nil, nil
@@ -354,7 +369,7 @@ func (s *Server) authenticate(r *http.Request) (*principal, error) {
 		return nil, nil
 	}
 	u, err := s.st.UserByID(ctx, sess.UserID)
-	if err != nil {
+	if err != nil || !u.LockedAt.IsZero() {
 		return nil, nil
 	}
 	return &principal{name: "user:" + u.Name, tier: TierAdmin, user: &u, session: &sess, mustChange: u.MustChangePassword}, nil

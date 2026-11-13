@@ -54,6 +54,11 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/events?since=-1", nil, TierRead, false},                                     // allowed → 400, so the stream never opens
 	{"GET", "/api/v1/tokens", nil, TierAdmin, true},
 	{"POST", "/api/v1/tokens", map[string]string{}, TierAdmin, true}, // allowed → 422, so no token is made
+	{"GET", "/api/v1/backups", nil, TierRead, false},
+	{"POST", "/api/v1/backups", nil, TierApply, false}, // allowed → 202 or 409 backup-running
+	{"GET", "/api/v1/restore", nil, TierRead, false},
+	{"POST", "/api/v1/restore/confirm", map[string]any{}, TierAdmin, true}, // allowed → 400
+	{"POST", "/api/v1/tokens/nope/enable", nil, TierAdmin, true},           // allowed → 404
 	{"DELETE", "/api/v1/tokens/tok_nope", nil, TierAdmin, true},
 	{"DELETE", "/api/v1/session", nil, TierAdmin, true}, // last: it logs the session out
 }

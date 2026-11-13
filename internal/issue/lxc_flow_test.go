@@ -153,7 +153,7 @@ func TestLXCCreate(t *testing.T) {
 		t.Errorf("after create: %+v", st)
 	}
 	b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "c1")
-	if b.Digest != st.Digest {
+	if !strings.HasPrefix(b.Digest, st.Digest+" ") { // digest and power (D-299)
 		t.Error("the binding misses the digest after the clear")
 	}
 	// The clear is not drift: the guest poll opens no Issue.

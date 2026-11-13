@@ -22,11 +22,13 @@ type tokenView struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
+	DisabledAt *time.Time `json:"disabled_at"` // D-303
 }
 
 func viewToken(t store.Token) tokenView {
 	return tokenView{ID: t.ID, Name: t.Name, Tier: t.Tier, MaxRisk: nullString(t.MaxRisk), CreatedBy: t.CreatedBy,
-		CreatedAt: t.CreatedAt.UTC(), LastUsedAt: utc(t.LastUsedAt), RevokedAt: utc(t.RevokedAt)}
+		CreatedAt: t.CreatedAt.UTC(), LastUsedAt: utc(t.LastUsedAt), RevokedAt: utc(t.RevokedAt),
+		DisabledAt: utc(t.DisabledAt)}
 }
 
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request, _ *principal) {

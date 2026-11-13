@@ -50,6 +50,7 @@ type Agent struct {
 	off       bool                                           // the guest powered off after seal: Run ends
 	onSeal    func()                                         // see OnSeal
 	onUpdate  func(wire.UpdateBody) (wire.Item, *wire.Hello) // see OnUpdate
+	onGrow    func(wire.GrowBody) wire.Item                  // the grow command (T-115); nil: unknown
 	sealFail  string                                         // a step that fails; "" for none
 	sealStuck bool                                           // the guest does not power off after seal
 	noMark    bool                                           // the agent does not take the build mark
@@ -100,6 +101,15 @@ func (a *Agent) OnUpdate(fn func(wire.UpdateBody) (wire.Item, *wire.Hello)) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.onUpdate = fn
+}
+
+// OnGrow makes the agent answer the grow command (T-115, D-299) with the
+// Item that fn returns. Without a hook the agent answers like an agent
+// before slice 4: "unknown command type".
+func (a *Agent) OnGrow(fn func(wire.GrowBody) wire.Item) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onGrow = fn
 }
 
 // OnSeal sets a hook that runs after a seal result was taken, where the
@@ -153,6 +163,12 @@ func (a *Agent) SetHello(h wire.Hello) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.hello2 = h
+}
+
+// SendHello sends the Hello of the agent (with the fields of SetHello),
+// as the real agent does after each start. It returns the HTTP status.
+func (a *Agent) SendHello(ctx context.Context) int {
+	return a.Report(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()})
 }
 
 // hello is the Hello of the agent.
@@ -445,6 +461,17 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 		a.update(ctx, cmd)
 	case wire.CommandSeal:
 		a.seal(ctx, cmd)
+	case wire.CommandGrow:
+		a.mu.Lock()
+		fn := a.onGrow
+		a.mu.Unlock()
+		if fn == nil {
+			a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Error: "unknown command type"})
+			return
+		}
+		var gb wire.GrowBody
+		_ = json.Unmarshal(cmd.Body, &gb)
+		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: []wire.Item{fn(gb)}})
 	case wire.CommandWatch:
 		// Like the real agent: store the list and report what differs now
 		// (open drift is reported again after a watch, T-018).

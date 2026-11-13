@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -269,7 +270,7 @@ func TestUpdate(t *testing.T) {
 		t.Error("token change without Bootstrap")
 	}
 	var co *driver.CreateOnlyError
-	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrDisk, To: 40}}, nil); !errors.As(err, &co) {
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "10.0.0.9/24"}}, nil); !errors.As(err, &co) {
 		t.Errorf("create-only: %v", err)
 	}
 	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrBridge, To: "vmbr0,firewall=0"}}, nil); err == nil {
@@ -588,4 +589,77 @@ func TestOtherBridgeRefused(t *testing.T) {
 	if n := len(f.log) - before; n != 0 {
 		t.Errorf("%d Proxmox requests: %v", n, f.log[before:])
 	}
+}
+
+// Slice 4 (D-299): tags at create and by Update, a disk grow of scsi0, a
+// shrink refused before any call, and a clear text for a tag refusal.
+func TestUpdateDay2(t *testing.T) {
+	f := newFakePVE(t)
+	d := f.driver(t)
+	ctx := context.Background()
+	ref, _ := d.FetchImage(ctx, image)
+	g := guest(ref)
+	g.Tags, g.TagsSet = []string{"web", "Prod"}, true
+	id, err := d.Create(ctx, g, driver.Bootstrap{Token: "tok-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm := f.vms[9001]
+	if vm.cfg["tags"] != "prod;web" {
+		t.Errorf("tags at create: %q", vm.cfg["tags"])
+	}
+	st, _ := d.Observe(ctx, id)
+	if !slices.Equal(st.Spec.Tags, []string{"prod", "web"}) {
+		t.Errorf("observed tags %v", st.Spec.Tags)
+	}
+	vm.cfg["tags"] = "Web,db x" // Proxmox takes other separators and case
+	if st, _ = d.Observe(ctx, id); !slices.Equal(st.Spec.Tags, []string{"db", "web", "x"}) {
+		t.Errorf("observed tags %v", st.Spec.Tags)
+	}
+
+	want := guest(ref)
+	want.DiskGB, want.Tags, want.TagsSet = 32, []string{"web"}, true
+	changes, err := d.Diff(want, st)
+	if err != nil || len(changes) != 2 {
+		t.Fatalf("diff: %+v %v", changes, err)
+	}
+	f.resizes = nil
+	if err := d.Update(ctx, id, changes, nil); err != nil {
+		t.Fatal(err)
+	}
+	if vm.cfg["tags"] != "web" || parseProps(vm.cfg["scsi0"])["size"] != "32G" || !slices.Equal(f.resizes, []string{"9001 scsi0 32G"}) {
+		t.Errorf("after update: tags %q scsi0 %q resizes %v", vm.cfg["tags"], vm.cfg["scsi0"], f.resizes)
+	}
+	// No tags: a delete of the option.
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrTags, From: []string{"web"}, To: []string(nil)}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := vm.cfg["tags"]; ok {
+		t.Errorf("tags left: %q", vm.cfg["tags"])
+	}
+	// A shrink or a bad tag is refused before any Proxmox call.
+	f.resizes = nil
+	var se *driver.ShrinkError
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrDisk, To: 20}}, nil); !errors.As(err, &se) || se.Have != 32 {
+		t.Errorf("shrink: %v", err)
+	}
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrDisk, To: 32}}, nil); err != nil || len(f.resizes) != 0 {
+		t.Errorf("same size: %v, resizes %v", err, f.resizes)
+	}
+	for _, bad := range []any{[]string{"a;b"}, []string{"-x"}, "web", []any{1}} {
+		if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrTags, To: bad}}, nil); err == nil {
+			t.Errorf("tags %v accepted", bad)
+		}
+	}
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrPower, To: "stopped"}}, nil); err == nil {
+		t.Error("power through Update")
+	}
+	// A refusal of the tags names the datacenter option (D-299).
+	f.refuseTags = true
+	err = d.Update(ctx, id, []wire.Change{{Attr: driver.AttrTags, To: []string{"web"}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "user-tag-access") || !strings.Contains(err.Error(), "no new right") {
+		t.Errorf("refused tags: %v", err)
+	}
+	// A write without tags is not explained as a tag refusal.
+	f.refuseTags = false
 }

@@ -212,3 +212,7 @@ func (l *failLimiter) reset(keys ...string) {
 		delete(l.keys, k)
 	}
 }
+
+// RandomPassword returns a new random password like the bootstrap one
+// (24 characters, 144 bits). plumb restore gives it to admin (D-303).
+func RandomPassword() string { return randomText(18) }

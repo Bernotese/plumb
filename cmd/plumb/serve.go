@@ -17,11 +17,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/api"
+	"github.com/Bernotese/plumb/internal/backup"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/driver/proxmox"
@@ -45,6 +47,8 @@ type serveFlags struct {
 	listen      string
 	agentListen string
 	hosts       []string
+	backupTime  string // daily, UTC "HH:MM" (D-302)
+	backupKeep  int
 }
 
 // errUsage marks a flag error: exit code 2.
@@ -63,9 +67,19 @@ func parseServe(args []string, stderr io.Writer) (serveFlags, error) {
 	fs.StringVar(&f.listen, "listen", "", "API and UI address (default :8443; with --dev 127.0.0.1:8443)")
 	fs.StringVar(&f.agentListen, "agent-listen", "", "agent listener address, always TLS (default :8444; with --dev 127.0.0.1:8444)")
 	hosts := fs.String("hosts", "localhost,127.0.0.1", "comma-separated host names and IPs for the certificates")
+	fs.StringVar(&f.backupTime, "backup-time", envOr("PLUMB_BACKUP_TIME", backup.DefaultTime), "daily backup time, UTC HH:MM (env PLUMB_BACKUP_TIME)")
+	keep := fs.String("backup-keep", envOr("PLUMB_BACKUP_KEEP", strconv.Itoa(backup.DefaultKeep)), "backups kept, scheduled and manual together (env PLUMB_BACKUP_KEEP)")
 	if err := fs.Parse(args); err != nil {
 		return f, errUsage
 	}
+	if _, _, err := backup.ParseTime(f.backupTime); err != nil {
+		return f, err
+	}
+	n, err := strconv.Atoi(*keep)
+	if err != nil || n < 1 || n > backup.MaxKeep {
+		return f, fmt.Errorf("backup keep %q: want 1 … %d", *keep, backup.MaxKeep)
+	}
+	f.backupKeep = n
 	for _, h := range strings.Split(*hosts, ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			f.hosts = append(f.hosts, h)
@@ -225,10 +239,21 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		}
 	}
 
+	// Restored mode (D-303): read before the link, the driver guard and
+	// the engine use it.
+	restore := &plan.RestoreMode{}
+	if err := restore.Load(ctx, st); err != nil {
+		return err
+	}
+	if restore.Active() {
+		log.Warn("restored mode: Plumb observes but changes nothing until a person confirms that the old controller is off (POST /restore/confirm)")
+	}
+
 	var eng *plan.Engine
 	var iss *issue.Service
 	lk, err := link.New(link.Config{
-		Dir: filepath.Join(f.data, "link"), Hosts: f.hosts, Store: st, Events: events, Logger: log,
+		Restored: restore.Active,
+		Dir:      filepath.Join(f.data, "link"), Hosts: f.hosts, Store: st, Events: events, Logger: log,
 		AgentBinary:  agentBinary(),
 		OnReport:     func(ctx context.Context, d link.Delivery) error { return eng.HandleReport(ctx, d) },
 		Sensitive:    func(ctx context.Context, t, id string) ([]string, bool, error) { return eng.Sensitive(ctx, t, id) },
@@ -245,8 +270,13 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 			log.Warn("LXC Images are off", "err", err)
 		}
 	}
+	// The second line of restored mode: no Proxmox write (D-303).
+	// rawDrv is the unwrapped driver, for the dev agents of the fake one.
+	rawDrv := drv
+	drv = driver.ReadOnlyWhen(drv, restore.Active)
 	eng, err = plan.New(plan.Config{
-		Store: st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
+		Restore: restore,
+		Store:   st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
 		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
 		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 		AddrStable: devAddrStable(f.devDemo), DiskLimitPercent: limit,
@@ -303,12 +333,21 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		}
 		devToken = randomToken()
 	}
-	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Secrets: secrets, Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
+	// Backups (T-112, D-302): the header names this install (D-304).
+	backups, err := backup.New(ctx, backup.Config{Store: st, Events: events, Key: key, DataDir: f.data,
+		Time: f.backupTime, Keep: f.backupKeep, PlumbVersion: version, InstallID: os.Getenv("PLUMB_INSTALL_ID"),
+		Node: os.Getenv("PLUMB_PVE_NODE"), Pool: os.Getenv("PLUMB_PVE_POOL"), AgentURL: agentURL(f.hosts, f.agentListen), Logger: log, Serve: true})
+	if err != nil {
+		return err
+	}
+	defer backups.Wait() // after the background wait, before the store closes
+	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Secrets: secrets, Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
 
 	errc := make(chan error, 2) // one send each: agent listener, API listener
 	goBG(func() { errc <- lk.Serve(ctx, f.agentListen) })
 	goBG(func() { eng.PollGuests(ctx, time.Minute) })
-	goBG(func() { eng.RunSchedules(ctx, time.Minute) }) // scheduled image builds (T-063)
+	goBG(func() { eng.RunSchedules(ctx, time.Minute) })                    // scheduled image builds (T-063)
+	goBG(func() { backups.RunSchedule(ctx, time.Minute, restore.Active) }) // daily backup (T-112); waits in restored mode
 
 	ln, err := net.Listen("tcp", f.listen)
 	if err != nil {
@@ -360,7 +399,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		// The simulated agents stop before runServer returns and the store
 		// closes (review T-024 m1).
 		actx, stop := context.WithCancel(ctx)
-		agents := newDevAgents(st, lk, drv.(*fake.Driver), log)
+		agents := newDevAgents(st, lk, rawDrv.(*fake.Driver), log)
 		agentsDone := make(chan struct{})
 		go func() { agents.run(actx, events); close(agentsDone) }()
 		defer func() { stop(); <-agentsDone }()
@@ -493,4 +532,12 @@ func agentURL(hosts []string, listen string) string {
 		host = hosts[0]
 	}
 	return "https://" + net.JoinHostPort(host, port)
+}
+
+// envOr returns the environment value of name, or def when it is empty.
+func envOr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
 }

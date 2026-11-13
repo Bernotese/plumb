@@ -400,6 +400,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /blocks:
     get:
@@ -761,6 +762,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /targets/{name}/agent-update:
     parameters:
@@ -2013,7 +2015,6 @@ paths:
     get:
       tags: [backup]
       operationId: listBackups
-      x-plumb-planned: T-112
       summary: List the backups of this controller and the state of the off-host copy
       description: |
         Backups in the data directory of the controller, newest first (D-288, D-302), the
@@ -2052,7 +2053,6 @@ paths:
     post:
       tags: [backup]
       operationId: createBackup
-      x-plumb-planned: T-112
       summary: Start a backup now
       description: |
         Starts one backup outside the schedule. It counts for the retention like a scheduled one.
@@ -2082,7 +2082,6 @@ paths:
     get:
       tags: [backup]
       operationId: getRestore
-      x-plumb-planned: T-113
       summary: Restore state of this controller
       description: |
         `restored: false` on a controller that was never restored. After `plumb restore`: the
@@ -2111,7 +2110,6 @@ paths:
     post:
       tags: [backup]
       operationId: confirmRestore
-      x-plumb-planned: T-113
       summary: End restored mode
       description: |
         A person confirms that the old controller is off (D-290). Human session only: a token
@@ -2153,7 +2151,6 @@ paths:
     post:
       tags: [tokens]
       operationId: enableToken
-      x-plumb-planned: T-113
       summary: Enable a token that a restore disabled
       description: |
         Human session only (D-303). Works also in restored mode, so a person can give one client
@@ -2795,9 +2792,10 @@ components:
         agent_missing:
           type: array
           description: |
-            What the desired state needs and the agent lacks: `<type>`, `<type>.<attr>` or
-            `command:<name>` (D-299), sorted. Empty when nothing is missing. Missing on an older
-            controller.
+            What the desired state needs and the agent lacks: `<type>` or `<type>.<attr>`, sorted.
+            Empty when nothing is missing. Missing on an older controller. `command:grow` is not
+            listed here (D-310): a disk grow of a VM checks it only at the Plan (409
+            `agent-outdated`) and in the Run.
           items: { type: string }
         agent_reverted:
           oneOf:
@@ -3694,7 +3692,12 @@ components:
       required: [name, created_at, size, sha256]
       properties:
         name: { type: string, pattern: "^plumb-[0-9]{8}T[0-9]{6}Z(-[0-9]{1,3})?\\.pbk$", examples: ["plumb-20261113T030000Z.pbk"] }
-        created_at: { $ref: "#/components/schemas/Time" }
+        created_at:
+          $ref: "#/components/schemas/Time"
+          description: |
+            When the file was written (its modification time, UTC). The name holds the start time
+            of the backup; after a clock change the two can differ. The list and the retention go by
+            the order in which the backups were made, not by either time.
         size: { type: integer, format: int64, minimum: 0 }
         sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
     BackupRun:
