@@ -284,7 +284,7 @@ pct)
 	destroy)
 		# A destroy that leaves the container (review nit test).
 		[[ ${FAKE_DESTROY_NOOP:-0} == 1 ]] && exit 0
-		rm -f "$st/lxc.$2" "$st/key.$2" "$st/stopped.$2"
+		rm -f "$st/lxc.$2" "$st/key.$2" "$st/stopped.$2" "$st/db.$2"
 		# Like pve-container 6.1: --purge keeps rules.seccomp and passthrough/.
 		if [[ -n ${PLUMB_INSTALL_LXC_DIR:-} ]]; then
 			mkdir -p "$PLUMB_INSTALL_LXC_DIR/$2/passthrough"
@@ -330,6 +330,7 @@ pct)
 		"grep -q ^"*" /etc/plumb/plumb.env") grep -q "$3" "$st/push/_etc_plumb_plumb.env" ;;
 		"grep -qx "*" /etc/plumb/plumb.env") grep -qxF "$3" "$st/push/_etc_plumb_plumb.env" ;;
 		"test -s /var/lib/plumb/key/master.key") has "key.$id" ;;
+		"test -s /var/lib/plumb/plumb.db") has "db.$id" ;;
 		"mountpoint -q /var/lib/plumb/key") grep -q '^mp0: .*mp=/var/lib/plumb/key' "$st/lxc.$id" ;;
 		journalctl*) echo "First start. User: admin  Password: pw-from-journal" ;;
 		"sha256sum /proc/"*"/exe")
@@ -386,6 +387,7 @@ lxc-attach) # lxc-attach -n ID --clear-env -- runuser -u plumb -- plumb key init
 	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from /var/lib/plumb/restore.pbk" ]]; then
 		[[ ${FAKE_RESTORE_FAIL:-0} == 1 ]] && exit 1
 		[[ -e $st/push/_var_lib_plumb_restore.pbk ]] || exit 1
+		touch "$st/db.$2"
 		echo "Restored. User: admin  Password: NEWPW"
 	fi
 	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key init --data /var/lib/plumb" ]]; then

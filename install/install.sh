@@ -127,7 +127,8 @@ Options:
   --backup-keep N        backups that serve keeps (default 7)
   --backup-storage ID|none
                          copy the newest encrypted backup daily to this storage (dir, nfs, cifs,
-                         cephfs); "none" removes the copy timer, the copies stay (D-289)
+                         cephfs); "none" removes the copy timer, the copies stay (D-289). The path of a
+                         dir storage is read at install time: after a change of it, run a repair run
   --backup-copy-time HH:MM   time of the copy, UTC (default: backup time + 30 min)
   --backup-copy-keep N   copies kept on the storage (default 14)
   --backup-max-size SIZE the largest backup that is copied, e.g. 512M or 2G (default 1G)
@@ -860,10 +861,13 @@ state_put() {
 	content=$(printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=%s' \
 		"$lxc" "$POOL" "$SNIPPET_STORAGE" "$snippets" "$images" "$id" "$copy")
 	# A kept state (--remove --keep-guests) stays until a restore or an
-	# install made a new LXC.
-	if [[ $(state_get kept_guests) == 1 && $LXC_OURS != 1 ]]; then
-		content+=$(printf '\nkept_guests=1\nnode=%s\nold_address=%s' "$(state_get node)" "$(state_get old_address)")
+	# install made a new LXC that runs; while a restore works, the mark
+	# restoring=1 names its LXC (review M2 of #221).
+	if [[ $(state_get kept_guests) == 1 && ($LXC_OURS != 1 || $RESTORING == 1) ]]; then
+		content+=$(printf '\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s' "$(state_get node)" "$(state_get old_address)" "$(state_get old_gateway)")
 	fi
+	[[ $RESTORING == 1 ]] && content+=$'\nrestoring=1'
+	
 	if [[ $content == "$STATE_WRITTEN" ]] || { [[ -f $STATE_FILE ]] && [[ $content == "$(cat "$STATE_FILE")" ]]; }; then
 		return 0
 	fi
@@ -1675,8 +1679,17 @@ check_restore() {
 	[[ $POOL == "$H_POOL" ]] || die "the backup is of pool $H_POOL, this run has --pool $POOL. Nothing was changed."
 	local id
 	id=$(state_get lxc_id)
-	[[ -z $id || $(lxc_state "$id") == none ]] ||
-		die "a Plumb LXC ($id) exists; replace it with --remove --keep-guests first. Nothing was changed."
+	if [[ -n $id && $(lxc_state "$id") != none ]]; then
+		# A restore that failed in its LXC (review M2 of #221): that LXC
+		# has no database; it goes after the confirm and the host verify.
+		[[ $(state_get restoring) == 1 && $(lxc_state "$id") == ours ]] ||
+			die "a Plumb LXC ($id) exists; replace it with --remove --keep-guests first. Nothing was changed."
+		if query pct exec "$id" -- test -s /var/lib/plumb/plumb.db </dev/null >/dev/null 2>&1; then
+			die "LXC $id of the last --restore has a restored database; run install.sh --plumb-binary FILE (a repair run) to start it. Nothing was changed."
+		fi
+		HALF_LXC=$id
+		say "LXC $id is left from a --restore that did not finish; it has no database. It is destroyed with its key volume first."
+	fi
 	if [[ $(state_get kept_guests) == 1 ]]; then
 		[[ $(state_get install_id) == "$H_INSTALL_ID" ]] ||
 			die "the backup is of install $H_INSTALL_ID, the kept guests belong to install $(state_get install_id). Nothing was changed."
@@ -1695,6 +1708,27 @@ check_restore() {
 # recovery key and the new admin password stay on the terminal (D-178,
 # D-303).
 readonly RESTORE_IN_LXC=/var/lib/plumb/restore.pbk
+RESTORING=0
+HALF_LXC=""
+
+# remove_half_lxc destroys the LXC of a --restore that did not finish:
+# the LXC and its key volume (it holds the key that was typed in again).
+remove_half_lxc() {
+	local id=$HALF_LXC keyvol
+	[[ -n $id ]] || return 0
+	keyvol=$(lxc_key_volume "$id")
+	keyvol=${keyvol#*: }
+	keyvol=${keyvol%%,*}
+	confirm "Destroy LXC $id of the last --restore${keyvol:+ and its key volume $keyvol}?" yes || die "stopped; nothing was changed"
+	run pct stop "$id" || true
+	run pct destroy "$id" --purge 1
+	if [[ -n $keyvol ]] && { query pvesm list "${keyvol%%:*}" --vmid "$id" 2>/dev/null || true; } | grep -q "^$keyvol "; then
+		run pvesm free "$keyvol"
+	fi
+	if [[ $DRY_RUN != 1 ]]; then
+		clean_stale_lxc_dir "$id" keep
+	fi
+}
 restore_in_lxc() {
 	lxc_has_key "$LXC_ID" && die "LXC $LXC_ID has a master key already; a restore needs a new LXC"
 	push_checked "$RESTORE_FILE" "$RESTORE_IN_LXC" 0600
@@ -1702,10 +1736,10 @@ restore_in_lxc() {
 	say ""
 	say "plumb key restore: type the RECOVERY KEY of the backup."
 	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb ||
-		die "plumb key restore failed; plumb.service was not started. Run install.sh --restore again on a terminal."
+		die "plumb key restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
 	say "plumb restore: it shows the NEW password of the user admin once."
 	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from "$RESTORE_IN_LXC" ||
-		die "plumb restore failed; plumb.service was not started. Run install.sh --remove --keep-guests, then --restore again."
+		die "plumb restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
 	run pct exec "$LXC_ID" -- rm -f "$RESTORE_IN_LXC" </dev/null
 	if [[ $DRY_RUN != 1 && $YES != 1 && -t 0 ]]; then
 		read -r -p "Write the admin password down, then press Enter" _ || true
@@ -1835,14 +1869,20 @@ if ! [[ $name =~ $re ]]; then
 	fail "the backup pointer names no valid backup file"
 fi
 # The host builds the name from the checked parts (D-289 N1).
-final="plumb-${BASH_REMATCH[1]}${BASH_REMATCH[2]}.pbk"
+ts=${BASH_REMATCH[1]}
+final="plumb-${ts}${BASH_REMATCH[2]}.pbk"
+# A time far ahead would name a copy that no later backup replaces
+# (review M1 of #221): at most 1 day ahead of this host's clock.
+when=$(date -u -d "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2}" +%s 2>/dev/null) || fail "the backup pointer has no valid time"
+((when <= $(date -u +%s) + 86400)) || fail "the backup pointer names a time more than 1 day ahead of this host"
 [[ $sha =~ ^[0-9a-f]{64}$ ]] || fail "the backup pointer has no valid sha256"
 [[ $size =~ ^[1-9][0-9]{0,15}$ ]] || fail "the backup pointer has no valid size"
 ((size <= max)) || fail "the backup has $size bytes, more than the limit of $max bytes (--backup-max-size)"
 
-# 3. Copied already: nothing to do but the retention.
-if [[ -f $dest/$final ]] && [[ $(sha256sum <"$dest/$final") == "$sha  -" ]]; then
-	:
+# 3. Copied already: nothing to do but the retention. A copy is never
+# replaced: the same name with other content fails (review M1 of #221).
+if [[ -e $dest/$final ]]; then
+	[[ $(sha256sum <"$dest/$final") == "$sha  -" ]] || fail "refuses to overwrite $final: the copy on the storage has other content"
 else
 	# 4. The file: temp name in the target directory, checks, rename.
 	tmp=$(mktemp -p "$dest" .tmp-XXXXXXXX)
@@ -1854,12 +1894,15 @@ else
 	# LXC. The GCM tags prove the content at the restore (D-288).
 	[[ $(sha256sum <"$tmp") == "$sha  -" ]] || fail "$name has another sha256 than the pointer says"
 	chmod 0600 "$tmp"
-	mv -f -- "$tmp" "$dest/$final"
+	touch -- "$tmp" # the retention orders by this time of the host
+	mv -n -- "$tmp" "$dest/$final" || true
+	[[ ! -e $tmp ]] || fail "refuses to overwrite $final"
 	sync -f "$dest/$final" 2>/dev/null || true
 fi
 
-# 5. Retention: the newest copies stay; only names of the strict form go.
-mapfile -t all < <(find "$dest" -maxdepth 1 -type f -name 'plumb-*.pbk' -printf '%f\n' | grep -E "$re" | sort -r)
+# 5. Retention by the time this host made each copy, never by the name
+# (review M1 of #221); only names of the strict form go.
+mapfile -t all < <(find "$dest" -maxdepth 1 -type f -name 'plumb-*.pbk' -printf '%T@ %f\n' | sort -rn | cut -d' ' -f2 | grep -E "$re")
 for old in "${all[@]:keep}"; do
 	rm -f -- "${dest:?}/$old"
 done
@@ -1911,7 +1954,11 @@ do_install() {
 		printf '  %s\n' "${STRAY_ACLS//$'\n'/$'\n'  }"
 	fi
 	confirm "Continue?" || die "stopped; nothing was changed"
-	[[ -z $RESTORE_FILE ]] || verify_on_host "$RESTORE_FILE" "nothing was changed"
+	if [[ -n $RESTORE_FILE ]]; then
+		verify_on_host "$RESTORE_FILE" "nothing was changed"
+		remove_half_lxc
+		RESTORING=1
+	fi
 
 	ensure_image_storage
 	state_put # --remove must know plumb-images even if a later step fails
@@ -1926,6 +1973,7 @@ do_install() {
 	local ip ca
 	ip=$(lxc_ip)
 	setup_lxc "$host" "$ip"
+	RESTORING=0 # serve runs with the restored database
 	state_put
 	new_tmp ca
 	fetch_plumb_ca "$ca"
@@ -1939,6 +1987,9 @@ do_install() {
 	if [[ -n $RESTORE_FILE ]]; then
 		say "Restored from $RESTORE_FILE. Log in as admin with the password that plumb restore showed. Plumb is in"
 		say "restored mode: it observes, and changes nothing until you confirm that the old controller is off (D-290)."
+		if [[ -z $BACKUP_STORAGE_SET ]]; then
+			say "No backup copy timer is set. Add one with a repair run: install.sh --plumb-binary FILE --backup-storage ID"
+		fi
 		return 0
 	fi
 	if [[ $DRY_RUN == 1 ]]; then
@@ -2087,11 +2138,19 @@ do_remove_keep() {
 	fi
 	need_tty "--remove --keep-guests"
 	ensure_install_id
-	addr=$({ query pct config "$lxc" 2>/dev/null || true; } | sed -n 's/^net0: .*[,=]ip=\([0-9.]*\)\/.*/\1/p' | head -n1)
+	# The address with its prefix and the gateway, for the exact --restore
+	# line (review L2 of #221). A DHCP LXC: the address it has now.
+	local net0 gw
+	net0=$({ query pct config "$lxc" 2>/dev/null || true; } | sed -n 's/^net0: //p' | head -n1)
+	addr=$(sed -n 's/.*\(^\|,\)ip=\([0-9.]*\/[0-9]*\)\(,.*\|$\)/\2/p' <<<"$net0")
+	gw=$(sed -n 's/.*\(^\|,\)gw=\([0-9.]*\)\(,.*\|$\)/\2/p' <<<"$net0")
 	if [[ -z $addr ]]; then
 		addr=$({ query pct exec "$lxc" -- hostname -I </dev/null 2>/dev/null || true; } | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -n1 || true)
+		[[ -z $addr ]] || addr+=/24
+		say "NOTE: LXC $lxc has a DHCP address; the restore needs it as a static address ($addr is a guess of the prefix)."
 	fi
-	[[ -n $addr ]] || die "cannot read the address of LXC $lxc; the restore needs it. Nothing was removed."
+	[[ $addr =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || die "cannot read the address of LXC $lxc; the restore needs it. Nothing was removed."
+	[[ -z $gw || $gw =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || gw=""
 	keyvol=$(lxc_key_volume "$lxc")
 	keyvol=${keyvol#*: }
 	keyvol=${keyvol%%,*}
@@ -2106,8 +2165,8 @@ do_remove_keep() {
 	say "  3. then it removes: the LXC $lxc with its disk${keyvol:+, the key volume $keyvol}, the backup copy timer,"
 	say "     and the token $PVE_USER!$TOKEN_NAME with its ACLs"
 	say "  It keeps: pool $POOL with its guests and templates, user $PVE_USER and its ACLs, the roles, the storages,"
-	say "  $SNIPPET_STORAGE with the vendor snippet, and $STATE_FILE (install $INSTALL_ID, pool, node, address $addr)."
-	say "  Then: install.sh --plumb-binary FILE --restore BACKUP --lxc-ip $addr/<prefix> --lxc-gw <gateway>"
+	say "  $SNIPPET_STORAGE with the vendor snippet, and $STATE_FILE (install $INSTALL_ID, pool, node, address $addr${gw:+, gateway $gw})."
+	say "  Then: install.sh --plumb-binary FILE --restore BACKUP --lxc-ip $addr --lxc-gw ${gw:-<gateway>}"
 	confirm "Replace the controller and keep the guests?" keep-guests || die "stopped; nothing was removed"
 
 	run pct exec "$lxc" -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb backup now --data /var/lib/plumb </dev/null ||
@@ -2134,11 +2193,12 @@ do_remove_keep() {
 	# The kept state: no LXC, the install id, pool, node and old address.
 	local tmp
 	new_tmp tmp
-	printf 'lxc_id=\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=\nkept_guests=1\nnode=%s\nold_address=%s\n' \
-		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$NODE" "$addr" >"$tmp"
+	printf 'lxc_id=\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s\n' \
+		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$NODE" "$addr" "$gw" >"$tmp"
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"
-	say "The controller is removed; the guests run on. Restore with --restore $COPY_RESULT --lxc-ip $addr/<prefix> --lxc-gw <gateway>."
+	say "The controller is removed; the guests run on. Restore with:"
+	say "  install.sh --plumb-binary FILE --restore $COPY_RESULT --lxc-ip $addr --lxc-gw ${gw:-<gateway>}"
 }
 
 main() {

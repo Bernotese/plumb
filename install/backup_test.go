@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testInstallID = "0f6c2a8e-1b7d-4c55-9a51-3c1f4a2b9d10"
@@ -280,7 +281,7 @@ func TestCopyRun(t *testing.T) {
 		t.Errorf("status push %q", opts)
 	}
 	// Retention: the newest 2 stay.
-	for _, n := range []string{"plumb-20261114T030000Z.pbk", "plumb-20261115T030000Z-2.pbk"} {
+	for _, n := range []string{"plumb-20261102T030000Z.pbk", "plumb-20261103T030000Z-2.pbk"} {
 		b.serveBackup(n, data)
 		if code, _, errOut := b.runCopy(); code != 0 {
 			t.Fatal(errOut)
@@ -293,7 +294,7 @@ func TestCopyRun(t *testing.T) {
 	for _, f := range left {
 		names = append(names, filepath.Base(f))
 	}
-	if strings.Join(names, " ") != "notes.txt plumb-20261114T030000Z.pbk plumb-20261115T030000Z-2.pbk" {
+	if strings.Join(names, " ") != "notes.txt plumb-20261102T030000Z.pbk plumb-20261103T030000Z-2.pbk" {
 		t.Errorf("after the retention: %v", names)
 	}
 
@@ -310,24 +311,24 @@ func TestCopyRun(t *testing.T) {
 		want  string
 	}{
 		{"bad name", func() { b.lxcFile("/var/lib/plumb/backups/latest", ptr("../etc/shadow", 10, sum)) }, "names no valid backup"},
-		{"name with a path", func() { b.lxcFile("/var/lib/plumb/backups/latest", ptr("plumb-20261116T030000Z.pbk/../x", 10, sum)) }, "names no valid backup"},
+		{"name with a path", func() { b.lxcFile("/var/lib/plumb/backups/latest", ptr("plumb-20261104T030000Z.pbk/../x", 10, sum)) }, "names no valid backup"},
 		{"big pointer", func() { b.lxcFile("/var/lib/plumb/backups/latest", make([]byte, 5000)) }, "larger than 4 KiB"},
 		{"not json", func() { b.lxcFile("/var/lib/plumb/backups/latest", []byte("{")) }, "not valid JSON"},
-		{"over the cap", func() { b.serveBackup("plumb-20261116T030000Z.pbk", big) }, "more than the limit"},
+		{"over the cap", func() { b.serveBackup("plumb-20261104T030000Z.pbk", big) }, "more than the limit"},
 		{"other sha", func() {
-			b.serveBackup("plumb-20261116T030000Z.pbk", data)
+			b.serveBackup("plumb-20261104T030000Z.pbk", data)
 			bad := append([]byte{}, data...)
 			bad[len(bad)-1] = 'X'
-			b.lxcFile("/var/lib/plumb/backups/plumb-20261116T030000Z.pbk", bad)
+			b.lxcFile("/var/lib/plumb/backups/plumb-20261104T030000Z.pbk", bad)
 		}, "another sha256"},
 		{"other size", func() {
-			b.serveBackup("plumb-20261116T030000Z.pbk", data)
-			b.lxcFile("/var/lib/plumb/backups/plumb-20261116T030000Z.pbk", append(append([]byte{}, data...), 'X'))
+			b.serveBackup("plumb-20261104T030000Z.pbk", data)
+			b.lxcFile("/var/lib/plumb/backups/plumb-20261104T030000Z.pbk", append(append([]byte{}, data...), 'X'))
 		}, "another size"},
-		{"no magic", func() { b.serveBackup("plumb-20261116T030000Z.pbk", []byte("PLUMB_ENV=secret value of plumb.env")) }, "not a Plumb backup file"},
+		{"no magic", func() { b.serveBackup("plumb-20261104T030000Z.pbk", []byte("PLUMB_ENV=secret value of plumb.env")) }, "not a Plumb backup file"},
 		{"a link", func() {
-			b.serveBackup("plumb-20261116T030000Z.pbk", data)
-			f := filepath.Join(b.state, "ct", "105", "var/lib/plumb/backups/plumb-20261116T030000Z.pbk")
+			b.serveBackup("plumb-20261104T030000Z.pbk", data)
+			f := filepath.Join(b.state, "ct", "105", "var/lib/plumb/backups/plumb-20261104T030000Z.pbk")
 			os.Remove(f)
 			os.Symlink("/etc/plumb/plumb.env", f)
 		}, "cannot read"},
@@ -342,7 +343,7 @@ func TestCopyRun(t *testing.T) {
 		if code == 0 || !strings.Contains(errOut, tc.want) {
 			t.Errorf("%s: %d %s", tc.name, code, errOut)
 		}
-		if _, err := os.Stat(filepath.Join(b.store, "plumb-backups", "plumb-20261116T030000Z.pbk")); err == nil {
+		if _, err := os.Stat(filepath.Join(b.store, "plumb-backups", "plumb-20261104T030000Z.pbk")); err == nil {
 			t.Errorf("%s: a copy was written", tc.name)
 		}
 		if tmp, _ := filepath.Glob(filepath.Join(b.store, "plumb-backups", ".tmp-*")); len(tmp) > 0 {
@@ -352,8 +353,37 @@ func TestCopyRun(t *testing.T) {
 			t.Errorf("%s: status %v", tc.name, st)
 		}
 	}
+	// Review M1 of #221: a copy is never replaced, a time far ahead is
+	// refused, and the retention follows the host's copy time.
+	keepCopy := filepath.Join(b.store, "plumb-backups", "plumb-20261103T030000Z-2.pbk")
+	before, _ := os.ReadFile(keepCopy)
+	other := append(append([]byte{}, data...), []byte(" replaced")...)
+	b.serveBackup("plumb-20261103T030000Z-2.pbk", other)
+	if code, _, errOut := b.runCopy(); code == 0 || !strings.Contains(errOut, "refuses to overwrite") {
+		t.Errorf("overwrite: %d %s", code, errOut)
+	}
+	if after, _ := os.ReadFile(keepCopy); string(after) != string(before) {
+		t.Error("a copy was replaced")
+	}
+	b.serveBackup("plumb-20991231T235959Z.pbk", data)
+	if code, _, errOut := b.runCopy(); code == 0 || !strings.Contains(errOut, "more than 1 day ahead") {
+		t.Errorf("future time: %d %s", code, errOut)
+	}
+	// A name that sorts last but was copied first goes first.
+	old := filepath.Join(b.store, "plumb-backups", "plumb-20991231T000000Z.pbk")
+	os.WriteFile(old, data, 0o600)
+	past := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(old, past, past)
+	b.serveBackup("plumb-20261104T030000Z.pbk", data)
+	if code, _, errOut := b.runCopy(); code != 0 {
+		t.Fatal(errOut)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("the retention kept the oldest copy because of its name")
+	}
+
 	// N3 at run time: the storage went inactive.
-	b.serveBackup("plumb-20261116T030000Z.pbk", data)
+	b.serveBackup("plumb-20261104T030000Z.pbk", data)
 	if code, _, errOut := b.runCopy("FAKE_STORAGE_INACTIVE=backups"); code == 0 || !strings.Contains(errOut, "not active") {
 		t.Errorf("inactive at run time: %d %s", code, errOut)
 	}
@@ -417,8 +447,11 @@ func TestRemoveKeepGuests(t *testing.T) {
 		t.Error("the copy timer stays without an LXC")
 	}
 	st := b.stateFile()
-	if st["lxc_id"] != "" || st["kept_guests"] != "1" || st["install_id"] != id || st["node"] != "pve1" || st["pool"] != "plumb" || st["old_address"] != "192.168.1.50" {
+	if st["lxc_id"] != "" || st["kept_guests"] != "1" || st["install_id"] != id || st["node"] != "pve1" || st["pool"] != "plumb" || st["old_address"] != "192.168.1.50/24" || st["old_gateway"] != "192.168.1.1" {
 		t.Errorf("kept state %v", st)
+	}
+	if !strings.Contains(out, "--restore "+copyPath+" --lxc-ip 192.168.1.50/24 --lxc-gw 192.168.1.1") {
+		t.Errorf("no exact restore line:\n%s", out)
 	}
 	// A plain install into the kept pool is refused.
 	code, _, errOut = b.run(asRoot, "--yes", "--plumb-binary", b.plumb)
@@ -588,6 +621,46 @@ func TestRestoreRefused(t *testing.T) {
 	os.WriteFile(b.stateF, nil, 0o600)
 	if code, _, errOut := b.restore(nil, file, net...); code == 0 || !strings.Contains(errOut, "no kept state") {
 		t.Errorf("no kept state: %d %s", code, errOut)
+	}
+}
+
+// Review M2 of #221: a restore that failed in its LXC; the same
+// --restore again removes that LXC first and passes.
+func TestRestoreAgainAfterFailure(t *testing.T) {
+	b, file := keptHost(t)
+	net := []string{"--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1"}
+	code, _, errOut := b.restore([]string{"FAKE_RESTORE_FAIL=1"}, file, net...)
+	if code == 0 || !strings.Contains(errOut, "Run the same install.sh --restore again") {
+		t.Fatalf("failed restore: %d %s", code, errOut)
+	}
+	st := b.stateFile()
+	if st["restoring"] != "1" || st["lxc_id"] != "105" || st["kept_guests"] != "1" {
+		t.Fatalf("state after the failure: %v", st)
+	}
+	b.resetCalls()
+	code, out, errOut := b.restore(nil, file, net...)
+	if code != 0 {
+		t.Fatalf("second restore: %d\n%s\n%s", code, out, errOut)
+	}
+	calls := b.calls()
+	if d, c := index(calls, "pct destroy 105"), index(calls, "pct create 105"); d < 0 || c < d {
+		t.Errorf("the half-made LXC was not destroyed first:\n%s", strings.Join(calls, "\n"))
+	}
+	st = b.stateFile()
+	if st["restoring"] != "" || st["kept_guests"] != "" || st["lxc_id"] != "105" {
+		t.Errorf("state after the restore: %v", st)
+	}
+	if !strings.Contains(out, "No backup copy timer is set") {
+		t.Errorf("no hint for the copy timer:\n%s", out)
+	}
+	// A restored LXC (it has a database) is never destroyed by --restore.
+	b2, file2 := keptHost(t)
+	b2.restore([]string{"FAKE_RESTORE_FAIL=0", "FAKE_SIGNAL_ON_RESTART=TERM"}, file2, net...)
+	if b2.stateFile()["restoring"] == "1" {
+		code, _, errOut = b2.restore(nil, file2, net...)
+		if code == 0 || !strings.Contains(errOut, "has a restored database") {
+			t.Errorf("restored LXC: %d %s", code, errOut)
+		}
 	}
 }
 
