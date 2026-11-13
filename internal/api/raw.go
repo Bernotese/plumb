@@ -39,7 +39,10 @@ type rawCache struct {
 }
 
 // headRaw runs fn with the Set of the head revision and the sources of
-// target, under the cache lock. No head: fn is not called.
+// target, under the cache lock. No head: fn is not called. The load and
+// the render of a Target run under the lock too, so after a head change
+// concurrent views of different Targets wait for each other; fine at
+// homelab scale (review L2 of #218), and a Set is not shared unlocked.
 func (s *Server) headRaw(ctx context.Context, target string, fn func(set *state.Set, src map[string]state.Source)) error {
 	head, err := s.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {

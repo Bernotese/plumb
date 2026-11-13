@@ -24,5 +24,5 @@ The controller serves the raw-mode fields of the contract (D-296, D-301), so the
 `pl-backend/T-125-raw-mode-api` · tests: `make lint test build` green; `TestRawMode` (admin + read token, every answer checked against the contract), `TestToSourceView`, `TestSourcesAndOverrides`.
 - `state.Set.Sources` (resource → Block use) and `Overrides`; `api/raw.go` sets `Issue.source`/`Issue.raw` and `TargetView.raw` (names only, never values). Read only: no new endpoint, no write path.
 - The head Set is cached per revision (revisions never change), so issue and target lists load it once.
-- Review L2 of #219: Accept (also "as raw") copied any reported attribute, so a forged firewall drift with `allow_no_ssh: true` (or `ssh_port`/`ssh_sources`) could drop the SSH rule. Now `issue.AcceptRefused` refuses these, `ssh` and `table` (409 `action-not-allowed`), and the Issue offers no accept (`TestRawAcceptFirewallSSH`).
+- Review L2 of #219 / M1 of #218: Accept (also "as raw") copied any reported attribute, so a forged firewall drift (`allow_no_ssh: true`, ports, `policy`) could weaken the firewall. Now `issue.AcceptRefused` refuses every Accept on `firewall:*` (409 `action-not-allowed`); the Issue offers no accept and `raw` is false (`TestRawAcceptFirewallSSH`).
 - The contract has no planned mark on these fields; "Missing on an older controller" stays (still true).
