@@ -91,7 +91,7 @@ func TestMvHangupIsChecked(t *testing.T) {
 // failed restore shows what the real run does and changes nothing.
 func TestRestoreRerunDryRun(t *testing.T) {
 	b, file := keptHost(t)
-	net := []string{"--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1"}
+	net := []string{"--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1"}
 	if code, _, errOut := b.restore([]string{"FAKE_RESTORE_FAIL=1"}, file, net...); code == 0 {
 		t.Fatalf("first restore did not fail: %s", errOut)
 	}
