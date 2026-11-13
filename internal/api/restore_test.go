@@ -216,7 +216,12 @@ func TestRestoreConfirmAndIssues(t *testing.T) {
 	}
 	e.backups.Wait()
 
-	// agent:silent: web1 runs, its agent sent no hello since the confirm.
+	// agent:silent: web1 runs, but its agent has a credential that this
+	// controller does not know (it enrolled again after the backup): it
+	// is offline here and its last hello is from before the restore.
+	if err := e.link.Revoke(e.ctx, "web1"); err != nil {
+		t.Fatal(err)
+	}
 	clk.add(plan.SilentAfter + time.Minute)
 	e.eng.CheckGuests(e.ctx)
 	silent, err := e.st.OpenIssue(e.ctx, "web1", plan.AgentSilentID)
@@ -267,5 +272,59 @@ func TestRestoreRecoverRuns(t *testing.T) {
 	}
 	if r, _ := e.st.GetRun(e.ctx, run.ID); r.Status != "failed" {
 		t.Errorf("run: %+v", r)
+	}
+}
+
+// An agent that said hello in restored mode and stays online sends no new
+// hello after the confirm: it is not silent (review M1 of #222).
+func TestRestoreOnlineAgentNotSilent(t *testing.T) {
+	e, _, _, clk := restoredEnv(t)
+	adm := e.login("admin", "restored-password-1")
+	adm.do("PUT", "/api/v1/session/password", map[string]string{"current_password": "restored-password-1", "new_password": "another-good-password"})
+	if code, body := adm.do("POST", "/api/v1/restore/confirm", map[string]any{"old_controller_off": true}); code != 200 {
+		t.Fatalf("confirm: %d %s", code, body)
+	}
+	clk.add(plan.SilentAfter + time.Minute)
+	e.eng.CheckGuests(e.ctx)
+	for _, target := range []string{"web1", "web2"} {
+		if _, err := e.st.OpenIssue(e.ctx, target, plan.AgentSilentID); err == nil {
+			t.Errorf("%s: agent:silent for an online agent", target)
+		}
+	}
+}
+
+// After a restore a VMID can hold another guest: the old controller
+// deleted the bound guest and Proxmox gave the VMID to a new one (review
+// H2 of #222). The bound guest is missing, and no Run writes to the
+// other guest, also not a delete of the Target.
+func TestRestoreForeignVMID(t *testing.T) {
+	e, _, _, _ := restoredEnv(t)
+	b1, _ := e.st.GetBinding(e.ctx, "Target", "web1")
+	b2, _ := e.st.GetBinding(e.ctx, "Target", "web2")
+	if err := e.drv.Delete(e.ctx, driver.GuestID(b2.Ref)); err != nil {
+		t.Fatal(err)
+	}
+	b2.Ref = b1.Ref // the VMID of web2 now holds a guest of another name
+	if err := e.st.PutBinding(e.ctx, b2); err != nil {
+		t.Fatal(err)
+	}
+	e.eng.CheckGuests(e.ctx)
+	if _, err := e.st.OpenIssue(e.ctx, "web2", plan.GuestMissingID); err != nil {
+		t.Fatalf("no guest:missing for a reused VMID: %v", err)
+	}
+	if _, err := e.st.AgentByTarget(e.ctx, "web2"); err == nil {
+		t.Error("the agent of web2 was not revoked")
+	}
+	adm := e.login("admin", "restored-password-1")
+	adm.do("PUT", "/api/v1/session/password", map[string]string{"current_password": "restored-password-1", "new_password": "another-good-password"})
+	if code, body := adm.do("POST", "/api/v1/restore/confirm", map[string]any{"old_controller_off": true}); code != 200 {
+		t.Fatalf("confirm: %d %s", code, body)
+	}
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "remove web2", "delete": []map[string]string{{"kind": "Target", "name": "web2"}}})
+	if _, err := e.drv.Observe(e.ctx, driver.GuestID(b1.Ref)); err != nil {
+		t.Fatalf("the delete of web2 removed the guest of web1: %v", err)
+	}
+	if _, err := e.st.GetBinding(e.ctx, "Target", "web2"); err != nil {
+		t.Errorf("binding of web2 is gone although the delete was refused: %v", err)
 	}
 }

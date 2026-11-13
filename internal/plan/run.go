@@ -636,6 +636,13 @@ type guestResult struct {
 // ref is the template that the Run fetched already (a container), or "".
 func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, tp TargetPlan, r *state.Rendered, planned ResourceChange, ref driver.ImageRef) (guestResult, error) {
 	var res guestResult
+	if tp.Guest != "create" {
+		// After a restore the VMID may hold another guest (review H2 of
+		// #222): no write to it.
+		if err := e.checkOwnGuest(ctx, tp.Target); err != nil {
+			return res, err
+		}
+	}
 	switch tp.Guest {
 	case "delete":
 		b, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target)

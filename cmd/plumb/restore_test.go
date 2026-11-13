@@ -20,6 +20,11 @@ import (
 // and enrollment tokens. It returns the file and the key.
 func makeBackup(t *testing.T) (string, secret.Key) {
 	t.Helper()
+	return makeBackupUsers(t, true)
+}
+
+func makeBackupUsers(t *testing.T, withAdmin bool) (string, secret.Key) {
+	t.Helper()
 	ctx := context.Background()
 	data := t.TempDir()
 	st, err := store.Open(ctx, filepath.Join(data, "plumb.db"))
@@ -32,7 +37,11 @@ func makeBackup(t *testing.T) (string, secret.Key) {
 		t.Fatal(err)
 	}
 	fast := api.PasswordParams{Time: 1, Memory: 64, Threads: 1}
-	admin, _ := st.CreateUser(ctx, store.User{Name: "admin", PasswordHash: api.HashPassword("old-admin-password", fast)})
+	name := "admin"
+	if !withAdmin {
+		name = "root"
+	}
+	admin, _ := st.CreateUser(ctx, store.User{Name: name, PasswordHash: api.HashPassword("old-admin-password", fast)})
 	st.CreateUser(ctx, store.User{Name: "bob", PasswordHash: api.HashPassword("bob-password", fast)})
 	st.CreateSession(ctx, store.Session{IDHash: "s1", UserID: admin.ID, ExpiresAt: time.Now().Add(time.Hour)})
 	st.CreateToken(ctx, store.Token{ID: "tok_ci", Name: "ci", Hash: "h1", Tier: "plan", CreatedBy: "user:admin"})
@@ -181,5 +190,47 @@ func TestRestoreCLI(t *testing.T) {
 	// A second restore into the now full data directory is refused.
 	if code := restoreCmd(ctx, args, termIO(&out, &errOut)); code != exitFailed {
 		t.Errorf("second restore: %d", code)
+	}
+}
+
+// A restore that fails after the file was verified leaves no database in
+// the data directory; the rest is cleaned at the next try (review H1 of
+// #222).
+func TestRestoreFailureLeavesNoDatabase(t *testing.T) {
+	ctx := context.Background()
+	file, key := makeBackupUsers(t, false) // no user admin: the restore step fails
+	data := t.TempDir()
+	os.MkdirAll(filepath.Join(data, "key"), 0o700)
+	secret.WriteKeyFile(filepath.Join(data, "key", "master.key"), key)
+	var out, errOut bytes.Buffer
+	if code := restoreCmd(ctx, []string{"--data", data, "--from", file}, termIO(&out, &errOut)); code != exitFailed ||
+		!strings.Contains(errOut.String(), "admin") {
+		t.Fatalf("restore without admin: %d %s", code, errOut.String())
+	}
+	ents, _ := os.ReadDir(data)
+	if len(ents) != 1 || ents[0].Name() != "key" {
+		t.Fatalf("data dir after a failed restore: %v", ents)
+	}
+	if strings.Contains(out.String(), "Password") {
+		t.Error("a password was shown for a failed restore")
+	}
+	// The rest of a restore cut before its commit point: link/ and a temp
+	// dir without plumb.db. A new try cleans them and works.
+	good, key2 := makeBackup(t)
+	data2 := t.TempDir()
+	os.MkdirAll(filepath.Join(data2, "key"), 0o700)
+	secret.WriteKeyFile(filepath.Join(data2, "key", "master.key"), key2)
+	os.MkdirAll(filepath.Join(data2, "link"), 0o700)
+	os.MkdirAll(filepath.Join(data2, ".restore-123"), 0o700)
+	if code := restoreCmd(ctx, []string{"--data", data2, "--from", good}, termIO(&out, &errOut)); code != 0 {
+		t.Fatalf("restore after a cut one: %d %s", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(data2, ".restore-123")); !os.IsNotExist(err) {
+		t.Error("the old temp dir stays")
+	}
+	for _, f := range []string{"plumb.db-wal", "plumb.db-shm"} {
+		if fi, err := os.Stat(filepath.Join(data2, f)); err == nil && fi.Size() > 0 {
+			t.Errorf("%s with data next to the database", f)
+		}
 	}
 }

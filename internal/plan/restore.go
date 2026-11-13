@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -66,8 +67,12 @@ const interruptedByRestore = "interrupted by a restore"
 
 // restoreState is what the engine keeps of a restore.
 type restoreState struct {
-	mu       sync.Mutex
-	revoked  map[string]bool // targets whose agent a guest:missing revoked
+	mu      sync.Mutex
+	revoked map[string]bool // targets whose agent a guest:missing revoked
+	// foreign are VMIDs of bindings whose guest has another name: the old
+	// controller deleted the bound guest and Proxmox gave the VMID to a
+	// new one (review H2 of #222). Unknown guests list them.
+	foreign  map[string]bool
 	unknown  []driver.PoolGuest
 	unknownT time.Time
 }
@@ -134,26 +139,73 @@ func (e *Engine) restoreIssue(ctx context.Context, target, id string, status wir
 }
 
 // checkSilent opens agent:silent for a bound, running guest whose agent
-// sent no hello since the confirm, once SilentAfter passed; a hello
-// after the confirm resolves it.
-func (e *Engine) checkSilent(ctx context.Context, target string, observed driver.GuestState) error {
-	if !e.cfg.Restore.Restored() || e.restoreActive() {
+// this controller never heard since the restore, once SilentAfter passed
+// after the confirm; a hello resolves it. An agent that said hello in
+// restored mode and stays connected says no new hello, so a hello since
+// the restore or an online agent counts (review M1 of #222).
+func (e *Engine) checkSilent(ctx context.Context, target string, observed driver.GuestState, r store.RestoreState) error {
+	if !r.Restored || r.RestoredMode || r.ConfirmedAt.IsZero() || e.cfg.Now().Sub(r.ConfirmedAt) < SilentAfter {
 		return nil
 	}
-	r, err := e.st.GetRestore(ctx)
-	if err != nil || r.ConfirmedAt.IsZero() || e.cfg.Now().Sub(r.ConfirmedAt) < SilentAfter {
-		return err
-	}
 	a, err := e.st.AgentByTarget(ctx, target)
-	heard := err == nil && a.Hello != nil && !a.Hello.At.Before(r.ConfirmedAt)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	heard := e.cfg.Agents.Online(target) || err == nil && a.Hello != nil && !a.Hello.At.Before(r.RestoredAt)
 	if heard || observed.Power != driver.PowerRunning {
 		return e.restoreIssue(ctx, target, AgentSilentID, wire.StatusUnchanged, nil)
 	}
 	return e.restoreIssue(ctx, target, AgentSilentID, wire.StatusDiffers,
 		[]wire.Change{{Attr: "hello", From: nil, To: "any", Risk: wire.RiskRead}})
+}
+
+// setForeign records whether the VMID of a binding belongs to another
+// guest now.
+func (e *Engine) setForeign(ref string, foreign bool) {
+	e.restore.mu.Lock()
+	defer e.restore.mu.Unlock()
+	if e.restore.foreign == nil {
+		e.restore.foreign = map[string]bool{}
+	}
+	if foreign != e.restore.foreign[ref] {
+		e.restore.unknownT = time.Time{} // list the guests again
+	}
+	if foreign {
+		e.restore.foreign[ref] = true
+	} else {
+		delete(e.restore.foreign, ref)
+	}
+}
+
+// ErrForeignGuest: after a restore the VMID of a Target belongs to
+// another guest; the Run does not touch it (review H2 of #222).
+var ErrForeignGuest = errors.New("plan: after the restore this VMID holds another guest; Plumb does not touch it (the Issue guest:missing tells)")
+
+// checkOwnGuest is the guard of a Run on the guest of a Target after a
+// restore: the bound VMID must still hold a guest with the name of the
+// Target. A guest that is gone is no error here.
+func (e *Engine) checkOwnGuest(ctx context.Context, target string) error {
+	if !e.cfg.Restore.Restored() {
+		return nil
+	}
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	observed, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+	if errors.Is(err, driver.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if observed.Spec.Name != target {
+		return fmt.Errorf("%w (VMID %s, name %q, Target %s)", ErrForeignGuest, b.Ref, observed.Spec.Name, target)
+	}
+	return nil
 }
 
 // unknownTTL is how long the list of unknown guests is kept.
@@ -175,13 +227,18 @@ func (e *Engine) UnknownGuests(ctx context.Context) ([]driver.PoolGuest, error) 
 		return nil, err
 	}
 	known := map[string]bool{}
+	e.restore.mu.Lock()
+	foreign := maps.Clone(e.restore.foreign)
+	e.restore.mu.Unlock()
 	for _, kind := range []string{state.KindTarget, state.KindImage} {
 		binds, err := e.st.Bindings(ctx, kind)
 		if err != nil {
 			return nil, err
 		}
 		for _, b := range binds {
-			known[b.Ref] = true
+			if !foreign[b.Ref] {
+				known[b.Ref] = true
+			}
 		}
 	}
 	builds, err := e.cfg.Driver.ListBuilds(ctx)

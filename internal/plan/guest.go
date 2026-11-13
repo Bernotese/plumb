@@ -40,6 +40,12 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var restored store.RestoreState // read once per poll (review L3 of #222)
+	if e.cfg.Restore.Restored() {
+		if restored, err = e.st.GetRestore(ctx); err != nil {
+			return err
+		}
+	}
 	var errs []error
 	now := e.cfg.Now()
 	seen := map[string]bool{}
@@ -67,11 +73,22 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
-		if e.cfg.Restore.Restored() {
+		if restored.Restored {
+			// The VMID may hold another guest now (review H2 of #222):
+			// then the bound guest is missing, and the other one is
+			// unknown.
+			if observed.Spec.Name != b.Name {
+				e.setForeign(b.Ref, true)
+				if err := e.guestMissing(ctx, b); err != nil {
+					errs = append(errs, err)
+				}
+				continue
+			}
+			e.setForeign(b.Ref, false)
 			if err := e.restoreIssue(ctx, b.Name, GuestMissingID, wire.StatusUnchanged, nil); err != nil {
 				errs = append(errs, err)
 			}
-			if err := e.checkSilent(ctx, b.Name, observed); err != nil {
+			if err := e.checkSilent(ctx, b.Name, observed, restored); err != nil {
 				errs = append(errs, err)
 			}
 		}

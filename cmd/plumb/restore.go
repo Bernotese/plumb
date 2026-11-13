@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/api"
@@ -133,14 +134,8 @@ func restore(ctx context.Context, data, from, keyFile string, kio keyIO) (int, e
 	if err != nil {
 		return exitFailed, fmt.Errorf("%w (run plumb key restore first)", err)
 	}
-	ents, err := os.ReadDir(data)
-	if err != nil {
+	if err := cleanRestoreRest(data); err != nil {
 		return exitFailed, err
-	}
-	for _, e := range ents {
-		if e.Name() != "key" && e.Name() != "lost+found" {
-			return exitFailed, fmt.Errorf("%s is not empty (%s): restore only into a new install", data, e.Name())
-		}
 	}
 	max, err := store.MaxSchemaVersion()
 	if err != nil {
@@ -191,30 +186,101 @@ func restore(ctx context.Context, data, from, keyFile string, kio keyIO) (int, e
 	if err != nil {
 		return exitFailed, fmt.Errorf("backup header: created_at: %w", err)
 	}
-	if err := os.Rename(filepath.Join(tmp, "plumb.db"), filepath.Join(data, "plumb.db")); err != nil {
+	// Everything happens on the database in the temp directory: the
+	// migration, the key check and the restore step. Only then link/ and,
+	// last, plumb.db move in place: the rename of plumb.db is the commit
+	// point. A failure or a crash before it leaves no database in the
+	// data directory (review H1 of #222).
+	password, err := restoreDB(ctx, filepath.Join(tmp, "plumb.db"), key, created, h)
+	if err != nil {
 		return exitFailed, err
 	}
 	if err := os.Rename(filepath.Join(tmp, "link"), filepath.Join(data, "link")); err != nil {
 		return exitFailed, err
 	}
-	st, err := store.Open(ctx, filepath.Join(data, "plumb.db")) // migrates an older schema
-	if err != nil {
+	if err := syncDir(data); err != nil {
 		return exitFailed, err
 	}
-	defer st.Close()
-	if _, err := secret.Open(ctx, st, key); err != nil {
+	if err := os.Rename(filepath.Join(tmp, "plumb.db"), filepath.Join(data, "plumb.db")); err != nil {
 		return exitFailed, err
 	}
-	header, err := json.Marshal(h)
-	if err != nil {
-		return exitFailed, err
-	}
-	password := api.RandomPassword()
-	if err := st.Restore(ctx, created, header, api.HashPassword(password, api.DefaultPasswordParams)); err != nil {
+	if err := syncDir(data); err != nil {
 		return exitFailed, err
 	}
 	fmt.Fprintf(kio.out, "Restored the backup of %s (install %s).\n", h.CreatedAt, h.InstallID)
 	fmt.Fprintf(kio.out, "User: admin  Password: %s\nThis password is shown once. The first login must change it. Every other user is locked, every API token is disabled.\n", password)
 	fmt.Fprintln(kio.out, "Plumb starts in restored mode: it changes nothing until you confirm that the old controller is off (POST /restore/confirm).")
 	return 0, nil
+}
+
+// restoreDB migrates the database file, checks the key against it and
+// runs the restore step (D-303). It returns the new admin password. The
+// database is closed when it returns, and no WAL file stays next to it.
+func restoreDB(ctx context.Context, db string, key secret.Key, created time.Time, h backup.Header) (string, error) {
+	st, err := store.Open(ctx, db) // migrates an older schema
+	if err != nil {
+		return "", err
+	}
+	password, err := func() (string, error) {
+		if _, err := secret.Open(ctx, st, key); err != nil {
+			return "", err
+		}
+		header, err := json.Marshal(h)
+		if err != nil {
+			return "", err
+		}
+		password := api.RandomPassword()
+		return password, st.Restore(ctx, created, header, api.HashPassword(password, api.DefaultPasswordParams))
+	}()
+	if cerr := st.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return "", err
+	}
+	// The last close checkpoints the WAL. A WAL that still holds data
+	// would carry the restore step outside plumb.db.
+	if fi, serr := os.Stat(db + "-wal"); serr == nil && fi.Size() > 0 {
+		return "", errors.New("the database left a WAL file with data after close")
+	}
+	os.Remove(db + "-wal")
+	os.Remove(db + "-shm")
+	return password, nil
+}
+
+// cleanRestoreRest checks that the data directory holds nothing but the
+// key volume. The rest of a restore that stopped before its commit point
+// (link/ or .restore-* without plumb.db) is removed; anything else
+// refuses.
+func cleanRestoreRest(data string) error {
+	ents, err := os.ReadDir(data)
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		if e.Name() == "plumb.db" {
+			return fmt.Errorf("%s holds a database: restore only into a new install", data)
+		}
+	}
+	for _, e := range ents {
+		switch n := e.Name(); {
+		case n == "key" || n == "lost+found":
+		case n == "link" && e.IsDir(), strings.HasPrefix(n, ".restore-") && e.IsDir():
+			if err := os.RemoveAll(filepath.Join(data, n)); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%s is not empty (%s): restore only into a new install", data, n)
+		}
+	}
+	return nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
