@@ -47,6 +47,7 @@ func exact(calls []string, c string) int {
 }
 
 func TestNewInstallSetsVztmpl(t *testing.T) {
+	t.Parallel()
 	h := installed(t)
 	if c := h.content("plumb-images"); c != "import,vztmpl" {
 		t.Errorf("content of plumb-images = %q", c)
@@ -62,6 +63,7 @@ func TestNewInstallSetsVztmpl(t *testing.T) {
 }
 
 func TestUpgradeOrder(t *testing.T) {
+	t.Parallel()
 	h := oldInstall(t)
 	want := h.newBinary()
 	code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
@@ -94,6 +96,7 @@ func TestUpgradeOrder(t *testing.T) {
 }
 
 func TestUpgradeDryRun(t *testing.T) {
+	t.Parallel()
 	h := oldInstall(t)
 	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -122,6 +125,7 @@ func TestUpgradeDryRun(t *testing.T) {
 // back to import, and the failure text gives the line for a manual
 // rollback of the binary.
 func TestUpgradeRollback(t *testing.T) {
+	t.Parallel()
 	for name, env := range map[string][]string{
 		"crash loop":     {"FAKE_CRASH_LOOP=1", "PLUMB_INSTALL_RUNNING_TRIES=2"},
 		"old process":    {"FAKE_RESTART_OLD=1", "PLUMB_INSTALL_RUNNING_TRIES=2"},
@@ -132,6 +136,7 @@ func TestUpgradeRollback(t *testing.T) {
 		"SIGTERM": {"FAKE_SIGNAL_ON_RESTART=TERM"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			h := oldInstall(t)
 			h.newBinary()
 			code, out, errOut := h.run(append(asRoot, env...), "--yes", "--plumb-binary", h.plumb)
@@ -183,6 +188,7 @@ func TestUpgradeRollback(t *testing.T) {
 // The image storage rule of D-084 accepts {import} and {import, vztmpl}
 // as sets; install.sh changes only the plumb-images that it made.
 func TestImageStorageContentRule(t *testing.T) {
+	t.Parallel()
 	for content, ok := range map[string]bool{
 		"import":            true,
 		"import,vztmpl":     true,
@@ -232,6 +238,7 @@ func TestImageStorageContentRule(t *testing.T) {
 
 // --remove also removes the empty template directories of vztmpl.
 func TestRemoveTemplateDirs(t *testing.T) {
+	t.Parallel()
 	h := installed(t)
 	os.MkdirAll(filepath.Join(h.images(), "template", "cache"), 0o755)
 	os.MkdirAll(filepath.Join(h.images(), "import"), 0o755)
