@@ -21,7 +21,8 @@ func TestNameRE(t *testing.T) {
 	bad := []string{
 		"", "plumb-.pbk", "../plumb-1.pbk", "plumb-1.pbk/../x", "plumb-1.pbk\n",
 		"/etc/plumb-1.pbk", "plumb-1 .pbk", "plumb-1.pbk.sha256", TempPrefix + "plumb-1.pbk",
-		PointerName, "plumb-1.PBK", "x-plumb-1.pbk",
+		PointerName, "plumb-1.PBK", "x-plumb-1.pbk", "plumb----.pbk", "plumb-20261113T030000Z-1234.pbk",
+		"plumb-20261113T0300Z.pbk", "plumb-20261113T030000.pbk",
 	}
 	for _, n := range bad {
 		if NameRE.MatchString(n) {

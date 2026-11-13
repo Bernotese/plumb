@@ -28,7 +28,8 @@
 // last flag before the end, data after the last chunk, and a file that
 // ends without a last chunk. So nothing can be cut, reordered, swapped
 // between files or changed, and the header is authenticated by the
-// first chunk.
+// first chunk. The AAD hashes the header bytes exactly as read from the
+// file, never a re-encoded JSON value (review L3 of #214).
 package backup
 
 import "regexp"
@@ -120,11 +121,11 @@ const (
 )
 
 // NameRE is the only form of a backup file name: "plumb-" + the UTC time
-// as 20060102T150405Z + ".pbk", with "-<n>" before the suffix when two
-// backups start in the same second. The host copy timer refuses every
-// other name and never uses a name from the container as a host path
-// (D-289 N1).
-var NameRE = regexp.MustCompile(`^plumb-[0-9TZ-]+\.pbk$`)
+// as 20060102T150405Z + ".pbk", with "-<n>" (1 to 3 digits) before the
+// suffix when two backups start in the same second. The host copy timer
+// refuses every other name and never uses a name from the container as a
+// host path (D-289 N1).
+var NameRE = regexp.MustCompile(`^plumb-[0-9]{8}T[0-9]{6}Z(-[0-9]{1,3})?\.pbk$`)
 
 // NameLayout is the time layout of a backup name.
 const NameLayout = "20060102T150405Z"

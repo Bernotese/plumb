@@ -44,8 +44,9 @@ info:
     `POST /restore/confirm`. Until then these return 409 `restored-mode`: `POST /plans/{id}/approve`,
     `POST /targets/{name}/reenroll`, `POST /images/{name}/build`, `POST /backups`. Creating a Plan
     (a proposal, an issue action, a rollback, an import, an agent update) still works; it waits
-    for the confirm. A restore disables every API token (`Token.disabled_at`) and drops every
-    session; every user must change the password at the next login.
+    for the confirm. A restore disables every API token (`Token.disabled_at`), drops every
+    session, gives the user `admin` a new random password (shown once on the installer
+    terminal; the old one no longer works) and locks every other user.
   license:
     name: Proprietary
     identifier: LicenseRef-Plumb
@@ -2116,7 +2117,8 @@ paths:
         A person confirms that the old controller is off (D-290). Human session only: a token
         gets 403 `human-required`. After it the engine, the schedules and the agent commands run
         again, and `agent:silent` starts to count (D-303). 409 `nothing-to-do` when the controller
-        is not in restored mode.
+        is not in restored mode. The confirm sends the current watch list to every online agent:
+        until then they keep the watch list of the old controller.
       security:
         - session: []
       requestBody:
@@ -3611,7 +3613,7 @@ components:
       additionalProperties: false
       required: [name, created_at, size, sha256]
       properties:
-        name: { type: string, pattern: "^plumb-[0-9TZ-]+\\.pbk$", examples: ["plumb-20261113T030000Z.pbk"] }
+        name: { type: string, pattern: "^plumb-[0-9]{8}T[0-9]{6}Z(-[0-9]{1,3})?\\.pbk$", examples: ["plumb-20261113T030000Z.pbk"] }
         created_at: { $ref: "#/components/schemas/Time" }
         size: { type: integer, format: int64, minimum: 0 }
         sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
