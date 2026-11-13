@@ -31,7 +31,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-106 second short host run (2026-11-13): controller on main e909458; T-102 (75 s lost link), T-103, T-104, T-105 passed on the real host; finding F3 → T-108; host clean | pl-backend | done (log PR #207) |
 | T-108 a short link drop (30 s) during an agent update no longer fails the Run with a false "old binary" (T-106 F3) | pl-backend | merged (PR #209, D-297, D-298); CI test replays the host timeline |
 | T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **approved by the user 2026-11-13** (all 6 recommendations; D-287 … D-296 accepted; plan PR #206). No new token right. Child cards T-110 … T-122 |
-| T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | T-111: PR #211, review passed up to two small fixes; T-110 in work |
+| T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | T-111 merged (PR #211, D-299 … D-301); T-110: PR #214, review passed, CI pending |
 | T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | T-116 in work; T-112, T-113 wait for T-110 |
 | T-114 installer (copy timer, `--remove --keep-guests`, `--restore`) · T-115 Proxmox day 2 | pl-reviewer (pl-architect reviews) | T-115 in work; T-114 waits for T-110 |
 | T-117 agent command `grow` | pl-codex-fix | PR #212, waits for the contract #211 and review |
@@ -39,6 +39,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-118 web slice 4 · T-119 starter Block `firewall` | pl-frontend | T-118 in work (filter, raw mode, power/tags/disk done locally; backups wait for T-110) |
 | T-120 QA slice 4 | pl-codex-qa | per card |
 | T-122 slice 4 real-host acceptance | pl-backend | last |
+| T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
+| T-124 GitHub releases with ready binaries and checksums: prepare only; **a release needs the user's own yes** | pl-codex-qa | in work |
 | T-109 flaky `TestAgentUpdateCommand` (test asserted too early; product safe) | pl-codex-qa | merged (PR #208) |
 
 Order with the test host: real-host part of T-015 on the running install → `--remove` and a fresh install from main (D-180) (two static VM addresses from the user are in `~/.config/plump/testhost.env`) → slice 2 part B (T-039 image builds, then T-038 LXC).

@@ -202,24 +202,32 @@ const GrowItemID = GrowItemType + ":root"
 // Safe apply (D-293, D-300). For a resource type in SafeApplyTypes the
 // agent, inside an apply:
 //
-//  1. writes the marker <state>/safe-apply.json (version 1: resource id,
-//     deadline) before it changes anything;
-//  2. applies the new state live, but keeps the confirmed state where the
-//     guest loads it at boot (for firewall: /etc/plumb/firewall.nft,
-//     loaded by plumb-firewall.service before the network);
-//  3. closes its idle connections and sends a Report of type
+//  1. checks every value (ports, ranges, CIDRs) and builds the new rules;
+//     a bad value fails the Item with nothing changed;
+//  2. arms the rollback timer: a transient systemd timer
+//     (systemd-run --on-active=120s, unit plumb-agent-firewall-rollback)
+//     that loads the confirmed state (or, before the first confirm,
+//     deletes the table), so a dead agent cannot keep unconfirmed rules;
+//  3. writes the marker <state>/safe-apply.json (version 1: command id,
+//     resource id, deadline);
+//  4. applies the new state live, but keeps the confirmed state where the
+//     guest loads it at boot (firewall: /etc/plumb-agent/firewall.nft, a
+//     protected agent path, loaded by plumb-agent-firewall.service);
+//  5. closes its idle connections and sends a Report of type
 //     ReportConfirm for the resource over a new TCP and TLS connection;
-//  4. on a 2xx answer within SafeApplySeconds of the change, makes the new
-//     state the confirmed one, removes the marker, and reports the Item
-//     StatusApplied;
-//  5. else puts the confirmed state back live, removes the marker, and
-//     reports the Item StatusFailed with RolledBack and Output.
+//  6. on a 2xx answer within SafeApplySeconds of the change, makes the new
+//     state the confirmed one, stops the rollback timer, removes the
+//     marker, and reports the Item StatusApplied;
+//  7. else puts the confirmed state back live, stops the timer, removes
+//     the marker, and reports the Item StatusFailed with RolledBack.
 //
 // An agent that starts and finds the marker (it died in the window, or
-// the guest rebooted) puts the confirmed state back before it does
-// anything else. A reboot in the window loads the confirmed state. The
-// update guard of D-271 is not used for this: it runs only after an
-// update, as the old binary.
+// the guest rebooted) puts the confirmed state back first, stops the
+// timer, and sends a result for the command id of the marker: the Item
+// StatusFailed with RolledBack, the other resources of the apply
+// StatusFailed with "the agent restarted during the apply". The
+// controller still waits for that apply, so the Run step ends failed and
+// rolled back, not at the apply timeout.
 const SafeApplySeconds = 90
 
 // SafeApplyTypes are the resource types with safe apply.
