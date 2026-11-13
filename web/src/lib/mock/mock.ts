@@ -43,6 +43,7 @@ import { CREATE_ONLY, maxRisk, REENROLL_REFUSED } from "../view";
 import { diskUse, nextSlot } from "../images";
 import { toYaml } from "../yaml";
 import { checkBlock } from "../blockCheck";
+import { usersOf } from "../blocks";
 import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
 import { buildRuns, diskRefusal, GIB, seedImages, seedLxc, seedTargets } from "./imageSeed";
@@ -898,6 +899,17 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     }
   }
 
+  /** One page, newest (highest id) first; the mock cursor is the id of the first item. */
+  function page<T extends { id: number }>(all: T[], cursor: string | undefined, limit: number) {
+    const from = cursor ? Number(cursor) : Infinity;
+    const rest = all.filter((x) => x.id <= from).sort((a, b) => b.id - a.id);
+    const next = rest[limit];
+    return structuredClone({
+      items: rest.slice(0, limit),
+      next: next ? String(next.id) : null,
+    });
+  }
+
   function findPlan(id: number): Plan {
     const p = plans.get(id);
     if (!p) throw problem("not-found", "Not found", 404, `Plan ${id} does not exist.`);
@@ -1695,6 +1707,50 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         }
         planTargets.push({ target: t.name, ...(used.length ? { secrets: used } : {}), resources });
       }
+      // A deleted Block must not be in use by a Target or Image that stays (server: 422).
+      for (const ref of proposal.delete ?? []) {
+        if (ref.kind === "Block") {
+          if (!blocks.has(ref.name))
+            throw problem(
+              "validation",
+              "Validation failed",
+              422,
+              `Block "${ref.name}" does not exist and cannot be deleted.`,
+            );
+          const gone = new Set(
+            (proposal.delete ?? []).filter((d) => d.kind === "Target").map((d) => d.name),
+          );
+          const u = usersOf(
+            ref.name,
+            [...targets.values()].filter((t) => !gone.has(t.document.name)),
+            images,
+          );
+          const first = u.targets[0] ?? u.images[0];
+          if (first)
+            throw problem("validation", "Validation failed", 422, "The documents are not valid.", {
+              errors: [
+                { pointer: "/delete", message: `Block "${ref.name}" is used by "${first}".` },
+              ],
+            });
+        }
+        if (ref.kind !== "Target") continue;
+        const t = targets.get(ref.name);
+        if (!t)
+          throw problem(
+            "validation",
+            "Validation failed",
+            422,
+            `Target "${ref.name}" does not exist and cannot be deleted.`,
+          );
+        planTargets.push({
+          target: ref.name,
+          resources: [
+            resourcePlan("guest:config", "delete", [
+              { attr: "state", from: "present", to: "absent", risk: "destructive" },
+            ]),
+          ],
+        });
+      }
       // Every other Target whose render changes with the Blocks is touched (T-096).
       for (const t of targets.values()) {
         if (planTargets.some((p) => p.target === t.document.name)) continue;
@@ -1741,7 +1797,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         planTargets.push({ target: name, ...(used.length ? { secrets: used } : {}), resources });
       }
       // The gate (D-259): a Target whose agent lacks what its state needs.
+      // A deleted Target renders nothing in the new state: no gate (server checkGate).
+      const deleted = new Set(
+        (proposal.delete ?? []).filter((d) => d.kind === "Target").map((d) => d.name),
+      );
       const outdated = planTargets
+        .filter((p) => !deleted.has(p.target))
         .map((p) => targets.get(p.target))
         .filter((t): t is TargetView => t?.status.agent_update === "required");
       if (outdated.length) {
@@ -1868,8 +1929,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           }
         }
         applyImageDocs(proposal);
-        for (const ref of proposal?.delete ?? [])
+        for (const ref of proposal?.delete ?? []) {
           if (ref.kind === "Target") targets.delete(ref.name);
+          if (ref.kind === "Block") {
+            blocks.delete(ref.name);
+            const at = blockViews.findIndex((v) => v.document.name === ref.name);
+            if (at >= 0) blockViews.splice(at, 1);
+          }
+        }
         for (const doc of proposal?.put ?? []) {
           if (doc.kind === "Block") {
             const b = doc as BlockDoc;
@@ -1923,6 +1990,51 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       active.add(job);
       void job.finally(() => active.delete(job));
       return structuredClone(run);
+    },
+    async listPlans(filter, cursor, limit = 50) {
+      auth();
+      return page(
+        [...plans.values()].filter((p) => !filter?.status || p.status === filter.status),
+        cursor,
+        limit,
+      );
+    },
+    async discardPlan(id) {
+      auth();
+      const p = findPlan(id);
+      if (p.status !== "pending")
+        throw problem("conflict", "Plan is not pending", 409, `Plan ${id} is ${p.status}.`);
+      p.status = "stale";
+      const issue = p.issue_id ? issues.get(p.issue_id) : undefined;
+      if (issue?.status === "resolving" && issue.plan_id === p.id) {
+        issue.status = "open";
+        issue.plan_id = null;
+        issue.actions = ["accept", "revert", "ignore_once", "ignore_rule"];
+        emit("issue.updated", `issue:${issue.id}`, {});
+      }
+      emit("plan.stale", `plan:${p.id}`, {});
+    },
+    async listRuns(cursor, limit = 50) {
+      auth();
+      return page([...runs.values()], cursor, limit);
+    },
+    async commentIssue(id, body) {
+      const s = auth();
+      const issue = issues.get(id);
+      if (!issue) throw new ApiError(example("getIssue", 404));
+      if (!body.trim() || body.length > 10000)
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [{ pointer: "/body", message: "A comment needs 1 to 10000 characters." }],
+        });
+      const c = {
+        id: Math.max(0, ...[...issues.values()].flatMap((i) => i.comments.map((x) => x.id))) + 1,
+        author: s.principal,
+        body,
+        created_at: now(),
+      };
+      issue.comments.push(c);
+      emit("issue.updated", `issue:${issue.id}`, {});
+      return structuredClone(c);
     },
     async getRun(id) {
       auth();

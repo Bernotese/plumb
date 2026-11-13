@@ -275,7 +275,7 @@ describe("History QA edges", () => {
     flushSync();
     // The button stays enabled; an empty reason gives a field error (review #2).
     expect(button("Roll back to this revision")?.disabled).toBe(false);
-    required(document.querySelector("form")).dispatchEvent(
+    required(reason.closest("form")).dispatchEvent(
       new Event("submit", { bubbles: true, cancelable: true }),
     );
     expect(rollback).not.toHaveBeenCalled();

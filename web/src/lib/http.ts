@@ -158,6 +158,21 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     approvePlan: (id, comment) =>
       call<Run>("POST", `/plans/${id}/approve`, comment ? { comment } : {}),
     getRun: (id) => call<Run>("GET", `/runs/${id}`),
+    listPlans: (f, cursor, limit = 50) => {
+      const q = new URLSearchParams();
+      if (f?.status) q.set("status", f.status);
+      q.set("limit", String(limit));
+      if (cursor) q.set("cursor", cursor);
+      return call<PageOf<Plan>>("GET", `/plans?${q.toString()}`);
+    },
+    discardPlan: async (id) => {
+      await call<undefined>("DELETE", `/plans/${id}`);
+    },
+    listRuns: (cursor, limit = 50) =>
+      call<PageOf<Run>>(
+        "GET",
+        `/runs?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      ),
     listIssues: async (f) => {
       const q = new URLSearchParams();
       if (f?.target) q.set("target", f.target);
@@ -172,6 +187,8 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
         ...(reason ? { reason } : {}),
         ...(rule ? { rule } : {}),
       }),
+    commentIssue: (id, body) =>
+      call<Issue["comments"][number]>("POST", `/issues/${id}/comments`, { body }),
     ignoreOnce: (id, reason) =>
       call<Issue>("POST", `/issues/${id}/resolve`, {
         action: "ignore_once",
