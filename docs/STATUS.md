@@ -30,7 +30,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-105 service stopped + enabled with an absent unit: the Plan now shows the enable (follow-up of T-103) | pl-codex-fix | merged (PR #205) |
 | T-106 second short host run (2026-11-13): controller on main e909458; T-102 (75 s lost link), T-103, T-104, T-105 passed on the real host; finding F3 → T-108; host clean | pl-backend | done (log PR #207) |
 | T-108 a short link drop (30 s) during an agent update no longer fails the Run with a false "old binary" (T-106 F3) | pl-backend | merged (PR #209, D-297, D-298); CI test replays the host timeline |
-| T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **Done 2026-11-13.** All cards T-110 … T-137 are on main (63790b7); real-host acceptance T-122 passed (restore proven on the third try, after the fixes T-130 and T-132). No new token right. The test controller runs bf42f61 (before T-133 … T-137; none of them was re-run on the host). Left for later: user management (no way to make a second user), `network` and more NICs, guest adoption |
+| T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **Done 2026-11-13.** All cards T-110 … T-137 are on main (63790b7); real-host acceptance T-122 passed (restore proven on the third try, after the fixes T-130 and T-132). No new token right. The test controller ran bf42f61 at the acceptance (71c14c0 since T-139) (before T-133 … T-137; none of them was re-run on the host). Left for later: user management (no way to make a second user), `network` and more NICs, guest adoption |
 | T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | both merged (PR #211, D-299 … D-301; PR #214, D-302 … D-304, D-311: a restore sets a new admin password) |
 | T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | T-116 merged (PR #213, D-305 … D-307; CI guest job with unprivileged LXC + VM); T-112 merged (PR #220, D-315 … D-317); T-113 merged (PR #222, D-318 … D-320; three review rounds) |
 | T-126 restore follow-ups: one-time password for locked users (human only), renamed guests, durable mark for a foreign guest on a reused VMID (never deleted) | pl-backend | merged (PR #224, D-321, D-322; three review rounds) |
@@ -50,10 +50,10 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-136 CI: install tests run in parallel, each script run bounded; "lint, test, build" needs 8 min of 15 (was 11.7–13.6, cancelled on slow runners) | pl-backend | merged (PR #239) |
 | T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | merged (PR #238) |
 | T-138 road to the release (all open points of BRIEF §5/§6 in slices) + plan of slice 5 | pl-architect, check: pl-reviewer | in work |
-| T-139 prep: facts from the test host for the coming topics (read-only) + test controller to latest main | pl-backend | in work |
-| T-140 prep: risk draft for user management, guest adoption, SSH repair fallback, MCP / AI help | pl-reviewer | in work (plan file only) |
-| T-141 prep: gap list BRIEF §5.2 against the web UI | pl-frontend | in work (plan file only) |
-| T-142 prep: gap list BRIEF §5.4 … §5.9 against the code | pl-codex-qa | in work (plan file only) |
+| T-139 prep: facts from the test host for the coming topics (read-only) + test controller to latest main | pl-backend | **done**: facts on branch `pl-backend/T-139-prep-host-facts` (no PR); the test controller runs 71c14c0 since 2026-11-13 (repair run, 7 ACL lines, storage.cfg unchanged) |
+| T-140 prep: risk draft for user management, guest adoption, SSH repair fallback, MCP / AI help | pl-reviewer | done: branch `pl-reviewer/T-140-risk-draft` (plan file only) |
+| T-141 prep: gap list BRIEF §5.2 against the web UI | pl-frontend | done: branch `pl-frontend/T-141-prep-web-gaps` (plan file only) |
+| T-142 prep: gap list BRIEF §5.4 … §5.9 against the code | pl-codex-qa | done: branch `pl-codex-qa/T-142-prep-code-gaps` (plan file only) |
 | T-143 small leftovers of slice 4 (README sentence, two test nits) | pl-codex-fix | in work |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
