@@ -128,6 +128,8 @@ var types = map[string]Type{
 		// A firewall belongs to one Target: its boot file is an agent path
 		// that seal removes, and a build guest has no safe apply partner.
 		NotInImage: true},
+	// Proxmox owns the network of a container (D-332).
+	"network": {Name: "network", Key: "name", Kinds: []wire.Kind{wire.KindVM}},
 	"command": {Name: "command", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newCommand,
 		NoDrift: true, Destructive: true, NotInImage: true},
 }
