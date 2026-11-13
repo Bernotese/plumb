@@ -54,7 +54,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-140 prep: risk draft for user management, guest adoption, SSH repair fallback, MCP / AI help | pl-reviewer | done: branch `pl-reviewer/T-140-risk-draft` (plan file only) |
 | T-141 prep: gap list BRIEF §5.2 against the web UI | pl-frontend | done: branch `pl-frontend/T-141-prep-web-gaps` (plan file only) |
 | T-142 prep: gap list BRIEF §5.4 … §5.9 against the code | pl-codex-qa | done: branch `pl-codex-qa/T-142-prep-code-gaps` (plan file only) |
-| T-143 small leftovers of slice 4 (README sentence, two test nits) | pl-codex-fix | in work |
+| T-143 small leftovers of slice 4 (README sentence, two test nits) | pl-codex-fix | merged (PR #240) |
 | T-144 slice 5 C1a: contract (catalogue, users and roles, copy rule, `verify` + refresh) | pl-architect | in work |
 | T-149 slice 5 C5: netplan probe in the CI guests | pl-codex-qa | in work |
 | T-153 slice 5 C9a: web gaps that need no new API | pl-frontend | in work |
