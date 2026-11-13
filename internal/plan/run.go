@@ -670,7 +670,11 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		if err := e.cfg.Agents.Revoke(ctx, tp.Target); err != nil {
 			return res, err
 		}
-		return res, e.st.DeleteBinding(ctx, state.KindTarget, tp.Target)
+		if err := e.st.DeleteBinding(ctx, state.KindTarget, tp.Target); err != nil {
+			return res, err
+		}
+		e.targetDeleted(ctx, tp.Target)
+		return res, nil
 
 	case "create":
 		spec, err := e.guestSpec(tp.Target, r)
@@ -1089,6 +1093,7 @@ func (e *Engine) finishDeletes(ctx context.Context, run store.Run) error {
 		if err := e.st.DeleteBinding(ctx, state.KindTarget, tp.Target); err != nil {
 			return err
 		}
+		e.targetDeleted(ctx, tp.Target)
 	}
 	return nil
 }
