@@ -70,7 +70,7 @@ func capName(s string) bool {
 // controller compares them with a Hello. A command type of a newer build
 // goes here with its handler in internal/agent.
 func AgentCommands() []CommandType {
-	return []CommandType{CommandApply, CommandObserve, CommandSeal, CommandUpdate, CommandWatch}
+	return []CommandType{CommandApply, CommandGrow, CommandObserve, CommandSeal, CommandUpdate, CommandWatch}
 }
 
 // BaselineCapabilities is what every agent before slice 3 can do: an agent
