@@ -24,12 +24,15 @@ import (
 // the file that serve wrote (backup.InstallFile), waits while another
 // backup runs, and exits 0 only when the backup is written.
 
-const backupUsage = "usage: plumb backup now [--data DIR] [--key-file PATH] [--wait DURATION]"
+const backupUsage = "usage: plumb backup now [--data DIR] [--key-file PATH] [--wait DURATION] | plumb backup verify [--key-file F] FILE"
 
 // backupWaitPoll is the pause while another backup runs.
 var backupWaitPoll = 2 * time.Second
 
 func backupCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "verify" {
+		return backupVerify(args[1:], osKeyIO(stdout, stderr))
+	}
 	if len(args) == 0 || args[0] != "now" {
 		fmt.Fprintln(stderr, backupUsage)
 		return 2
