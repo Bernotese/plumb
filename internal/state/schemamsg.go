@@ -28,9 +28,10 @@ var notPatterns = map[string]string{
 // ruleMessages are the messages of the other rules, by schema location
 // (relative to https://plumb.invalid/schema/) and keyword.
 var ruleMessages = map[string]string{
-	"resource/firewall.json#/allOf/0/then not":                "allow_no_ssh is true: ssh_port and ssh_sources must then be missing (there is no SSH rule)",
-	"resource/firewall.json#/allOf/1/then/propertyNames enum": "state is absent: only name and state are allowed, the other attributes must be missing",
-	// The library text repeats the value: never a key in an error.
+	"resource/firewall.json#/allOf/0/then not":                                                                     "allow_no_ssh is true: ssh_port and ssh_sources must then be missing (there is no SSH rule)",
+	"resource/firewall.json#/allOf/1/then/propertyNames enum":                                                      "state is absent: only name and state are allowed, the other attributes must be missing",
+	"resource/user.json#/properties/ssh_keys/items pattern":                                                        "must be one public key line (type, key, optional comment), never a private key",
+	"resource/apt_repository.json#/properties/uris/items pattern":                                                  "must be an http or https URL without spaces",
 	"resource/apt_repository.json#/properties/key pattern":                                                         "must be exactly one ASCII-armored public key block",
 	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway required":                          "gateway needs a static ip: set ip too",
 	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway/properties/ip not":                 "gateway needs a static ip, not dhcp",
@@ -106,6 +107,20 @@ var schemaMessages = sync.OnceValues(func() (map[string]string, error) {
 	}
 	return out, nil
 })
+
+// valueFreeMessage is the text of a failed pattern or format without the
+// value: the library text repeats it, and a value can be a secret (a
+// private key in ssh_keys, a password in a URL; review S1 of #236).
+// "" for the other kinds, whose texts hold no value.
+func valueFreeMessage(e *jsonschema.ValidationError) string {
+	switch k := e.ErrorKind.(type) {
+	case *kind.Pattern:
+		return fmt.Sprintf("has the wrong form: it must match the pattern %q", k.Want)
+	case *kind.Format:
+		return fmt.Sprintf("is not a valid %s", k.Want)
+	}
+	return ""
+}
 
 // ruleMessage returns the plain message of a failed schema keyword, or "".
 func ruleMessage(e *jsonschema.ValidationError, keywordLocation string) string {

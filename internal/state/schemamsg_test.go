@@ -62,3 +62,65 @@ func TestSchemaRuleMessages(t *testing.T) {
 		}
 	}
 }
+
+// Review S1 of #236: a failed pattern or format never repeats the value;
+// it names the attribute and the rule. Every error path: the render of a
+// Target, the attribute check of a Block at save, a parameter default of
+// a Block (a schema of the user), and a document schema.
+func TestSchemaErrorsNeverEchoValue(t *testing.T) {
+	const privKey = `-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ-secret-key-body\n-----END OPENSSH PRIVATE KEY-----`
+	const credURL = `ftp://deploy:hunter2-secret-pass@repo.example.invalid/debian`
+	secrets := []string{"secret-key-body", "hunter2-secret-pass"}
+	check := func(what string, err error, want string) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", what, err, want)
+			return
+		}
+		for _, s := range secrets {
+			if strings.Contains(err.Error(), s) {
+				t.Errorf("%s: the error repeats the value: %s", what, err)
+			}
+		}
+	}
+	for _, c := range []struct{ res, want string }{
+		{`{"user":{"name":"u","ssh_keys":["` + privKey + `"]}}`, "attribute /ssh_keys/0: must be one public key line"},
+		{`{"apt_repository":{"name":"r","uris":["` + credURL + `"],"suites":["s"],"key":"x"}}`, "attribute /uris/0: must be an http or https URL without spaces"},
+		{`{"file":{"path":"/etc/x","mode":"` + credURL + `"}}`, "attribute /mode: has the wrong form: it must match the pattern"},
+	} {
+		// Literal values: the attribute check of the Block at save.
+		bs, err := Validate([]Doc{doc(KindBlock, "b", `{"resources":[`+c.res+`]}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saveErr error
+		if es := bs.CheckBlockAttrs([]string{"b"}); len(es) > 0 {
+			saveErr = es
+		}
+		check("save "+c.res, saveErr, strings.TrimPrefix(c.want, "attribute "))
+		// Through a parameter: only the render sees the value.
+		templ := strings.Replace(strings.Replace(c.res, privKey, "{{ .v }}", 1), credURL, "{{ .v }}", 1)
+		val := privKey
+		if !strings.Contains(c.res, privKey) {
+			val = credURL
+		}
+		s, err := Validate([]Doc{doc(KindImage, "img", image),
+			doc(KindBlock, "b", `{"params":{"type":"object","properties":{"v":{"type":"string"}}},"resources":[`+templ+`]}`),
+			target(`"blocks":[{"use":"b","params":{"v":"`+val+`"}}]`)})
+		if err == nil {
+			_, err = s.Render("t1")
+		}
+		check("render "+c.res, err, c.want)
+	}
+	// A schema of the user: a parameter default and a parameter value.
+	params := `{"type":"object","properties":{"v":{"type":"string","pattern":"^[a-z]+$","default":"` + credURL + `"}}}`
+	_, err := Validate([]Doc{doc(KindBlock, "b", `{"params":`+params+`,"resources":[{"file":{"path":"/x"}}]}`)})
+	check("param default", err, "/spec/params/properties/v/default: has the wrong form")
+	_, err = Validate([]Doc{doc(KindImage, "img", image),
+		doc(KindBlock, "b", `{"params":{"type":"object","properties":{"v":{"type":"string","pattern":"^[a-z]+$"}}},"resources":[{"file":{"path":"/x"}}]}`),
+		target(`"blocks":[{"use":"b","params":{"v":"`+credURL+`"}}]`)})
+	check("param value", err, "has the wrong form: it must match the pattern")
+	// A document schema.
+	_, err = Validate([]Doc{doc(KindImage, "img", `{"type":"vm","url":"`+credURL+` x","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}`)})
+	check("image url", err, "/spec/url: has the wrong form")
+}
