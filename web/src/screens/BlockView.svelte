@@ -6,6 +6,7 @@
   import type { BlockView } from "../lib/types";
   import { toYaml } from "../lib/yaml";
   import Badge from "../ui/Badge.svelte";
+  import DeleteDocument from "../ui/DeleteDocument.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
   let { api, name }: { api: PlumbApi; name: string } = $props();
@@ -124,6 +125,18 @@
       </ol>
     </div>
   </section>
+
+  {@const userCount = users.targets.length + users.images.length}
+  <DeleteDocument
+    {api}
+    kind="Block"
+    {name}
+    blocked={userCount
+      ? `${userCount === 1 ? "One Target or Image uses" : `${userCount} Targets and Images use`} this Block (see "Used by"). Remove it from them first.`
+      : undefined}
+  >
+    <p>The plan removes the Block from the desired state. No guest changes: nothing uses it.</p>
+  </DeleteDocument>
 {:else if !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}

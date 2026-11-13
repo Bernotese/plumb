@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { ApiError } from "../lib/api";
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
@@ -17,6 +18,31 @@
   let approveError = $state<unknown>(null);
   let comment = $state("");
   let busy = $state(false);
+  let confirmDrop = $state(false);
+  let dropError = $state<unknown>(null);
+
+  async function askDrop() {
+    confirmDrop = true;
+    dropError = null;
+    await tick();
+    document.getElementById("drop-confirm")?.focus();
+  }
+
+  async function drop() {
+    busy = true;
+    dropError = null;
+    try {
+      await api.discardPlan(id);
+      confirmDrop = false;
+      await load();
+      document.getElementById("page-title")?.focus();
+    } catch (err) {
+      dropError = err;
+      if (err instanceof ApiError && err.problem.status === 409) await load();
+    } finally {
+      busy = false;
+    }
+  }
 
   const load = () =>
     api.getPlan(id).then(
@@ -93,8 +119,9 @@
 {#if plan}
   {#if plan.status === "stale"}
     <div class="banner warn" role="alert">
-      <strong>This plan is stale.</strong> The desired state changed after it was made, so it cannot be
-      approved. Make the change again to get a new plan.
+      <strong>This plan is stale.</strong> It was dropped, or the desired state changed after it was
+      made, so it cannot be approved. Make the change again to get a new plan.
+      <a href={href({ name: "plans" })}>Pending plans</a>
     </div>
   {:else if plan.status === "approved"}
     <div class="banner ok">
@@ -262,8 +289,32 @@
           aria-describedby={restored.mode ? "approve-restored" : undefined}
           >Approve and apply</button
         >
-        <a class="btn" href={href({ name: "targets" })}>Not now</a>
+        <a class="btn" href={href({ name: "plans" })}>Not now</a>
+        {#if !confirmDrop}
+          <button class="btn danger" type="button" disabled={busy} onclick={askDrop}
+            >Drop plan</button
+          >
+        {/if}
       </div>
+      {#if confirmDrop}
+        <div class="drop" role="group" aria-labelledby="drop-question">
+          <p id="drop-question">
+            Drop plan {id}? It can never be applied after that. An issue that it would resolve is
+            open again.
+          </p>
+          <div class="row">
+            <button
+              id="drop-confirm"
+              class="btn danger"
+              type="button"
+              disabled={busy}
+              onclick={drop}>Drop</button
+            >
+            <button class="btn" type="button" onclick={() => (confirmDrop = false)}>Cancel</button>
+          </div>
+        </div>
+      {/if}
+      <ProblemBox error={dropError} />
       {#if restored.mode}<p class="muted" id="approve-restored">{RESTORED_WAIT}</p>{/if}
     </form>
   {:else}
@@ -274,6 +325,14 @@
 {/if}
 
 <style>
+  .drop {
+    margin-top: var(--space-3);
+    border-left: 4px solid var(--color-danger);
+    padding-left: var(--space-3);
+  }
+  .drop p {
+    margin: 0 0 var(--space-2);
+  }
   .why {
     margin: var(--space-1) 0 0;
     padding-left: var(--space-6);

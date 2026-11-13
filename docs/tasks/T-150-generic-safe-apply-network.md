@@ -11,6 +11,8 @@ Slice 5, child card **C6** of T-138. The `network` resource (VM: extra addresses
 - `AGENTS.md` "Autonomy and release" (D-326)
 
 ## Acceptance criteria
+- [ ] **Prove first (review G3 of #244), before the safe-apply work:** a CI guest test on the Debian 13 vendor cloud image (netplan 1.1.2) and on Ubuntu 26.04 shows that a second file `/etc/netplan/60-plumb-<name>.yaml` under the same key appends to `addresses`, `routes` and `nameservers.addresses` of `50-cloud-init.yaml` (`netplan get` before and after). If a list is replaced instead, stop and tell `pl-lead` (the contract of T-145 must change).
+- [ ] Server refusals of T-145 G1 (controller, node, every Target's main address and gateway, another Target's extra address) and the agent duplicate-address probe, each with a test.
 - [ ] Everything row C6 of the plan lists; touch only the files that row gives you. If you need another file, ask `pl-lead` first.
 - [ ] `firewall` moves onto the generic code with its slice 4 tests unchanged, incl. the CI guest rollback test.
 - [ ] CI guest tests for `network` incl. a forced rollback; the schema refuses the main address and a default route; `network` on an LXC is refused at save.

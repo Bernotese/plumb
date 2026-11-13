@@ -361,7 +361,6 @@ paths:
     get:
       tags: [blocks]
       operationId: listCatalogBlocks
-      x-plumb-planned: T-146
       summary: List the starter Blocks that ship with Plumb
       description: |
         The Blocks embedded in this binary (D-328), sorted by name, compared with the head

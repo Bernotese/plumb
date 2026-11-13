@@ -98,6 +98,10 @@
                     /></span
                   >{/if}<span class="ignored" title={formatTime(since)}
                   >waiting for {ageText(since)}</span
+                >{/if}{#if t.status.open_issues > 0}<a
+                  class="ignored"
+                  href={href({ name: "issues", target: t.document.name })}
+                  >{t.status.open_issues} open issue{t.status.open_issues === 1 ? "" : "s"}</a
                 >{/if}{#if t.status.ignored_drift?.length}<span class="ignored"
                   >{t.status.ignored_drift.length} ignored by rule</span
                 >{/if}{#if t.status.agent_version || agent?.label}<span class="ignored agent"

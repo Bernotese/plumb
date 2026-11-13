@@ -236,6 +236,7 @@ func TestContract(t *testing.T) {
 	call(adm, "GET", "/api/v1/images/nope", "/images/{name}", nil) // 404
 	call(adm, "GET", "/api/v1/blocks", "/blocks", nil)
 	call(adm, "GET", "/api/v1/blocks/motd", "/blocks/{name}", nil)
+	call(adm, "GET", "/api/v1/catalog/blocks", "/catalog/blocks", nil)
 	call(adm, "GET", "/api/v1/targets", "/targets", nil)
 	call(adm, "GET", "/api/v1/targets/web1", "/targets/{name}", nil)
 	call(adm, "GET", "/api/v1/targets/nope", "/targets/{name}", nil) // 404
