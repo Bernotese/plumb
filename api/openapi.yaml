@@ -3403,8 +3403,9 @@ components:
         minutes after the confirm (its agent may have enrolled again after the backup, so its
         credential is unknown). One change `{attr: hello, from: null, to: "any", risk: read}`; use
         `POST /targets/{name}/reenroll`. Both offer only `ignore_once` and `ignore_rule`, and
-        `system` resolves them as `gone` when the guest or the hello comes back, or the Target
-        goes.
+        `system` resolves them as `gone` when the guest or the hello comes back, or when an
+        applied Plan deletes the Target (then with the system comment "Resolved: the Target was
+        deleted."; a foreign guest stays and is never deleted, D-322).
       required:
         - id
         - target

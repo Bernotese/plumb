@@ -48,3 +48,17 @@ func TestBlockAttrsCheckedAtSave(t *testing.T) {
 		t.Fatalf("a change of the stored bad Block: %d %s", code, body)
 	}
 }
+
+// T-134 F9: the 422 of a firewall with allow_no_ssh and ssh_port names
+// the attributes and says the rule.
+func TestFirewallNoSSHRuleMessage(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	fw := doc(state.KindBlock, "fw", `{"resources":[{"firewall":{"name":"main","policy":"drop","allow_no_ssh":true,"ssh_port":22}}]}`)
+	web := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"fw"}]}`)
+	code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "put": []state.Doc{doc(state.KindImage, "ubuntu", imageSpec), fw, web}})
+	if code != 422 || !strings.Contains(string(body), "allow_no_ssh is true: ssh_port and ssh_sources must then be missing") ||
+		strings.Contains(string(body), "'not' failed") {
+		t.Fatalf("firewall without SSH and with ssh_port: %d %s", code, body)
+	}
+}
