@@ -1,0 +1,53 @@
+name: Prepare draft release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (vMAJOR.MINOR.PATCH, optional prerelease suffix)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-draft
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build twice and verify identical checksums
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          bash scripts/package-release.sh "$VERSION" "$RUNNER_TEMP/release-one"
+          bash scripts/package-release.sh "$VERSION" "$RUNNER_TEMP/release-two"
+          diff "$RUNNER_TEMP/release-one/SHA256SUMS" "$RUNNER_TEMP/release-two/SHA256SUMS"
+      - name: Create a draft for a person to publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            --draft --target "$GITHUB_SHA" --title "$VERSION" \
+            --notes 'Linux/amd64. Verify SHA256SUMS before unpacking. A person must review and publish this draft.' \
+            "$RUNNER_TEMP/release-one/plumb-${VERSION}-linux-amd64.tar.gz" \
+            "$RUNNER_TEMP/release-one/SHA256SUMS"

@@ -56,7 +56,7 @@ lint: lint-go lint-sh lint-web
 
 ## lint-sh: shellcheck for the shell scripts. CI must have shellcheck; on a
 ## machine without it the check is skipped with a warning.
-SH_FILES = install/install.sh install/testdata/fakepve scripts/check-embed.sh scripts/test-slice-pve.sh
+SH_FILES = scripts/package-release.sh install/install.sh install/testdata/fakepve scripts/check-embed.sh scripts/test-slice-pve.sh
 lint-sh:
 	@for f in $(SH_FILES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then shellcheck -x $(SH_FILES); \
