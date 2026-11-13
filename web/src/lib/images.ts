@@ -74,11 +74,17 @@ export function newestReady(st: ImageStatus | undefined): ImageVersion | null {
   );
 }
 
-/** "1.4 GiB", "612 MiB". */
+/**
+ * "1.4 GiB", "612 MiB", "190 KiB", "512 B". The unit is chosen after the
+ * rounding, so no size shows as "0 MiB" or "1024 KiB".
+ */
 export function bytesText(n: number): string {
-  const gib = n / 2 ** 30;
-  if (gib >= 1) return `${gib.toFixed(1)} GiB`;
-  return `${Math.round(n / 2 ** 20)} MiB`;
+  if (n < 2 ** 10) return `${Math.round(n)} B`;
+  const kib = Math.round(n / 2 ** 10);
+  if (kib < 2 ** 10) return `${kib} KiB`;
+  const mib = Math.round(n / 2 ** 20);
+  if (mib < 2 ** 10) return `${mib} MiB`;
+  return `${(n / 2 ** 30).toFixed(1)} GiB`;
 }
 
 /**
