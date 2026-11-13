@@ -45,12 +45,14 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-128 installer: no stray Perl line for a missing storage; host `/etc/plumb` never wider than 0700 (T-122 F1, F2) | pl-codex-fix | merged (PR #229) |
 | T-130 `--restore` failed on every host: the installer put the backup into the data dir (T-122 F5). Now a dir of its own; a test runs the real `plumb` on the installer layout | pl-backend | merged (PR #231); main build green after it (24eb562) |
 | T-132 installer: `pct exec` without a tty, bounded wait for the boot of the LXC, checksum check after a failed push (T-122 F7); complete dry-run of a restore rerun (F6) | pl-backend | merged (PR #233) |
-| T-134 host-run findings F8 (`guest:missing` of a deleted Target stays open), F9 (raw 422 text) | pl-backend | in work |
-| T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | after T-133 |
+| T-134 host-run findings F8, F9; also: a schema error never repeats a rejected value (a pasted private key came back in the 422) | pl-backend | PR #236, review passed |
+| T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | PR #237, review passed |
+| T-136 CI: install tests run in parallel, each script run bounded; "lint, test, build" needs 8 min of 15 (was 11.7–13.6, cancelled on slow runners) | pl-backend | merged (PR #239) |
+| T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | PR #238, review passed |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-131 screenshots for the README: 7 pictures of the dev demo (light theme, 52–132 KB), each checked by pl-reviewer and pl-lead; demo data on the documentation range | pl-frontend | merged (PR #232) |
-| T-133 example addresses in tests, docs and demo data move to the documentation ranges (user order 2026-11-13; history is not rewritten); then a leak check against the test-host config by pl-lead | pl-frontend | in work |
+| T-133 example addresses in tests, docs and demo data move to the documentation ranges (user order 2026-11-13; history is not rewritten); then a leak check against the test-host config by pl-lead | pl-frontend | PR #234, review passed |
 | T-124 GitHub releases with ready binaries and checksums: prepare only; **a release needs the user's own yes** | pl-codex-qa | merged (PR #216): manual workflow, draft only. No release and no tag exist |
 | T-109 flaky `TestAgentUpdateCommand` (test asserted too early; product safe) | pl-codex-qa | merged (PR #208) |
 
