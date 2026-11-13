@@ -17,6 +17,8 @@ Slice 5, child card **C4** of T-138. A token can no longer bring a value that a 
 - [ ] New decisions (only if needed): ask `pl-lead` for numbers; write them to `docs/decisions/T-148.md`.
 - [ ] No new token right. Tests: `make lint test` passes; `origin/main` merged; PR to `main`; report to `pl-lead`.
 
+- [ ] Also yours (asked by pl-architect, T-145): the `x-plumb-list` marks on `internal/resource/schema/firewall.json` (`tcp_ports`, `udp_ports`, `sources`, `ssh_sources`), see D-350.
+
 ## Out of scope
 - Everything of other rows. Any release step.
 
