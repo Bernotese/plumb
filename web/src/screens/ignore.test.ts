@@ -263,7 +263,7 @@ describe("IssueView", () => {
       expect(!!button("Ignore once")).toBe(actions.some((a) => a === "ignore_once"));
       expect(!!button("Make ignore-rule plan")).toBe(actions.some((a) => a === "ignore_rule"));
       expect(!!button(/^Revert:/)).toBe(actions.some((a) => a === "revert"));
-      expect(button(/^Accept:/)).toBeUndefined();
+      expect(button(/^Accept/)).toBeUndefined();
     },
   );
 

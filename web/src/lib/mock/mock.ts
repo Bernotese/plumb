@@ -396,6 +396,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]),
   );
   seedTargets(targets);
+  // T-118 (D-296): worker1 keeps an accepted motd as a raw resource.
+  const worker1 = targets.get("worker1");
+  if (worker1)
+    worker1.document.spec.overrides = {
+      "file:/etc/motd": { content: "Maintenance window: Sunday 02:00 UTC\n" },
+    };
   seedLxc(images, targets);
   seedAgents(targets);
 

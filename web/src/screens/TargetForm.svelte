@@ -34,6 +34,7 @@
   import { unfitText } from "../lib/blocks";
   import AgentCard from "../ui/AgentCard.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import RawResources from "../ui/RawResources.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
   let { api, name }: { api: PlumbApi; name?: string } = $props();
@@ -603,6 +604,7 @@
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
 {#if loaded && existing}
+  <RawResources {api} target={existing} />
   <AgentCard {api} target={existing} />
   <form class="card" onsubmit={reenroll} aria-labelledby="reenroll-title">
     <h2 id="reenroll-title">Re-enroll the agent</h2>

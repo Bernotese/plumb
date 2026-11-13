@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
+  import { offersRaw } from "../lib/raw";
   import { go, href } from "../lib/router";
   import type { Issue, IssueAction } from "../lib/types";
   import {
@@ -41,6 +42,9 @@
   const canPlan = $derived(
     issue?.actions.includes("revert") || (issue?.actions.includes("accept") && !hidden),
   );
+
+  // D-296: Accept on a Block resource makes it a raw resource of the Target.
+  const raw = $derived(issue ? offersRaw(issue.resource) : false);
 
   const changedAttrs = $derived([...new Set(issue?.changes.map((c) => c.attr) ?? [])]);
   const canIgnore = $derived(
@@ -180,10 +184,15 @@
           {/if}
           {#if issue.actions.includes("accept") && !hidden}
             <button class="btn" type="button" disabled={busy} onclick={() => resolve("accept")}>
-              Accept: keep the guest value
+              {raw ? "Accept as raw for this Target" : "Accept: keep the guest value"}
             </button>
           {/if}
         </div>
+        {#if raw && issue.actions.includes("accept") && !hidden}<p class="muted" id="raw-help">
+            Accept as raw keeps the guest value for this Target only. The Block does not set these
+            attributes on it any more. The Target page lists it under "Raw resources", where you can
+            edit it or go back to the Block.
+          </p>{/if}
         <p class="muted">
           {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a
             plan.{/if}
