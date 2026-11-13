@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -381,5 +382,52 @@ func mustJSON(t *testing.T, s string, v any) {
 	t.Helper()
 	if err := json.Unmarshal([]byte(s), v); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFirewallRecoveryWiring(t *testing.T) {
+	env, nft := newFwEnv(t)
+	rs, err := New(fwRes(nil), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmed := fwBootFile(fwState{State: wire.StatePresent, Policy: "accept", SSH: "tcp/22 from everywhere"}, "previous table")
+	if err := writeManaged(env.Root, FirewallBootFile, []byte(confirmed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.(SafeApplier).Prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(env.Root, FirewallBootFile)); got != confirmed {
+		t.Fatal("prepare overwrote the confirmed boot file")
+	}
+	unit := readFile(t, filepath.Join(env.Root, firewallUnitPath))
+	for _, required := range []string{"After=local-fs.target nftables.service", "Before=network-pre.target shutdown.target", "ExecStart=" + nftPath + " -f " + FirewallBootFile} {
+		if !strings.Contains(unit, required) {
+			t.Errorf("boot unit missing %q", required)
+		}
+	}
+	if n := nft.count("systemd-run"); n != 1 {
+		t.Fatalf("rollback timer must be armed exactly once, got %d calls", n)
+	}
+	for _, call := range nft.calls {
+		if call[0] != "systemd-run" {
+			continue
+		}
+		if len(call) < 3 || !slices.Equal(call[len(call)-3:], []string{nftPath, "-f", FirewallBootFile}) {
+			t.Fatalf("timer must load confirmed rules: %v", call)
+		}
+		delay := 0
+		for _, arg := range call {
+			if text, ok := strings.CutPrefix(arg, "--on-active="); ok {
+				delay, err = strconv.Atoi(text)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if delay <= wire.SafeApplySeconds {
+			t.Fatalf("rollback timer fires inside confirm window: %d", delay)
+		}
 	}
 }

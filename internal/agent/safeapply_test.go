@@ -275,6 +275,15 @@ func TestConfirmNewConnection(t *testing.T) {
 	if n := conns.Load(); n != 3 {
 		t.Fatalf("confirm reused a connection: %d connections", n)
 	}
+	// A confirm must not disable keep-alive on the polling transport.
+	for i := 0; i < 2; i++ {
+		if err := c.report(ctx, "cred", wire.Report{Type: wire.ReportDrift}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := conns.Load(); n != 4 {
+		t.Fatalf("confirm changed the shared transport: %d connections", n)
+	}
 }
 
 // The agent and the real link agree on the confirm round trip (D-300).

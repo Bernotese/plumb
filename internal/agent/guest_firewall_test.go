@@ -90,6 +90,10 @@ func TestGuestFirewall(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Keep an unrelated table through apply, rollback, boot loading and removal.
+	fwSh(t, "nft", "add", "table", "inet", "plumb_qa_foreign")
+	t.Cleanup(func() { _ = exec.Command("nft", "delete", "table", "inet", "plumb_qa_foreign").Run() })
+	foreignSurvives := func() { t.Helper(); fwSh(t, "nft", "list", "table", "inet", "plumb_qa_foreign") }
 	// The peer namespace.
 	_ = exec.Command("ip", "netns", "del", fwNetns).Run()
 	_ = exec.Command("ip", "link", "del", "plumbfw0").Run()
@@ -217,6 +221,7 @@ func TestGuestFirewall(t *testing.T) {
 		if rep.Error != "" || len(rep.Items) != 1 {
 			t.Fatalf("apply: %+v", rep)
 		}
+		foreignSurvives()
 		return rep.Items[0]
 	}
 
@@ -295,6 +300,7 @@ func TestGuestFirewall(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	waitReach("8081", false)
+	foreignSurvives()
 
 	// 4. The boot unit loads the confirmed rules.
 	fwSh(t, "nft", "delete", "table", "inet", "plumb")
@@ -303,6 +309,8 @@ func TestGuestFirewall(t *testing.T) {
 	if got := liveTable(t); got != confirmed {
 		t.Fatalf("boot unit:\n%s\nwant\n%s", got, confirmed)
 	}
+
+	foreignSurvives()
 
 	// 6. The starter Block firewall (T-119), rendered by the controller's own
 	// code: package nftables, then the table with SSH and the listed port.
