@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
+  import { offersRaw } from "../lib/raw";
   import { go, href } from "../lib/router";
   import type { Issue, IssueAction } from "../lib/types";
   import {
@@ -41,6 +42,10 @@
   const canPlan = $derived(
     issue?.actions.includes("revert") || (issue?.actions.includes("accept") && !hidden),
   );
+
+  // D-296: Accept on a Block resource makes it a raw resource of the Target.
+  // `raw` and `source` come from the server (D-301); an older one sends neither.
+  const raw = $derived(issue ? (issue.raw ?? offersRaw(issue.resource)) : false);
 
   const changedAttrs = $derived([...new Set(issue?.changes.map((c) => c.attr) ?? [])]);
   const canIgnore = $derived(
@@ -102,6 +107,20 @@
 <ProblemBox {error} />
 {#if issue}
   <div class="card">
+    {#if issue.resource === "guest:missing"}
+      <p class="hint-box" id="restore-hint">
+        After a restore: the guest of this Target is gone from Proxmox (it was deleted after the
+        backup). Plumb never makes it again by itself. Delete the Target, or delete it and add it
+        again by a Plan.
+      </p>
+    {:else if issue.resource === "agent:silent"}
+      <p class="hint-box" id="restore-hint">
+        After a restore: the guest runs, but its agent did not say hello within 10 minutes. It may
+        have enrolled again after the backup, so Plumb does not know its credential.
+        <a href={href({ name: "target-edit", target: issue.target })}>Re-enroll the agent</a> on the Target
+        page.
+      </p>
+    {/if}
     {#if isAddress}
       <p id="address-text">{addressIssueText(issue)}</p>
       <p>
@@ -180,10 +199,18 @@
           {/if}
           {#if issue.actions.includes("accept") && !hidden}
             <button class="btn" type="button" disabled={busy} onclick={() => resolve("accept")}>
-              Accept: keep the guest value
+              {raw ? "Accept as raw for this Target" : "Accept: keep the guest value"}
             </button>
           {/if}
         </div>
+        {#if raw && issue.actions.includes("accept") && !hidden}<p class="muted" id="raw-help">
+            Accept as raw keeps the guest value for this Target only.
+            {#if issue.source}The Block <span class="mono">{issue.source.block}</span>
+              {#if issue.source.use !== issue.source.block}(use
+                <span class="mono">{issue.source.use}</span>){/if} does not set these attributes on it
+              any more.{:else}The Block does not set these attributes on it any more.{/if} The Target
+            page lists it under "Raw resources", where you can edit it or go back to the Block.
+          </p>{/if}
         <p class="muted">
           {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a
             plan.{/if}

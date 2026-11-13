@@ -4,6 +4,7 @@
   import { createHttpApi } from "./lib/http";
   import { go, href, isRouteHash, parse, type Route } from "./lib/router";
   import { applyTheme, loadTheme, type Theme } from "./lib/theme";
+  import { restored } from "./lib/restored.svelte";
   import type { Session } from "./lib/types";
   import History from "./screens/History.svelte";
   import ChangePassword from "./screens/ChangePassword.svelte";
@@ -34,10 +35,15 @@
     if (import.meta.env.VITE_PLUMB_MOCK === "1") {
       const mock = await import("./lib/mock/mock");
       // "?as=admin" starts signed in, "?as=first-login" at the forced
-      // password change (screenshots of the mock build).
+      // password change, "?as=restored" in restored mode (screenshots of
+      // the mock build).
       const as = new URLSearchParams(location.search).get("as");
       return {
-        api: mock.createMockApi({ signedIn: as === "admin", firstLogin: as === "first-login" }),
+        api: mock.createMockApi({
+          signedIn: as === "admin" || as === "restored",
+          firstLogin: as === "first-login",
+          restored: as === "restored",
+        }),
         hint: `Demo login: ${mock.MOCK_USER.username} / ${mock.MOCK_USER.password}`,
         banner: mock.MOCK_BANNER,
       };
@@ -120,6 +126,42 @@
     go({ name: "login" });
   }
 
+  // Restored mode (D-290, D-303): a banner on every screen until a person
+  // confirms that the old controller is off. The forced password change
+  // cannot read GET /restore yet: it shows a static note instead.
+  $effect(() => {
+    const a = api;
+    if (!a || screen !== "app") {
+      restored.mode = false;
+      return;
+    }
+    let stale = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const check = (again: boolean) =>
+      a.getRestore().then(
+        (r) => {
+          if (!stale) restored.mode = r.restored_mode;
+        },
+        // An older controller has no /restore; else try once more (review L1).
+        () => {
+          if (again && !stale) retry = setTimeout(() => void check(false), 5000);
+        },
+      );
+    void check(true);
+    const stop = a.events(
+      undefined,
+      (e) => {
+        if (e.type === "restore.confirmed") restored.mode = false;
+      },
+      () => void check(true),
+    );
+    return () => {
+      stale = true;
+      clearTimeout(retry);
+      stop();
+    };
+  });
+
   const navCurrent = (names: Route["name"][]) => (names.includes(route.name) ? "page" : undefined);
 </script>
 
@@ -176,6 +218,15 @@
   </div>
 </header>
 {#if banner}<p class="demo">{banner}</p>{/if}
+{#if restored.mode}
+  <div class="banner warn restored" id="restored-banner">
+    <strong>Restored mode.</strong> This Plumb was restored from a backup. It changes nothing until
+    a person confirms that the old controller is off.
+    {#if session?.tier === "admin"}<a href={href({ name: "settings", tab: "backups" })}
+        >Confirm in Settings → Backups</a
+      >.{:else}Ask an admin to confirm it.{/if}
+  </div>
+{/if}
 
 <main id="main" tabindex="-1">
   {#if screen === "loading"}
@@ -225,7 +276,12 @@
   {:else if route.name === "revision"}
     {#key route.id}<RevisionView {api} id={route.id} />{/key}
   {:else if route.name === "settings"}
-    {#if session}<Settings {api} {session} tab={route.tab} />{/if}
+    {#if session}<Settings
+        {api}
+        {session}
+        tab={route.tab}
+        onRestore={(r) => (restored.mode = r.restored_mode)}
+      />{/if}
   {:else}
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p>
@@ -296,6 +352,11 @@
     font-size: var(--text-xs);
     background: var(--color-info-bg);
     color: var(--color-info);
+  }
+  .restored {
+    margin: 0;
+    border-radius: 0;
+    padding: var(--space-2) var(--space-6);
   }
   main {
     max-width: 72rem;

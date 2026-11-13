@@ -11,15 +11,19 @@ After the installer removes the Plumb token, no ACL line of that token stays in 
 - `install/install.sh`: token removal in `--remove` and `--remove --keep-guests`; the comment that says the ACLs go with the token; D-081 (seven roles, one per path), D-240 (`PlumbAudit` on `/`)
 
 ## Acceptance criteria
-- [ ] `--remove` and `--remove --keep-guests` delete the ACL entries of the token explicitly (`pveum acl delete … --tokens …`, each path and role that the installer set) before or with the token; the ACLs of the user stay as the contract says (D-290: `--keep-guests` keeps the user with its ACLs)
-- [ ] `--restore` and a repair run set the token ACLs themselves and do not rely on leftover lines; a leftover line from an older removal is cleaned
-- [ ] No right is added: the set of token ACLs after install, repair and restore equals today's set (test compares it)
-- [ ] Fake-PVE test that models the PVE 9.2 behaviour (token removal keeps the lines); dry-run shows the new steps; shellcheck clean; `make lint test build` green
-- [ ] The wrong comment in `install.sh` is fixed
+- [x] `--remove` and `--remove --keep-guests` delete the ACL entries of the token explicitly (`pveum acl delete … --tokens …`, each path and role that the installer set) before or with the token; the ACLs of the user stay as the contract says (D-290: `--keep-guests` keeps the user with its ACLs)
+- [x] `--restore` and a repair run set the token ACLs themselves and do not rely on leftover lines; a leftover line from an older removal is cleaned
+- [x] No right is added: the set of token ACLs after install, repair and restore equals today's set (test compares it)
+- [x] Fake-PVE test that models the PVE 9.2 behaviour (token removal keeps the lines); dry-run shows the new steps; shellcheck clean; `make lint test build` green
+- [x] The wrong comment in `install.sh` is fixed
 
 ## Out of scope
 - A host run (pl-lead decides; T-122 can check it at the end)
 - No new token right (D-081)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- `pl-reviewer/T-129-token-acl-lines-after-remove` · tests: `make lint test build` → green; `go test ./install/ -run TokenACL` fails 3/3 on the old install.sh.
+- `remove_token`: deletes every listed ACL of the token (`pveum acl delete … --tokens`), then the token; used by `--remove`, `--keep-guests` and the token replace. User ACLs stay.
+- `ensure_acls`: a new token gets all 7 planned ACLs set; the ACL list is read again after `token add`, so a leftover line outside the plan shows and is removed.
+- Fake PVE: token remove keeps the lines; the list hides lines of a missing token; `acl delete` of a missing token fails (like PVE).
+- Open: a leftover line of a token that is already gone cannot be deleted (PVE refuses, the list hides it); it goes at the next install/restore. D-313 text still says "its ACLs go with it" (DECISIONS.md, for pl-lead).

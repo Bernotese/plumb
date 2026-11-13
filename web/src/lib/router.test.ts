@@ -34,7 +34,7 @@ describe("router", () => {
   });
   it("opens the tokens tab for #/settings", () => {
     expect(parse("#/settings")).toEqual({ name: "settings", tab: "tokens" });
-    expect(parse("#/settings/users").name).toBe("not-found");
+    expect(parse("#/settings/nope").name).toBe("not-found");
   });
   it("defaults to the targets", () => {
     expect(parse("")).toEqual({ name: "targets" });

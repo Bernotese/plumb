@@ -110,8 +110,9 @@ pveum)
 			esac
 			shift 2
 		done
-		# Like Proxmox: an ACL needs an existing user or token.
-		if [[ $op == modify && $type == token ]] && ! has "token.${ugid#*!}"; then
+		# Like Proxmox: an ACL needs an existing user or token. This holds
+		# for delete too, so the lines of a removed token cannot go.
+		if [[ $type == token ]] && ! has "token.${ugid#*!}"; then
 			echo "ACL update failed: no such token '${ugid#*!}' for user '${ugid%%!*}'" >&2
 			exit 255
 		fi
@@ -136,6 +137,9 @@ pveum)
 		printf '['
 		while read -r path ugid role type prop; do
 			[[ -n $path ]] || continue
+			# Like PVE 9.2: the lines of a removed token stay in user.cfg,
+			# but the list skips them ("ignore invalid acl token").
+			if [[ $type == token ]] && ! has "token.${ugid#*!}"; then continue; fi
 			[[ $first == 1 ]] || printf ','
 			first=0
 			printf '{"path":"%s","ugid":"%s","roleid":"%s","type":"%s","propagate":%s}' "$path" "$ugid" "$role" "$type" "${prop:-1}"
@@ -150,12 +154,9 @@ pveum)
 			printf '{"full-tokenid":"%s!%s","info":{"privsep":1},"value":"%s"}\n' "$4" "$5" "$FAKE_SECRET"
 			;;
 		remove)
+			# Like PVE 9.2.26 (T-122 F4): the ACL lines of the token stay, and
+			# a new token with the same name gets them again.
 			rm -f "$st/token.$5"
-			# Like Proxmox: the ACLs of the token go with it.
-			if [[ -e $st/acl ]]; then
-				awk -v u="$4!$5" '$2 != u' "$st/acl" >"$st/acl.new"
-				mv "$st/acl.new" "$st/acl"
-			fi
 			;;
 		esac
 		;;
@@ -350,6 +351,10 @@ pct)
 			echo "mv $3 $4" >>"$st/mv"
 			;;
 		"rm -f "*) rm -f "$st/push/${3//\//_}" "$st/push/${3//\//_}.opts" ;;
+		"rm -rf -- /var/lib/plumb-restore")
+			rm -f "$st/push/_var_lib_plumb-restore_"*
+			echo "$*" >>"$st/rm-restore"
+			;;
 		"systemctl restart plumb.service")
 			# FAKE_SIGNAL_ON_RESTART=HUP: the installer gets the signal
 			# during the restart, like an SSH drop (review M1 of T-077).
@@ -384,9 +389,11 @@ lxc-attach) # lxc-attach -n ID --clear-env -- runuser -u plumb -- plumb key init
 		has "key.$2" && exit 1
 		touch "$st/key.$2"
 	fi
-	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from /var/lib/plumb/restore.pbk" ]]; then
+	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from /var/lib/plumb-restore/restore.pbk" ]]; then
 		[[ ${FAKE_RESTORE_FAIL:-0} == 1 ]] && exit 1
-		[[ -e $st/push/_var_lib_plumb_restore.pbk ]] || exit 1
+		[[ -e $st/push/_var_lib_plumb-restore_restore.pbk ]] || exit 1
+		# Like plumb restore (D-318): the data directory holds only the key.
+		compgen -G "$st/push/_var_lib_plumb_*" >/dev/null && { echo "plumb restore: /var/lib/plumb is not empty" >&2; exit 1; }
 		touch "$st/db.$2"
 		echo "Restored. User: admin  Password: NEWPW"
 	fi

@@ -10,6 +10,11 @@ import (
 const (
 	HumanOnlyRuleChange    = "rule-change"
 	HumanOnlySecretBinding = "secret-binding" // T-029
+	// HumanOnlyAcceptGuestData: the Plan adopts values that a guest
+	// reported (Accept of an Issue, also "Accept as raw"). A compromised
+	// guest can report valid-looking values, so a person must see them
+	// (D-323). Set from the origin, which only the server sets.
+	HumanOnlyAcceptGuestData = "accept-guest-data"
 )
 
 // humanOnlyReasons computes Plan.human_only from the content of the

@@ -20,6 +20,10 @@ import type {
   TargetView,
   Token,
   TokenCreated,
+  BackupList,
+  BackupRun,
+  OneTimePassword,
+  RestoreState,
 } from "./types";
 
 /** Every event type of the contract: an SSE listener is needed per name. */
@@ -40,6 +44,10 @@ export const EVENT_TYPES = [
   "secret.updated",
   "secret.deleted",
   "image.version",
+  "backup.finished",
+  "restore.confirmed",
+  "token.enabled",
+  "user.password_reset",
 ] as const satisfies readonly components["schemas"]["Event"]["type"][];
 
 export interface HttpOptions {
@@ -180,6 +188,17 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     rollbackRevision: (n, reason) => call<Plan>("POST", `/revisions/${n}/rollback`, { reason }),
     listTokens: () => all<Token>("/tokens"),
     createToken: (req) => call<TokenCreated>("POST", "/tokens", req),
+    enableToken: (id) => call<Token>("POST", `/tokens/${encodeURIComponent(id)}/enable`),
+    listBackups: () => call<BackupList>("GET", "/backups"),
+    createBackup: () => call<BackupRun>("POST", "/backups"),
+    getRestore: () => call<RestoreState>("GET", "/restore"),
+    confirmRestore: (reason) =>
+      call<RestoreState>("POST", "/restore/confirm", {
+        old_controller_off: true,
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      }),
+    resetUserPassword: (name) =>
+      call<OneTimePassword>("POST", `/users/${encodeURIComponent(name)}/password`),
     revokeToken: async (id) => {
       await call<undefined>("DELETE", `/tokens/${encodeURIComponent(id)}`);
     },

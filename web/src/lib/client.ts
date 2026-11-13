@@ -21,6 +21,10 @@ import type {
   TokenCreated,
   TokenRequest,
   ImportRequest,
+  BackupList,
+  BackupRun,
+  OneTimePassword,
+  RestoreState,
 } from "./types";
 
 export interface PlumbApi {
@@ -72,6 +76,21 @@ export interface PlumbApi {
   /** The answer holds the bearer once. The caller must not keep it. */
   createToken(req: TokenRequest): Promise<TokenCreated>;
   revokeToken(id: string): Promise<void>;
+  /** Enables a token that a restore disabled (D-303, human session). */
+  enableToken(id: string): Promise<Token>;
+  /** Backups, schedule, last run and the off-host copy state (D-302). */
+  listBackups(): Promise<BackupList>;
+  /** Starts one backup now; 409 `backup-running` or `restored-mode`. */
+  createBackup(): Promise<BackupRun>;
+  /** Restore state; `restored_mode` until a person confirms (D-303). */
+  getRestore(): Promise<RestoreState>;
+  /** Ends restored mode: the person states that the old controller is off. */
+  confirmRestore(reason?: string): Promise<RestoreState>;
+  /**
+   * Gives another user a new one-time password (D-321, human session). The
+   * answer holds it once; the caller must not keep it.
+   */
+  resetUserPassword(name: string): Promise<OneTimePassword>;
   /** Secret metadata, sorted by name. No value ever comes back. */
   listSecrets(): Promise<SecretInfo[]>;
   putSecret(name: string, value: string): Promise<SecretInfo>;

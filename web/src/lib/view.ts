@@ -6,6 +6,14 @@ export type Tone = "ok" | "warn" | "danger" | "info" | "muted";
 /** The four user-facing target states of the card, plus the rare ones. */
 export function targetState(t: TargetView): { label: string; tone: Tone; detail: string } {
   const s = t.status;
+  // A stopped Target has no running agent on purpose (D-299): not "Offline".
+  if (s.phase === "stopped") {
+    return {
+      label: "Stopped",
+      tone: "muted",
+      detail: "Stopped on purpose (desired power: stopped).",
+    };
+  }
   if (s.agent === "offline") {
     return {
       label: "Offline",
@@ -36,13 +44,6 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
       return { label: "Pending", tone: "muted", detail: "No guest yet." };
     case "error":
       return { label: "Error", tone: "danger", detail: "The last run failed." };
-    case "stopped":
-      // Contract only (T-111, D-299); T-118 places it before the offline check.
-      return {
-        label: "Stopped",
-        tone: "muted",
-        detail: "Stopped on purpose (desired power: stopped).",
-      };
   }
 }
 
@@ -168,6 +169,15 @@ export function changeNotes(c: Change, resource?: string): { tags: string[]; not
       );
     }
   }
+  // D-291: Proxmox cannot shrink a disk, so a grow is for good.
+  if (c.attr === "disk" && !c.pending && typeof c.from === "number" && typeof c.to === "number") {
+    if (c.to > c.from) notes.push("A grow cannot be undone: Proxmox cannot make a disk smaller.");
+  }
+  if (c.attr === "power" && c.to === "stopped") {
+    notes.push(
+      "Plumb stops the guest at the end of the Run. Agent steps are skipped while it is stopped.",
+    );
+  }
   return { tags, notes };
 }
 
@@ -212,7 +222,8 @@ export function formatTime(iso: string | null | undefined): string {
 }
 
 /** Guest settings that cannot change after create in the first slice (D-025). */
-export const CREATE_ONLY = ["ip", "gateway", "user", "ssh_keys", "disk"] as const;
+// `disk` is grow-only since slice 4 (D-291, D-299); the form checks it.
+export const CREATE_ONLY = ["ip", "gateway", "user", "ssh_keys"] as const;
 
 /** Applies one run.step event to a run snapshot; false when it does not fit. */
 export function applyStepEvent(
@@ -244,6 +255,12 @@ export function humanOnlyReasons(plan: Plan): string[] {
   for (const reason of plan.human_only ?? []) {
     if (reason === "rule-change") {
       out.push("It adds, changes or removes an ignore rule.");
+      continue;
+    }
+    if (reason === "accept-guest-data") {
+      out.push(
+        "It accepts values from the guest: Plumb keeps what the guest reported. A person must check them.",
+      );
       continue;
     }
     if (reason === "image-recipe") {

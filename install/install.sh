@@ -695,10 +695,17 @@ acl_entries() {
 # the plan, for example the single role of D-032 from an older install
 # (review T-013 #4).
 stray_acls() {
-	local path ugid role type propagate planned r acls
+	local acls
 	# Read the list first: a failing pveum or perl stops the run here
 	# instead of looking like "no old rights" (review T-013 n1).
 	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER; nothing was changed"
+	stray_of "$acls"
+}
+
+# stray_of ACLS prints the entries of ACLS (acl_entries lines) that are
+# not in the plan.
+stray_of() {
+	local path ugid role type propagate planned r
 	while read -r path ugid role type propagate; do
 		[[ -n $path ]] || continue
 		planned=0
@@ -708,7 +715,7 @@ stray_acls() {
 			fi
 		done
 		[[ $planned == 1 ]] || printf '%s %s %s %s\n' "$path" "$ugid" "$role" "$type"
-	done <<<"$acls"
+	done <<<"$1"
 }
 
 # check_user_groups refuses an existing Plumb user that is in a group: the
@@ -776,11 +783,16 @@ ensure_pool_user_roles() {
 
 # ensure_acls gives user and token the planned ACLs and removes the others.
 # It runs after ensure_token: Proxmox refuses an ACL for a token that does
-# not exist yet ("no such token"; test host, T-013 step 3), and a replaced
-# token has lost the ACLs of the old one.
+# not exist yet ("no such token"; test host, T-013 step 3). A new token
+# gets every planned ACL set here: PVE 9.2 gives it the lines of an older
+# token with the same name that were not deleted (T-122 F4), and these
+# lines are not listed before the token exists. So the list is read again
+# now, and its stray entries replace the ones of the preview.
 ensure_acls() {
-	local role acls
+	local role acls new_token=0
+	[[ -n $TOKEN_SECRET ]] && new_token=1
 	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER"
+	STRAY_ACLS=$(stray_of "$acls")
 	for role in "${ROLE_NAMES[@]}"; do
 		local propagate path
 		propagate=$(role_propagate "$role")
@@ -788,10 +800,27 @@ ensure_acls() {
 		# An ACL that exists as planned is kept (repair run).
 		grep -qxF "$path $PVE_USER $role user $propagate" <<<"$acls" ||
 			run pveum acl modify "$path" --users "$PVE_USER" --roles "$role" --propagate "$propagate"
-		grep -qxF "$path $PVE_USER!$TOKEN_NAME $role token $propagate" <<<"$acls" ||
+		if [[ $new_token == 1 ]] || ! grep -qxF "$path $PVE_USER!$TOKEN_NAME $role token $propagate" <<<"$acls"; then
 			run pveum acl modify "$path" --tokens "$PVE_USER!$TOKEN_NAME" --roles "$role" --propagate "$propagate"
+		fi
 	done
 	remove_stray_acls
+}
+
+# remove_token deletes the ACLs of the Plumb token, then the token. PVE
+# 9.2.26 keeps the ACL lines of a removed token in user.cfg (every pveum,
+# qm and pct call then warns "ignore invalid acl token"), and a new token
+# with the same name gets them again (T-122 F4). Proxmox refuses to delete
+# an ACL of a token that does not exist, so the ACLs go first. The ACLs of
+# the user stay.
+remove_token() {
+	local acls path ugid role type propagate
+	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER!$TOKEN_NAME; the token was not removed"
+	while read -r path ugid role type propagate; do
+		[[ $type == token && $ugid == "$PVE_USER!$TOKEN_NAME" ]] || continue
+		run pveum acl delete "$path" --tokens "$ugid" --roles "$role"
+	done <<<"$acls"
+	run pveum user token remove "$PVE_USER" "$TOKEN_NAME"
 }
 
 # ensure_token sets TOKEN_SECRET when it makes a new token. An existing
@@ -805,7 +834,7 @@ ensure_token() {
 		fi
 		confirm "Token $PVE_USER!$TOKEN_NAME exists, but no Plumb LXC holds it. Replace the token?" yes ||
 			die "stopped; the token was not changed"
-		run pveum user token remove "$PVE_USER" "$TOKEN_NAME"
+		remove_token
 	fi
 	local out
 	if [[ $DRY_RUN == 1 ]]; then
@@ -1453,8 +1482,11 @@ readonly COPY_NAME=plumb-backup-copy COPY_STATUS_DIR=/var/lib/plumb-copy
 
 # storage_field ID FIELD prints one field of the storage config.
 storage_field() {
+	local json
+	json=$(query pvesh get "/storage/$1" --output-format json 2>/dev/null) || return 1
+	[[ -n $json ]] || return 1
 	# shellcheck disable=SC2016 # perl code
-	query pvesh get "/storage/$1" --output-format json 2>/dev/null | json_rows 'print $d->{$ARGV[0]} // ""' "$2"
+	json_rows 'print $d->{$ARGV[0]} // ""' "$2" <<<"$json"
 }
 
 # check_backup_storage checks --backup-storage before any change: type
@@ -1500,9 +1532,9 @@ copy_unit() {
 	fi
 }
 
-# put_host_file SRC DEST MODE installs a root-owned file on the host.
+# put_host_file SRC DEST MODE [DIR_MODE] installs a root-owned file on the host.
 put_host_file() {
-	run install -d -o root -g root -m 0755 "$(dirname "$2")"
+	run install -d -o root -g root -m "${4:-0755}" "$(dirname "$2")"
 	run install -o root -g root -m "$3" "$1" "$2"
 }
 
@@ -1517,7 +1549,7 @@ install_copy_timer() {
 	copy_script >"$tmp"
 	put_host_file "$tmp" "$SBIN_DIR/$COPY_NAME" 0755
 	copy_conf "$LXC_ID" "$storage" "$type" "$path" >"$tmp"
-	put_host_file "$tmp" "$COPY_CONF" 0600
+	put_host_file "$tmp" "$COPY_CONF" 0600 0700
 	copy_unit service >"$tmp"
 	put_host_file "$tmp" "$UNIT_DIR/$COPY_NAME.service" 0644
 	copy_unit timer >"$tmp"
@@ -1706,8 +1738,12 @@ check_restore() {
 # goes into the LXC, then plumb key restore and plumb restore run as user
 # plumb on this terminal, before the first start of plumb.service. The
 # recovery key and the new admin password stay on the terminal (D-178,
-# D-303).
-readonly RESTORE_IN_LXC=/var/lib/plumb/restore.pbk
+# D-303). The file goes outside the data directory: plumb restore refuses
+# a data directory that holds anything but the key volume (D-318, T-130).
+# The directory is root:plumb 0750: user plumb reads the file but cannot
+# put a link where root pushes it.
+readonly RESTORE_DIR=/var/lib/plumb-restore
+readonly RESTORE_IN_LXC=$RESTORE_DIR/restore.pbk
 RESTORING=0
 HALF_LXC=""
 
@@ -1729,18 +1765,28 @@ remove_half_lxc() {
 		clean_stale_lxc_dir "$id" keep
 	fi
 }
+# drop_restore_file removes the backup file and its directory from the
+# LXC, after the restore and after a failed one.
+drop_restore_file() {
+	run pct exec "$LXC_ID" -- rm -rf -- "$RESTORE_DIR" </dev/null || true
+}
 restore_in_lxc() {
 	lxc_has_key "$LXC_ID" && die "LXC $LXC_ID has a master key already; a restore needs a new LXC"
+	run pct exec "$LXC_ID" -- install -d -o root -g plumb -m 0750 "$RESTORE_DIR" </dev/null
 	push_checked "$RESTORE_FILE" "$RESTORE_IN_LXC" 0600
 	run pct exec "$LXC_ID" -- chown plumb:plumb "$RESTORE_IN_LXC" </dev/null
 	say ""
 	say "plumb key restore: type the RECOVERY KEY of the backup."
-	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb ||
+	if ! run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb; then
+		drop_restore_file
 		die "plumb key restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
+	fi
 	say "plumb restore: it shows the NEW password of the user admin once."
-	run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from "$RESTORE_IN_LXC" ||
+	if ! run lxc-attach -n "$LXC_ID" --clear-env -- /usr/sbin/runuser -u plumb -- /usr/local/bin/plumb restore --data /var/lib/plumb --from "$RESTORE_IN_LXC"; then
+		drop_restore_file
 		die "plumb restore failed; plumb.service was not started. Run the same install.sh --restore again: it removes this LXC first."
-	run pct exec "$LXC_ID" -- rm -f "$RESTORE_IN_LXC" </dev/null
+	fi
+	drop_restore_file
 	if [[ $DRY_RUN != 1 && $YES != 1 && -t 0 ]]; then
 		read -r -p "Write the admin password down, then press Enter" _ || true
 	fi
@@ -2069,7 +2115,9 @@ do_remove() {
 		fi
 	fi
 	if query pveum user list --output-format json | json_has userid "$PVE_USER"; then
-		run pveum user token remove "$PVE_USER" "$TOKEN_NAME" || true
+		if query pveum user token list "$PVE_USER" --output-format json 2>/dev/null | json_has tokenid "$TOKEN_NAME"; then
+			remove_token
+		fi
 		run pveum user delete "$PVE_USER"
 	fi
 	local roles role
@@ -2121,7 +2169,8 @@ check_state_file() {
 # do_remove_keep replaces the controller and keeps the guests (D-290,
 # D-304, D-313): first a fresh backup, copied off and checked with the
 # recovery key; any failure stops before a change. Then only the LXC, its
-# key volume, the copy timer and the token (with its ACLs) go.
+# key volume, the copy timer and the token (with its ACLs, deleted first:
+# remove_token) go.
 do_remove_keep() {
 	NODE=$(query hostname -s)
 	local lxc keyvol addr
@@ -2187,8 +2236,8 @@ do_remove_keep() {
 		clean_stale_lxc_dir "$lxc" keep
 	fi
 	if query pveum user token list "$PVE_USER" --output-format json 2>/dev/null | json_has tokenid "$TOKEN_NAME"; then
-		# The ACLs of the token go with it; the user keeps its own (D-304).
-		run pveum user token remove "$PVE_USER" "$TOKEN_NAME"
+		# The user keeps its own ACLs (D-304).
+		remove_token
 	fi
 	# The kept state: no LXC, the install id, pool, node and old address.
 	local tmp

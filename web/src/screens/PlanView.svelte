@@ -8,6 +8,7 @@
   import ChangeTable from "../ui/ChangeTable.svelte";
   import ImagePlanPart from "../ui/ImagePlanPart.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
   import RiskBadge from "../ui/RiskBadge.svelte";
 
   let { api, id }: { api: PlumbApi; id: number } = $props();
@@ -209,6 +210,17 @@
               : "The service restarts because a resource it depends on changes."}
           </p>
         {/if}
+        {#if r.summary?.length}
+          <ul class="summary" aria-label="Summary of {r.resource}">
+            {#each r.summary as line, j (j)}<li>{line}</li>{/each}
+          </ul>
+        {/if}
+        {#if r.confirm_seconds}
+          <p class="muted safe">
+            Safe apply: after the change the agent must reach Plumb again within {r.confirm_seconds} s.
+            Else it puts the old state back by itself, and the step fails as "rolled back".
+          </p>
+        {/if}
         {#if r.changes.length === 0 && r.action === "create"}
           <p class="muted">
             Not observed yet: the guest does not exist. The agent observes and applies it at the
@@ -243,9 +255,16 @@
       </div>
       <ProblemBox error={approveError} />
       <div class="row">
-        <button class="btn primary" type="submit" disabled={busy}>Approve and apply</button>
+        <button
+          class="btn primary"
+          type="submit"
+          disabled={busy || restored.mode}
+          aria-describedby={restored.mode ? "approve-restored" : undefined}
+          >Approve and apply</button
+        >
         <a class="btn" href={href({ name: "targets" })}>Not now</a>
       </div>
+      {#if restored.mode}<p class="muted" id="approve-restored">{RESTORED_WAIT}</p>{/if}
     </form>
   {:else}
     <ProblemBox error={approveError} />
@@ -282,6 +301,10 @@
     gap: var(--space-2);
     align-items: center;
     flex-wrap: wrap;
+  }
+  .summary {
+    margin: 0 0 var(--space-2);
+    padding-left: var(--space-6);
   }
   .order {
     margin: 0 0 var(--space-2);
