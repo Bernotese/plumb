@@ -291,6 +291,9 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 		st.Phase = "error"
 	case st.OpenIssues > 0:
 		st.Phase = "drifted"
+	case live.DesiredPower == "stopped" && live.Power == "stopped":
+		// Stopped on purpose: its agent is offline and that is no Issue (D-299).
+		st.Phase = "stopped"
 	case len(st.Waiting) > 0:
 		st.Phase = "restart_needed"
 	default:

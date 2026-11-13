@@ -12,10 +12,10 @@ Fix the contract for backup, off-host copy, replace and restore before any code.
 - New decisions: `docs/decisions/T-110.md`; ask pl-lead for numbers
 
 ## Acceptance criteria
-- [ ] Backup file format (header with fingerprint, chunked AEAD, D-288); API `GET /backups`, `POST /backups`, state of the off-host copy; no download
-- [ ] `plumb restore`; installer flags `--backup-storage`, `--remove --keep-guests`, `--restore` with their pre-checks (D-289, D-290 incl. N1–N7)
-- [ ] Restored mode: API 409 `restored-mode`, the full list of what is stopped, confirm step, token re-enable; Issues `guest:missing`, `agent:silent`
-- [ ] OpenAPI, wire/state schemas and `docs/ARCHITECTURE.md` updated; `make lint test build` green (contract tests, no feature code)
+- [x] Backup file format (header with fingerprint, chunked AEAD, D-288); API `GET /backups`, `POST /backups`, state of the off-host copy; no download
+- [x] `plumb restore`; installer flags `--backup-storage`, `--remove --keep-guests`, `--restore` with their pre-checks (D-289, D-290 incl. N1–N7)
+- [x] Restored mode: API 409 `restored-mode`, the full list of what is stopped, confirm step, token re-enable; Issues `guest:missing`, `agent:silent`
+- [x] OpenAPI, wire/state schemas and `docs/ARCHITECTURE.md` updated; `make lint test build` green (contract tests, no feature code)
 
 ## Out of scope
 - Day 2 and firewall (T-111)
@@ -24,4 +24,7 @@ Fix the contract for backup, off-host copy, replace and restore before any code.
 ## Plan (architect, optional)
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+branch `pl-architect/T-110-slice4-contract-backup-restore` · see PR · tests: `make lint test build` → ok
+- Contract: `internal/backup/format.go` (file layout, header, KDF labels, names, pointer, copy status), OpenAPI (`/backups`, `/restore`, `/restore/confirm`, `/tokens/{id}/enable`, all `x-plumb-planned`; `Token.disabled_at`; Problems, events, Issues `guest:missing`/`agent:silent`), ARCHITECTURE §16. D-302 … D-304 in `docs/decisions/T-110.md`.
+- New in the contract, not named in D-288 … D-290: `plumb backup verify` (host + LXC), `plumb backup now`, `install_id` made by the installer (none exists today), unused enrollment tokens revoked at restore, `--backup-to` as the alternative to `--backup-storage` for `--keep-guests`.
+- ARCHITECTURE §15 comes from T-111 (PR #211); whichever merges second keeps both sections.

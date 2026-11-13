@@ -64,6 +64,8 @@ type Step struct {
 	Output     string
 	StartedAt  time.Time
 	FinishedAt time.Time
+	// RolledBack: a safe apply put the confirmed state back (D-300).
+	RolledBack bool
 }
 
 // ErrPlanNotPending is returned when a Plan cannot be approved because it
@@ -360,10 +362,17 @@ func (s *Store) UpdateStep(ctx context.Context, runID, seq int64, status string,
 	return err
 }
 
+// MarkStepRolledBack records that a failed step of a safe apply put the
+// confirmed state back (D-300).
+func (s *Store) MarkStepRolledBack(ctx context.Context, runID, seq int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE run_step SET rolled_back = 1 WHERE run_id = ? AND seq = ? AND status = 'failed'`, runID, seq)
+	return err
+}
+
 // Steps returns the steps of a Run in order.
 func (s *Store) Steps(ctx context.Context, runID int64) ([]Step, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT run_id, seq, target, resource, status, changes, output, started_at, finished_at
+		`SELECT run_id, seq, target, resource, status, changes, output, started_at, finished_at, rolled_back
 		 FROM run_step WHERE run_id = ? ORDER BY seq`, runID)
 	if err != nil {
 		return nil, err
@@ -374,7 +383,7 @@ func (s *Store) Steps(ctx context.Context, runID int64) ([]Step, error) {
 		var st Step
 		var changes string
 		var started, finished sql.NullString
-		if err := rows.Scan(&st.RunID, &st.Seq, &st.Target, &st.Resource, &st.Status, &changes, &st.Output, &started, &finished); err != nil {
+		if err := rows.Scan(&st.RunID, &st.Seq, &st.Target, &st.Resource, &st.Status, &changes, &st.Output, &started, &finished, &st.RolledBack); err != nil {
 			return nil, err
 		}
 		st.Changes = json.RawMessage(changes)
@@ -397,7 +406,16 @@ type Binding struct {
 	// Waiting lists the values that wait for the next stop and start of
 	// the guest (D-195). Only Target bindings use it.
 	Waiting []Waiting
+	// RootGrow is the size in GiB of a VM disk that the driver grew while
+	// the agent did not grow the root file system yet (D-310, review M1 of
+	// #217): the next Plan of the Target sends grow again. 0: nothing
+	// pending. It is stored as the entry RootGrowAttr of the waiting
+	// column (no migration) and is never in Waiting.
+	RootGrow int
 }
+
+// RootGrowAttr is the waiting entry that holds Binding.RootGrow.
+const RootGrowAttr = "root_fs"
 
 // Waiting is one value that is set in the hypervisor and waits for the
 // next stop and start of the guest. Since is when Plumb first saw this
@@ -411,7 +429,11 @@ type Waiting struct {
 
 // PutBinding stores or replaces a binding.
 func (s *Store) PutBinding(ctx context.Context, b Binding) error {
-	waiting, err := waitingJSON(b.Waiting)
+	w := append([]Waiting(nil), b.Waiting...)
+	if b.RootGrow > 0 {
+		w = append(w, Waiting{Attr: RootGrowAttr, To: b.RootGrow})
+	}
+	waiting, err := waitingJSON(w)
 	if err != nil {
 		return err
 	}
@@ -434,8 +456,17 @@ func waitingJSON(w []Waiting) (string, error) {
 }
 
 func scanWaiting(raw string, b *Binding) error {
-	if err := json.Unmarshal([]byte(raw), &b.Waiting); err != nil {
+	var all []Waiting
+	if err := json.Unmarshal([]byte(raw), &all); err != nil {
 		return fmt.Errorf("store: binding %s/%s: waiting: %w", b.Kind, b.Name, err)
+	}
+	b.Waiting, b.RootGrow = nil, 0
+	for _, w := range all {
+		if w.Attr == RootGrowAttr {
+			b.RootGrow = w.To
+			continue
+		}
+		b.Waiting = append(b.Waiting, w)
 	}
 	if len(b.Waiting) == 0 {
 		b.Waiting = nil

@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // CreateOnly lists the guest:config attributes that cannot change after
 // the guest exists (ARCHITECTURE §5: cloud-init runs once). Every driver
-// uses this list through DiffGuest, so the fake and Proxmox agree.
-var CreateOnly = []string{AttrKind, AttrImage, AttrDisk, AttrIP, AttrGateway, AttrUser, AttrSSHKeys}
+// uses this list through DiffGuest, so the fake and Proxmox agree. The
+// disk left it in slice 4: it grows, never shrinks (D-299).
+var CreateOnly = []string{AttrKind, AttrImage, AttrIP, AttrGateway, AttrUser, AttrSSHKeys}
 
 // Attribute names of create-only settings that are not in the user's
 // guest block but are still part of GuestSpec.
@@ -35,10 +37,39 @@ func IsOutside(attr string) bool { return slices.Contains(Outside, attr) }
 // moment, so all are disruptive (D-063). A write of a new value of cores
 // or memory stays disruptive also when it only waits: it decides what the
 // guest is after its next cold start, and that can come with no Plan.
+//
+// Slice 4 (D-291, D-299): a disk grow cannot be undone, so it is
+// disruptive; tags change nothing that runs (reversible). The risk of a
+// power change depends on the direction (PowerRisk).
 var guestRisk = map[string]wire.Risk{
 	AttrCores:  wire.RiskDisruptive,
 	AttrMemory: wire.RiskDisruptive,
 	AttrBridge: wire.RiskDisruptive,
+	AttrDisk:   wire.RiskDisruptive,
+	AttrTags:   wire.RiskReversible,
+}
+
+// PowerRisk is the risk of a power change to want: a start is reversible,
+// a stop disruptive (D-291).
+func PowerRisk(want Power) wire.Risk {
+	if want == PowerRunning {
+		return wire.RiskReversible
+	}
+	return wire.RiskDisruptive
+}
+
+// NormTags is the form of a tag set that Plumb compares and writes: lower
+// case, no empty entry, no duplicate, sorted; nil when empty. Proxmox
+// compares tags without case by default (datacenter tag-style).
+func NormTags(tags []string) []string {
+	var out []string
+	for _, t := range tags {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" && !slices.Contains(out, t) {
+			out = append(out, t)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ColdStart lists the attributes whose new value can wait for the next
@@ -66,7 +97,26 @@ func DiffGuest(desired GuestSpec, observed GuestState) ([]wire.Change, error) {
 			return nil, &OutsideError{Attr: c.Attr}
 		}
 	}
+	// Grow only (D-299): the desired disk below either view is a shrink.
+	if have := max(observed.Spec.DiskGB, observed.Next().DiskGB); desired.DiskGB < have {
+		return nil, &ShrinkError{Have: have, Want: desired.DiskGB}
+	}
 	return changes, nil
+}
+
+// Grow returns the disk change of changes when it grows the disk, else nil.
+func Grow(changes []wire.Change) *wire.Change {
+	for _, c := range changes {
+		if c.Attr != AttrDisk {
+			continue
+		}
+		from, err1 := IntValue(c.From)
+		to, err2 := IntValue(c.To)
+		if err1 == nil && err2 == nil && to > from {
+			return &c
+		}
+	}
+	return nil
 }
 
 // DriftGuest lists every difference, the create-only ones included, for
@@ -114,6 +164,16 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 	add(AttrCores, have.Cores, next.Cores, desired.Cores, guestRisk[AttrCores], false)
 	add(AttrMemory, have.MemoryMB, next.MemoryMB, desired.MemoryMB, guestRisk[AttrMemory], false)
 	add(AttrBridge, have.Bridge, next.Bridge, desired.Bridge, guestRisk[AttrBridge], false)
+	// Slice 4 (D-299). The disk keeps its risk also as a pending value. A
+	// disk bigger than desired (grown in Proxmox) is drift too; DiffGuest
+	// refuses to plan it back.
+	add(AttrDisk, have.DiskGB, next.DiskGB, desired.DiskGB, guestRisk[AttrDisk], true)
+	if desired.TagsSet { // missing tags: not managed
+		add(AttrTags, list(NormTags(have.Tags)), list(NormTags(next.Tags)), list(NormTags(desired.Tags)), guestRisk[AttrTags], false)
+	}
+	if desired.Power != "" && observed.Power != desired.Power { // missing power: not managed
+		out = append(out, wire.Change{Attr: AttrPower, From: string(observed.Power), To: string(desired.Power), Risk: PowerRisk(desired.Power)})
+	}
 	// Container settings: Plumb writes only features; the rest is what a
 	// person added on the host. Both can give a container more power on
 	// the host, so the risk is destructive (T-038 §3, review S6).
@@ -151,8 +211,6 @@ func createOnlyValue(s GuestSpec, attr string) any {
 		return s.Kind
 	case AttrImage:
 		return s.ImageName
-	case AttrDisk:
-		return s.DiskGB
 	case AttrIP:
 		return s.IP
 	case AttrGateway:

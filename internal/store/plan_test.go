@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestApprovePlan(t *testing.T) {
@@ -77,6 +78,21 @@ func TestApprovePlan(t *testing.T) {
 	if len(steps) != 1 || steps[0].Status != "applied" || steps[0].Output != "ok" || steps[0].FinishedAt.IsZero() || steps[0].StartedAt.IsZero() {
 		t.Errorf("steps = %+v", steps)
 	}
+	// rolled_back (D-300) only on a failed step.
+	if err := s.MarkStepRolledBack(ctx, run.ID, seq); err != nil {
+		t.Fatal(err)
+	}
+	if steps, _ := s.Steps(ctx, run.ID); steps[0].RolledBack {
+		t.Error("an applied step was marked rolled back")
+	}
+	fw, _ := s.AddStep(ctx, Step{RunID: run.ID, Target: "web1", Resource: "firewall:main", Status: "pending"})
+	s.UpdateStep(ctx, run.ID, fw, "failed", nil, "no round trip")
+	if err := s.MarkStepRolledBack(ctx, run.ID, fw); err != nil {
+		t.Fatal(err)
+	}
+	if steps, _ := s.Steps(ctx, run.ID); len(steps) != 2 || !steps[1].RolledBack || steps[0].RolledBack {
+		t.Errorf("rolled back: %+v", steps)
+	}
 	if err := s.FinishRun(ctx, run.ID, "succeeded", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -131,5 +147,29 @@ func TestIssues(t *testing.T) {
 	s.DeleteBinding(ctx, "Target", "web1")
 	if _, err := s.GetBinding(ctx, "Target", "web1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleted binding: %v", err)
+	}
+}
+
+// T-115 (review M1 of #217): the pending root grow rides in the waiting
+// column and never shows as a waiting value.
+func TestBindingRootGrow(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	w := []Waiting{{Attr: "cores", From: 2, To: 4, Since: time.Now()}}
+	if err := s.PutBinding(ctx, Binding{Kind: "Target", Name: "web1", Ref: "100", Waiting: w, RootGrow: 20}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.GetBinding(ctx, "Target", "web1")
+	if err != nil || b.RootGrow != 20 || len(b.Waiting) != 1 || b.Waiting[0].Attr != "cores" {
+		t.Fatalf("%+v %v", b, err)
+	}
+	all, _ := s.Bindings(ctx, "Target")
+	if len(all) != 1 || all[0].RootGrow != 20 || len(all[0].Waiting) != 1 {
+		t.Errorf("Bindings: %+v", all)
+	}
+	b.RootGrow, b.Waiting = 0, nil
+	s.PutBinding(ctx, b)
+	if b, _ = s.GetBinding(ctx, "Target", "web1"); b.RootGrow != 0 || b.Waiting != nil {
+		t.Errorf("cleared: %+v", b)
 	}
 }

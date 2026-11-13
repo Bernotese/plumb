@@ -122,6 +122,12 @@ var types = map[string]Type{
 	"unit":           {Name: "unit", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUnit},
 	// An LXC shares the host kernel (ARCHITECTURE §6).
 	"sysctl": {Name: "sysctl", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newSysctl},
+	// Safe apply (wire.SafeApplyTypes, D-293); nftables in an unprivileged
+	// LXC is proven by the guest tests (T-116).
+	"firewall": {Name: "firewall", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFirewall,
+		// A firewall belongs to one Target: its boot file is an agent path
+		// that seal removes, and a build guest has no safe apply partner.
+		NotInImage: true},
 	"command": {Name: "command", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newCommand,
 		NoDrift: true, Destructive: true, NotInImage: true},
 }

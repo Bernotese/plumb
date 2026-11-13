@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,7 +105,11 @@ type targetState struct {
 	queue       []wire.Command
 	wake        chan struct{}               // closed and replaced when a command is queued
 	outstanding map[string]wire.CommandType // command id → type, until its result
-	sensitive   map[string][]string         // resource id → sensitive attributes; a key means "known"
+	// safe lists, per apply command, its resources with safe apply
+	// (wire.SafeApplyTypes): a confirm report must name one (D-300).
+	// Only applies that have one are in it; it ends with the result.
+	safe      map[string][]string
+	sensitive map[string][]string // resource id → sensitive attributes; a key means "known"
 	// secrets holds the sensitive desired values that link sent, per
 	// resource. They are masked in Output and Error (defence in depth).
 	secrets  map[string][]string
@@ -250,7 +255,7 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 	l.mu.Lock()
 	if ts := l.target(target); ts != nil {
 		ts.lastPoll = time.Time{}
-		ts.outstanding = map[string]wire.CommandType{}
+		ts.resetOutstanding()
 		ts.agentID = revokedAgent
 		close(ts.wake) // waiting polls of the old agent end now (with 401)
 		ts.wake = make(chan struct{})
@@ -276,7 +281,7 @@ func (l *Link) Revoke(ctx context.Context, target string) error {
 	ts := l.target(target)
 	ts.agentID = revokedAgent
 	ts.queue = nil
-	ts.outstanding = map[string]wire.CommandType{}
+	ts.resetOutstanding()
 	ts.sensitive = map[string][]string{}
 	ts.secrets = map[string][]string{}
 	ts.lastPoll = time.Time{}
@@ -395,7 +400,7 @@ func (l *Link) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	l.mu.Lock()
 	ts := l.target(agent.Target)
-	ts.outstanding = map[string]wire.CommandType{}
+	ts.resetOutstanding()
 	ts.agentID = agent.ID
 	l.mu.Unlock()
 	l.emit(r.Context(), "target.status", agent.Target, "agent:"+agent.Target,
@@ -430,11 +435,24 @@ func (l *Link) current(ts *targetState, agentID string) bool {
 	return ts.agentID == agentID
 }
 
+// resetOutstanding forgets the commands that the agent took. The safe
+// lists of queued commands stay: a new agent polls them.
+func (ts *targetState) resetOutstanding() {
+	ts.outstanding = map[string]wire.CommandType{}
+	safe := map[string][]string{}
+	for _, c := range ts.queue {
+		if ids, ok := ts.safe[c.ID]; ok {
+			safe[c.ID] = ids
+		}
+	}
+	ts.safe = safe
+}
+
 // target returns the state of a target. The caller holds l.mu.
 func (l *Link) target(name string) *targetState {
 	ts, ok := l.targets[name]
 	if !ok {
-		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]wire.CommandType{},
+		ts = &targetState{wake: make(chan struct{}), outstanding: map[string]wire.CommandType{}, safe: map[string][]string{},
 			sensitive: map[string][]string{}, secrets: map[string][]string{}}
 		l.targets[name] = ts
 	}
@@ -516,6 +534,16 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 		default:
 			return "", fmt.Errorf("link: seal needs a wire.SealBody, got %T", body)
 		}
+	case wire.CommandGrow:
+		// The root file system of a Target VM after a disk grow (D-299).
+		if build {
+			return "", fmt.Errorf("link: no grow for the build guest %q", target)
+		}
+		switch body.(type) {
+		case wire.GrowBody, *wire.GrowBody:
+		default:
+			return "", fmt.Errorf("link: grow needs a wire.GrowBody, got %T", body)
+		}
 	case wire.CommandUpdate:
 		// A build guest runs the agent of this controller and never updates
 		// (T-092): its seal does not remove plumb-agent.prev.
@@ -561,6 +589,9 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 			values = append(values, withValues[i].SecretValues...)
 		}
 		ts.secrets[res.ID] = values
+		if typ == wire.CommandApply && slices.Contains(wire.SafeApplyTypes, res.Type) {
+			ts.safe[id] = append(ts.safe[id], res.ID)
+		}
 	}
 	ts.queue = append(ts.queue, wire.Command{ID: id, Type: typ, Body: raw})
 	close(ts.wake)
@@ -622,6 +653,10 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateReport(rep, strings.HasPrefix(agent.Target, wire.BuildLinkPrefix)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if rep.Type == wire.ReportConfirm {
+		l.confirm(w, agent, rep)
 		return
 	}
 	// A bad address list in a Hello makes the list unknown; the Hello
@@ -698,6 +733,7 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		}
 		if rep.Type == wire.ReportResult {
 			delete(ts.outstanding, rep.CommandID)
+			delete(ts.safe, rep.CommandID)
 		}
 	}
 	// D-062: a change loses its values when the head revision, the sent
@@ -757,6 +793,28 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "try again")
 			return
 		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// confirm answers the round trip of a safe apply (D-300): 204 when the
+// command is an apply of this agent that has no result yet and the
+// resource is one of its safe-apply resources, else 409. It stores and
+// forwards nothing; the Run step stays running.
+func (l *Link) confirm(w http.ResponseWriter, agent store.Agent, rep wire.Report) {
+	l.mu.Lock()
+	ts := l.target(agent.Target)
+	if !l.current(ts, agent.ID) {
+		l.mu.Unlock()
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	open := ts.outstanding[rep.CommandID] == wire.CommandApply &&
+		slices.Contains(ts.safe[rep.CommandID], rep.Items[0].Resource)
+	l.mu.Unlock()
+	if !open {
+		writeError(w, http.StatusConflict, "no open apply with this resource")
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -862,6 +920,16 @@ func validateReport(rep wire.Report, build bool) error {
 				return errors.New("bad hello field")
 			}
 		}
+	case wire.ReportConfirm:
+		if rep.CommandID == "" || rep.Hello != nil || rep.Error != "" || len(rep.Items) != 1 {
+			return errors.New("confirm has command_id and one item")
+		}
+		it := rep.Items[0]
+		typ, _, _ := wire.SplitID(it.Resource)
+		if !slices.Contains(wire.SafeApplyTypes, typ) || it.Status != wire.StatusRunning ||
+			len(it.Changes) > 0 || it.Output != "" || it.RolledBack {
+			return errors.New("confirm item: a safe-apply resource, running, nothing else")
+		}
 	case wire.ReportAddrs:
 		if rep.CommandID != "" || rep.Hello != nil || len(rep.Items) > 0 || rep.Error != "" {
 			return errors.New("addrs has only the addrs fields")
@@ -893,12 +961,18 @@ func validateReport(rep wire.Report, build bool) error {
 		// a seal command for it.
 		// The Item agent:binary only in a result; checkItemKinds then needs
 		// an update command for it (T-092).
+		// The Item grow:root only in a result of a grow command (D-299).
 		if !wire.AgentType(typ) && !(typ == wire.SealItemType && build && rep.Type == wire.ReportResult) &&
-			!(typ == wire.AgentItemType && !build && rep.Type == wire.ReportResult) {
+			!(typ == wire.AgentItemType && !build && rep.Type == wire.ReportResult) &&
+			!(typ == wire.GrowItemType && !build && rep.Type == wire.ReportResult) {
 			return fmt.Errorf("item %d: resource type %q is not an agent resource", i, typ)
 		}
 		if !agentStatuses[it.Status] {
 			return fmt.Errorf("item %d: bad status %q", i, it.Status)
+		}
+		// rolled_back only on a failed safe apply (D-300).
+		if it.RolledBack && (it.Status != wire.StatusFailed || !slices.Contains(wire.SafeApplyTypes, typ)) {
+			return fmt.Errorf("item %d: rolled_back only on a failed safe-apply resource", i)
 		}
 		if len(it.Output) > maxOutput {
 			return fmt.Errorf("item %d: output too long", i)
@@ -935,6 +1009,25 @@ func checkUpdateItems(rep wire.Report) error {
 	return nil
 }
 
+// checkGrowItems: the result of a grow command has at most one Item,
+// grow:root, applied, unchanged or failed, without changes, and no
+// progress (D-299). A result with an error and no Item is allowed.
+func checkGrowItems(rep wire.Report) error {
+	if rep.Type != wire.ReportResult {
+		return errors.New("grow has no progress reports")
+	}
+	if len(rep.Items) > 1 {
+		return errors.New("grow has one item")
+	}
+	for _, it := range rep.Items {
+		if it.Resource != wire.GrowItemID || len(it.Changes) > 0 ||
+			(it.Status != wire.StatusApplied && it.Status != wire.StatusUnchanged && it.Status != wire.StatusFailed) {
+			return fmt.Errorf("bad grow item %q %q", it.Resource, it.Status)
+		}
+	}
+	return nil
+}
+
 // sealItemStatuses are the states of a seal step (wire.SealSteps).
 var sealItemStatuses = map[wire.Status]bool{
 	wire.StatusApplied: true, wire.StatusSkipped: true, wire.StatusFailed: true, wire.StatusRefused: true,
@@ -945,8 +1038,11 @@ var sealItemStatuses = map[wire.Status]bool{
 // step at most once and without changes, and no progress; every other
 // command has no seal step (review of #119).
 func checkItemKinds(rep wire.Report, cmd wire.CommandType) error {
-	if cmd == wire.CommandUpdate {
+	switch cmd {
+	case wire.CommandUpdate:
 		return checkUpdateItems(rep)
+	case wire.CommandGrow:
+		return checkGrowItems(rep)
 	}
 	if cmd != wire.CommandSeal {
 		for i, it := range rep.Items {
@@ -955,6 +1051,8 @@ func checkItemKinds(rep wire.Report, cmd wire.CommandType) error {
 				return fmt.Errorf("item %d: a seal step answers only a seal command", i)
 			case wire.AgentItemType:
 				return fmt.Errorf("item %d: %s answers only an update command", i, wire.AgentBinaryID)
+			case wire.GrowItemType:
+				return fmt.Errorf("item %d: %s answers only a grow command", i, wire.GrowItemID)
 			}
 		}
 		return nil
