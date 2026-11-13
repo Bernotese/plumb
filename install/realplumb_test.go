@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +30,18 @@ var realBin struct {
 	path string
 	err  error
 	out  []byte
+}
+
+// The shared binary must stay until all parallel tests have finished.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if realBin.path != "" {
+		if err := os.RemoveAll(filepath.Dir(realBin.path)); err != nil {
+			fmt.Fprintf(os.Stderr, "remove real plumb temp dir: %v\n", err)
+			code = 1
+		}
+	}
+	os.Exit(code)
 }
 
 // realPlumb builds cmd/plumb once per test binary.
