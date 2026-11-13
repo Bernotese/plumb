@@ -108,13 +108,38 @@ full list of rights.
 3. Set a new password. Plumb asks for it at the first login.
 4. **Images:** add an Image (a Debian or Ubuntu cloud image, or a container template). You can
    switch on a build with Blocks and a schedule.
+
+   ![Image page of ubuntu-26.04: title, type virtual machine, kind stock, base image address and checksum](docs/screenshots/readme-images.png)
+   <br>*An Image: where the base image comes from, and its checksum.*
+
 5. **Blocks:** look at the starter Blocks (for example `deploy-user`, `ssh-hardening`, `nginx`,
    `docker-engine`). Change them or write your own.
+
+   ![Block page of nginx: the Targets that use it, its parameter server_name, and the start of its YAML document](docs/screenshots/readme-blocks.png)
+   <br>*A Block: the Targets that use it, its parameters and its document.*
+
 6. **Targets:** make a Target. Choose the Image, the size and the Blocks.
+
+   ![Targets list with four Targets: app1 in Plumb; db1, web1 and web2 out of Plumb; each with image, size, address and agent version](docs/screenshots/readme-targets.png)
+   <br>*The Targets: one is in Plumb, three have drift.*
+
+   ![Edit page of Target web2: configured and reported address, image, type, and the guest settings cores, memory, disk, bridge and power](docs/screenshots/readme-target.png)
+   <br>*One Target: its address, its Image and its guest settings.*
+
 7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
    each step.
+
+   ![Plan 2 for web1: reason, risk disruptive, three resource changes and one restart with old and new values, and the Approve form](docs/screenshots/readme-plan.png)
+   <br>*A Plan: every change with its old value, new value and risk. Nothing changes before you approve it.*
+
+   ![Run 2 succeeded: the four steps on web1, each applied](docs/screenshots/readme-run.png)
+   <br>*The Run of that Plan: each step on each Target.*
+
 8. **Issues:** when somebody changes a guest by hand, an Issue opens. Choose "Revert", "Accept" or
    "Ignore".
+
+   ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
+   <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
 
 In **Settings** you make API tokens, store secrets, and export or import the whole state.
 

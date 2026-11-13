@@ -64,6 +64,9 @@ var devTargets = []string{"web1", "web2"}
 const (
 	demoAddrTarget   = "db1"
 	demoAddrReported = "10.99.0.107"
+	// demoCleanTarget has no seeded drift: the demo shows a Target in sync
+	// next to the drifted ones (T-131). No e2e test changes it.
+	demoCleanTarget = "app1"
 )
 
 // devAddrStable is the stable time of the address check: the demo opens
@@ -79,8 +82,11 @@ func devAddrStable(demo bool) time.Duration {
 // demoDocs is the extra seed of --dev-demo.
 func demoDocs() []state.Doc {
 	return []state.Doc{{Kind: state.KindTarget, Name: demoAddrTarget, Spec: json.RawMessage(`{"type":"vm","image":"ubuntu-26.04",` +
-		`"guest":{"cores":1,"memory":1024,"disk":10,"bridge":"vmbr0","ip":"192.168.1.20/24","gateway":"192.168.1.1"},` +
-		`"blocks":[{"use":"motd","params":{"text":"Hello from db1"}}]}`)}}
+		`"guest":{"cores":1,"memory":1024,"disk":10,"bridge":"vmbr0","ip":"192.0.2.20/24","gateway":"192.0.2.1"},` +
+		`"blocks":[{"use":"motd","params":{"text":"Hello from db1"}}]}`)},
+		{Kind: state.KindTarget, Name: demoCleanTarget, Spec: json.RawMessage(`{"type":"vm","image":"ubuntu-26.04",` +
+			`"guest":{"cores":2,"memory":2048,"disk":16,"bridge":"vmbr0"},` +
+			`"blocks":[{"use":"motd","params":{"text":"Hello from app1"}}]}`)}}
 }
 
 func devDocs() []state.Doc {
@@ -269,9 +275,9 @@ func (d *devAgents) start(ctx context.Context, target, ref string) {
 		a.SetAddrs(append([]string{}, st.IPs...))
 	}
 	// A simulated agent is the agent of this build (T-092): no update
-	// proposal, and the gate passes.
+	// proposal, and the gate passes. It reports the version of this build.
 	served := servedAgent()
-	a.SetHello(wire.Hello{BinarySHA256: served.SHA256, Capabilities: &served.Capabilities})
+	a.SetHello(wire.Hello{Version: served.Version, BinarySHA256: served.SHA256, Capabilities: &served.Capabilities})
 	// The simulated guest grows its root file system at once (T-115).
 	a.OnGrow(func(wire.GrowBody) wire.Item {
 		return wire.Item{Resource: wire.GrowItemID, Status: wire.StatusApplied, Output: "grown (simulated)"}
@@ -328,7 +334,7 @@ func seedDev(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Li
 func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.Link, agents *devAgents, log *slog.Logger) error {
 	eng.Wait()
 	deadline := time.Now().Add(30 * time.Second)
-	for _, t := range append(slices.Clone(devTargets), demoAddrTarget) {
+	for _, t := range append(slices.Clone(devTargets), demoAddrTarget, demoCleanTarget) {
 		for !lk.Online(t) {
 			if time.Now().After(deadline) {
 				return fmt.Errorf("dev demo: %s is not online", t)
