@@ -31,11 +31,11 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-106 second short host run (2026-11-13): controller on main e909458; T-102 (75 s lost link), T-103, T-104, T-105 passed on the real host; finding F3 → T-108; host clean | pl-backend | done (log PR #207) |
 | T-108 a short link drop (30 s) during an agent update no longer fails the Run with a false "old binary" (T-106 F3) | pl-backend | merged (PR #209, D-297, D-298); CI test replays the host timeline |
 | T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **approved by the user 2026-11-13** (all 6 recommendations; D-287 … D-296 accepted; plan PR #206). No new token right. Child cards T-110 … T-122 |
-| T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | T-111 merged (PR #211, D-299 … D-301); T-110: PR #214, review passed, CI pending |
-| T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | T-116 merged (PR #213, D-305 … D-307; CI guest job with unprivileged LXC + VM); T-112, T-113 wait for T-110 |
+| T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | both merged (PR #211, D-299 … D-301; PR #214, D-302 … D-304, D-311: a restore sets a new admin password) |
+| T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | T-116 merged (PR #213, D-305 … D-307; CI guest job with unprivileged LXC + VM); T-112 next (after T-125), then T-113 |
 | T-125 raw mode in the API (`Issue.source`, `Issue.raw`, `TargetView.raw`; gap of the plan, no new scope) | pl-backend | in work |
-| T-114 installer (copy timer, `--remove --keep-guests`, `--restore`) · T-115 Proxmox day 2 | pl-reviewer (pl-architect reviews) | T-115: PR #217, review passed, CI pending; T-114 waits for T-110 |
-| T-117 agent command `grow` | pl-codex-fix | PR #212, review passed, CI pending |
+| T-114 installer (copy timer, `--remove --keep-guests`, `--restore`) · T-115 Proxmox day 2 | pl-reviewer (pl-architect reviews) | T-115: PR #217, review passed, CI pending; T-114 in work |
+| T-117 agent command `grow` | pl-codex-fix | merged (PR #212) |
 | T-121 flaky `TestServeNoAnswer` (a freed port was reused by another test; test-only fix) | pl-codex-fix | merged (PR #210) |
 | T-118 web slice 4 · T-119 starter Block `firewall` | pl-frontend | T-118: UI complete locally, e2e waits for the backend cards; T-119 in work |
 | T-120 QA slice 4 | pl-codex-qa | per card |
