@@ -3,6 +3,7 @@
   "command": ["vm", "lxc"],
   "directory": ["vm", "lxc"],
   "file": ["vm", "lxc"],
+  "firewall": ["vm", "lxc"],
   "package": ["vm", "lxc"],
   "service": ["vm", "lxc"],
   "symlink": ["vm", "lxc"],
