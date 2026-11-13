@@ -16,6 +16,7 @@
   import { KIND_NAME, formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
 
   let { api, name }: { api: PlumbApi; name: string } = $props();
   let image = $state<ImageView | null>(null);
@@ -212,9 +213,13 @@
           <input id="build-reason" type="text" bind:value={reason} maxlength="2000" />
         </div>
         <ProblemBox error={buildError} />
-        <button class="btn primary" type="submit" disabled={busy || st.building !== null}
-          >Build now</button
+        <button
+          class="btn primary"
+          type="submit"
+          disabled={busy || st.building !== null || restored.mode}
+          aria-describedby={restored.mode ? "build-restored" : undefined}>Build now</button
         >
+        {#if restored.mode}<p class="muted" id="build-restored">{RESTORED_WAIT}</p>{/if}
         <p class="muted">
           This makes a plan for a new version from the recipe below. Nothing happens until it is
           approved.

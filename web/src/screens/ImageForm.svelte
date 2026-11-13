@@ -20,6 +20,7 @@
     type Field,
     type Values,
   } from "../lib/schemaForm";
+  import { unfitText } from "../lib/blocks";
   import type { BlockView, ImageSpec, ImageView } from "../lib/types";
   import { KIND_NAME, type GuestKind } from "../lib/view";
   import ProblemBox from "../ui/ProblemBox.svelte";
@@ -86,8 +87,24 @@
     Object.values(b.document.spec.params?.properties ?? {}).some(
       (p) => (p as { writeOnly?: boolean }).writeOnly === true,
     );
-  const usable = $derived(allBlocks.filter((b) => !hasSecret(b)));
+  // T-118 (D-260): also only Blocks that fit the guest type.
+  const usable = $derived(
+    allBlocks.filter((b) => !hasSecret(b) && unfitText(b.document, kind) === ""),
+  );
   const secretBlocks = $derived(allBlocks.filter(hasSecret).map((b) => b.document.name));
+  const unfitBlocks = $derived(
+    allBlocks
+      .filter((b) => !hasSecret(b) && unfitText(b.document, kind) !== "")
+      .map((b) => b.document.name),
+  );
+  $effect(() => {
+    if (!usable.some((b) => b.document.name === addChoice))
+      addChoice = usable[0]?.document.name ?? "";
+  });
+  const unfitUse = (use: string) => {
+    const b = blockByName(use);
+    return b ? unfitText(b.document, kind) : "";
+  };
   const blockByName = (n: string) => allBlocks.find((b) => b.document.name === n);
   const wasBuilt = $derived(existing?.document.spec.build !== undefined);
 
@@ -132,7 +149,6 @@
         keyedTargets = t
           .filter((x) => x.document.spec.image === name && x.document.spec.guest.ssh_keys?.length)
           .map((x) => x.document.name);
-        addChoice = b.find((x) => !hasSecret(x))?.document.name ?? "";
         const s = i?.document.spec;
         const g = s?.build?.guest;
         guest = initialValues(guestFields, {
@@ -218,6 +234,8 @@
         else if (u.id.trim() && !namePattern.test(u.id.trim()))
           u.errors["__id"] = "The id has the wrong format.";
         seen.push(id);
+        const unfit = unfitUse(u.use);
+        if (unfit) u.errors["__kind"] = unfit;
       }
     }
     errors = e;
@@ -233,7 +251,9 @@
     submitError = null;
     if (!check()) {
       queueMicrotask(() =>
-        (document.querySelector('[aria-invalid="true"]') as HTMLElement | null)?.focus(),
+        (
+          document.querySelector('[aria-invalid="true"], .use-unfit') as HTMLElement | null
+        )?.focus(),
       );
       return;
     }
@@ -482,10 +502,21 @@
           Not offered: <span class="mono">{secretBlocks.join(", ")}</span>.
         </p>
       {/if}
+      {#if unfitBlocks.length}
+        <p class="muted" id="i-not-for-kind">
+          Not offered for a {kind === "lxc" ? "container" : "virtual machine"}:
+          <span class="mono">{unfitBlocks.join(", ")}</span>.
+        </p>
+      {/if}
       {#each uses as u (u.key)}
         {@const b = blockByName(u.use)}
+        {@const unfit = unfitUse(u.use)}
         <fieldset>
           <legend id="iuse-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend>
+          {#if unfit}<p class="error use-unfit" id="iuse-{u.key}-unfit" tabindex="-1">
+              This Block does not fit a {kind === "lxc" ? "container" : "virtual machine"}. {unfit}
+              Remove it to save.
+            </p>{/if}
           <div class="field">
             <label for="iuse-{u.key}-id">Use id (optional)</label>
             <input

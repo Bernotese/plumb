@@ -1,18 +1,32 @@
 <script lang="ts">
-  // Settings (T-035): API tokens, secrets, export and import. Only a person
+  // Settings (T-035): API tokens, secrets, export and import, backups (T-118). Only a person
   // who logged in (tier admin) manages these (D-046, D-087, D-095).
   import type { PlumbApi } from "../lib/client";
   import { href, type SettingsTab } from "../lib/router";
-  import type { Session } from "../lib/types";
+  import type { RestoreState, Session } from "../lib/types";
+  import Backups from "./Backups.svelte";
   import ExportImport from "./ExportImport.svelte";
   import Secrets from "./Secrets.svelte";
   import Tokens from "./Tokens.svelte";
+  import ResetPassword from "../ui/ResetPassword.svelte";
 
-  let { api, session, tab }: { api: PlumbApi; session: Session; tab: SettingsTab } = $props();
+  let {
+    api,
+    session,
+    tab,
+    onRestore,
+  }: {
+    api: PlumbApi;
+    session: Session;
+    tab: SettingsTab;
+    onRestore?: (r: RestoreState) => void;
+  } = $props();
   const tabs: { tab: SettingsTab; label: string }[] = [
     { tab: "tokens", label: "API tokens" },
     { tab: "secrets", label: "Secrets" },
     { tab: "export", label: "Export and import" },
+    { tab: "backups", label: "Backups" },
+    { tab: "users", label: "Users" },
   ];
 </script>
 
@@ -35,12 +49,26 @@
     <Tokens {api} />
   {:else if tab === "secrets"}
     <Secrets {api} />
+  {:else if tab === "backups"}
+    <Backups {api} {onRestore} />
+  {:else if tab === "users"}
+    <section class="card" aria-labelledby="users-title">
+      <h2 id="users-title">One-time password</h2>
+      <p>
+        Give another user a new password when they lost theirs, or when a restore locked them. Plumb
+        makes the password and shows it once. The user must change it at the first login.
+      </p>
+      <ResetPassword {api} id="users-otp" />
+    </section>
   {:else}
     <ExportImport {api} />
   {/if}
 {/if}
 
 <style>
+  .card h2 {
+    margin-top: 0;
+  }
   .tabs {
     display: flex;
     flex-wrap: wrap;

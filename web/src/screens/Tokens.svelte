@@ -115,6 +115,18 @@
     document.getElementById(`revoke-confirm-${id}`)?.focus();
   }
 
+  // D-303: a restore disables every token; a person enables them one by one.
+  async function enable(id: string) {
+    revokeError = null;
+    try {
+      await api.enableToken(id);
+      await reload();
+      queueMicrotask(() => document.getElementById(`revoke-${id}`)?.focus());
+    } catch (err) {
+      revokeError = err;
+    }
+  }
+
   async function revoke(id: string) {
     revokeError = null;
     try {
@@ -253,12 +265,30 @@
                     >
                   </div>
                 </div>
+              {:else if t.disabled_at}
+                <div class="row">
+                  <Badge tone="warn" label="Disabled by the restore" />
+                  <button
+                    class="btn"
+                    type="button"
+                    id="enable-{t.id}"
+                    aria-label="Enable {t.name}"
+                    onclick={() => enable(t.id)}>Enable</button
+                  >
+                  <button
+                    class="btn"
+                    type="button"
+                    aria-label="Revoke {t.name}"
+                    onclick={() => askRevoke(t.id)}>Revoke</button
+                  >
+                </div>
               {:else}
                 <div class="row">
                   <Badge tone="ok" label="Active" />
                   <button
                     class="btn"
                     type="button"
+                    id="revoke-{t.id}"
                     aria-label="Revoke {t.name}"
                     onclick={() => askRevoke(t.id)}>Revoke</button
                   >

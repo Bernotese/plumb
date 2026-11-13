@@ -110,8 +110,9 @@ pveum)
 			esac
 			shift 2
 		done
-		# Like Proxmox: an ACL needs an existing user or token.
-		if [[ $op == modify && $type == token ]] && ! has "token.${ugid#*!}"; then
+		# Like Proxmox: an ACL needs an existing user or token. This holds
+		# for delete too, so the lines of a removed token cannot go.
+		if [[ $type == token ]] && ! has "token.${ugid#*!}"; then
 			echo "ACL update failed: no such token '${ugid#*!}' for user '${ugid%%!*}'" >&2
 			exit 255
 		fi
@@ -136,6 +137,9 @@ pveum)
 		printf '['
 		while read -r path ugid role type prop; do
 			[[ -n $path ]] || continue
+			# Like PVE 9.2: the lines of a removed token stay in user.cfg,
+			# but the list skips them ("ignore invalid acl token").
+			if [[ $type == token ]] && ! has "token.${ugid#*!}"; then continue; fi
 			[[ $first == 1 ]] || printf ','
 			first=0
 			printf '{"path":"%s","ugid":"%s","roleid":"%s","type":"%s","propagate":%s}' "$path" "$ugid" "$role" "$type" "${prop:-1}"
@@ -150,12 +154,9 @@ pveum)
 			printf '{"full-tokenid":"%s!%s","info":{"privsep":1},"value":"%s"}\n' "$4" "$5" "$FAKE_SECRET"
 			;;
 		remove)
+			# Like PVE 9.2.26 (T-122 F4): the ACL lines of the token stay, and
+			# a new token with the same name gets them again.
 			rm -f "$st/token.$5"
-			# Like Proxmox: the ACLs of the token go with it.
-			if [[ -e $st/acl ]]; then
-				awk -v u="$4!$5" '$2 != u' "$st/acl" >"$st/acl.new"
-				mv "$st/acl.new" "$st/acl"
-			fi
 			;;
 		esac
 		;;

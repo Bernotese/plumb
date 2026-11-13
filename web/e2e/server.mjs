@@ -1,8 +1,8 @@
 // Starts `plumb serve --dev --dev-demo` for the end-to-end test and hands the
 // one-time admin password to the test through the environment.
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -28,14 +28,16 @@ async function freePorts() {
 /**
  * Starts a dev server with its own data directory on 127.0.0.1:<port> (agents
  * on port + 1; port 0 picks free ports). Returns the base URL, the one-time
- * admin password and a stop function.
+ * admin password, the data directory and a stop function.
  * A spec can start a second, fresh server with it (export/import).
+ * With `data` the server uses that directory (a restore, T-118); it prints
+ * no password then. stop({ keep: true }) keeps the data directory.
  */
-export async function startPlumb(port, { demo = true } = {}) {
+export async function startPlumb(port, { demo = true, data = undefined } = {}) {
   if (port === 0) port = await freePorts();
-  const bin = resolve(import.meta.dirname, "../../bin/plumb");
-  if (!existsSync(bin)) throw new Error(`${bin} is missing: run "make build" first`);
-  const data = await mkdtemp(join(tmpdir(), "plumb-e2e-"));
+  const bin = plumbBin();
+  const fresh = data === undefined;
+  data ??= await mkdtemp(join(tmpdir(), "plumb-e2e-"));
   const args = ["serve", "--dev", ...(demo ? ["--dev-demo"] : [])];
   args.push("--data", data, "--listen", `127.0.0.1:${port}`);
   args.push("--agent-listen", `127.0.0.1:${port + 1}`);
@@ -46,23 +48,55 @@ export async function startPlumb(port, { demo = true } = {}) {
     const read = (chunk) => {
       out += chunk;
       const m = /User: admin\s+Password: (\S+)/.exec(out);
-      if (m && /listens on/.test(out)) {
+      if ((m || !fresh) && /listens on/.test(out)) {
         clearTimeout(timer);
-        ok(m[1]);
+        ok(m?.[1] ?? "");
       }
     };
     proc.stdout.on("data", read);
     proc.stderr.on("data", read);
     proc.on("exit", (code) => fail(new Error(`plumb exited (${code}):\n${out}`)));
   });
-  const stop = async () => {
+  const stop = async ({ keep = false } = {}) => {
     if (proc.exitCode === null) {
       proc.kill("SIGTERM");
       await new Promise((done) => proc.once("exit", done));
     }
-    await rm(data, { recursive: true, force: true });
+    if (!keep) await rm(data, { recursive: true, force: true });
   };
-  return { base: `http://127.0.0.1:${port}`, password, stop };
+  return { base: `http://127.0.0.1:${port}`, password, data, stop };
+}
+
+function plumbBin() {
+  const bin = resolve(import.meta.dirname, "../../bin/plumb");
+  if (!existsSync(bin)) throw new Error(`${bin} is missing: run "make build" first`);
+  return bin;
+}
+
+/**
+ * Runs `plumb restore` of a backup file into a new data directory with the
+ * master key of `keyData` (the dev key; T-118, D-303). restore prints the
+ * new admin password only on a terminal: script(1) gives it one. Returns
+ * the data directory and the new admin password. The data directory gets
+ * the dev mode marker after the restore: serve --dev opens only dev data.
+ */
+export async function restorePlumb(keyData, backupFile) {
+  const data = await mkdtemp(join(tmpdir(), "plumb-e2e-restore-"));
+  await mkdir(join(data, "key"), { mode: 0o700 });
+  await copyFile(join(keyData, "key", "master.key"), join(data, "key", "master.key"));
+  const q = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+  const cmd = `${q(plumbBin())} restore --data ${q(data)} --from ${q(backupFile)}`;
+  const out = await new Promise((ok, fail) =>
+    execFile("script", ["-qec", cmd, "/dev/null"], { timeout: 60_000 }, (err, stdout, stderr) =>
+      err
+        ? fail(new Error(`plumb restore failed: ${err.message}\n${stdout}${stderr}`))
+        : ok(stdout),
+    ),
+  );
+  const m = /User: admin\s+Password: (\S+)/.exec(out);
+  if (!m) throw new Error(`plumb restore printed no password:\n${out}`);
+  await writeFile(join(data, "mode"), "dev\n", { mode: 0o600 });
+  return { data, password: m[1] };
 }
 
 export default async function globalSetup() {
