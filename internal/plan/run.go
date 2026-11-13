@@ -427,7 +427,11 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 			after = hellos
 		}
 		if err := e.waitOnline(ctx, tp.Target, after); err != nil {
-			failAll(err.Error())
+			if gres.grow > 0 { // the disk grew already (review L3 of #217)
+				failAll(fmt.Sprintf(textGrowAgent, gres.grow, err.Error()))
+			} else {
+				failAll(err.Error())
+			}
 			return false
 		}
 		e.emit(ctx, "target.status", "target:"+tp.Target, "system", map[string]any{"agent": "online", "run": run.ID})
@@ -445,6 +449,10 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	if gres.grow > 0 {
 		if err := e.growRoot(ctx, p.ID, tp.Target, gres.grow); err != nil {
 			failAll(err.Error())
+			return false
+		}
+		if err := e.setRootGrow(ctx, tp.Target, 0); err != nil {
+			failAll("the root file system grew, but the binding cannot be stored: " + err.Error())
 			return false
 		}
 		if !gres.stop {
@@ -812,6 +820,18 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 		if desired.Kind == wire.KindVM {
 			res.grow = desired.DiskGB
 		}
+	}
+	// A root grow that failed in an earlier Run (review M1 of #217): the
+	// Plan shows root_fs, the disk has its size, the agent grows again.
+	if grow == nil && !reenroll && hasAttr(planned.Changes, AttrRootFS) && b.RootGrow > 0 && desired.Kind == wire.KindVM {
+		if after.Power != driver.PowerRunning {
+			return res, errors.New(textGrowNotRunning)
+		}
+		res.grow = b.RootGrow
+		recorded = append(recorded, rootFSChange(b.RootGrow))
+	}
+	if res.grow > 0 {
+		b.RootGrow = res.grow // pending until the agent grew the root file system
 	}
 	recorded, err = checkWritten(recorded, desired, after)
 	res.changes = recorded

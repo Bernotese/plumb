@@ -397,7 +397,16 @@ type Binding struct {
 	// Waiting lists the values that wait for the next stop and start of
 	// the guest (D-195). Only Target bindings use it.
 	Waiting []Waiting
+	// RootGrow is the size in GiB of a VM disk that the driver grew while
+	// the agent did not grow the root file system yet (D-310, review M1 of
+	// #217): the next Plan of the Target sends grow again. 0: nothing
+	// pending. It is stored as the entry RootGrowAttr of the waiting
+	// column (no migration) and is never in Waiting.
+	RootGrow int
 }
+
+// RootGrowAttr is the waiting entry that holds Binding.RootGrow.
+const RootGrowAttr = "root_fs"
 
 // Waiting is one value that is set in the hypervisor and waits for the
 // next stop and start of the guest. Since is when Plumb first saw this
@@ -411,7 +420,11 @@ type Waiting struct {
 
 // PutBinding stores or replaces a binding.
 func (s *Store) PutBinding(ctx context.Context, b Binding) error {
-	waiting, err := waitingJSON(b.Waiting)
+	w := append([]Waiting(nil), b.Waiting...)
+	if b.RootGrow > 0 {
+		w = append(w, Waiting{Attr: RootGrowAttr, To: b.RootGrow})
+	}
+	waiting, err := waitingJSON(w)
 	if err != nil {
 		return err
 	}
@@ -434,8 +447,17 @@ func waitingJSON(w []Waiting) (string, error) {
 }
 
 func scanWaiting(raw string, b *Binding) error {
-	if err := json.Unmarshal([]byte(raw), &b.Waiting); err != nil {
+	var all []Waiting
+	if err := json.Unmarshal([]byte(raw), &all); err != nil {
 		return fmt.Errorf("store: binding %s/%s: waiting: %w", b.Kind, b.Name, err)
+	}
+	b.Waiting, b.RootGrow = nil, 0
+	for _, w := range all {
+		if w.Attr == RootGrowAttr {
+			b.RootGrow = w.To
+			continue
+		}
+		b.Waiting = append(b.Waiting, w)
 	}
 	if len(b.Waiting) == 0 {
 		b.Waiting = nil

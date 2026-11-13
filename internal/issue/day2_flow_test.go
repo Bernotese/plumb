@@ -102,6 +102,9 @@ func TestDay2StopAndStart(t *testing.T) {
 	if len(tp.Resources) != 2 || !tp.Resources[1].Unverified {
 		t.Errorf("start plan resources: %+v", tp.Resources)
 	}
+	if n := strings.Join(planNotes(t, p), " "); !strings.Contains(n, "web1 is stopped and the Run starts it") {
+		t.Errorf("start note: %q", n)
+	}
 	run = e.approve(p.ID)
 	if run.Status != "succeeded" || stepNames(e.steps(run)) != "guest:config=applied file:/etc/motd=applied" {
 		t.Fatalf("start run %s: %s", run.Status, stepNames(e.steps(run)))
@@ -247,13 +250,26 @@ func TestDay2VMGrow(t *testing.T) {
 	if st := e.observe("web1"); st.Spec.DiskGB != 20 {
 		t.Errorf("disk after a failed root grow: %d", st.Spec.DiskGB)
 	}
-	// The disk has 20 GiB now: a new Plan has no disk change. A Plan with
-	// 30 GiB and a good agent passes.
+	// The disk keeps 20 GiB, the root grow is pending (review M1 of #217):
+	// after the fix in the guest, the next Plan grows the file system.
+	if b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); b.RootGrow != 20 || len(b.Waiting) != 0 {
+		t.Fatalf("binding after a failed root grow: %+v", b)
+	}
 	e.helloWithGrow(wire.Item{Resource: wire.GrowItemID, Status: wire.StatusApplied})
-	run = e.approve(e.propose(plan.Proposal{Put: []state.Doc{doc(state.KindTarget, "web1",
-		`{"type":"vm","image":"ubuntu","allow_restart":true,"guest":{"cores":2,"memory":1024,"disk":30,"bridge":"vmbr0"},"blocks":[{"use":"motd","params":{"text":"hello"}}]}`)}}).ID)
-	if run.Status != "failed" || !strings.Contains(e.guestStep(run).Output, "wrong size") {
-		t.Fatalf("the grow body must name the new size: %s %+v", run.Status, e.guestStep(run))
+	p := e.propose(plan.Proposal{Targets: []string{"web1"}})
+	gc := e.guestChanges(p)
+	if c := find(gc.Changes, plan.AttrRootFS); c == nil || c.To != "20 GiB" || gc.Risk != wire.RiskDisruptive || find(gc.Changes, driver.AttrDisk) != nil {
+		t.Fatalf("retry plan: %+v", gc)
+	}
+	run = e.approve(p.ID)
+	if run.Status != "succeeded" || find(stepChanges(t, e.guestStep(run)), plan.AttrRootFS) == nil {
+		t.Fatalf("retry run %s: %+v", run.Status, e.guestStep(run))
+	}
+	if b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); b.RootGrow != 0 {
+		t.Errorf("the mark stays after the grow: %+v", b)
+	}
+	if gc := e.guestChanges(e.propose(plan.Proposal{Targets: []string{"web1"}})); len(gc.Changes) != 0 {
+		t.Errorf("a Plan after the grow: %+v", gc)
 	}
 }
 

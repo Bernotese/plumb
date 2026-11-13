@@ -112,12 +112,12 @@ func allowRestartChange(before, after *state.Rendered) *wire.Change {
 }
 
 // driverChanges are the changes that Update gets: none of restart,
-// allow_restart, power (the engine runs Power, D-299) or a read change (a
-// value that already waits).
+// allow_restart, power (the engine runs Power, D-299), root_fs (the agent
+// grows it) or a read change (a value that already waits).
 func driverChanges(changes []wire.Change) []wire.Change {
 	var out []wire.Change
 	for _, c := range changes {
-		if c.Attr == wire.AttrRestart || c.Attr == AttrAllowRestart || c.Attr == driver.AttrPower || c.Risk == wire.RiskRead {
+		if c.Attr == wire.AttrRestart || c.Attr == AttrAllowRestart || c.Attr == driver.AttrPower || c.Attr == AttrRootFS || c.Risk == wire.RiskRead {
 			continue
 		}
 		out = append(out, c)

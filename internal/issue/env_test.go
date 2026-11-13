@@ -147,7 +147,7 @@ func (e *env) agent(target string) *linktest.Agent {
 				quiet := e.noBootHello
 				e.mu.Unlock()
 				if seen >= 0 && n > seen && !quiet && a.Enrolls() > 0 {
-					a.Report(ctx, wire.Report{Type: wire.ReportHello, Hello: &wire.Hello{Version: "test", Hostname: "fake", OS: "fake 1"}})
+					a.SendHello(ctx) // with the fields of SetHello, as a real agent after its start
 				}
 				seen = n
 			}

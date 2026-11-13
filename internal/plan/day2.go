@@ -22,10 +22,55 @@ const (
 	textStopNeedsRestart = "power: stopped needs allow_restart on the Target (D-291): a Run may stop the guest only then"
 	textGrowNotRunning   = "a disk grow needs a running guest (D-299): set power: running, or start the guest, then plan again"
 	textGrowAgent        = "the disk is %d GiB in Proxmox now, but the agent did not grow the root file system: %s. " +
-		"The bigger disk stays (it cannot shrink); fix the cause in the guest, then plan again"
+		"The bigger disk stays (it cannot shrink). Fix the cause in the guest, then plan again: the Plan then grows the root file system"
+	textStartedNote = "%s is stopped and the Run starts it: its resources were not observed, so the Plan shows them as unverified; the agent applies them after the start"
 	textStoppedSkip = "Target stopped"
 	textNotStopped  = "not stopped: %s; the guest keeps running. Plan again"
 )
+
+// AttrRootFS is the Plan-only change of guest:config that sends the agent
+// command grow again after a failed root grow (review M1 of #217): the
+// disk has its size in Proxmox, only the file system is behind. The
+// driver never gets it.
+const AttrRootFS = store.RootGrowAttr
+
+// rootFSChange is the change of a pending root grow of gib GiB.
+func rootFSChange(gib int) wire.Change {
+	return wire.Change{Attr: AttrRootFS, From: "not grown", To: fmt.Sprintf("%d GiB", gib), Risk: wire.RiskDisruptive}
+}
+
+// setRootGrow stores the pending root grow of a target (0 clears it).
+func (e *Engine) setRootGrow(ctx context.Context, target string, gib int) error {
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		return err
+	}
+	if b.RootGrow == gib {
+		return nil
+	}
+	b.RootGrow = gib
+	return e.st.PutBinding(ctx, b)
+}
+
+// startNotes are the Plan warnings of review L1 of #217: a Run that
+// starts a stopped guest applies its resources unverified, so the Plan
+// risk is that of a new guest.
+func startNotes(plans []TargetPlan) []string {
+	var out []string
+	for _, tp := range plans {
+		starts, unverified := false, false
+		for _, rc := range tp.Resources {
+			if rc.Resource == wire.GuestConfigID && powerTo(rc.Changes) == driver.PowerRunning {
+				starts = true
+			}
+			unverified = unverified || rc.Unverified
+		}
+		if starts && unverified {
+			out = append(out, fmt.Sprintf(textStartedNote, tp.Target))
+		}
+	}
+	return out
+}
 
 // rulePower is the power state that the restart rule of D-194 sees: a
 // guest that the Run stops at its end takes every waiting value at its
@@ -68,7 +113,7 @@ func (e *Engine) checkDay2(ctx context.Context, target string, desired driver.Gu
 	if powerTo(changes) == driver.PowerStopped && !allow {
 		return &ProposalError{Target: target, Msg: textStopNeedsRestart}
 	}
-	if driver.Grow(changes) == nil {
+	if driver.Grow(changes) == nil && !hasAttr(changes, AttrRootFS) {
 		return nil
 	}
 	if !runsAfter(desired, observed) {

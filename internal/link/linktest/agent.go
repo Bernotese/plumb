@@ -165,6 +165,12 @@ func (a *Agent) SetHello(h wire.Hello) {
 	a.hello2 = h
 }
 
+// SendHello sends the Hello of the agent (with the fields of SetHello),
+// as the real agent does after each start. It returns the HTTP status.
+func (a *Agent) SendHello(ctx context.Context) int {
+	return a.Report(ctx, wire.Report{Type: wire.ReportHello, Hello: a.hello()})
+}
+
 // hello is the Hello of the agent.
 func (a *Agent) hello() *wire.Hello {
 	a.mu.Lock()

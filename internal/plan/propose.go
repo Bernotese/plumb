@@ -292,6 +292,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if note := e.diskNote(ctx, next, plans); note != "" {
 		in.Proposal.Notes = append(in.Proposal.Notes, note)
 	}
+	in.Proposal.Notes = append(in.Proposal.Notes, startNotes(plans)...)
 	markIgnored(next.Rules(), plans)
 	// The image part: builds of new or changed recipes and removals
 	// (D-199, D-209), and the Targets that cannot be made yet (D-200).
@@ -516,6 +517,11 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	}
 	if err != nil {
 		return tp, err
+	}
+	// A VM disk that grew while its root file system did not (review M1
+	// of #217): the Plan grows the file system again.
+	if !reenroll && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
+		gchanges = append(gchanges, rootFSChange(bind.RootGrow))
 	}
 	if !reenroll {
 		if err := e.checkDay2(ctx, target, desired, observed, gchanges, r.AllowRestart); err != nil {
