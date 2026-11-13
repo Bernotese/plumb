@@ -55,10 +55,13 @@ func liveTable(t *testing.T) string {
 	return string(out)
 }
 
+// Commands in the peer namespace run with nsenter, not "ip netns exec":
+// that remounts /sys, which an unprivileged container refuses.
+
 // reachable reports whether the peer can open a TCP connection to the
 // guest port.
 func reachable(port string) bool {
-	err := exec.Command("ip", "netns", "exec", fwNetns, "timeout", "3", "bash", "-c",
+	err := exec.Command("nsenter", "--net=/run/netns/"+fwNetns, "timeout", "3", "bash", "-c",
 		"exec 3<>/dev/tcp/"+fwHost+"/"+port).Run()
 	return err == nil
 }
@@ -99,9 +102,9 @@ func TestGuestFirewall(t *testing.T) {
 	fwSh(t, "ip", "link", "set", "plumbfw1", "netns", fwNetns)
 	fwSh(t, "ip", "addr", "add", fwHost+"/24", "dev", "plumbfw0")
 	fwSh(t, "ip", "link", "set", "plumbfw0", "up")
-	fwSh(t, "ip", "netns", "exec", fwNetns, "ip", "addr", "add", fwPeer+"/24", "dev", "plumbfw1")
-	fwSh(t, "ip", "netns", "exec", fwNetns, "ip", "link", "set", "plumbfw1", "up")
-	fwSh(t, "ip", "netns", "exec", fwNetns, "ip", "link", "set", "lo", "up")
+	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "addr", "add", fwPeer+"/24", "dev", "plumbfw1")
+	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "plumbfw1", "up")
+	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "lo", "up")
 	for _, port := range []string{"8080", "8081"} {
 		ln, err := net.Listen("tcp", fwHost+":"+port)
 		if err != nil {
