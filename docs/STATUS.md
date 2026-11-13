@@ -45,7 +45,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-128 installer: no stray Perl line for a missing storage; host `/etc/plumb` never wider than 0700 (T-122 F1, F2) | pl-codex-fix | merged (PR #229) |
 | T-130 `--restore` failed on every host: the installer put the backup into the data dir (T-122 F5). Now a dir of its own; a test runs the real `plumb` on the installer layout | pl-backend | merged (PR #231); main build green after it (24eb562) |
 | T-132 installer: `pct exec` without a tty, bounded wait for the boot of the LXC, checksum check after a failed push (T-122 F7); complete dry-run of a restore rerun (F6) | pl-backend | merged (PR #233) |
-| T-134 host-run findings F8, F9; also: a schema error never repeats a rejected value (a pasted private key came back in the 422) | pl-backend | PR #236, review passed |
+| T-134 host-run findings F8, F9; also: a schema error never repeats a rejected value (a pasted private key came back in the 422) | pl-backend | merged (PR #236, D-325) |
 | T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | PR #237, review passed |
 | T-136 CI: install tests run in parallel, each script run bounded; "lint, test, build" needs 8 min of 15 (was 11.7–13.6, cancelled on slow runners) | pl-backend | merged (PR #239) |
 | T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | PR #238, review passed |
