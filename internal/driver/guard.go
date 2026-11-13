@@ -35,7 +35,9 @@ func (g guard) Create(ctx context.Context, spec GuestSpec, boot Bootstrap) (Gues
 	return g.d.Create(ctx, spec, boot)
 }
 
-func (g guard) Observe(ctx context.Context, id GuestID) (GuestState, error) { return g.d.Observe(ctx, id) }
+func (g guard) Observe(ctx context.Context, id GuestID) (GuestState, error) {
+	return g.d.Observe(ctx, id)
+}
 
 func (g guard) Diff(desired GuestSpec, observed GuestState) ([]wire.Change, error) {
 	return g.d.Diff(desired, observed)

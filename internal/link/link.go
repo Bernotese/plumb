@@ -53,7 +53,7 @@ type Config struct {
 	// Restored reports restored mode (D-303): Send refuses every command
 	// but observe while it is true. nil: never.
 	Restored func() bool
-	Store *store.Store
+	Store    *store.Store
 	// Events gets the enrollment events. It may be nil in tests.
 	Events *event.Log
 	// AgentBinary is served at GET /agent/v1/binary. The plumb binary

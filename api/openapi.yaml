@@ -400,6 +400,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /blocks:
     get:
@@ -761,6 +762,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /targets/{name}/agent-update:
     parameters:

@@ -206,7 +206,7 @@ type Engine struct {
 	st  *store.Store
 	// restore is what the engine keeps of a restore (D-303).
 	restore restoreState
-	log *slog.Logger
+	log     *slog.Logger
 
 	ctx    context.Context // runs live as long as the engine
 	cancel context.CancelFunc

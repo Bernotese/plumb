@@ -271,6 +271,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		}
 	}
 	// The second line of restored mode: no Proxmox write (D-303).
+	// rawDrv is the unwrapped driver, for the dev agents of the fake one.
+	rawDrv := drv
 	drv = driver.ReadOnlyWhen(drv, restore.Active)
 	eng, err = plan.New(plan.Config{
 		Restore: restore,
@@ -397,7 +399,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		// The simulated agents stop before runServer returns and the store
 		// closes (review T-024 m1).
 		actx, stop := context.WithCancel(ctx)
-		agents := newDevAgents(st, lk, drv.(*fake.Driver), log)
+		agents := newDevAgents(st, lk, rawDrv.(*fake.Driver), log)
 		agentsDone := make(chan struct{})
 		go func() { agents.run(actx, events); close(agentsDone) }()
 		defer func() { stop(); <-agentsDone }()
