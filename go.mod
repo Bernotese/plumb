@@ -5,6 +5,7 @@ go 1.27
 toolchain go1.27.4
 
 require (
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/klauspost/compress v1.20.4
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.yaml.in/yaml/v3 v3.0.4
@@ -14,6 +15,7 @@ require (
 )
 
 require (
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

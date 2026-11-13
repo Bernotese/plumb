@@ -108,12 +108,10 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, "an old build guest could not be removed: "+err.Error())
 		return false
 	}
-	// The pin of the base: SHA-256 for a VM, SHA-512 for lxc (D-224).
-	pin := info.SHA256
+	// The pin of the base: SHA-256 for a VM, SHA-512 for lxc (D-224) and
+	// for a VM from a Debian list (D-345).
+	pin := info.Pin()
 	lxc := info.Type == wire.KindLXC
-	if lxc {
-		pin = info.SHA512
-	}
 	v, err := e.st.AddImageVersion(ctx, store.ImageVersion{Image: l.image, Trigger: buildTrigger(p, l.image), RunID: run.ID,
 		RevisionID: run.RevisionID, RecipeSHA256: r.RecipeSHA256, BaseSHA256: pin, DiskGB: r.Recipe.DiskGB},
 		func(n int) string { return BuildDigest(l.image, n, r.RecipeSHA256, pin, run.ID) })
@@ -132,7 +130,7 @@ func (l *lane) build(ctx context.Context, p store.Plan, run store.Run, info stat
 		s.set(ctx, StepImageBase, wire.StatusFailed, nil, fmt.Sprintf("%v; nothing was made", err))
 		return false
 	}
-	is := driver.ImageSpec{Name: l.image, Kind: info.Type, URL: r.Recipe.URL, SHA256: info.SHA256}
+	is := driver.ImageSpec{Name: l.image, Kind: info.Type, URL: r.Recipe.URL, SHA256: info.SHA256, SHA512: info.SHA512}
 	if lxc {
 		is.SHA256, is.SHA512 = "", info.SHA512 // the repacked template file (D-234)
 	}
@@ -491,7 +489,7 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 	if ok && info.Built {
 		keep = info.Keep
 	}
-	removed, left, err := e.retain(ctx, image, keep, info.SHA256, built)
+	removed, left, err := e.retain(ctx, image, keep, info.Pin(), built)
 	var lines []string
 	for _, r := range removed {
 		lines = append(lines, "removed "+r)
@@ -528,7 +526,7 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 // Image (sha256 is then ignored). It returns what it removed and what it
 // left on purpose (with the reason). err joins every other error (D-232):
 // removed and left are still valid then.
-func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 string, built int) (removed, left []string, err error) {
+func (e *Engine) retain(ctx context.Context, image string, keep int, pin string, built int) (removed, left []string, err error) {
 	var hard []string
 	stay := false // a removal failed: its template is still there
 	defer func() {
@@ -598,7 +596,7 @@ func (e *Engine) retain(ctx context.Context, image string, keep int, sha256 stri
 		}
 	}
 	for _, o := range objs {
-		if o.Kind == driver.ImageBaseTemplate && (keep == 0 || o.Digest != sha256) {
+		if o.Kind == driver.ImageBaseTemplate && (keep == 0 || o.Digest != pin) {
 			remove(o, 0)
 		}
 	}

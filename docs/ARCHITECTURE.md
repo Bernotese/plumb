@@ -23,7 +23,7 @@ Reasons for each choice: `docs/DECISIONS.md` D-018 … D-049. Terms: `docs/BRIEF
 | Package | Job | May import (plus `wire`) |
 |---|---|---|
 | `api` | HTTP handlers, sessions, API tokens, SSE, static UI | `plan`, `issue`, `state`, `secret`, `event`, `store`, `backup` |
-| `plan` | Proposal → Plan → approval → Revision → Run. Risk classes | `state`, `link`, `driver`, `secret`, `event`, `store` |
+| `plan` | Proposal → Plan → approval → Revision → Run. Risk classes | `state`, `link`, `driver`, `secret`, `event`, `store`, `trust` |
 | `issue` | Drift intake, issues, resolve actions, ignore rules | `plan`, `state`, `event`, `store` |
 | `state` | Documents, JSON Schema validation, Block rendering, revision diff, export/import | `resource` (schemas), `store` |
 | `link` | Agent listener, Plumb CA, enrollment, command queue | `event`, `store` |
@@ -34,6 +34,7 @@ Reasons for each choice: `docs/DECISIONS.md` D-018 … D-049. Terms: `docs/BRIEF
 | `resource` | `Resource` interface, one file per type, one JSON Schema per type | – |
 | `agent` | Agent loop: enroll, poll, apply, watch | `resource` |
 | `backup` | Backup file format, writer, reader, restore (D-302, §16) | `secret`, `event`, `store` |
+| `trust` | Vendor checksum lists of base images, signature check with pinned keys (D-335, §17) | – |
 | `wire` | Message types shared by controller and agent | – |
 
 There are two seams (D-005): `Driver` for Proxmox in the controller, `Resource` for the guest in the agent. Only `driver/proxmox` talks to Proxmox.
@@ -175,7 +176,7 @@ Only the real-host level needs Proxmox. It is not part of CI. **The user must pr
 ## 9. Conventions, layout, how to run (D-033, D-035)
 - Layout: `cmd/plumb`, `cmd/plumb-agent` (flags only) · `internal/<package>` (§2, tests next to the code) · `api/openapi.yaml` · `blocks/*.yaml` (embedded) · `web/` (`web/dist` is embedded) · `install/install.sh` · `test/` (guest and real-host harness).
 - Go: `gofmt`, `go vet`, `staticcheck`, `CGO_ENABLED=0`, `log/slog`, wrapped errors, `context` first, table tests. No `util` package.
-- Go dependencies (a new one needs a decision line): `modernc.org/sqlite`, `go.yaml.in/yaml`, `santhosh-tekuri/jsonschema`, `golang.org/x/crypto`, `golang.org/x/sys`. No web framework, no ORM, no Proxmox SDK.
+- Go dependencies (a new one needs a decision line): `modernc.org/sqlite`, `go.yaml.in/yaml`, `santhosh-tekuri/jsonschema`, `golang.org/x/crypto`, `golang.org/x/sys`, `klauspost/compress` (D-225), `ProtonMail/go-crypto` (verify only, D-336). No web framework, no ORM, no Proxmox SDK.
 - Web: strict TypeScript, `eslint`, `prettier`, `svelte-check`. Plain CSS with tokens in one file. No component library. No hand-written API types. Web dependencies (same rule): `svelte`, `vite`, `typescript`, `openapi-typescript`, `vitest`, `@playwright/test`. Build and lint tools are free as `devDependencies` (D-042).
 - Upgrade (D-229): run the new `install.sh` with the new `plumb` binary, as a repair run (`install.sh --plumb-binary bin/plumb`; `--dry-run` first). An install from before D-229 has `plumb-images` with content `import` only: the controller starts with a warning, VM Targets work, LXC Images fail with "run install.sh again". The repair run shows the change `import → import,vztmpl`, asks, pushes the new binary, then sets the content, then restarts `plumb.service`. Do not change the storage by hand before the new binary is in: an older binary refuses `import,vztmpl` at its start (exit 78). `pvesm set` rewrites `/etc/pve/storage.cfg` and reorders the content lists of other storages (same content). When the new binary does not start, the installer sets the content back to `import` and says so.
 - Rollback to an older binary by hand: run `pvesm set plumb-images --content import` first, then put the old binary back.

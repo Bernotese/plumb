@@ -28,7 +28,17 @@ type ImageSpec struct {
 	Kind   wire.Kind
 	URL    string
 	SHA256 string // pinned checksum of a vm Image; the driver must refuse any other file
-	SHA512 string // pinned checksum of an lxc Image (D-224)
+	SHA512 string // pinned checksum of an lxc Image (D-224), or of a vm Image instead of SHA256 (D-345)
+}
+
+// Pin returns the checksum algorithm and value of the spec: sha512 when
+// SHA512 is set (every lxc Image, a vm Image from a Debian list), else
+// sha256 (D-345).
+func (s ImageSpec) Pin() (algo, sum string) {
+	if s.SHA512 != "" {
+		return "sha512", s.SHA512
+	}
+	return "sha256", s.SHA256
 }
 
 // GuestSpec holds the managed settings of a guest (resource guest:config).
