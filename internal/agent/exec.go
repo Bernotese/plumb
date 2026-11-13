@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/Bernotese/plumb/internal/resource"
@@ -121,6 +122,7 @@ type step struct {
 	r           wire.Resource
 	needs       []*step       // after: runs only when each ended unchanged or applied
 	restartDeps []*step       // restart_on: waits; restarts when one changed; runs also when one failed
+	prev        []*step       // the earlier steps of the same Block use (they ended before this one)
 	done        chan struct{} // closed when the step ended
 	changed     bool          // the step applied changes (read after done)
 	item        wire.Item
@@ -264,7 +266,8 @@ func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk, plann
 		s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusUnchanged}
 		return
 	}
-	if p, ok := planned[s.r.ID]; !ok || (!p.Unverified && !wire.Covers(p.Changes, item.Changes)) {
+	if p, ok := planned[s.r.ID]; !ok || (!p.Unverified && !wire.Covers(p.Changes, item.Changes) &&
+		!resource.NewUnitCovers(s.r, p.Changes, item.Changes, s.madeBefore())) {
 		s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusRefused, Changes: item.Changes,
 			Output: resource.SafeOutput(s.r, notPlanned)}
 		return
@@ -282,6 +285,24 @@ func (a *Agent) applyStep(ctx context.Context, s *step, maxRisk wire.Risk, plann
 	}
 	s.changed = true
 	s.item = wire.Item{Resource: s.r.ID, Status: wire.StatusApplied, Changes: item.Changes}
+}
+
+// madeBefore returns the resources that this step waited for (after,
+// restart_on, earlier in its Block use) and that this apply created. Each of
+// those steps has ended, so its result can be read.
+func (s *step) madeBefore() []wire.Resource {
+	var out []wire.Resource
+	seen := map[*step]bool{}
+	for _, list := range [][]*step{s.needs, s.restartDeps, s.prev} {
+		for _, dep := range list {
+			if seen[dep] || !dep.changed || wire.ActionOf(dep.item.Changes) != wire.ActionCreate {
+				continue
+			}
+			seen[dep] = true
+			out = append(out, dep.r)
+		}
+	}
+	return out
 }
 
 // progress sends one step result while the apply runs. It is best effort:
@@ -313,6 +334,7 @@ func plan(list []wire.Resource) ([]*step, [][]*step, error) {
 			blockIdx[r.Block] = bi
 			blocks = append(blocks, nil)
 		}
+		s.prev = slices.Clone(blocks[bi])
 		blocks[bi] = append(blocks[bi], s)
 	}
 	for i, s := range steps {

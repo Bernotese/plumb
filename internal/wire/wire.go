@@ -273,6 +273,10 @@ func Covers(planned, now []Change) bool {
 	return true
 }
 
+// SameValue reports whether two change values are equal in their JSON
+// form, the comparison of Covers.
+func SameValue(a, b any) bool { return jsonForm(a) == jsonForm(b) }
+
 func sameChange(a, b Change) bool {
 	if a.Attr != b.Attr || a.Risk != b.Risk {
 		return false

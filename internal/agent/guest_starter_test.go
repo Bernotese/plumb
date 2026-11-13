@@ -93,7 +93,29 @@ func newStarterGuest(t *testing.T, ctx context.Context) *starterGuest {
 // unchanged. It returns the items by resource id.
 func (g *starterGuest) apply(id string, list []wire.Resource) map[string]wire.Item {
 	g.t.Helper()
-	items, err := g.a.apply(g.ctx, id, wire.ApplyBody{Resources: list, Planned: unverified(list...), MaxRisk: wire.RiskDisruptive})
+	return g.applyPlanned(id, list, unverified(list...))
+}
+
+// plan is the Plan of the list as the controller makes it from the
+// agent's observe: one planned entry per resource that differs.
+func (g *starterGuest) plan(list []wire.Resource) []wire.Planned {
+	g.t.Helper()
+	var out []wire.Planned
+	for _, it := range g.a.observe(g.ctx, list) {
+		if it.Status == wire.StatusFailed || it.Status == wire.StatusRefused {
+			g.t.Fatalf("observe: %+v", it)
+		}
+		if len(it.Changes) > 0 {
+			out = append(out, wire.Planned{Resource: it.Resource, Changes: it.Changes})
+		}
+	}
+	return out
+}
+
+// applyPlanned is apply with the given planned entries.
+func (g *starterGuest) applyPlanned(id string, list []wire.Resource, planned []wire.Planned) map[string]wire.Item {
+	g.t.Helper()
+	items, err := g.a.apply(g.ctx, id, wire.ApplyBody{Resources: list, Planned: planned, MaxRisk: wire.RiskDisruptive})
 	if err != nil {
 		g.t.Fatal(err)
 	}
@@ -391,7 +413,21 @@ func TestGuestStarterDockerCompose(t *testing.T) {
 		return ""
 	}
 
-	items := g.applyTwice("compose", starterRender(t, uses(18081), secrets))
+	// T-103 (F2 of T-100): the first apply runs against one Plan that was
+	// observed before docker and the compose units existed.
+	list := starterRender(t, uses(18081), secrets)
+	planned := g.plan(list)
+	for _, p := range planned {
+		if p.Resource == "service:plumb-compose-whoami.service" && p.Changes[0].From != wire.StateAbsent {
+			t.Fatalf("the Plan saw the compose unit: %+v", p)
+		}
+	}
+	items := g.applyPlanned("compose", list, planned)
+	for _, it := range g.apply("compose-again", list) {
+		if it.Status != wire.StatusUnchanged {
+			t.Errorf("second round changed %s: %+v", it.Resource, it)
+		}
+	}
 	if got := get(18081); strings.TrimSpace(got) != canary {
 		t.Fatalf("app served %q", got)
 	}
