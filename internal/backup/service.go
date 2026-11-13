@@ -56,6 +56,38 @@ type Config struct {
 	CopyStatus string
 	Now        func() time.Time
 	Logger     *slog.Logger
+	// Serve: this is the service of serve. New then removes temp files of
+	// a cut run, fails the runs that a stop cut, and writes InstallFile.
+	// "plumb backup now" runs beside serve and does none of it.
+	Serve bool
+}
+
+// InstallFile in the backup directory holds the header fields of the
+// install (no secret), written by serve at start, so "plumb backup now"
+// writes the same header without the flags and environment of serve.
+const InstallFile = "install.json"
+
+// Install is the content of InstallFile.
+type Install struct {
+	InstallID string `json:"install_id"`
+	Node      string `json:"node"`
+	Pool      string `json:"pool"`
+	AgentURL  string `json:"agent_url"`
+}
+
+// LoadInstall reads InstallFile of a data directory.
+func LoadInstall(dataDir string) (Install, error) {
+	b, err := readSmall(filepath.Join(dataDir, DirName, InstallFile), 4096)
+	if err != nil {
+		return Install{}, fmt.Errorf("read %s (start plumb serve once): %w", InstallFile, err)
+	}
+	var in Install
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return Install{}, fmt.Errorf("%s: %w", InstallFile, err)
+	}
+	return in, nil
 }
 
 // Service writes, lists and schedules backups.
@@ -116,8 +148,18 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if err := os.Chmod(s.dir, 0o700); err != nil {
 		return nil, err
 	}
+	if !cfg.Serve {
+		return s, nil
+	}
 	s.cleanTemps()
 	if err := cfg.Store.FailRunningBackups(ctx, "interrupted: the controller stopped during the backup"); err != nil {
+		return nil, err
+	}
+	in, err := json.Marshal(Install{InstallID: cfg.InstallID, Node: cfg.Node, Pool: cfg.Pool, AgentURL: cfg.AgentURL})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.writeSmall(InstallFile, append(in, '\n')); err != nil {
 		return nil, err
 	}
 	return s, nil

@@ -66,7 +66,7 @@ func newFixture(t *testing.T, cfg func(*Config)) *fixture {
 	st.Now = f.clock.now
 	c := Config{Store: st, Events: f.ev, Key: f.key, DataDir: data, PlumbVersion: "v-test", InstallID: "install-1",
 		Node: "pve-dev", Pool: "plumb", AgentURL: "https://192.0.2.10:8444", CopyStatus: f.copy, Now: f.clock.now,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Serve: true}
 	if cfg != nil {
 		cfg(&c)
 	}
@@ -420,8 +420,10 @@ func TestBackupFailureVisible(t *testing.T) {
 		t.Errorf("events: %+v", evs)
 	}
 	ents, _ := os.ReadDir(filepath.Join(f.data, DirName))
-	if len(ents) != 0 {
-		t.Errorf("files after a failed backup: %v", ents)
+	for _, e := range ents {
+		if e.Name() != InstallFile {
+			t.Errorf("file after a failed backup: %s", e.Name())
+		}
 	}
 }
 

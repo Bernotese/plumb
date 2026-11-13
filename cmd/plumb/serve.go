@@ -320,7 +320,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	// Backups (T-112, D-302): the header names this install (D-304).
 	backups, err := backup.New(ctx, backup.Config{Store: st, Events: events, Key: key, DataDir: f.data,
 		Time: f.backupTime, Keep: f.backupKeep, PlumbVersion: version, InstallID: os.Getenv("PLUMB_INSTALL_ID"),
-		Node: os.Getenv("PLUMB_PVE_NODE"), Pool: os.Getenv("PLUMB_PVE_POOL"), AgentURL: agentURL(f.hosts, f.agentListen), Logger: log})
+		Node: os.Getenv("PLUMB_PVE_NODE"), Pool: os.Getenv("PLUMB_PVE_POOL"), AgentURL: agentURL(f.hosts, f.agentListen), Logger: log, Serve: true})
 	if err != nil {
 		return err
 	}

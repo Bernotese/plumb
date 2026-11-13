@@ -107,7 +107,7 @@ func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {
 		t.Fatal(err)
 	}
 	e.backups, err = backup.New(ctx, backup.Config{Store: st, Events: e.events, Key: e.key, DataDir: dir,
-		CopyStatus: filepath.Join(dir, "copy-status.json"), InstallID: "install-test", Logger: log})
+		CopyStatus: filepath.Join(dir, "copy-status.json"), InstallID: "install-test", Logger: log, Serve: true})
 	if err != nil {
 		t.Fatal(err)
 	}

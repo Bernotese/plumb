@@ -29,4 +29,4 @@ The controller writes a scheduled, encrypted backup of its whole state.
 `pl-backend/T-112-backup-in-controller` · tests: `make lint test build` green; `internal/backup` (round trip, wrong key, forged fingerprint, cut at 9 points, changed bytes and header, reordered/dropped/foreign chunks, chunk edges, retention + pointer, one at a time, interrupted run, schedule, copy status), `TestBackupsAPI` (tiers, 202, 409 `backup-running`, list, copy, contract check), `TestBackupFlags`.
 - `internal/backup/{stream,service}.go`: writer, reader `backup.Read` (for T-113), schedule, retention, list, copy status; `secret.Key.BackupDataKey/BackupFingerprint`.
 - Migration 0014 `backup_run`; `GET/POST /backups` (planned marks removed); `serve --backup-time/--backup-keep`.
-- Not in this card: `plumb backup now` (CLI over the local socket, used by T-114) and the restored-mode pause (T-113: `RunSchedule` takes a `paused` func). D-315 … D-317.
+- `plumb backup now --data DIR` for T-114 (D-317: beside serve on the same database, header from `backups/install.json`). Not here: restored-mode pause (T-113: `RunSchedule` takes a `paused` func). D-315 … D-317.
