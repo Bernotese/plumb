@@ -49,18 +49,22 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | merged (PR #237) |
 | T-136 CI: install tests run in parallel, each script run bounded; "lint, test, build" needs 8 min of 15 (was 11.7–13.6, cancelled on slow runners) | pl-backend | merged (PR #239) |
 | T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | merged (PR #238) |
-| T-138 road to the release (all open points of BRIEF §5/§6 in slices 5–9) + plan of slice 5 ("People, network, trusted images") | pl-architect, check: pl-reviewer | plan in PR #241, in review. Child cards: T-144 … T-159 |
+| T-138 road to the release (all open points of BRIEF §5/§6 in slices 5–9, `docs/plans/ROADMAP.md`) + plan of slice 5 ("People, network, trusted images") | pl-architect, check: pl-reviewer | merged (PR #241), D-327 … D-341. Child cards: T-144 … T-159. User questions U1 … U5 sent 2026-11-13 (needed from slice 6), no answer yet |
 | T-139 prep: facts from the test host for the coming topics (read-only) + test controller to latest main | pl-backend | **done**: facts on branch `pl-backend/T-139-prep-host-facts` (no PR); the test controller runs 71c14c0 since 2026-11-13 (repair run, 7 ACL lines, storage.cfg unchanged) |
 | T-140 prep: risk draft for user management, guest adoption, SSH repair fallback, MCP / AI help | pl-reviewer | done: branch `pl-reviewer/T-140-risk-draft` (plan file only) |
 | T-141 prep: gap list BRIEF §5.2 against the web UI | pl-frontend | done: branch `pl-frontend/T-141-prep-web-gaps` (plan file only) |
 | T-142 prep: gap list BRIEF §5.4 … §5.9 against the code | pl-codex-qa | done: branch `pl-codex-qa/T-142-prep-code-gaps` (plan file only) |
 | T-143 small leftovers of slice 4 (README sentence, two test nits) | pl-codex-fix | merged (PR #240) |
-| T-144 slice 5 C1a: contract (catalogue, users and roles, copy rule, `verify` + refresh) | pl-architect | in work |
+| T-144 slice 5 C1a: contract (catalogue, users and roles, copy rule, `verify` + refresh) | pl-architect | merged (PR #243), D-342 … D-347 |
 | T-149 slice 5 C5: netplan probe in the CI guests | pl-codex-qa | measured (draft PR #242): Ubuntu 26.04 has netplan, an unchanged apply keeps the agent link; the Debian LXD image has no netplan → T-160 checks the real Debian cloud image |
-| T-153 slice 5 C9a: web gaps that need no new API | pl-frontend | in work |
+| T-153 slice 5 C9a: web gaps that need no new API | pl-frontend | PR #245, review passed, waits for CI |
 | T-155 slice 5 C10: npm audit refresh | pl-codex-fix | closed without a change (2026-11-13): 2 low findings via `deepmerge` 4.3.1 (dev-only), the advisory has no patched version and the latest `@sveltejs/vite-plugin-svelte` needs it. No downgrade, no suppression. Check again in slice 9 |
 | T-160 facts: network setup of the real Debian 13 cloud image (for the `network` contract T-145) | pl-backend | done (branch `pl-backend/T-160-debian-network-facts`): the pinned image has netplan (networkd backend, `50-cloud-init.yaml`, match by MAC); on `pve-dev` an unchanged `netplan apply` kept IPv4 and the agent link (SLAAC IPv6 gap ~2 s). Host clean, pool empty |
-| Slice 5, not started yet: T-145 C1b contract `network`/`group`, T-146 C2 catalogue API, T-147 C3 users and roles, T-148 C4 copy rule, T-150 C6 generic safe apply + `network`, T-151 C7 `group`, T-152 C8 signed checksums, T-154 C9b web, T-156 C11 Block `network`, T-157 C12 QA, T-158 C13 host acceptance, T-159 C14 README | – | waits for its dependencies (plan T-138) |
+| T-145 slice 5 C1b: contract `network`, `group`, generic safe apply | pl-architect | PR #244, review: fixes G1, G2 in work |
+| T-146 slice 5 C2: starter catalogue API | pl-backend | in work |
+| T-147 slice 5 C3: users and roles (migration 0017) | pl-reviewer (implementer), review: pl-architect | starts after its open reviews; `api.go` after T-146 |
+| T-148 slice 5 C4: copy rule for guest-reported values (D-331, migration 0018) | pl-backend | after T-146 |
+| Slice 5, not started yet: T-150 C6 generic safe apply + `network`, T-151 C7 `group`, T-152 C8 signed checksums, T-154 C9b web, T-156 C11 Block `network`, T-157 C12 QA, T-158 C13 host acceptance, T-159 C14 README | – | waits for its dependencies (plan T-138) |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-131 screenshots for the README: 7 pictures of the dev demo (light theme, 52–132 KB), each checked by pl-reviewer and pl-lead; demo data on the documentation range | pl-frontend | merged (PR #232) |
