@@ -31,7 +31,7 @@ Ubuntu 26.04.
 
 ### 1. Get the files
 
-There is no release download yet. Build the binary on a Linux machine with Go and Node.js 24 or
+Until there is a release, build the binary yourself on a Linux machine with Go and Node.js 24 or
 newer (versions: `go.mod`, `Makefile`):
 
 ```sh
@@ -73,18 +73,31 @@ During the install, Plumb shows a **recovery key** once. Plumb does not store it
 
 Plumb never gets root access to Proxmox. Its token may:
 
-- create, change, start, stop and delete guests in the pool `plumb` only;
-- use space on the disk storage, the `plumb-images` and `plumb-snippets` storages, and the guest
-  bridge;
-- read status information of the host (read only).
+- create, change, start, stop and delete guests in the pool `plumb`;
+- use space on the disk storage and on `plumb-snippets`, and connect guests to the guest bridge;
+- download images and templates into `plumb-images`.
+
+It can also read, but never change, data of the whole host. It needs this right (`Sys.Audit` on
+`/`) to see the free space of the disk storage, and Proxmox gives no narrower right for it. So
+Plumb can read:
+
+- the IDs, names and CPU, memory and disk use of **all** guests, also outside the pool;
+- the task list of all users, root included (not the task logs);
+- the backup jobs and the guests in them;
+- the host and datacenter settings: disks and SMART data, `/etc/hosts`, the node config, and the
+  cluster firewall rules.
+
+It cannot read the configuration of a guest outside the pool, the syslog or the network settings.
 
 It may not:
 
-- change the host, its network, its storages or other users;
+- change guests outside the pool;
+- change the host, its network, its storages or its users;
 - give rights to anybody, or make new pools;
-- open a console or use the QEMU guest agent;
-- touch guests outside the pool. The Plumb LXC itself is not in the pool, so Plumb cannot change
-  itself.
+- open a console or use the QEMU guest agent.
+
+The Plumb LXC itself is not in the pool, so Plumb cannot change itself. The installer prints the
+full list of rights.
 
 ## First steps
 
@@ -135,7 +148,14 @@ templates. Delete them through Plumb first.
 
 ## Backup and restore
 
-Backup and restore of Plumb come with the next release.
+Plumb has no backup of itself yet.
+
+**Settings → Export and import** saves one YAML file with every Image, Block, Target and rule. It
+does not hold the history, the Issues, the users or the tokens. It does not hold which guest belongs
+to which Target, or the agent identities: a new Plumb made from it creates new guests. Secret
+values are in it only when you give a passphrase.
+
+Keep the recovery key in any case.
 
 ## Known limits
 
