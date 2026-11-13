@@ -24,7 +24,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-098 QA debt (C8) · T-099 QA per card (C9) | pl-codex-qa | merged (PR #186; #192, #194, #195, #199: update hash check and gate, 8/8 mutants killed) |
 | T-100 real-host acceptance (C10) | pl-backend | run done, PR #201 (log). PASS: manual step for old agents (VM + LXC), update by Plan, forced auto-revert, Docker in VM and in an unprivileged LXC (no `keyctl`), build Plan without the metadata note, gate. Two medium findings → T-102, T-103. Host clean. |
 | T-101 server checks Block resource attributes at save (found in T-096) | pl-architect | merged (PR #193) |
-| T-102 update result lost at the swap: Run waits 15 min (T-100 F1) | pl-backend | started |
+| T-102 update result lost at the swap: Run waits 15 min (T-100 F1) | pl-backend | PR #202 in review |
 | T-103 first apply of a unit + its service is refused, a 2nd Plan is needed (T-100 F2) | pl-reviewer (pl-architect reviews) | started |
 | T-104 `docker-engine` also for LXC (D-262: T-100 passed without new rights) | pl-frontend | started |
 
