@@ -593,7 +593,7 @@ paths:
                       last_seen: "2026-11-10T09:14:02Z"
                       guest_id: "9001"
                       ips: []
-                      reported_ips: [192.168.1.41, "fd00::41"]
+                      reported_ips: [192.0.2.41, "2001:db8::41"]
                       reported_at: "2026-11-10T08:02:11Z"
                       applied_revision: 7
                       open_issues: 1
@@ -608,7 +608,7 @@ paths:
                         type: vm
                         image: debian-13
                         allow_restart: true
-                        guest: { cores: 4, memory: 8192, disk: 100, bridge: vmbr0, ip: 192.168.1.20/24 }
+                        guest: { cores: 4, memory: 8192, disk: 100, bridge: vmbr0, ip: 192.0.2.20/24 }
                         blocks: [{ use: motd }]
                         overrides: {}
                     status:
@@ -617,8 +617,8 @@ paths:
                       power: running
                       last_seen: "2026-11-10T09:14:05Z"
                       guest_id: "9002"
-                      ips: [192.168.1.20]
-                      reported_ips: [192.168.1.107]
+                      ips: [192.0.2.20]
+                      reported_ips: [192.0.2.107]
                       reported_at: "2026-11-10T09:01:30Z"
                       applied_revision: 6
                       open_issues: 1
@@ -641,7 +641,7 @@ paths:
                       last_seen: "2026-11-10T09:14:01Z"
                       guest_id: "9003"
                       ips: []
-                      reported_ips: [192.168.1.43]
+                      reported_ips: [192.0.2.43]
                       reported_at: "2026-11-10T07:55:00Z"
                       applied_revision: 5
                       open_issues: 0
@@ -688,7 +688,7 @@ paths:
                       last_seen: "2026-11-10T09:14:03Z"
                       guest_id: "9005"
                       ips: []
-                      reported_ips: [192.168.1.45]
+                      reported_ips: [192.0.2.45]
                       reported_at: "2026-11-10T09:00:40Z"
                       applied_revision: 7
                       open_issues: 0
@@ -732,7 +732,7 @@ paths:
                   last_seen: "2026-11-10T09:14:02Z"
                   guest_id: "9001"
                   ips: []
-                  reported_ips: [192.168.1.41, "fd00::41"]
+                  reported_ips: [192.0.2.41, "2001:db8::41"]
                   reported_at: "2026-11-10T08:02:11Z"
                   applied_revision: 7
                   open_issues: 0
@@ -1259,7 +1259,7 @@ paths:
                     opened_at: "2026-11-10T09:03:30Z"
                     updated_at: "2026-11-10T09:03:30Z"
                     changes:
-                      - { attr: ip, from: [192.168.1.107], to: 192.168.1.20, risk: read }
+                      - { attr: ip, from: [192.0.2.107], to: 192.0.2.20, risk: read }
                     actions: [ignore_once, ignore_rule]
                     plan_id: null
                     resolution: null
@@ -2879,7 +2879,7 @@ components:
             reports no list (an old agent, D-217), or when the guest has no address. Missing on an
             older controller.
           maxItems: 16
-          items: { type: string, examples: ["192.0.2.41", "fd00::41"] }
+          items: { type: string, examples: ["192.0.2.41", "2001:db8::41"] }
         reported_at:
           $ref: "#/components/schemas/NullableTime"
           description: |

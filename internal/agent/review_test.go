@@ -178,7 +178,7 @@ func TestStateDirRules(t *testing.T) {
 	}
 	ca := newCA(t)
 	for _, bad := range []string{"/", "relative/dir", "/../"} {
-		c := Config{URL: "https://10.0.0.1:8444", CA: ca.pem, StateDir: bad}
+		c := Config{URL: "https://192.0.2.1:8444", CA: ca.pem, StateDir: bad}
 		if err := c.check(); err == nil {
 			t.Errorf("state_dir %q: want error", bad)
 		}

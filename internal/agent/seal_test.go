@@ -75,13 +75,13 @@ func buildGuest(t *testing.T, root string) (shadow string) {
 		"etc/cloud/cloud-init.disabled": "", "etc/ssh/ssh_host_ed25519_key": "k", "etc/ssh/ssh_host_ed25519_key.pub": "k",
 		"etc/ssh/sshd_config": "keep", "home/plumb-build/.profile": "", "etc/sudoers.d/90-cloud-init-users": "x",
 		"var/lib/systemd/random-seed": "s", "var/lib/systemd/credential.secret": "s",
-		"var/log/syslog": "build-host 10.0.0.9 plumb-build", "var/log/syslog.1": "old", "var/log/dpkg.log.2.gz": "old",
+		"var/log/syslog": "build-host 192.0.2.9 plumb-build", "var/log/syslog.1": "old", "var/log/dpkg.log.2.gz": "old",
 		"var/log/apt/history.log": "x", "var/log/journal/0123/system.journal": "j",
 		"var/log/cloud-init-output.log": "upgrade log", "tmp/a/b": "x", "var/tmp/c": "x", "root/.bash_history": "ls",
 		"etc/shadow":     "root:secret",
 		"etc/hostname":   "plumb-build-web-v3\n",
 		"etc/machine-id": "0123456789abcdef0123456789abcdef\n",
-		"etc/hosts":      "127.0.0.1\tlocalhost\n127.0.1.1\tplumb-build-web-v3.lan plumb-build-web-v3\n10.0.0.5 db plumb-build-web-v3 # build\n::1 localhost ip6-localhost\n",
+		"etc/hosts":      "127.0.0.1\tlocalhost\n127.0.1.1\tplumb-build-web-v3.lan plumb-build-web-v3\n192.0.2.5 db plumb-build-web-v3 # build\n::1 localhost ip6-localhost\n",
 		"etc/passwd-":    "plumb-build:x:1000", "etc/shadow-": "plumb-build:!", "etc/group-": "plumb-build:x:1000:",
 		"etc/gshadow-": "plumb-build:!::", "etc/subuid-": "plumb-build:100000:65536", "etc/subgid-": "plumb-build:100000:65536",
 		"usr/lib/systemd/system/systemd-random-seed.service": "",
@@ -236,7 +236,7 @@ func TestSealBuildGuest(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(root, "etc/hostname")); string(b) != "localhost\n" {
 		t.Errorf("hostname = %q", b)
 	}
-	wantHosts := "127.0.0.1\tlocalhost\n10.0.0.5\tdb # build\n::1 localhost ip6-localhost\n"
+	wantHosts := "127.0.0.1\tlocalhost\n192.0.2.5\tdb # build\n::1 localhost ip6-localhost\n"
 	if b, _ := os.ReadFile(filepath.Join(root, "etc/hosts")); string(b) != wantHosts {
 		t.Errorf("hosts =\n%q\nwant\n%q", b, wantHosts)
 	}
@@ -576,7 +576,7 @@ func TestCleanHosts(t *testing.T) {
 		{"127.0.1.1 b-v1.lan b-v1\n", ""},
 		{"127.0.0.1 localhost b-v1\n", "127.0.0.1\tlocalhost\n"},
 		{"# b-v1 in a comment\n127.0.0.1 localhost\n", "# b-v1 in a comment\n127.0.0.1 localhost\n"},
-		{"10.0.0.1 b-v10 xb-v1 b-v1x\n", "10.0.0.1 b-v10 xb-v1 b-v1x\n"},
+		{"192.0.2.1 b-v10 xb-v1 b-v1x\n", "192.0.2.1 b-v10 xb-v1 b-v1x\n"},
 		{"127.0.0.1 localhost", "127.0.0.1 localhost"},
 	}
 	for _, c := range cases {

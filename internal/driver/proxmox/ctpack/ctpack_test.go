@@ -25,7 +25,7 @@ const testCA = "-----BEGIN CERTIFICATE-----\nMIIBplumbCAline1\nline2+/=\n-----EN
 
 func opts(base []byte) Options {
 	s := sha512.Sum512(base)
-	return Options{SHA512: hex.EncodeToString(s[:]), CA: []byte(testCA), AgentURL: "https://10.0.0.5:8444"}
+	return Options{SHA512: hex.EncodeToString(s[:]), CA: []byte(testCA), AgentURL: "https://192.0.2.5:8444"}
 }
 
 // ent is one entry of a test base.
@@ -436,7 +436,7 @@ func TestOptions(t *testing.T) {
 	for name, mut := range map[string]func(*Options){
 		"pin upper case":  func(o *Options) { o.SHA512 = strings.ToUpper(o.SHA512) },
 		"pin short":       func(o *Options) { o.SHA512 = o.SHA512[:64] },
-		"url http":        func(o *Options) { o.AgentURL = "http://10.0.0.5:8444" },
+		"url http":        func(o *Options) { o.AgentURL = "http://192.0.2.5:8444" },
 		"url quote":       func(o *Options) { o.AgentURL = "https://x'; rm -rf /; '" },
 		"url path":        func(o *Options) { o.AgentURL = "https://x/path" },
 		"url newline":     func(o *Options) { o.AgentURL = "https://x\nevil" },
@@ -465,7 +465,7 @@ func TestOptions(t *testing.T) {
 }
 
 func TestName(t *testing.T) {
-	o := Options{SHA512: strings.Repeat("a", 128), CA: []byte(testCA), AgentURL: "https://10.0.0.5:8444"}
+	o := Options{SHA512: strings.Repeat("a", 128), CA: []byte(testCA), AgentURL: "https://192.0.2.5:8444"}
 	n, err := Name("debian-13", o)
 	if err != nil {
 		t.Fatal(err)
@@ -480,7 +480,7 @@ func TestName(t *testing.T) {
 	for _, mut := range []func(*Options){
 		func(o *Options) { o.SHA512 = strings.Repeat("b", 128) },
 		func(o *Options) { o.CA = []byte(strings.Replace(testCA, "line1", "line9", 1)) },
-		func(o *Options) { o.AgentURL = "https://10.0.0.6:8444" },
+		func(o *Options) { o.AgentURL = "https://192.0.2.6:8444" },
 	} {
 		m := o
 		mut(&m)
@@ -669,7 +669,7 @@ func TestRealTemplate(t *testing.T) {
 	h := sha512.New()
 	io.Copy(h, f)
 	f.Seek(0, io.SeekStart)
-	o := Options{SHA512: hex.EncodeToString(h.Sum(nil)), CA: []byte(testCA), AgentURL: "https://10.0.0.5:8444"}
+	o := Options{SHA512: hex.EncodeToString(h.Sum(nil)), CA: []byte(testCA), AgentURL: "https://192.0.2.5:8444"}
 	out := filepath.Join(t.TempDir(), "out.tar.gz")
 	w, _ := os.Create(out)
 	start := time.Now()

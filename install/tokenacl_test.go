@@ -89,12 +89,12 @@ func TestTokenACLsKeepGuestsAndRestore(t *testing.T) {
 
 	file := filepath.Join(b.store, "plumb-backups", "plumb-20261113T030000Z.pbk")
 	b.resetCalls()
-	if code, out, errOut := b.restore(nil, file, "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1", "--backup-storage", "backups"); code != 0 {
+	if code, out, errOut := b.restore(nil, file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1", "--backup-storage", "backups"); code != 0 {
 		t.Fatalf("restore: %d\n%s\n%s", code, out, errOut)
 	}
 	checkTokenACLs(t, b.host, "restore")
 
-	b.install("--backup-storage", "backups", "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1")
+	b.install("--backup-storage", "backups", "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
 	checkTokenACLs(t, b.host, "repair")
 }
 

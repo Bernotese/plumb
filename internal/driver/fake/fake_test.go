@@ -98,7 +98,7 @@ func TestUpdateRules(t *testing.T) {
 	ctx := context.Background()
 	d, id, _ := setup(t)
 	for name, c := range map[string]wire.Change{
-		"create-only":      {Attr: driver.AttrIP, From: "dhcp", To: "10.0.0.2/24", Risk: wire.RiskDestructive},
+		"create-only":      {Attr: driver.AttrIP, From: "dhcp", To: "192.0.2.2/24", Risk: wire.RiskDestructive},
 		"shrink":           {Attr: driver.AttrDisk, From: 20, To: 2, Risk: wire.RiskDisruptive},
 		"power":            {Attr: driver.AttrPower, From: "running", To: "stopped"},
 		"unknown":          {Attr: "vga", To: "std"},
@@ -114,7 +114,7 @@ func TestUpdateRules(t *testing.T) {
 		}
 	}
 	var co *driver.CreateOnlyError
-	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "10.0.0.2/24"}}, nil); !errors.As(err, &co) {
+	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrIP, To: "192.0.2.2/24"}}, nil); !errors.As(err, &co) {
 		t.Errorf("create-only update: %v", err)
 	}
 	if err := d.Update(ctx, id, []wire.Change{{Attr: driver.AttrEnrollToken, Sensitive: true, Risk: wire.RiskDisruptive}}, nil); err == nil {

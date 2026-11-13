@@ -619,13 +619,13 @@ func TestFirstRoundAfterMigration(t *testing.T) {
 // a text that says what to do in Proxmox.
 func TestPendingCreateOnlyText(t *testing.T) {
 	e, id := pendingEnv(t, false)
-	e.drv.TamperPending(id, func(s *driver.GuestSpec) { s.IP = "10.0.0.9/24" })
+	e.drv.TamperPending(id, func(s *driver.GuestSpec) { s.IP = "192.0.2.9/24" })
 	put := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"motd","params":{"text":"other"}}]}`)
 	_, err := e.eng.Propose(e.ctx, plan.Input{Proposal: plan.Proposal{Put: []state.Doc{put}}, Author: "user:admin"})
 	if !errors.Is(err, plan.ErrCreateOnly) {
 		t.Fatalf("propose: %v", err)
 	}
-	for _, part := range []string{`"ip" has a pending value in Proxmox (10.0.0.9/24, not active; the VM uses dhcp)`, "qm set " + string(id) + " --revert <key>", "Then plan again"} {
+	for _, part := range []string{`"ip" has a pending value in Proxmox (192.0.2.9/24, not active; the VM uses dhcp)`, "qm set " + string(id) + " --revert <key>", "Then plan again"} {
 		if !strings.Contains(err.Error(), part) {
 			t.Errorf("text lacks %q: %v", part, err)
 		}

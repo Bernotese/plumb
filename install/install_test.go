@@ -471,11 +471,11 @@ func TestInstallAndRunAgain(t *testing.T) {
 	if opts, _ := os.ReadFile(filepath.Join(h.state, "push", "_etc_plumb_plumb.env.opts")); !strings.Contains(string(opts), "--perms 0600") {
 		t.Errorf("env file mode: %s", opts)
 	}
-	if !strings.Contains(out, "https://192.168.1.50:8443") || !strings.Contains(out, "password pw-from-journal") {
+	if !strings.Contains(out, "https://192.0.2.50:8443") || !strings.Contains(out, "password pw-from-journal") {
 		t.Errorf("end of install: %s", out)
 	}
 	snippet, err := os.ReadFile(filepath.Join(h.snippet, "snippets", "plumb-vendor.yaml"))
-	if err != nil || !strings.Contains(string(snippet), "https://192.168.1.50:8444") || strings.Contains(string(snippet), fakeSecret) {
+	if err != nil || !strings.Contains(string(snippet), "https://192.0.2.50:8444") || strings.Contains(string(snippet), fakeSecret) {
 		t.Fatalf("snippet: %v\n%s", err, snippet)
 	}
 	if st, _ := os.ReadFile(h.stateF); !strings.Contains(string(st), "lxc_id=105") || strings.Contains(string(st), fakeSecret) {
@@ -543,7 +543,7 @@ func snippetFile(t *testing.T, h *host, url string) (int, string, string) {
 // an install command that is valid sh and idempotent.
 func TestSnippet(t *testing.T) {
 	h := newHost(t)
-	code, out, errOut := snippetFile(t, h, "https://10.0.0.5:8444")
+	code, out, errOut := snippetFile(t, h, "https://192.0.2.5:8444")
 	if code != 0 {
 		t.Fatalf("%d %s %s", code, out, errOut)
 	}
@@ -578,7 +578,7 @@ func TestSnippet(t *testing.T) {
 	if err := json.Unmarshal([]byte(files["/etc/plumb-agent/agent.json"]), &cfg); err != nil {
 		t.Fatalf("agent.json: %v\n%s", err, files["/etc/plumb-agent/agent.json"])
 	}
-	if cfg.URL != "https://10.0.0.5:8444" || !strings.Contains(cfg.CA, "MIIBplumbCAline1\nline2+/=\n") || files["/etc/plumb-agent/ca.pem"] != cfg.CA {
+	if cfg.URL != "https://192.0.2.5:8444" || !strings.Contains(cfg.CA, "MIIBplumbCAline1\nline2+/=\n") || files["/etc/plumb-agent/ca.pem"] != cfg.CA {
 		t.Errorf("agent.json = %+v", cfg)
 	}
 	script := files["/usr/local/sbin/plumb-agent-install"]
@@ -598,7 +598,7 @@ func TestSnippet(t *testing.T) {
 	}
 	// One source of behaviour (T-038 §9): an LXC template gets the same
 	// script and agent unit as the vendor snippet.
-	if want := ctpack.FirstBootScript("https://10.0.0.5:8444"); script != want {
+	if want := ctpack.FirstBootScript("https://192.0.2.5:8444"); script != want {
 		t.Errorf("the snippet script and ctpack.FirstBootScript differ:\n--- snippet\n%s\n--- ctpack\n%s", script, want)
 	}
 	if files["/etc/systemd/system/plumb-agent.service"] != ctpack.AgentUnit {
@@ -611,7 +611,7 @@ func TestSnippet(t *testing.T) {
 		}
 	}
 	// A URL that could break the YAML or the script is refused.
-	for _, bad := range []string{"http://10.0.0.5:8444", "https://x'; rm -rf /; '", "https://a b", "https://x\n- evil", "https://x/path"} {
+	for _, bad := range []string{"http://192.0.2.5:8444", "https://x'; rm -rf /; '", "https://a b", "https://x\n- evil", "https://x/path"} {
 		h := newHost(t)
 		if code, _, _ := snippetFile(t, h, bad); code == 0 {
 			t.Errorf("url %q accepted", bad)
@@ -793,11 +793,11 @@ func TestInstallerMinors(t *testing.T) {
 	for _, bad := range []string{"\"", "\\", "x\" , \"evil\": \"1"} {
 		ca := filepath.Join(t.TempDir(), "ca.pem")
 		os.WriteFile(ca, []byte("-----BEGIN CERTIFICATE-----\nMIIB"+bad+"\n-----END CERTIFICATE-----\n"), 0o644)
-		if code, _, errOut := h.run(nil, "--dry-run", "--snippet-only", "--ca", ca, "--url", "https://10.0.0.5:8444"); code == 0 || !strings.Contains(errOut, "more than PEM") {
+		if code, _, errOut := h.run(nil, "--dry-run", "--snippet-only", "--ca", ca, "--url", "https://192.0.2.5:8444"); code == 0 || !strings.Contains(errOut, "more than PEM") {
 			t.Errorf("CA with %q: %d %q", bad, code, errOut)
 		}
 	}
-	_, out, _ := snippetFile(t, newHost(t), "https://10.0.0.5:8444")
+	_, out, _ := snippetFile(t, newHost(t), "https://192.0.2.5:8444")
 	if !strings.Contains(out, "--connect-timeout 10 --max-time 300") || !strings.Contains(out, "--timeout=60") {
 		t.Error("downloads without timeouts")
 	}

@@ -16,12 +16,12 @@ func TestSlice4Schemas(t *testing.T) {
 	}{
 		{`{"name":"main"}`, true},
 		{`{"name":"main","policy":"drop","tcp_ports":"80,443,8000-8100","udp_ports":"51820"}`, true},
-		{`{"name":"main","tcp_ports":"443","sources":"10.0.0.0/8,fd00::/8","ssh_port":2222,"ssh_sources":"192.0.2.0/24"}`, true},
+		{`{"name":"main","tcp_ports":"443","sources":"198.51.100.0/24,2001:db8::/32","ssh_port":2222,"ssh_sources":"192.0.2.0/24"}`, true},
 		{`{"name":"main","ssh_port":"{{ .port }}"}`, false}, // a template renders before the check; the raw text is no port
 		{`{"name":"main","ssh_port":"2222"}`, true},         // a rendered parameter is text
 		{`{"name":"main","policy":"drop","allow_no_ssh":true}`, true},
 		{`{"name":"main","allow_no_ssh":true,"ssh_port":22}`, false},
-		{`{"name":"main","allow_no_ssh":true,"ssh_sources":"10.0.0.0/8"}`, false},
+		{`{"name":"main","allow_no_ssh":true,"ssh_sources":"198.51.100.0/24"}`, false},
 		{`{"name":"main","allow_no_ssh":false,"ssh_port":22}`, true},
 		{`{"name":"main","state":"absent"}`, true},
 		{`{"name":"main","state":"absent","policy":"drop"}`, false},
@@ -30,8 +30,8 @@ func TestSlice4Schemas(t *testing.T) {
 		{`{"name":"main","tcp_ports":"80;443"}`, false},
 		{`{"name":"main","tcp_ports":"80,"}`, false},
 		{`{"name":"main","tcp_ports":"http"}`, false},
-		{`{"name":"main","sources":"10.0.0.0"}`, false}, // a CIDR needs its prefix
-		{`{"name":"main","sources":"10.0.0.0/8 ; drop"}`, false},
+		{`{"name":"main","sources":"198.51.100.0"}`, false}, // a CIDR needs its prefix
+		{`{"name":"main","sources":"198.51.100.0/24 ; drop"}`, false},
 		{`{"name":"main","ssh_port":0}`, false},
 		{`{"name":"main","ssh_port":70000}`, false},
 		{`{"name":"main","ssh_port":"022"}`, false},

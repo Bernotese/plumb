@@ -162,7 +162,7 @@ func TestRealPlumbBackupAndRestoreChain(t *testing.T) {
 	b := installedWithGuests(t)
 	st := b.stateFile()
 	lxc := filepath.Join(b.state, "ct", "105") // the root of the fake LXC 105
-	in := backup.Install{InstallID: st["install_id"], Node: "pve1", Pool: "plumb", AgentURL: "https://192.168.1.50:8444", Keep: 7}
+	in := backup.Install{InstallID: st["install_id"], Node: "pve1", Pool: "plumb", AgentURL: "https://192.0.2.50:8444", Keep: 7}
 	os.RemoveAll(filepath.Join(lxc, "var", "lib", "plumb")) // the fake backup of installedWithGuests
 	key := realData(t, filepath.Join(lxc, "var", "lib", "plumb"), in)
 
@@ -198,7 +198,7 @@ func TestRealPlumbBackupAndRestoreChain(t *testing.T) {
 
 	// --restore into a new LXC: the same pushes and plumb calls.
 	b.resetCalls()
-	code, out, errOut = b.restore(nil, file, "--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1")
+	code, out, errOut = b.restore(nil, file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
 	if code != 0 {
 		t.Fatalf("restore: %d\n%s\n%s", code, out, errOut)
 	}
