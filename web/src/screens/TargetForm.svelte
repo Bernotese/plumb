@@ -31,8 +31,11 @@
     waitingSince,
   } from "../lib/view";
   import { smallestDisk } from "../lib/images";
+  import { unfitText } from "../lib/blocks";
   import AgentCard from "../ui/AgentCard.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
+  import RawResources from "../ui/RawResources.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
 
   let { api, name }: { api: PlumbApi; name?: string } = $props();
@@ -104,9 +107,18 @@
   // The schema texts speak of VMs and cloud-init; a container field gets
   // its own help (review N1 of #165).
   const LXC_FIELD_HELP: Record<string, string> = {
-    disk: "GiB: the size of the root file system, at least 2. Create-only.",
+    disk: "GiB: the size of the root file system, at least 2. Grow only: a grow cannot be undone.",
     ip: "dhcp or an IPv4 address in CIDR form. Create-only. Proxmox writes it into the container at every start.",
     ssh_keys: "Public keys for root; a container has no bootstrap user (D-226). Create-only.",
+  };
+
+  // Slice 4 fields (D-291, D-299): short help for people; the schema texts
+  // are written for the contract.
+  const DAY2_HELP: Record<string, string> = {
+    disk: "GiB. Grow only: a grow cannot be undone. The guest must run.",
+    power:
+      "running or stopped. (none): Plumb does not start or stop the guest. A stop needs the restart setting below.",
+    tags: "Proxmox tags, lower case. Plumb keeps exactly these. No entries on a new Target: Plumb does not touch the tags.",
   };
 
   // The type follows the Image (T-038 §8); a stored Target keeps its own.
@@ -130,17 +142,20 @@
       : 0,
   );
   const usesDeployUser = $derived(uses.some((u) => u.use === "deploy-user"));
+  const day2Fields = guestFields.map((f) =>
+    DAY2_HELP[f.name] ? { ...f, description: DAY2_HELP[f.name] } : f,
+  );
   // A container has no bootstrap user; its SSH keys go to root (D-226).
   const kindFields = $derived(
     kind === "lxc"
-      ? guestFields
+      ? day2Fields
           .filter((f) => f.name !== "user" && !(builtLxc && f.name === "ssh_keys"))
           .map((f) => {
             const description = LXC_FIELD_HELP[f.name];
             const label = f.name === "ssh_keys" ? "SSH keys for root" : f.label;
             return description ? { ...f, label, description } : { ...f, label };
           })
-      : guestFields,
+      : day2Fields,
   );
   // A container takes cores and memory live: no "Restart needed" (D-248).
   const waitingFrom = $derived(
@@ -170,6 +185,20 @@
 
   const blockByName = (n: string) => blocks.find((b) => b.document.name === n);
 
+  // T-118 (D-260): the picker offers only Blocks that fit the guest type.
+  const addable = $derived(blocks.filter((b) => unfitText(b.document, kind) === ""));
+  const hidden = $derived(
+    blocks.filter((b) => unfitText(b.document, kind) !== "").map((b) => b.document.name),
+  );
+  $effect(() => {
+    if (!addable.some((b) => b.document.name === addChoice))
+      addChoice = addable[0]?.document.name ?? "";
+  });
+  const unfitUse = (u: Use) => {
+    const b = blockByName(u.use);
+    return b ? unfitText(b.document, kind) : "";
+  };
+
   function makeUse(use: string, id = "", params: Record<string, unknown> = {}): Use {
     const schema = blockByName(use)?.document.spec.params;
     const fields = fieldsOf(schema);
@@ -194,7 +223,6 @@
         images = i;
         blocks = b;
         existing = t;
-        addChoice = b[0]?.document.name ?? "";
         if (t) {
           targetName = t.document.name;
           image = t.document.spec.image;
@@ -211,6 +239,8 @@
             disk: 20,
             bridge: "vmbr0",
             ip: "dhcp",
+            // D-299: a new Target is managed as running; a stored one keeps "not managed".
+            power: "running",
           });
         }
         loaded = true;
@@ -247,6 +277,23 @@
         ...guestErrors,
         disk: `At least ${min} GiB: the template of image ${image} has ${min} GiB, and a disk cannot shrink.`,
       };
+    // D-291, D-299: the disk only grows; a stop needs allow_restart.
+    const storedDisk = existing?.document.spec.guest.disk;
+    if (
+      editing &&
+      storedDisk !== undefined &&
+      !guestErrors["disk"] &&
+      Number(guest["disk"]) < storedDisk
+    )
+      guestErrors = {
+        ...guestErrors,
+        disk: `A disk only grows: at least ${storedDisk} GiB, the size it has now.`,
+      };
+    if (guest["power"] === "stopped" && !allowRestart && !guestErrors["power"])
+      guestErrors = {
+        ...guestErrors,
+        power: `A stop needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below.`,
+      };
     const seen: string[] = [];
     for (const u of uses) {
       u.errors = validate(u.fields, u.values);
@@ -255,6 +302,8 @@
       else if (u.id.trim() && !namePattern.test(u.id.trim()))
         u.errors["__id"] = "The id has the wrong format.";
       seen.push(id);
+      const unfit = unfitUse(u);
+      if (unfit) u.errors["__kind"] = unfit;
     }
     errors = e;
     return (
@@ -269,22 +318,28 @@
     submitError = null;
     if (!check()) {
       queueMicrotask(() =>
-        (document.querySelector('[aria-invalid="true"]') as HTMLElement | null)?.focus(),
+        (
+          document.querySelector('[aria-invalid="true"], .use-unfit') as HTMLElement | null
+        )?.focus(),
       );
       return;
     }
+    const guestSpec = mergeParams(
+      existing?.document.spec.guest ?? {},
+      // On an existing target the create-only fields keep their stored
+      // value: a schema default the form shows must not become a change.
+      editing
+        ? kindFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
+        : kindFields,
+      guest,
+    );
+    // D-299: a missing `tags` means "not managed"; an emptied list means "no tags".
+    if (existing?.document.spec.guest.tags !== undefined && guestSpec["tags"] === undefined)
+      guestSpec["tags"] = [];
     const spec: TargetSpec = {
       type: kind,
       image,
-      // On an existing target the create-only fields keep their stored
-      // value: a schema default the form shows must not become a change.
-      guest: mergeParams(
-        existing?.document.spec.guest ?? {},
-        editing
-          ? kindFields.filter((f) => !(CREATE_ONLY as readonly string[]).includes(f.name))
-          : kindFields,
-        guest,
-      ) as TargetSpec["guest"],
+      guest: guestSpec as TargetSpec["guest"],
       blocks: uses.map((u) => ({
         use: u.use,
         ...(u.id.trim() ? { id: u.id.trim() } : {}),
@@ -497,10 +552,15 @@
     <h2>Blocks</h2>
     {#each uses as u (u.key)}
       {@const b = blockByName(u.use)}
+      {@const unfit = unfitUse(u)}
       <fieldset aria-describedby={b?.document.spec.description ? `use-${u.key}-desc` : undefined}>
         <legend id="use-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend>
         {#if b?.document.spec.description}<p class="muted" id="use-{u.key}-desc">
             {b.document.spec.description}
+          </p>{/if}
+        {#if unfit}<p class="error use-unfit" id="use-{u.key}-unfit" tabindex="-1">
+            This Block does not fit a {kind === "lxc" ? "container" : "virtual machine"}. {unfit}
+            Remove it to save.
           </p>{/if}
         <div class="field">
           <label for="use-{u.key}-id">Use id (optional)</label>
@@ -540,12 +600,22 @@
     <div class="row add">
       <label for="add-choice" class="sr-only">Block to add</label>
       <select id="add-choice" bind:value={addChoice}>
-        {#each blocks as b (b.document.name)}
+        {#each addable as b (b.document.name)}
           <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
         {/each}
       </select>
-      <button type="button" class="btn" id="add-block" onclick={() => addBlock()}>Add Block</button>
+      <button
+        type="button"
+        class="btn"
+        id="add-block"
+        disabled={addable.length === 0}
+        onclick={() => addBlock()}>Add Block</button
+      >
     </div>
+    {#if hidden.length}<p class="muted" id="blocks-hidden">
+        Not offered for a {kind === "lxc" ? "container" : "virtual machine"}:
+        {#each hidden as h, i (h)}{i ? ", " : ""}<span class="mono">{h}</span>{/each}.
+      </p>{/if}
 
     <h2>Review</h2>
     <div class="field">
@@ -570,6 +640,7 @@
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
 {#if loaded && existing}
+  <RawResources {api} target={existing} />
   <AgentCard {api} target={existing} />
   <form class="card" onsubmit={reenroll} aria-labelledby="reenroll-title">
     <h2 id="reenroll-title">Re-enroll the agent</h2>
@@ -601,7 +672,14 @@
       <textarea id="reenroll-reason" bind:value={reenrollReason} maxlength="2000"></textarea>
     </div>
     <ProblemBox error={reenrollError} />
-    <button class="btn" type="submit" disabled={reenrollBusy}>Plan the re-enrollment</button>
+    <button
+      class="btn"
+      type="submit"
+      disabled={reenrollBusy || restored.mode}
+      aria-describedby={restored.mode ? "reenroll-restored" : undefined}
+      >Plan the re-enrollment</button
+    >
+    {#if restored.mode}<p class="muted" id="reenroll-restored">{RESTORED_WAIT}</p>{/if}
   </form>
 {/if}
 

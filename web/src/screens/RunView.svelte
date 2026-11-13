@@ -107,8 +107,17 @@
             <tr>
               <th scope="row" class="mono">{s.resource}</th>
               <td>{s.action ?? "–"}</td>
-              <td><Badge tone={tone[s.status] ?? "muted"} label={s.status} /></td>
-              <td><pre class="mono out">{s.output || "–"}</pre></td>
+              <td>
+                <Badge tone={tone[s.status] ?? "muted"} label={s.status} />
+                {#if s.rolled_back}<span class="rolled">rolled back</span>{/if}
+              </td>
+              <td>
+                {#if s.rolled_back}<p class="rolled-text">
+                    The agent lost the link to Plumb after the change and put the old state back.
+                    The guest is as before the Run.
+                  </p>{/if}
+                <pre class="mono out">{s.output || "–"}</pre>
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -160,6 +169,14 @@
 {/if}
 
 <style>
+  .rolled {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--color-danger);
+  }
+  .rolled-text {
+    margin: 0 0 var(--space-1);
+  }
   .waits {
     border-left: 4px solid var(--color-warn);
   }

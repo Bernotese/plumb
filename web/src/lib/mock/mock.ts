@@ -32,6 +32,9 @@ import type {
   Session,
   StateDocument,
   Token,
+  BackupList,
+  BackupRun,
+  RestoreState,
   TokenCreated,
   TargetDoc,
   TargetView,
@@ -59,6 +62,8 @@ export interface MockOptions {
   firstLogin?: boolean;
   /** Start as an API token of tier `plan` (no access to the settings, T-035). */
   token?: boolean;
+  /** Start as a restored controller in restored mode (D-290, D-303). */
+  restored?: boolean;
 }
 
 export interface MockApi extends PlumbApi {
@@ -124,6 +129,24 @@ const keyAttr: Record<string, string> = {
   user: "name",
   symlink: "path",
 };
+
+/** The Block use that renders a resource, or null (D-301: Issue.source, RawResource.source). */
+export function sourceOf(
+  spec: TargetDoc["spec"],
+  blocks: Map<string, BlockDoc>,
+  resource: string,
+): { block: string; use: string } | null {
+  if (resource.startsWith("guest:") || resource.startsWith("agent:")) return null;
+  for (const u of spec.blocks ?? []) {
+    try {
+      const ids = render({ ...spec, blocks: [u], overrides: {} }, blocks).map((r) => r.id);
+      if (ids.includes(resource)) return { block: u.use, use: u.id ?? u.use };
+    } catch {
+      // A use alone can fail its `after` check; it is then not the source.
+    }
+  }
+  return null;
+}
 
 /**
  * Renders the Blocks of a Target into a flat resource list: Blocks, the
@@ -254,7 +277,33 @@ export function planTarget(
           ],
         });
       }
-      changes.push({ attr, from: og[attr], to: g[attr], risk: "disruptive" });
+      // D-291, D-299: the disk only grows (a grow cannot be undone).
+      if (attr === "disk" && Number(g[attr]) < Number(og[attr])) {
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [
+            {
+              pointer: `/put/0/spec/guest/disk`,
+              message: `disk can only grow: ${String(og[attr])} GiB now, ${String(g[attr])} GiB asked.`,
+            },
+          ],
+        });
+      }
+      // A start and a tag change are reversible; a stop and a grow are disruptive.
+      const risk: Risk =
+        attr === "tags" || (attr === "power" && g[attr] !== "stopped")
+          ? "reversible"
+          : "disruptive";
+      changes.push({ attr, from: og[attr], to: g[attr], risk });
+    }
+    if (g["power"] === "stopped" && next.allow_restart !== true) {
+      throw problem("validation", "Validation failed", 422, undefined, {
+        errors: [
+          {
+            pointer: `/put/0/spec/guest/power`,
+            message: "power: stopped needs allow_restart (D-291).",
+          },
+        ],
+      });
     }
     // T-056 (D-194), for a running VM: off, cores and memory wait; on, the
     // Plan has the restart. A stopped VM takes them at its next start. The
@@ -396,6 +445,12 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     exampleItems<TargetView>(example("listTargets", 200)).map((t) => [t.document.name, t]),
   );
   seedTargets(targets);
+  // T-118 (D-296): worker1 keeps an accepted motd as a raw resource.
+  const worker1 = targets.get("worker1");
+  if (worker1)
+    worker1.document.spec.overrides = {
+      "file:/etc/motd": { content: "Maintenance window: Sunday 02:00 UTC\n" },
+    };
   seedLxc(images, targets);
   seedAgents(targets);
 
@@ -430,6 +485,20 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   } as BlockDoc;
   blockViews.push({ revision: 7, document: appBlock });
   blocks.set(appBlock.name, appBlock);
+
+  // T-118: a VM-only Block (sysctl, D-260); the pickers hide it for a container.
+  const tuneBlock: BlockDoc = {
+    kind: "Block",
+    name: "net-tuning",
+    spec: {
+      title: "Network tuning",
+      description:
+        "Turns on IPv4 forwarding. Virtual machines only: a container shares the host kernel.",
+      resources: [{ sysctl: { name: "net.ipv4.ip_forward", value: 1 } }],
+    },
+  } as BlockDoc;
+  blockViews.push({ revision: 7, document: tuneBlock });
+  blocks.set(tuneBlock.name, tuneBlock);
 
   // T-049: the nginx Block (blocks/nginx.yaml, short form) and nginx-site
   // with `after` and `restarts` (D-167, D-172).
@@ -554,6 +623,23 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   // example undone; revision 5 is a seed with the old memory of db1 (the
   // reason of revision 6). An older base is the empty state (from: null).
   type Snapshot = Map<string, StateDocument>;
+
+  // D-301: raw resources of a Target and the raw offer of an Issue.
+  const withRaw = (t: TargetView): TargetView => ({
+    ...t,
+    raw: Object.entries(t.document.spec.overrides ?? {})
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([resource, o]) => ({
+        resource,
+        attrs: Object.keys(o ?? {}).sort(),
+        source: sourceOf(t.document.spec, blocks, resource),
+      })),
+  });
+  const withSource = (i: Issue): Issue => {
+    const t = targets.get(i.target);
+    const source = t ? sourceOf(t.document.spec, blocks, i.resource) : null;
+    return { ...i, source, raw: source !== null && i.actions.includes("accept") };
+  };
   const docKey = (d: { kind: string; name: string }) => `${d.kind}/${d.name}`;
   const headDocs: Snapshot = new Map();
   for (const d of [
@@ -640,6 +726,34 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   // Tokens and secrets (T-035). The mock keeps secret values only to show
   // conflicts on import; the API never returns them.
   const tokens = new Map(exampleItems<Token>(example("listTokens", 200)).map((t) => [t.id, t]));
+
+  // T-118: backups and the restore state (D-288 … D-290, D-302 … D-304).
+  const backups: BackupList = structuredClone(example("listBackups", 200));
+  // The users of the mock (D-321): the restore locked all but admin.
+  const MOCK_USERS = ["admin", "alice", "bob"];
+  const restore: RestoreState = opts.restored
+    ? structuredClone(example("getRestore", 200))
+    : { restored: false, restored_mode: false };
+  if (opts.restored) {
+    let n = 0;
+    for (const t of tokens.values())
+      if (!t.revoked_at) {
+        t.disabled_at = restore.restored_at ?? now();
+        n++;
+      }
+    restore.disabled_tokens = n;
+    restore.locked_users = MOCK_USERS.filter((u) => u !== "admin");
+  }
+  /** 409 `restored-mode` for the writers that wait for the confirm (D-303). */
+  function writable(): void {
+    if (restore.restored_mode)
+      throw problem(
+        "restored-mode",
+        "Restored mode",
+        409,
+        "This Plumb was restored from a backup. Confirm that the old controller is off first.",
+      );
+  }
   const secrets = new Map(
     exampleItems<SecretInfo>(example("listSecrets", 200)).map((x) => [x.name, x]),
   );
@@ -1454,6 +1568,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async buildImage(name, reason) {
       auth();
+      writable();
       const view = findImage(name);
       if (!view) throw new ApiError(example("getImage", 404));
       if (!view.document.spec.build)
@@ -1496,13 +1611,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async listTargets() {
       auth();
-      return structuredClone([...targets.values()]);
+      return structuredClone([...targets.values()].map(withRaw));
     },
     async getTarget(name) {
       auth();
       const t = targets.get(name);
       if (!t) throw new ApiError(example("getTarget", 404));
-      return structuredClone(t);
+      return structuredClone(withRaw(t));
     },
     async createPlan(proposal: Proposal) {
       auth();
@@ -1662,6 +1777,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async approvePlan(id) {
       const s = auth();
+      writable();
       const p = findPlan(id);
       // Only a person approves a human-only Plan (D-099; QA T-036 F2).
       if (p.status === "pending" && (p.human_only?.length ?? 0) > 0 && s.tier !== "admin") {
@@ -1821,13 +1937,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           (!filter?.target || i.target === filter.target) &&
           (!filter?.status || i.status === filter.status),
       );
-      return structuredClone(list.sort((a, b) => b.id - a.id));
+      return structuredClone(list.sort((a, b) => b.id - a.id).map(withSource));
     },
     async getIssue(id) {
       auth();
       const i = issues.get(id);
       if (!i) throw new ApiError(example("getIssue", 404));
-      return structuredClone(i);
+      return structuredClone(withSource(i));
     },
     async resolveIssue(id, action, reason, rule) {
       auth();
@@ -2018,6 +2134,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
     async reenrollTarget(name, reason) {
       auth();
+      writable();
       const t = targets.get(name);
       if (!t) throw problem("not-found", "Not found", 404, `Target ${name} does not exist.`);
       // D-194: a running VM with allow_restart off is not restarted.
@@ -2131,6 +2248,82 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       const bearer = `${id}.${[...rnd].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
       const out: TokenCreated = { token: structuredClone(token), bearer };
       return out;
+    },
+    async enableToken(id) {
+      human();
+      const t = tokens.get(id);
+      if (!t) throw problem("not-found", "Not found", 404, `Token ${id} does not exist.`);
+      if (t.revoked_at)
+        throw problem("token-revoked", "Token revoked", 409, `Token ${id} is revoked.`);
+      if (t.disabled_at) {
+        t.disabled_at = null;
+        restore.disabled_tokens = Math.max(0, (restore.disabled_tokens ?? 1) - 1);
+        emit("token.enabled", `token:${id}`, {});
+      }
+      return structuredClone(t);
+    },
+    async listBackups() {
+      auth();
+      return structuredClone(backups);
+    },
+    async createBackup() {
+      const s = auth();
+      writable();
+      if (backups.running)
+        throw problem("backup-running", "Backup running", 409, "A backup runs already.");
+      const run: BackupRun = {
+        started_at: now(),
+        finished_at: null,
+        result: "running",
+        by: s.principal,
+        name: null,
+        message: "",
+      };
+      backups.running = true;
+      backups.last_run = run;
+      void sleep(stepDelay * 2).then(() => {
+        const at = now();
+        const name = `plumb-${at.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}.pbk`;
+        backups.items.unshift({
+          name,
+          created_at: at,
+          size: 2621440 + backups.items.length * 4096,
+          sha256: "0".repeat(56) + String(backups.items.length).padStart(8, "0"),
+        });
+        backups.items = backups.items.slice(0, backups.schedule.keep);
+        backups.running = false;
+        backups.last_run = { ...run, finished_at: at, result: "ok", name };
+        emit("backup.finished", `backup:${name}`, { result: "ok" });
+      });
+      return structuredClone(run);
+    },
+    async getRestore() {
+      auth();
+      return structuredClone(restore);
+    },
+    async confirmRestore(reason) {
+      const s = human();
+      void reason;
+      if (!restore.restored_mode)
+        throw problem("nothing-to-do", "Nothing to do", 409, "This Plumb is not in restored mode.");
+      restore.restored_mode = false;
+      restore.confirmed_at = now();
+      restore.confirmed_by = s.principal;
+      emit("restore.confirmed", "restore:1", {});
+      return structuredClone(restore);
+    },
+    async resetUserPassword(name) {
+      const s = human();
+      if (`user:${name}` === s.principal)
+        throw problem("own-user", "Own user", 409, "Change your own password in your session.");
+      if (!MOCK_USERS.includes(name))
+        throw problem("not-found", "Not found", 404, `User ${name} does not exist.`);
+      const rnd = crypto.getRandomValues(new Uint8Array(16));
+      const password = btoa(String.fromCharCode(...rnd)).replace(/[^A-Za-z0-9]/g, "");
+      if (restore.locked_users)
+        restore.locked_users = restore.locked_users.filter((u) => u !== name);
+      emit("user.password_reset", `user:${name}`, {});
+      return { username: name, password };
     },
     async revokeToken(id) {
       human();

@@ -30,6 +30,11 @@
 <div class="narrow">
   <h1 id="page-title" tabindex="-1">Change your password</h1>
   <p class="banner info">This is your first login. Choose a new password before you continue.</p>
+  <!-- GET /restore is refused before this change: a static note (review L1 of #227). -->
+  <p class="muted" id="restored-note">
+    After a restore from a backup, Plumb starts in restored mode: it changes nothing until an admin
+    confirms in Settings → Backups that the old controller is off.
+  </p>
   <ProblemBox {error} />
   <form class="card" onsubmit={submit}>
     <div class="field">
