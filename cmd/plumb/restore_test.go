@@ -46,7 +46,7 @@ func makeBackup(t *testing.T) (string, secret.Key) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := svc.RunNow(ctx, "system")
+	run, err := svc.RunNow(ctx, "system", store.BackupCLI)
 	if err != nil || run.Result != store.BackupOK {
 		t.Fatalf("backup: %+v %v", run, err)
 	}
