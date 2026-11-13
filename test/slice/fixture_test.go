@@ -71,12 +71,13 @@ func (r *runner) Run(ctx context.Context, name string, args ...string) ([]byte, 
 
 // Only controller wiring, token provisioning, and fake guest bootstrap bypass HTTP.
 // Accounts and the package/service are preinstalled; file and key apply are real.
-func fixture(t *testing.T) (*httptest.Server, string, *runner, string) {
+func fixture(t *testing.T) (*httptest.Server, string, string, *runner, string) {
 	return fixtureNginx(t, true)
 }
 
 // A cold guest gets nginx directories only from the fake package install.
-func fixtureNginx(t *testing.T, preinstalled bool) (*httptest.Server, string, *runner, string) {
+// The third value is the bootstrap password of the admin user.
+func fixtureNginx(t *testing.T, preinstalled bool) (*httptest.Server, string, string, *runner, string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir, root := t.TempDir(), t.TempDir()
@@ -104,7 +105,10 @@ func fixtureNginx(t *testing.T, preinstalled bool) (*httptest.Server, string, *r
 	issues = issue.New(st, ev, eng)
 	bearer, _, err := api.CreateToken(ctx, st, "slice", api.TierApply, wire.RiskDisruptive, "user:admin")
 	must(t, err)
-	srv := httptest.NewServer(api.New(api.Config{Store: st, Events: ev, Plans: eng, Issues: issues, Logger: log}).Handler())
+	fast := api.PasswordParams{Time: 1, Memory: 64, Threads: 1}
+	password, _, err := api.BootstrapAdmin(ctx, st, fast)
+	must(t, err)
+	srv := httptest.NewServer(api.New(api.Config{Store: st, Events: ev, Plans: eng, Issues: issues, Logger: log, PasswordParams: fast}).Handler())
 	tls := httptest.NewUnstartedServer(lnk.Handler())
 	tls.TLS = lnk.TLSConfig()
 	tls.StartTLS()
@@ -154,7 +158,7 @@ func fixtureNginx(t *testing.T, preinstalled bool) (*httptest.Server, string, *r
 			t.Error(err)
 		}
 	})
-	return srv, bearer, r, root
+	return srv, bearer, password, r, root
 }
 
 func must(t *testing.T, err error) {

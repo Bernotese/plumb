@@ -236,6 +236,9 @@ func TestCopyStorageRefused(t *testing.T) {
 			env = append(env, tc.env)
 		}
 		code, _, errOut := b.run(env, "--yes", "--plumb-binary", b.plumb, "--backup-storage", tc.storage)
+		if tc.storage == "missing" && strings.Contains(errOut, "malformed JSON") {
+			t.Errorf("missing storage emitted Perl diagnostic: %s", errOut)
+		}
 		if code == 0 || !strings.Contains(errOut, tc.want) {
 			t.Errorf("%s: %d %s", tc.storage, code, errOut)
 		}
@@ -249,6 +252,47 @@ func TestCopyStorageRefused(t *testing.T) {
 	code, _, errOut := b.run(append([]string{"FAKE_MOUNTED=1"}, asRoot...), "--yes", "--plumb-binary", b.plumb, "--backup-storage", "share")
 	if code != 0 {
 		t.Errorf("mounted share: %s", errOut)
+	}
+}
+
+// The config directory stays private, even if writing the config fails.
+func TestCopyConfigDirectoryPrivate(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
+			b := newBackupHost(t)
+			// Fail after install -d has run, before the config is written.
+			if fail {
+				wrapper := filepath.Join(b.bin, "install")
+				fake, err := os.Readlink(wrapper)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(wrapper); err != nil {
+					t.Fatal(err)
+				}
+				script := "#!/bin/bash\n[[ ${!#} != \"$PLUMB_INSTALL_COPY_CONF\" ]] || exit 3\nexec bash -c 'source \"$FAKE_INSTALL\"' install \"$@\"\n"
+				if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				b.env = append(b.env, "FAKE_INSTALL="+fake)
+			}
+			code, _, errOut := b.run(asRoot, "--yes", "--plumb-binary", b.plumb, "--backup-storage", "backups")
+			if (code != 0) != fail {
+				t.Fatalf("exit %d: %s", code, errOut)
+			}
+			info, err := os.Stat(filepath.Dir(b.conf))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o700 {
+				t.Errorf("config directory mode: %v", info.Mode())
+			}
+			for _, call := range b.calls() {
+				if strings.HasPrefix(call, "install -d ") && strings.HasSuffix(call, " "+filepath.Dir(b.conf)) && !strings.Contains(call, "-m 0700 ") {
+					t.Errorf("directory permissions widened: %s", call)
+				}
+			}
+		})
 	}
 }
 

@@ -257,6 +257,10 @@ export function humanOnlyReasons(plan: Plan): string[] {
       out.push("It adds, changes or removes an ignore rule.");
       continue;
     }
+    if (reason === "accept-guest-data") {
+      out.push("It adopts values that the guest reported. A person must check them.");
+      continue;
+    }
     if (reason === "image-recipe") {
       out.push(
         "It makes, changes or deletes the recipe of a built image, or makes a container image or changes its address or checksum.",
