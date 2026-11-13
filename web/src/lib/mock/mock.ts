@@ -729,6 +729,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
 
   // T-118: backups and the restore state (D-288 … D-290, D-302 … D-304).
   const backups: BackupList = structuredClone(example("listBackups", 200));
+  // The users of the mock (D-321): the restore locked all but admin.
+  const MOCK_USERS = ["admin", "alice", "bob"];
   const restore: RestoreState = opts.restored
     ? structuredClone(example("getRestore", 200))
     : { restored: false, restored_mode: false };
@@ -2306,6 +2308,17 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       restore.confirmed_by = s.principal;
       emit("restore.confirmed", "restore:1", {});
       return structuredClone(restore);
+    },
+    async resetUserPassword(name) {
+      const s = human();
+      if (`user:${name}` === s.principal)
+        throw problem("own-user", "Own user", 409, "Change your own password in your session.");
+      if (!MOCK_USERS.includes(name))
+        throw problem("not-found", "Not found", 404, `User ${name} does not exist.`);
+      const rnd = crypto.getRandomValues(new Uint8Array(16));
+      const password = btoa(String.fromCharCode(...rnd)).replace(/[^A-Za-z0-9]/g, "");
+      emit("user.password_reset", `user:${name}`, {});
+      return { username: name, password };
     },
     async revokeToken(id) {
       human();

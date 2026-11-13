@@ -10,6 +10,7 @@ import { restorePlumb, startPlumb } from "./server.mjs";
 // directory. The restored Plumb forces a new admin password, shows the
 // restored-mode banner, refuses the confirm without the check, ends
 // restored mode, and an API token disabled by the restore can be enabled.
+// A user locked by the restore gets a one-time password (T-126, D-321).
 test("backup now, restore, restored mode, confirm, enable a token", async ({ browser }) => {
   test.setTimeout(180_000);
   const first = await startPlumb(0);
@@ -61,6 +62,26 @@ test("backup now, restore, restored mode, confirm, enable a token", async ({ bro
     await expect(row).toContainText("Disabled by the restore");
 
     await page.goto(`${server.base}/#/settings/backups`);
+
+    // The restore locked the user "dev" (T-126, D-321): a one-time
+    // password, shown once; "dev" logs in with it and must change it.
+    await page.locator("#restore-otp-name").fill("dev");
+    await page.getByRole("button", { name: "Give a one-time password" }).click();
+    await page.getByRole("button", { name: "Make a one-time password" }).click();
+    await expect(page.locator("#restore-otp-title")).toHaveText('One-time password for "dev"');
+    const otp = (await page.locator("#restore-otp-value").textContent())?.trim() ?? "";
+    expect(otp.length).toBeGreaterThan(8);
+    await page.getByRole("button", { name: "Done, I copied it" }).click();
+    await expect(page.locator("#restore-otp-value")).toHaveCount(0);
+    const devCtx = await browser.newContext();
+    const dev = await devCtx.newPage();
+    await dev.goto(server.base);
+    await dev.getByLabel("User name").fill("dev");
+    await dev.getByLabel("Password", { exact: true }).fill(otp);
+    await dev.getByRole("button", { name: "Log in" }).click();
+    await expect(dev.getByRole("heading", { name: "Change your password" })).toBeVisible();
+    await devCtx.close();
+
     const end = page.getByRole("button", { name: "End restored mode" });
     await end.click();
     await expect(page.getByText("Confirm that the old controller is off.")).toBeVisible();

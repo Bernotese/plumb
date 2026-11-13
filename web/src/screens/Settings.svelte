@@ -8,6 +8,7 @@
   import ExportImport from "./ExportImport.svelte";
   import Secrets from "./Secrets.svelte";
   import Tokens from "./Tokens.svelte";
+  import ResetPassword from "../ui/ResetPassword.svelte";
 
   let {
     api,
@@ -25,6 +26,7 @@
     { tab: "secrets", label: "Secrets" },
     { tab: "export", label: "Export and import" },
     { tab: "backups", label: "Backups" },
+    { tab: "users", label: "Users" },
   ];
 </script>
 
@@ -49,12 +51,24 @@
     <Secrets {api} />
   {:else if tab === "backups"}
     <Backups {api} {onRestore} />
+  {:else if tab === "users"}
+    <section class="card" aria-labelledby="users-title">
+      <h2 id="users-title">One-time password</h2>
+      <p>
+        Give another user a new password when they lost theirs, or when a restore locked them. Plumb
+        makes the password and shows it once. The user must change it at the first login.
+      </p>
+      <ResetPassword {api} id="users-otp" />
+    </section>
   {:else}
     <ExportImport {api} />
   {/if}
 {/if}
 
 <style>
+  .card h2 {
+    margin-top: 0;
+  }
   .tabs {
     display: flex;
     flex-wrap: wrap;

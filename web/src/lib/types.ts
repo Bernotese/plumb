@@ -42,6 +42,7 @@ export type Token = S["Token"];
 export type BackupList = S["BackupList"];
 export type BackupRun = S["BackupRun"];
 export type RestoreState = S["RestoreState"];
+export type OneTimePassword = S["OneTimePassword"];
 export type TokenRequest = S["TokenRequest"];
 export type TokenCreated = S["TokenCreated"];
 export type Tier = S["Tier"];

@@ -23,6 +23,7 @@ import type {
   ImportRequest,
   BackupList,
   BackupRun,
+  OneTimePassword,
   RestoreState,
 } from "./types";
 
@@ -85,6 +86,11 @@ export interface PlumbApi {
   getRestore(): Promise<RestoreState>;
   /** Ends restored mode: the person states that the old controller is off. */
   confirmRestore(reason?: string): Promise<RestoreState>;
+  /**
+   * Gives another user a new one-time password (D-321, human session). The
+   * answer holds it once; the caller must not keep it.
+   */
+  resetUserPassword(name: string): Promise<OneTimePassword>;
   /** Secret metadata, sorted by name. No value ever comes back. */
   listSecrets(): Promise<SecretInfo[]>;
   putSecret(name: string, value: string): Promise<SecretInfo>;

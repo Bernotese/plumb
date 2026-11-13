@@ -25,8 +25,14 @@ export type Route =
   | { name: "settings"; tab: SettingsTab }
   | { name: "not-found"; path: string };
 
-export type SettingsTab = "tokens" | "secrets" | "export" | "backups";
-const TABS: readonly string[] = ["tokens", "secrets", "export", "backups"] satisfies SettingsTab[];
+export type SettingsTab = "tokens" | "secrets" | "export" | "backups" | "users";
+const TABS: readonly string[] = [
+  "tokens",
+  "secrets",
+  "export",
+  "backups",
+  "users",
+] satisfies SettingsTab[];
 
 const NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
 

@@ -22,6 +22,7 @@ import type {
   TokenCreated,
   BackupList,
   BackupRun,
+  OneTimePassword,
   RestoreState,
 } from "./types";
 
@@ -46,6 +47,7 @@ export const EVENT_TYPES = [
   "backup.finished",
   "restore.confirmed",
   "token.enabled",
+  "user.password_reset",
 ] as const satisfies readonly components["schemas"]["Event"]["type"][];
 
 export interface HttpOptions {
@@ -195,6 +197,8 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
         old_controller_off: true,
         ...(reason?.trim() ? { reason: reason.trim() } : {}),
       }),
+    resetUserPassword: (name) =>
+      call<OneTimePassword>("POST", `/users/${encodeURIComponent(name)}/password`),
     revokeToken: async (id) => {
       await call<undefined>("DELETE", `/tokens/${encodeURIComponent(id)}`);
     },

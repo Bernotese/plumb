@@ -10,6 +10,7 @@
   import { formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import ResetPassword from "../ui/ResetPassword.svelte";
 
   let { api, onRestore }: { api: PlumbApi; onRestore?: (r: RestoreState) => void } = $props();
 
@@ -152,6 +153,12 @@
           <a href={href({ name: "settings", tab: "tokens" })}>API tokens</a>.
         </p>
       {/if}
+      <h3 id="locked-title">Locked users</h3>
+      <p class="muted">
+        The restore locked every user but admin. Give a user a one-time password to let them in
+        again; they choose their own password at the first login.
+      </p>
+      <ResetPassword {api} id="restore-otp" />
       {#if restore.unknown_guests?.length}
         <h3>Unknown guests</h3>
         <p class="muted">
