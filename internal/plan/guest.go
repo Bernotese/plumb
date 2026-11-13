@@ -78,10 +78,17 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 			// then the bound guest is missing, and the other one is
 			// unknown.
 			// It counts while restored mode holds, and after it only
-			// until the first good check (while that Issue is open);
+			// while that Issue is open or ignored (foreignHolds);
 			// later a rename is the normal create-only drift. Writes to
-			// such a guest are refused either way (checkOwnGuest).
-			if observed.Spec.Name != b.Name && (e.restoreActive() || e.openRestoreIssue(ctx, b.Name, GuestMissingID)) {
+			// such a guest are refused while it counts (checkOwnGuest).
+			foreign := false
+			if observed.Spec.Name != b.Name {
+				if foreign, err = e.foreignHolds(ctx, b.Name); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+			}
+			if foreign {
 				e.setForeign(b.Ref, true)
 				if err := e.guestMissing(ctx, b, false); err != nil {
 					errs = append(errs, err)

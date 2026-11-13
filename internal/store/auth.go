@@ -91,6 +91,26 @@ func (s *Store) SetPassword(ctx context.Context, userID int64, hash, keep string
 	})
 }
 
+// ResetPassword gives a user a new password hash that must change at the
+// first login, ends a lock of a restore and every session of the user
+// (D-321).
+func (s *Store) ResetPassword(ctx context.Context, name, hash string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var id int64
+		err := tx.QueryRowContext(ctx,
+			`UPDATE user SET password_hash = ?, must_change_password = 1, locked_at = NULL WHERE name = ? RETURNING id`,
+			hash, name).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM session WHERE user_id = ?`, id)
+		return err
+	})
+}
+
 // Session is a login session. Only the hash of its id is stored.
 type Session struct {
 	IDHash    string
