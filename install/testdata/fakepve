@@ -311,6 +311,9 @@ pct)
 	exec)
 		id=$2
 		shift 3 # pct exec ID --
+		# T-132: record a terminal on any std stream (lxc-attach would
+		# give the command a pty in the container).
+		if [[ -t 0 || -t 1 || -t 2 ]]; then echo "$*" >>"$st/exec-tty"; fi
 		if [[ -t 0 || -p /dev/stdin ]]; then IFS= read -r _ || true; fi
 		[[ -n ${FAKE_EXEC_FAIL:-} && "$*" == "$FAKE_EXEC_FAIL" ]] && exit 3
 		case "$*" in
@@ -343,12 +346,23 @@ pct)
 			[[ -e $f ]] || { echo "sha256sum: $2: No such file or directory" >&2; exit 1; }
 			sha256sum <"$f" | sed "s#-\$#${2}#"
 			;;
+		"timeout "*" systemctl is-system-running --wait")
+			echo "is-system-running" >>"$st/boot-wait"
+			echo "${FAKE_BOOT_STATE:-running}"
+			[[ ${FAKE_BOOT_STATE:-running} == running ]]
+			;;
 		"mv -f "*)
 			[[ ${FAKE_MV_FAIL:-0} == 1 ]] && exit 1
 			from=$st/push/${3//\//_} to=$st/push/${4//\//_}
 			mv -f "$from" "$to" || exit 1
 			[[ -e $from.opts ]] && mv -f "$from.opts" "$to.opts"
 			echo "mv $3 $4" >>"$st/mv"
+			# FAKE_MV_HUP_ONCE=<dest>: the mv ran, then pct exec reports
+			# SIGHUP (exit 129) once, like T-122 F7.
+			if [[ ${FAKE_MV_HUP_ONCE:-} == "$4" && ! -e $st/mv-hup ]]; then
+				touch "$st/mv-hup"
+				exit 129
+			fi
 			;;
 		"rm -f "*) rm -f "$st/push/${3//\//_}" "$st/push/${3//\//_}.opts" ;;
 		"rm -rf -- /var/lib/plumb-restore")
@@ -384,6 +398,8 @@ pct)
 	esac
 	;;
 lxc-attach) # lxc-attach -n ID --clear-env -- runuser -u plumb -- plumb key init …
+	# The key prompts keep the real terminal (D-180).
+	if [[ -t 0 ]]; then echo "${*:5}" >>"$st/attach-tty"; fi
 	[[ ${FAKE_KEYINIT_FAIL:-0} == 1 ]] && exit 1
 	if [[ "${*:5}" == "/usr/sbin/runuser -u plumb -- /usr/local/bin/plumb key restore --data /var/lib/plumb" ]]; then
 		has "key.$2" && exit 1
