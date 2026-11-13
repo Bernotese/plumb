@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -307,6 +308,8 @@ type issueView struct {
 	PlanID     *int64          `json:"plan_id"`
 	Resolution *resolutionView `json:"resolution"`
 	Comments   []commentView   `json:"comments"`
+	Raw        bool            `json:"raw"`    // D-301
+	Source     *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
 }
 
 func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error) {
@@ -326,13 +329,7 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		if !(i.Resource == wire.GuestConfigID && plan.RevertShrinks(ch)) {
 			v.Actions = append(v.Actions, "revert")
 		}
-		accept := true
-		for _, c := range ch {
-			if c.Sensitive || (i.Resource == wire.GuestConfigID && (c.Attr == "image" || c.Attr == "kind")) {
-				accept = false
-			}
-		}
-		if accept {
+		if issue.AcceptRefused(i.Resource, ch) == nil {
 			v.Actions = append([]string{"accept"}, v.Actions...)
 		}
 		// The list does not depend on the caller; the server checks who
@@ -341,6 +338,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	}
 	if i.Status == store.IssueResolved {
 		v.Resolution = &resolutionView{Action: i.Resolution, By: i.ResolvedBy, At: i.ResolvedAt.UTC()}
+	}
+	if err := s.issueSource(ctx, &v); err != nil {
+		return v, err
 	}
 	comments, err := s.st.Comments(ctx, i.ID)
 	if err != nil {
