@@ -164,6 +164,36 @@ func (e *Engine) guestMissing(ctx context.Context, b store.Binding, revoke bool)
 		[]wire.Change{{Attr: "guest_id", From: nil, To: b.Ref, Risk: wire.RiskDestructive}})
 }
 
+// TargetDeletedReason is the Output of the items that resolve the
+// restore Issues of a deleted Target (T-134 F8).
+const TargetDeletedReason = "the Target was deleted"
+
+// targetDeleted resolves the restore Issues (guest:missing,
+// agent:silent) of a Target whose binding a delete step dropped: no
+// poll reports on it again, and their actions need the Target. A
+// foreign guest keeps its own rules (D-322): its mark went with the
+// binding and the guest stays in unknown_guests. An error is only
+// logged: the delete is done.
+func (e *Engine) targetDeleted(ctx context.Context, target string) {
+	if !e.cfg.Restore.Restored() {
+		return
+	}
+	e.restore.mu.Lock()
+	delete(e.restore.revoked, target) // a new Target of that name revokes again
+	e.restore.unknownT = time.Time{}  // list the guests again
+	e.restore.mu.Unlock()
+	if e.cfg.OnDrift == nil {
+		return
+	}
+	var items []wire.Item
+	for _, id := range []string{GuestMissingID, AgentSilentID} {
+		items = append(items, wire.Item{Resource: id, Status: wire.StatusUnchanged, Output: TargetDeletedReason})
+	}
+	if err := e.cfg.OnDrift(ctx, target, wire.Report{Type: wire.ReportDrift, Items: items}); err != nil {
+		e.log.Warn("resolve the restore Issues of a deleted Target", "target", target, "err", err)
+	}
+}
+
 // restoreIssue sends a drift item of a restore Issue: differs opens it,
 // unchanged resolves it as gone.
 func (e *Engine) restoreIssue(ctx context.Context, target, id string, status wire.Status, changes []wire.Change) error {

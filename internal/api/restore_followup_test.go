@@ -344,3 +344,64 @@ func TestRestoreBackupRunOK(t *testing.T) {
 		t.Errorf("last backup run: %+v %v", last, err)
 	}
 }
+
+// T-134 F8: a delete of the Target resolves its guest:missing as gone
+// with the reason, also for a foreign guest; the foreign guest stays.
+func TestRestoreTargetDeleteResolvesGuestMissing(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(map[bool]string{false: "gone", true: "foreign"}[foreign], func(t *testing.T) {
+			e, _, _, _ := restoredEnv(t)
+			b1, _ := e.st.GetBinding(e.ctx, "Target", "web1")
+			b2, _ := e.st.GetBinding(e.ctx, "Target", "web2")
+			if err := e.drv.Delete(e.ctx, driver.GuestID(b2.Ref)); err != nil {
+				t.Fatal(err)
+			}
+			if foreign {
+				b2.Ref = b1.Ref // the VMID of web2 holds the guest named web1
+				if err := e.st.PutBinding(e.ctx, b2); err != nil {
+					t.Fatal(err)
+				}
+			}
+			adm := e.login("admin", "restored-password-1")
+			adm.do("PUT", "/api/v1/session/password", map[string]string{"current_password": "restored-password-1", "new_password": "another-good-password"})
+			if code, body := adm.do("POST", "/api/v1/restore/confirm", map[string]any{"old_controller_off": true}); code != 200 {
+				t.Fatalf("confirm: %d %s", code, body)
+			}
+			iss, err := e.st.OpenIssue(e.ctx, "web2", plan.GuestMissingID)
+			if err != nil {
+				t.Fatalf("no guest:missing: %v", err)
+			}
+			e.runPlanAnyStatus(adm, map[string]any{"reason": "remove web2", "delete": []map[string]string{{"kind": "Target", "name": "web2"}}})
+			if _, err := e.st.GetBinding(e.ctx, "Target", "web2"); err == nil {
+				t.Fatal("the binding of web2 stays after its delete")
+			}
+			got, err := e.st.GetIssue(e.ctx, iss.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != store.IssueResolved || got.Resolution != "gone" || got.ResolvedBy != "system" {
+				t.Errorf("guest:missing after the delete: %s %s by %s", got.Status, got.Resolution, got.ResolvedBy)
+			}
+			cs, err := e.st.Comments(e.ctx, iss.ID)
+			if err != nil || len(cs) != 1 || cs[0].Author != "system" || cs[0].Body != "Resolved: the Target was deleted." {
+				t.Errorf("comments: %+v %v", cs, err)
+			}
+			code, body := adm.do("GET", "/api/v1/issues/"+itoa(iss.ID), nil)
+			if code != 200 || !strings.Contains(string(body), "the Target was deleted") {
+				t.Errorf("GET issue: %d %s", code, body)
+			}
+			if foreign {
+				if _, err := e.drv.Observe(e.ctx, driver.GuestID(b1.Ref)); err != nil {
+					t.Fatalf("the delete of web2 removed the foreign guest: %v", err)
+				}
+			}
+			e.eng.CheckGuests(e.ctx)
+			if _, err := e.st.OpenIssue(e.ctx, "web2", plan.GuestMissingID); err == nil {
+				t.Error("guest:missing opened again after the delete")
+			}
+			if _, err := e.st.OpenIssue(e.ctx, "web1", plan.GuestMissingID); err == nil {
+				t.Error("guest:missing of web1 opened")
+			}
+		})
+	}
+}

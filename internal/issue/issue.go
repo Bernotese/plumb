@@ -192,10 +192,28 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 			if err := s.st.ResolveIssue(ctx, iss.ID, "gone", "system"); err != nil {
 				return err
 			}
-			s.emit(ctx, "issue.resolved", iss.ID, "system", s.waitingNote(ctx, iss, map[string]any{"resolution": "gone"}))
+			data := map[string]any{"resolution": "gone"}
+			if reason := systemReason(it); reason != "" {
+				// The engine says why (T-134 F8): a comment on the Issue.
+				data["reason"] = reason
+				if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: " + reason + "."}); err != nil {
+					return err
+				}
+			}
+			s.emit(ctx, "issue.resolved", iss.ID, "system", s.waitingNote(ctx, iss, data))
 		}
 	}
 	return nil
+}
+
+// systemReason is the reason of an unchanged item that resolves an Issue
+// of a restore: only the controller sends these resources (the link
+// refuses them from an agent), so the text is ours.
+func systemReason(it wire.Item) string {
+	if it.Resource != plan.GuestMissingID && it.Resource != plan.AgentSilentID {
+		return ""
+	}
+	return it.Output
 }
 
 // dropIssue resolves the open Issue of a target and resource as "ignore"

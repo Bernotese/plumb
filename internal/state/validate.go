@@ -238,7 +238,11 @@ func schemaErrors(kind, name, base string, err error) Errors {
 		if len(e.Causes) == 0 {
 			u := e.BasicOutput()
 			msg := "invalid"
-			if u.Error != nil {
+			if m := ruleMessage(e, u.KeywordLocation); m != "" {
+				msg = m // the rule in plain words (T-134 F9)
+			} else if m := valueFreeMessage(e); m != "" {
+				msg = m // never the value (review S1 of #236)
+			} else if u.Error != nil {
 				msg = u.Error.String()
 			}
 			out = append(out, &Error{Kind: kind, Name: name, Path: base + u.InstanceLocation, Msg: msg})

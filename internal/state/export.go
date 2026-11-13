@@ -260,7 +260,7 @@ func Decode(raw []byte) (*ExportFile, error) {
 func header(m map[string]any) (ExportHeader, error) {
 	var h ExportHeader
 	if format, _ := m["format"].(json.Number); string(format) != fmt.Sprint(ExportFormat) {
-		return h, &ExportError{Path: "/format", Msg: fmt.Sprintf("unknown format %v; this Plumb reads format %d", m["format"], ExportFormat)}
+		return h, &ExportError{Path: "/format", Msg: fmt.Sprintf("unknown format; this Plumb reads format %d", ExportFormat)}
 	}
 	h.Format = ExportFormat
 	if rev, ok := m["revision"].(json.Number); ok {
@@ -280,6 +280,16 @@ func header(m map[string]any) (ExportHeader, error) {
 	return h, nil
 }
 
+// tagNotAllowed names a refused YAML tag. A value never shows in an error
+// (review of #236): a custom tag is text of the file, so only a standard
+// tag (!!binary, !!timestamp …) is named.
+func tagNotAllowed(n *yaml.Node) string {
+	if t := n.ShortTag(); strings.HasPrefix(t, "!!") && len(t) <= 16 && !strings.ContainsAny(t, " \t\r\n") {
+		return fmt.Sprintf("the YAML tag %s is not allowed", t)
+	}
+	return "a custom YAML tag is not allowed"
+}
+
 // fromNode converts a YAML node to a JSON value. Numbers become
 // json.Number with their literal, so no value goes through float64.
 func fromNode(n *yaml.Node, path string) (any, *ExportError) {
@@ -294,7 +304,7 @@ func fromNode(n *yaml.Node, path string) (any, *ExportError) {
 		return fromNode(n.Content[0], path)
 	case yaml.MappingNode:
 		if n.ShortTag() != "!!map" {
-			return nil, &ExportError{Path: path, Msg: fmt.Sprintf("the YAML tag %s is not allowed", n.Tag)}
+			return nil, &ExportError{Path: path, Msg: tagNotAllowed(n)}
 		}
 		m := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
@@ -320,7 +330,7 @@ func fromNode(n *yaml.Node, path string) (any, *ExportError) {
 		return m, nil
 	case yaml.SequenceNode:
 		if n.ShortTag() != "!!seq" {
-			return nil, &ExportError{Path: path, Msg: fmt.Sprintf("the YAML tag %s is not allowed", n.Tag)}
+			return nil, &ExportError{Path: path, Msg: tagNotAllowed(n)}
 		}
 		s := make([]any, len(n.Content))
 		for i, c := range n.Content {
@@ -346,11 +356,11 @@ func fromNode(n *yaml.Node, path string) (any, *ExportError) {
 		case "!!int", "!!float":
 			num := json.Number(strings.ReplaceAll(n.Value, "_", ""))
 			if !json.Valid([]byte(num)) {
-				return nil, &ExportError{Path: path, Msg: fmt.Sprintf("%q is not a JSON number", n.Value)}
+				return nil, &ExportError{Path: path, Msg: "not a JSON number"}
 			}
 			return num, nil
 		}
-		return nil, &ExportError{Path: path, Msg: fmt.Sprintf("the YAML tag %s is not allowed", n.Tag)}
+		return nil, &ExportError{Path: path, Msg: tagNotAllowed(n)}
 	}
 	return nil, &ExportError{Path: path, Msg: "unknown YAML element"}
 }
