@@ -431,6 +431,20 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   blockViews.push({ revision: 7, document: appBlock });
   blocks.set(appBlock.name, appBlock);
 
+  // T-118: a VM-only Block (sysctl, D-260); the pickers hide it for a container.
+  const tuneBlock: BlockDoc = {
+    kind: "Block",
+    name: "net-tuning",
+    spec: {
+      title: "Network tuning",
+      description:
+        "Turns on IPv4 forwarding. Virtual machines only: a container shares the host kernel.",
+      resources: [{ sysctl: { name: "net.ipv4.ip_forward", value: 1 } }],
+    },
+  } as BlockDoc;
+  blockViews.push({ revision: 7, document: tuneBlock });
+  blocks.set(tuneBlock.name, tuneBlock);
+
   // T-049: the nginx Block (blocks/nginx.yaml, short form) and nginx-site
   // with `after` and `restarts` (D-167, D-172).
   const nginxBlock: BlockDoc = {

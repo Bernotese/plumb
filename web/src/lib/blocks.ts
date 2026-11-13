@@ -1,5 +1,7 @@
 // Helpers of the Blocks screens (T-096). Pure functions, so the screens stay thin.
+import resourceKinds from "./resourceKinds.json";
 import type { BlockDoc, ImageView, TargetView } from "./types";
+import type { GuestKind } from "./view";
 
 /** The text of a new Block: a small valid example the user changes. */
 export const NEW_BLOCK = `kind: Block
@@ -48,6 +50,33 @@ export function resourceTypes(doc: BlockDoc): string[] {
     for (const t of Object.keys(r)) if (!out.includes(t)) out.push(t);
   }
   return out;
+}
+
+// The target kinds of each resource type; a Go test keeps it equal to the
+// table in internal/resource (D-260).
+const KINDS: Record<string, readonly string[]> = resourceKinds;
+
+/**
+ * The resource types of a Block that a Target of this kind does not
+ * support, for example `sysctl` on a container (D-260). Empty: the Block
+ * fits. An unknown type is not listed; the server decides on it.
+ */
+export function unfitTypes(doc: BlockDoc, kind: GuestKind): string[] {
+  return resourceTypes(doc).filter((t) => {
+    const k = KINDS[t];
+    return k !== undefined && !k.includes(kind);
+  });
+}
+
+/** Why a Block does not fit a guest of this kind, or "" when it fits. */
+export function unfitText(doc: BlockDoc, kind: GuestKind): string {
+  const bad = unfitTypes(doc, kind);
+  if (bad.length === 0) return "";
+  const what = kind === "lxc" ? "a container" : "a virtual machine";
+  const list = bad.map((t) => `"${t}"`).join(", ");
+  return bad.length === 1
+    ? `It uses the resource type ${list}, which ${what} does not support.`
+    : `It uses the resource types ${list}, which ${what} does not support.`;
 }
 
 export interface ParamRow {

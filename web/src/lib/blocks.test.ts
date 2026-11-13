@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { docPointers, paramRows, resourceTypes, useErrors, usersOf } from "./blocks";
+import {
+  docPointers,
+  paramRows,
+  resourceTypes,
+  unfitText,
+  unfitTypes,
+  useErrors,
+  usersOf,
+} from "./blocks";
 import type { BlockDoc, ImageView, TargetView } from "./types";
 
 const doc = {
@@ -99,5 +107,24 @@ describe("blocks helpers", () => {
       },
     ]);
     expect(handled).toEqual(errors.slice(0, 4));
+  });
+});
+
+describe("unfitTypes", () => {
+  const block = (resources: Record<string, unknown>[]) =>
+    ({ kind: "Block", name: "b", spec: { resources } }) as unknown as BlockDoc;
+
+  it("lists the types a container does not support", () => {
+    const b = block([{ sysctl: { name: "a", value: 1 } }, { file: { path: "/x" } }]);
+    expect(unfitTypes(b, "lxc")).toEqual(["sysctl"]);
+    expect(unfitTypes(b, "vm")).toEqual([]);
+    expect(unfitText(b, "lxc")).toBe(
+      'It uses the resource type "sysctl", which a container does not support.',
+    );
+    expect(unfitText(b, "vm")).toBe("");
+  });
+
+  it("leaves an unknown type to the server", () => {
+    expect(unfitTypes(block([{ firewall: {} }]), "lxc")).toEqual([]);
   });
 });

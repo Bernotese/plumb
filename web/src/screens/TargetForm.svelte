@@ -31,6 +31,7 @@
     waitingSince,
   } from "../lib/view";
   import { smallestDisk } from "../lib/images";
+  import { unfitText } from "../lib/blocks";
   import AgentCard from "../ui/AgentCard.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
@@ -170,6 +171,20 @@
 
   const blockByName = (n: string) => blocks.find((b) => b.document.name === n);
 
+  // T-118 (D-260): the picker offers only Blocks that fit the guest type.
+  const addable = $derived(blocks.filter((b) => unfitText(b.document, kind) === ""));
+  const hidden = $derived(
+    blocks.filter((b) => unfitText(b.document, kind) !== "").map((b) => b.document.name),
+  );
+  $effect(() => {
+    if (!addable.some((b) => b.document.name === addChoice))
+      addChoice = addable[0]?.document.name ?? "";
+  });
+  const unfitUse = (u: Use) => {
+    const b = blockByName(u.use);
+    return b ? unfitText(b.document, kind) : "";
+  };
+
   function makeUse(use: string, id = "", params: Record<string, unknown> = {}): Use {
     const schema = blockByName(use)?.document.spec.params;
     const fields = fieldsOf(schema);
@@ -194,7 +209,6 @@
         images = i;
         blocks = b;
         existing = t;
-        addChoice = b[0]?.document.name ?? "";
         if (t) {
           targetName = t.document.name;
           image = t.document.spec.image;
@@ -255,6 +269,8 @@
       else if (u.id.trim() && !namePattern.test(u.id.trim()))
         u.errors["__id"] = "The id has the wrong format.";
       seen.push(id);
+      const unfit = unfitUse(u);
+      if (unfit) u.errors["__kind"] = unfit;
     }
     errors = e;
     return (
@@ -269,7 +285,9 @@
     submitError = null;
     if (!check()) {
       queueMicrotask(() =>
-        (document.querySelector('[aria-invalid="true"]') as HTMLElement | null)?.focus(),
+        (
+          document.querySelector('[aria-invalid="true"], .use-unfit') as HTMLElement | null
+        )?.focus(),
       );
       return;
     }
@@ -497,10 +515,15 @@
     <h2>Blocks</h2>
     {#each uses as u (u.key)}
       {@const b = blockByName(u.use)}
+      {@const unfit = unfitUse(u)}
       <fieldset aria-describedby={b?.document.spec.description ? `use-${u.key}-desc` : undefined}>
         <legend id="use-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend>
         {#if b?.document.spec.description}<p class="muted" id="use-{u.key}-desc">
             {b.document.spec.description}
+          </p>{/if}
+        {#if unfit}<p class="error use-unfit" id="use-{u.key}-unfit" tabindex="-1">
+            This Block does not fit a {kind === "lxc" ? "container" : "virtual machine"}. {unfit}
+            Remove it to save.
           </p>{/if}
         <div class="field">
           <label for="use-{u.key}-id">Use id (optional)</label>
@@ -540,12 +563,22 @@
     <div class="row add">
       <label for="add-choice" class="sr-only">Block to add</label>
       <select id="add-choice" bind:value={addChoice}>
-        {#each blocks as b (b.document.name)}
+        {#each addable as b (b.document.name)}
           <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
         {/each}
       </select>
-      <button type="button" class="btn" id="add-block" onclick={() => addBlock()}>Add Block</button>
+      <button
+        type="button"
+        class="btn"
+        id="add-block"
+        disabled={addable.length === 0}
+        onclick={() => addBlock()}>Add Block</button
+      >
     </div>
+    {#if hidden.length}<p class="muted" id="blocks-hidden">
+        Not offered for a {kind === "lxc" ? "container" : "virtual machine"}:
+        {#each hidden as h, i (h)}{i ? ", " : ""}<span class="mono">{h}</span>{/each}.
+      </p>{/if}
 
     <h2>Review</h2>
     <div class="field">

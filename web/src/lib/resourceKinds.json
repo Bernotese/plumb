@@ -1,0 +1,12 @@
+{
+  "apt_repository": ["vm", "lxc"],
+  "command": ["vm", "lxc"],
+  "directory": ["vm", "lxc"],
+  "file": ["vm", "lxc"],
+  "package": ["vm", "lxc"],
+  "service": ["vm", "lxc"],
+  "symlink": ["vm", "lxc"],
+  "sysctl": ["vm"],
+  "unit": ["vm", "lxc"],
+  "user": ["vm", "lxc"]
+}
