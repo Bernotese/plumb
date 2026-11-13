@@ -120,8 +120,8 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		}
 		return false
 	})
-	// web1, web2 and the demo Target db1 (T-070).
-	eventually(t, "3 seed agents", 5*time.Second, func() bool { return devAgentRuns() == 3 })
+	// web1, web2, the demo Target db1 (T-070) and app1 (T-131).
+	eventually(t, "4 seed agents", 5*time.Second, func() bool { return devAgentRuns() == 4 })
 
 	// The demo guest:address Issue of db1 is there, and it is not the
 	// newest Issue (the e2e tests revert the newest one).
@@ -156,8 +156,15 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		}
 	}
 	if call("GET", "/api/v1/targets/db1", nil, &db1) != 200 ||
-		strings.Join(db1.Status.IPs, ",") != "192.168.1.20" || strings.Join(db1.Status.ReportedIPs, ",") != "10.99.0.107" {
+		strings.Join(db1.Status.IPs, ",") != "192.0.2.20" || strings.Join(db1.Status.ReportedIPs, ",") != "10.99.0.107" {
 		t.Errorf("db1 status %+v", db1.Status)
+	}
+
+	// app1 has no seeded drift: the demo shows a Target in sync (T-131).
+	for _, i := range issues.Items {
+		if i.Target == "app1" {
+			t.Errorf("app1 has an Issue: %+v", i)
+		}
 	}
 
 	// --dev-demo seeds one plan token; the server never prints its bearer (T-030).
@@ -201,7 +208,7 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		"guest":  map[string]any{"cores": 1, "memory": 1024, "disk": 10, "bridge": "vmbr0"},
 		"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "Hello from web3"}}},
 	}}}})
-	eventually(t, "agent of web3", 5*time.Second, func() bool { return devAgentRuns() == 4 })
+	eventually(t, "agent of web3", 5*time.Second, func() bool { return devAgentRuns() == 5 })
 	// T-126: the simulated agent says hello after a power start and
 	// answers the grow command, so these Runs end in --dev too.
 	web3 := func(power string, disk int) map[string]any {
@@ -215,7 +222,7 @@ func TestDevAgentForNewTarget(t *testing.T) {
 	apply("start web3", web3("running", 10))
 	apply("grow web3", web3("running", 20))
 	apply("delete web3", map[string]any{"delete": []any{map[string]any{"kind": "Target", "name": "web3"}}})
-	eventually(t, "agent of web3 stops", 5*time.Second, func() bool { return devAgentRuns() == 3 })
+	eventually(t, "agent of web3 stops", 5*time.Second, func() bool { return devAgentRuns() == 4 })
 
 	// T-064: a build guest gets a simulated agent; it seals, powers off,
 	// and the build makes version 1. Then its agent stops.
