@@ -231,7 +231,7 @@ const GrowItemID = GrowItemType + ":root"
 const SafeApplySeconds = 90
 
 // SafeApplyTypes are the resource types with safe apply.
-var SafeApplyTypes = []string{"firewall"}
+var SafeApplyTypes = []string{"firewall", "network"}
 
 // The result of seal has one Item per step, in this order, with the
 // resource id "seal:<step>" (SealItemID). Status is applied, skipped (the

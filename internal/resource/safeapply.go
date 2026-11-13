@@ -42,6 +42,7 @@ func RollbackUnit(typ string) string { return "plumb-agent-" + typ + "-rollback"
 // resource. Add a type here and in wire.SafeApplyTypes.
 var safeRestorers = map[string]func(ctx context.Context, env Env) error{
 	"firewall": restoreFirewall,
+	"network":  restoreNetwork,
 }
 
 // Restore puts the confirmed state of a safe-apply type back, without a

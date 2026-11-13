@@ -62,8 +62,9 @@ func TestTypeTable(t *testing.T) {
 	for _, name := range Names() {
 		typ, _ := Lookup(name)
 		// firewall is not in an Image either (T-116): seal removes its
-		// boot file with /etc/plumb-agent.
-		if want := name == "command"; typ.NoDrift != want || typ.Destructive != want || typ.NotInImage != (want || name == "firewall") {
+		// boot file with /etc/plumb-agent. network neither (T-150): its
+		// extra addresses belong to one Target, not to every clone.
+		if want := name == "command"; typ.NoDrift != want || typ.Destructive != want || typ.NotInImage != (want || name == "firewall" || name == "network") {
 			t.Errorf("%s: NoDrift, Destructive, NotInImage = %v, %v, %v; only command has them (and NotInImage firewall)", name, typ.NoDrift, typ.Destructive, typ.NotInImage)
 		}
 	}

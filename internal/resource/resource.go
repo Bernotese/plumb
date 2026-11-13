@@ -135,7 +135,9 @@ var types = map[string]Type{
 		// that seal removes, and a build guest has no safe apply partner.
 		NotInImage: true},
 	// Proxmox owns the network of a container (D-332).
-	"network": {Name: "network", Key: "name", Kinds: []wire.Kind{wire.KindVM}},
+	// Safe apply (wire.SafeApplyTypes, D-333, D-349). A network belongs
+	// to one Target, like a firewall.
+	"network": {Name: "network", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newNetwork, NotInImage: true},
 	"command": {Name: "command", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newCommand,
 		NoDrift: true, Destructive: true, NotInImage: true},
 }
