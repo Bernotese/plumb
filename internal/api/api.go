@@ -65,7 +65,7 @@ type Server struct {
 	// Failed logins (review T-011 M1): 5/min per user and client, 20/min
 	// per client, and 100/min per known user. Nobody can lock out the real
 	// user from another client by guessing at 5/min.
-	loginPair *failLimiter
+	loginPair *backoffLimiter // growing delay with a fixed end (D-330)
 	loginIP   *failLimiter
 	loginUser *failLimiter
 	// bearers counts bad bearers per client and token id (20/min) while the
@@ -109,7 +109,7 @@ func New(cfg Config) *Server {
 	}
 	return &Server{
 		cfg: cfg, st: cfg.Store, log: cfg.Logger, now: cfg.Now,
-		loginPair: newFailLimiter(cfg.Now, 5, time.Minute),
+		loginPair: newBackoffLimiter(cfg.Now, 5, time.Minute, 15*time.Minute, time.Hour),
 		loginIP:   newFailLimiter(cfg.Now, 20, time.Minute),
 		loginUser: newFailLimiter(cfg.Now, 100, time.Minute),
 		bearers:   newFailLimiter(cfg.Now, 20, time.Minute),
@@ -178,14 +178,18 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(pattern, s.guard(a, h))
 	}
 	read, planTier, apply := access{tier: TierRead}, access{tier: TierPlan}, access{tier: TierApply}
+	// A session may call an operation when its role is at least the tier
+	// of the operation; session-only operations need role admin, except
+	// the own session (x-plumb-role: read, D-342).
 	self := access{tier: TierRead, duringReset: true}
+	ownSession := access{tier: TierRead, sessionOnly: true, duringReset: true}
 	human := access{tier: TierAdmin, sessionOnly: true, duringReset: true}
 	admin := access{tier: TierAdmin, sessionOnly: true}
 
 	route("GET /api/v1/session", self, s.getSession)
 	route("POST /api/v1/session", access{}, s.login)
-	route("DELETE /api/v1/session", human, s.logout)
-	route("PUT /api/v1/session/password", human, s.changePassword)
+	route("DELETE /api/v1/session", ownSession, s.logout)
+	route("PUT /api/v1/session/password", ownSession, s.changePassword)
 
 	route("GET /api/v1/images", read, s.listDocs("Image"))
 	route("GET /api/v1/images/{name}", read, s.getDoc("Image"))
@@ -231,6 +235,9 @@ func (s *Server) Handler() http.Handler {
 	route("GET /api/v1/restore", read, s.getRestore)
 	route("POST /api/v1/restore/confirm", human, s.confirmRestore)
 	route("POST /api/v1/tokens/{id}/enable", human, s.enableToken)
+	route("GET /api/v1/users", admin, s.listUsers)
+	route("POST /api/v1/users", admin, s.createUser)
+	route("PATCH /api/v1/users/{name}", admin, s.changeUser)
 	route("POST /api/v1/users/{name}/password", admin, s.resetUserPassword)
 
 	route("GET /api/v1/backups", read, s.listBackups)
@@ -371,10 +378,12 @@ func (s *Server) authenticate(r *http.Request) (*principal, error) {
 		return nil, nil
 	}
 	u, err := s.st.UserByID(ctx, sess.UserID)
-	if err != nil || !u.LockedAt.IsZero() {
+	// A disable ends the sessions (D-330); the check here also covers a
+	// session that a race let through.
+	if err != nil || !u.LockedAt.IsZero() || !u.DisabledAt.IsZero() {
 		return nil, nil
 	}
-	return &principal{name: "user:" + u.Name, tier: TierAdmin, user: &u, session: &sess, mustChange: u.MustChangePassword}, nil
+	return sessionPrincipal(u, sess), nil
 }
 
 // --- responses ---
