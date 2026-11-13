@@ -26,6 +26,12 @@ func (p *principal) view() sessionView {
 	return v
 }
 
+// sessionPrincipal is the principal of a session: its tier is the role of
+// the user (D-329, D-342).
+func sessionPrincipal(u store.User, sess store.Session) *principal {
+	return &principal{name: "user:" + u.Name, tier: u.Role, user: &u, session: &sess, mustChange: u.MustChangePassword}
+}
+
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request, p *principal) {
 	writeJSON(w, http.StatusOK, p.view())
 }
@@ -65,8 +71,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, _ *principal) {
 		tooMany(w, time.Second)
 		return
 	}
-	// A user that a restore locked cannot log in (D-303).
-	if !good || err != nil || !u.LockedAt.IsZero() {
+	// A user that a restore locked (D-303) or a person disabled (D-330)
+	// cannot log in; the answer is the same as for a wrong password.
+	if !good || err != nil || !u.LockedAt.IsZero() || !u.DisabledAt.IsZero() {
 		s.loginPair.fail(pair)
 		s.loginIP.fail(ip)
 		if err == nil { // only real users get a user key (review m4)
@@ -82,9 +89,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, _ *principal) {
 		s.internal(w, err)
 		return
 	}
+	if err := s.st.TouchLogin(r.Context(), u.ID); err != nil {
+		s.log.Error("last login", "user", u.Name, "err", err)
+	}
 	http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: id, Path: "/", Expires: sess.ExpiresAt,
 		HttpOnly: true, Secure: !s.cfg.Dev, SameSite: http.SameSiteStrictMode})
-	p := &principal{name: "user:" + u.Name, tier: TierAdmin, user: &u, session: &sess, mustChange: u.MustChangePassword}
+	p := sessionPrincipal(u, sess)
 	writeJSON(w, http.StatusOK, p.view())
 }
 
