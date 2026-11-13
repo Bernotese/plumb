@@ -113,12 +113,20 @@ full list of rights.
    <br>*An Image: where the base image comes from, and its checksum.*
 
 5. **Blocks:** look at the starter Blocks (for example `deploy-user`, `ssh-hardening`, `nginx`,
-   `docker-engine`). Change them or write your own.
+   `docker-engine`, `firewall`). Change them or write your own. The `firewall` Block drops incoming
+   traffic except the ports you list. SSH always stays open. When a firewall change cuts the guest
+   off from Plumb, the agent puts the old rules back after 90 seconds.
 
    ![Block page of nginx: the Targets that use it, its parameter server_name, and the start of its YAML document](docs/screenshots/readme-blocks.png)
    <br>*A Block: the Targets that use it, its parameters and its document.*
 
-6. **Targets:** make a Target. Choose the Image, the size and the Blocks.
+6. **Targets:** make a Target. Choose the Image, the size and the Blocks. Later you can change
+   these on the Target, also through a Plan:
+   - **Power:** "running" or "stopped". A stop needs "Plumb may restart this VM" (for a container:
+     "this container") on the Target.
+   - **Tags:** the Proxmox tags of the guest. Plumb keeps exactly these. A new Target with no
+     entry: Plumb does not touch its tags.
+   - **Disk:** it only grows. Proxmox cannot make a disk smaller, so a grow cannot be undone.
 
    ![Targets list with four Targets: app1 in Plumb; db1, web1 and web2 out of Plumb; each with image, size, address and agent version](docs/screenshots/readme-targets.png)
    <br>*The Targets: one is in Plumb, three have drift.*
@@ -136,7 +144,8 @@ full list of rights.
    <br>*The Run of that Plan: each step on each Target.*
 
 8. **Issues:** when somebody changes a guest by hand, an Issue opens. Choose "Revert", "Accept" or
-   "Ignore".
+   "Ignore". A Plan that accepts a value from the guest needs a person: an API token cannot approve
+   it.
 
    ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
    <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
@@ -173,7 +182,82 @@ templates. Delete them through Plumb first.
 
 ## Backup and restore
 
-Plumb has no backup of itself yet.
+### What a backup holds
+
+Plumb backs up its whole state every day at 03:00 UTC and keeps the last 7 backups (installer
+options `--backup-time` and `--backup-keep`). **Settings → Backups** shows them, and "Back up now"
+makes one at once.
+
+![Settings, Backups tab: daily at 03:00 UTC, keep 7, the last run, the off-host copy state and the list of backup files](docs/screenshots/readme-backups.png)
+<br>*Settings → Backups: the schedule, the last run, the off-host copy and the backups.*
+
+A backup is encrypted. Only your recovery key opens it.
+
+- It holds: every Image, Block, Target, rule and revision, the history, the Issues, the users and
+  tokens, which guest belongs to which Target, and the identities of the agents.
+- It does not hold: the recovery key, the Proxmox token of Plumb (the installer makes a new one),
+  and the guests themselves. Back up the guests with Proxmox.
+
+### Copy the backups off the host
+
+The backups live in the Plumb LXC. If the disk of the host dies, they die with it. Copy them to a
+storage on another device, for example an NFS or CIFS share:
+
+```sh
+bash install.sh --plumb-binary ./plumb <your usual options> --backup-storage <storage>
+```
+
+The host copies the newest backup to `<storage path>/plumb-backups/` every day (30 minutes after
+the backup) and keeps 14 copies. The storage must exist in Proxmox (`dir`, `nfs`, `cifs` or
+`cephfs`). A directory on the same host is not an off-host copy. Settings → Backups shows the state
+of the last copy. `--backup-storage none` stops the copies; the copies stay.
+
+Check a copy now and then on the host. It asks for the recovery key and changes nothing:
+
+```sh
+./plumb backup verify <storage path>/plumb-backups/<file>.pbk
+```
+
+This proves that the file opens with your key. Only a real restore proves the whole way back.
+
+### Replace the controller
+
+To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and restore:
+
+1. Remove only the controller. Plumb takes a fresh backup, copies it to the backup storage, and
+   checks it with your recovery key. A wrong key stops here, before any change. The pool and its
+   guests stay.
+
+   ```sh
+   bash install.sh --remove --keep-guests --plumb-binary ./plumb
+   ```
+
+   Without `--backup-storage` at the install, add `--backup-to <directory>`: a directory on this
+   host. That is not an off-host copy; the installer warns you.
+2. Restore. The installer prints this line at the end of step 1. Use the same address as before:
+   the agents in the guests know only this address.
+
+   ```sh
+   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway>
+   ```
+
+   It asks for the recovery key and checks the file before it changes anything. A wrong key stops
+   the run.
+
+### After a restore
+
+- The installer shows a new password for `admin` once. Write it down. The first login asks for a
+  new one. The old passwords do not work any more.
+- Plumb starts in **restored mode**: it reads Proxmox and the agents, but it changes nothing. No
+  Plan is applied and no backup runs. A banner says so.
+- Every API token is disabled. Enable only the ones you still need, in Settings → API tokens.
+- When the old controller is off for good, confirm it in **Settings → Backups**. Only then does
+  Plumb work normally again. If two controllers run, both change the same guests.
+- Guests that were made after the backup are listed as unknown guests. Plumb never changes or
+  deletes them. A guest that was deleted after the backup gets an Issue; Plumb does not make it
+  again by itself.
+
+### Export and import
 
 **Settings → Export and import** saves one YAML file with every Image, Block, Target and rule. It
 does not hold the history, the Issues, the users or the tokens. It does not hold which guest belongs
@@ -191,6 +275,9 @@ Keep the recovery key in any case.
 - A change of cores or memory of a running VM waits for a restart. Switch on "Plumb may restart
   this VM" on the Target if Plumb may restart it.
 - One Proxmox host only. No clusters.
+- A restored Plumb needs the same address as before.
+- There is one user, `admin`. More users come later.
+- A guest has one network card. More cards and other network settings come later.
 
 ## More
 
