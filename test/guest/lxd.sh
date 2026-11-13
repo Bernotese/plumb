@@ -76,6 +76,17 @@ for image in images:debian/13 ubuntu:26.04; do
     if [[ "$kind" == vm ]]; then
       lxc file push "$tmp/netplan-probe.test" "$name/root/netplan-probe.test"
       PLUMB_NETPLAN_VM="$name" "$tmp/netplan-probe.test" -test.v -test.timeout=50s -test.run '^TestNetplanProbe$'
+      # T-150 (review G3 of #244): the netplan list merge of D-348, in a
+      # temporary root only. The LXD Debian cloud image has no netplan: take
+      # netplan.io from the Debian 13 archive (the vendor image ships the same
+      # 1.1.2), after the probe so its facts stay those of the image.
+      if [[ "$image" == images:debian/13 ]]; then
+        inst env DEBIAN_FRONTEND=noninteractive sh -c \
+          'apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=5 install -y -q --no-install-recommends netplan.io' >/dev/null
+      fi
+      want=""
+      if [[ "$image" == images:debian/13 ]]; then want=1.1.2; fi
+      inst env PLUMB_NETPLAN_MERGE=1 PLUMB_NETPLAN_WANT="$want" /root/agent.test -test.v -test.timeout=2m -test.run '^TestGuestNetplanMerge$'
     fi
     lxc delete -f "$name"
   done
