@@ -3120,10 +3120,13 @@ components:
             get in the base revision. `rule-change`: the Plan puts, changes or deletes a Rule.
             `image-recipe`: the Plan makes or deletes a built Image, or changes its recipe,
             `schedule` or `retention`, also through a changed Block (D-201).
-            The server computes it from the content of the proposal, for every origin.
+            `accept-guest-data`: the Plan was made by an Accept of an Issue (origin `accept`) and
+            adopts values that a guest reported (D-323).
+            The server computes it from the content of the proposal, for every origin, and from
+            the origin for `accept-guest-data`; no client field sets or clears it.
           items:
             type: string
-            enum: [secret-binding, rule-change, image-recipe]
+            enum: [secret-binding, rule-change, image-recipe, accept-guest-data]
         images:
           type: array
           description: |

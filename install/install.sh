@@ -1482,8 +1482,11 @@ readonly COPY_NAME=plumb-backup-copy COPY_STATUS_DIR=/var/lib/plumb-copy
 
 # storage_field ID FIELD prints one field of the storage config.
 storage_field() {
+	local json
+	json=$(query pvesh get "/storage/$1" --output-format json 2>/dev/null) || return 1
+	[[ -n $json ]] || return 1
 	# shellcheck disable=SC2016 # perl code
-	query pvesh get "/storage/$1" --output-format json 2>/dev/null | json_rows 'print $d->{$ARGV[0]} // ""' "$2"
+	json_rows 'print $d->{$ARGV[0]} // ""' "$2" <<<"$json"
 }
 
 # check_backup_storage checks --backup-storage before any change: type
@@ -1529,9 +1532,9 @@ copy_unit() {
 	fi
 }
 
-# put_host_file SRC DEST MODE installs a root-owned file on the host.
+# put_host_file SRC DEST MODE [DIR_MODE] installs a root-owned file on the host.
 put_host_file() {
-	run install -d -o root -g root -m 0755 "$(dirname "$2")"
+	run install -d -o root -g root -m "${4:-0755}" "$(dirname "$2")"
 	run install -o root -g root -m "$3" "$1" "$2"
 }
 
@@ -1546,7 +1549,7 @@ install_copy_timer() {
 	copy_script >"$tmp"
 	put_host_file "$tmp" "$SBIN_DIR/$COPY_NAME" 0755
 	copy_conf "$LXC_ID" "$storage" "$type" "$path" >"$tmp"
-	put_host_file "$tmp" "$COPY_CONF" 0600
+	put_host_file "$tmp" "$COPY_CONF" 0600 0700
 	copy_unit service >"$tmp"
 	put_host_file "$tmp" "$UNIT_DIR/$COPY_NAME.service" 0644
 	copy_unit timer >"$tmp"

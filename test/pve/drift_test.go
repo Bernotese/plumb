@@ -100,7 +100,8 @@ func driftPath(a *apiClient, g guest, target, original string) {
 	}
 	a.closed(issue, "revert")
 	issue = change("T015-accept")
-	accepted := a.approve(a.call("POST", "/issues/"+issue+"/resolve", object{"action": "accept"}, 201), false)
+	// An Accept adopts guest data: only a person approves it (D-323).
+	accepted := a.approve(a.call("POST", "/issues/"+issue+"/resolve", object{"action": "accept"}, 201), true)
 	if accepted["revision"].(float64) <= reverted["revision"].(float64) ||
 		!strings.Contains(guestRead(a.t, g, "sudo cat "+site), "# T015-accept") {
 		a.t.Fatal("accept lost drift or revision")
