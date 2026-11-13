@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/backup"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/event"
@@ -39,20 +40,21 @@ var envLog = quiet
 
 // env is a whole controller with the API in front.
 type env struct {
-	t      *testing.T
-	ctx    context.Context
-	st     *store.Store
-	events *event.Log
-	drv    *fake.Driver
-	link   *link.Link
-	eng    *plan.Engine
-	iss    *issue.Service
-	sec    *secret.Store
-	key    secret.Key
-	srv    *Server
-	dir    string // data directory: plumb.db and link/
-	h      http.Handler
-	agents map[string]*linktest.Agent
+	t       *testing.T
+	ctx     context.Context
+	st      *store.Store
+	backups *backup.Service
+	events  *event.Log
+	drv     *fake.Driver
+	link    *link.Link
+	eng     *plan.Engine
+	iss     *issue.Service
+	sec     *secret.Store
+	key     secret.Key
+	srv     *Server
+	dir     string // data directory: plumb.db and link/
+	h       http.Handler
+	agents  map[string]*linktest.Agent
 
 	password string   // admin password at bootstrap
 	bearers  []string // every token created
@@ -104,11 +106,17 @@ func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.srv = New(Config{Store: st, Events: e.events, Plans: eng, Issues: iss, Secrets: e.sec, Dev: dev, PasswordParams: fastPasswords,
+	e.backups, err = backup.New(ctx, backup.Config{Store: st, Events: e.events, Key: e.key, DataDir: dir,
+		CopyStatus: filepath.Join(dir, "copy-status.json"), InstallID: "install-test", Logger: log, Serve: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv = New(Config{Store: st, Events: e.events, Plans: eng, Issues: iss, Backups: e.backups, Secrets: e.sec, Dev: dev, PasswordParams: fastPasswords,
 		KeepAlive: 50 * time.Millisecond, Logger: log})
 	e.h = e.srv.Handler()
 	t.Cleanup(func() {
 		cancel()
+		e.backups.Wait()
 		eng.Close()
 		st.Close()
 	})

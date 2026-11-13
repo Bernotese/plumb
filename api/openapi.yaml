@@ -2013,7 +2013,6 @@ paths:
     get:
       tags: [backup]
       operationId: listBackups
-      x-plumb-planned: T-112
       summary: List the backups of this controller and the state of the off-host copy
       description: |
         Backups in the data directory of the controller, newest first (D-288, D-302), the
@@ -2052,7 +2051,6 @@ paths:
     post:
       tags: [backup]
       operationId: createBackup
-      x-plumb-planned: T-112
       summary: Start a backup now
       description: |
         Starts one backup outside the schedule. It counts for the retention like a scheduled one.
@@ -3695,7 +3693,12 @@ components:
       required: [name, created_at, size, sha256]
       properties:
         name: { type: string, pattern: "^plumb-[0-9]{8}T[0-9]{6}Z(-[0-9]{1,3})?\\.pbk$", examples: ["plumb-20261113T030000Z.pbk"] }
-        created_at: { $ref: "#/components/schemas/Time" }
+        created_at:
+          $ref: "#/components/schemas/Time"
+          description: |
+            When the file was written (its modification time, UTC). The name holds the start time
+            of the backup; after a clock change the two can differ, and the list and the retention
+            go by this time.
         size: { type: integer, format: int64, minimum: 0 }
         sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
     BackupRun:

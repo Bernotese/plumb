@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/backup"
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
@@ -33,6 +34,9 @@ type Config struct {
 	Events *event.Log
 	Plans  *plan.Engine
 	Issues *issue.Service
+	// Backups writes and lists the backups (T-112). nil: the backup
+	// routes answer 503.
+	Backups *backup.Service
 	// Version is the Plumb version, for the export header.
 	Version string
 	// Secrets is the encrypted secret store (required).
@@ -222,6 +226,9 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/import", admin, s.importState)
 
 	route("GET /api/v1/events", read, s.events)
+
+	route("GET /api/v1/backups", read, s.listBackups)
+	route("POST /api/v1/backups", apply, s.createBackup)
 
 	route("GET /api/v1/tokens", admin, s.listTokens)
 	route("POST /api/v1/tokens", admin, s.createToken)
