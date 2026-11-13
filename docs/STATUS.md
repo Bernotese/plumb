@@ -48,6 +48,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-131 screenshots for the README (user order 2026-11-13): 5 to 7 pictures of the dev demo, never of the test host | pl-frontend | in work (demo data moved to the documentation range first) |
+| T-133 example addresses in tests, docs and demo data move to the documentation ranges (user order 2026-11-13; history is not rewritten); then a leak check against the test-host config by pl-lead | pl-frontend | starts after PR #232 |
 | T-124 GitHub releases with ready binaries and checksums: prepare only; **a release needs the user's own yes** | pl-codex-qa | merged (PR #216): manual workflow, draft only. No release and no tag exist |
 | T-109 flaky `TestAgentUpdateCommand` (test asserted too early; product safe) | pl-codex-qa | merged (PR #208) |
 
