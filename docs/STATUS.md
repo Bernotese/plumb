@@ -31,7 +31,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-106 second short host run (2026-11-13): controller on main e909458; T-102 (75 s lost link), T-103, T-104, T-105 passed on the real host; finding F3 → T-108; host clean | pl-backend | done (log PR #207) |
 | T-108 a short link drop (30 s) during an agent update no longer fails the Run with a false "old binary" (T-106 F3) | pl-backend | merged (PR #209, D-297, D-298); CI test replays the host timeline |
 | T-107 slice 4 ("Safe day 2"): backup + restore of Plumb, Proxmox day 2 (power, tags, disk grow), `firewall` with safe apply, raw mode | all | **approved by the user 2026-11-13** (all 6 recommendations; D-287 … D-296 accepted; plan PR #206). No new token right. Child cards T-110 … T-122 |
-| T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | T-111: PR #211, review passed up to two small fixes; T-110 in work |
+| T-110 contract backup/restore · T-111 contract day 2 + firewall | pl-architect | T-111 merged (PR #211, D-299 … D-301); T-110: PR #214, review passed, CI pending |
 | T-112 backup in the controller · T-113 restore + restored mode · T-116 agent safe apply + `firewall` | pl-backend | T-116 in work; T-112, T-113 wait for T-110 |
 | T-114 installer (copy timer, `--remove --keep-guests`, `--restore`) · T-115 Proxmox day 2 | pl-reviewer (pl-architect reviews) | T-115 in work; T-114 waits for T-110 |
 | T-117 agent command `grow` | pl-codex-fix | PR #212, waits for the contract #211 and review |
