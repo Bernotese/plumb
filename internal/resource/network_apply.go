@@ -540,11 +540,13 @@ func (n *network) preflight(ctx context.Context, key string, before npView, own 
 	if !ok {
 		return fmt.Errorf("preflight: the entry %s of the main NIC is gone", key)
 	}
-	mainOf := func(v npView) []string {
+	// The main addresses: before without the current file of this
+	// resource, after also without its new values.
+	mainOf := func(v npView, skip ...[]netip.Prefix) []string {
 		var out []string
 		for _, p := range v.addrs() {
 			mine := func(x netip.Prefix) bool { return x.Addr() == p.Addr() }
-			if !slices.ContainsFunc(n.spec.Addresses, mine) && !slices.ContainsFunc(own, mine) {
+			if !slices.ContainsFunc(slices.Concat(skip...), mine) {
 				out = append(out, p.String())
 			}
 		}
@@ -552,7 +554,7 @@ func (n *network) preflight(ctx context.Context, key string, before npView, own 
 		return out
 	}
 	switch {
-	case !slices.Equal(mainOf(before), mainOf(after)):
+	case !slices.Equal(mainOf(before, own), mainOf(after, own, n.spec.Addresses)):
 		return errors.New("preflight: the main address of the NIC would change")
 	case !slices.Equal(before.defaults(), after.defaults()):
 		return errors.New("preflight: a default route would change")
@@ -611,6 +613,11 @@ func (n *network) Prepare(ctx context.Context) error {
 	key, err := mainKey(view, dev, main)
 	if err != nil {
 		return err
+	}
+	for i, a := range n.spec.Addresses {
+		if a.Addr() == main {
+			return fmt.Errorf("address %d is the main address of the Target", i+1)
+		}
 	}
 	if n.content, err = n.fileContent(key); err != nil {
 		return err
