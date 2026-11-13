@@ -46,6 +46,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-130 `--restore` fails on every host: the installer puts the backup into the data dir and `plumb restore` refuses it (T-122 F5, blocker; the two sides were never tested together) | pl-backend (pl-architect reviews) | in work |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself | pl-reviewer (pl-architect reviews) | in work |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
+| T-131 screenshots for the README (user order 2026-11-13): 5 to 7 pictures of the dev demo, never of the test host | pl-frontend | starts after PR #227 is on main |
 | T-124 GitHub releases with ready binaries and checksums: prepare only; **a release needs the user's own yes** | pl-codex-qa | merged (PR #216): manual workflow, draft only. No release and no tag exist |
 | T-109 flaky `TestAgentUpdateCommand` (test asserted too early; product safe) | pl-codex-qa | merged (PR #208) |
 
