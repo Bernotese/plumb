@@ -231,6 +231,19 @@ type Driver interface {
 	// guest that is gone is ErrNotFound; a guest that fails the guard is
 	// left, with an error that names it.
 	RemoveBuild(ctx context.Context, id GuestID, image string, version int) error
+	// ListGuests lists every guest in the pool, also templates and guests
+	// that Plumb did not make. Read only. GET /restore shows the ones that
+	// nothing is bound to (D-303).
+	ListGuests(ctx context.Context) ([]PoolGuest, error)
+}
+
+// PoolGuest is one guest of the pool, as the pool list shows it. The name
+// can be empty or stale for a guest that was made a moment ago.
+type PoolGuest struct {
+	ID       GuestID
+	Name     string
+	Kind     wire.Kind
+	Template bool
 }
 
 // --- Image builds (T-039, D-203, D-208, D-209) ---

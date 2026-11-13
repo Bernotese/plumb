@@ -44,6 +44,7 @@ const (
 	OpRemoveImage Op = "RemoveImage"
 	OpDiskSpace   Op = "DiskSpace"
 	OpListBuilds  Op = "ListBuilds"
+	OpListGuests  Op = "ListGuests"
 	OpRemoveBuild Op = "RemoveBuild"
 )
 
@@ -1014,6 +1015,18 @@ func (d *Driver) ListBuilds(ctx context.Context) ([]driver.BuildGuest, error) {
 			if g.build != nil {
 				out = append(out, driver.BuildGuest{ID: id, Image: g.build.Image, Version: g.build.Version, Template: g.template})
 			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		return out, nil
+	})
+}
+
+// ListGuests lists every guest, as the pool would.
+func (d *Driver) ListGuests(ctx context.Context) ([]driver.PoolGuest, error) {
+	return task(ctx, d, OpListGuests, func() ([]driver.PoolGuest, error) {
+		out := []driver.PoolGuest{}
+		for id, g := range d.guests {
+			out = append(out, driver.PoolGuest{ID: id, Name: g.spec.Name, Kind: g.spec.Kind, Template: g.template})
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 		return out, nil
