@@ -34,8 +34,17 @@ info:
       an `Origin` header that matches the server. This includes `POST /session` (login CSRF).
     - `token`: API token as bearer. The roles listed for `token` on an operation are the
       **minimum tier**. Token tiers are ordered `read` < `plan` < `apply` (D-046).
-    - An operation that lists only `session` is for humans only. A human session has the tier
-      `admin`.
+    - An operation that lists only `session` is for humans only.
+    - Roles of human users (D-329, D-330): every user has a role `read` < `plan` < `apply` <
+      `admin`, on the scale of the token tiers. A session may call an operation when its role is at
+      least the tier listed for `token`; an operation that lists only `session` needs `admin`. An
+      operation may name another minimum with `x-plumb-role` (the `/session` operations: `read`,
+      so every user can log out and change the own password). A role too low gives 403
+      `forbidden`. The role is checked in addition to "human session": a Plan with `human_only`
+      or of risk `destructive` needs a human session **and** a role that may approve it
+      (`apply` up to `disruptive`, `admin` for `destructive`). The same holds inside operations:
+      `ignore_once` by a session needs role `apply` up to `disruptive` and `admin` for a
+      `destructive` change.
     - A session with `must_change_password` can only call the `/session` operations. Other calls
       return 403 `password-change-required`.
 
@@ -91,6 +100,7 @@ paths:
     get:
       tags: [session]
       operationId: getSession
+      x-plumb-role: read
       summary: Read the current principal
       description: Works for a session and for a token. The UI uses it at start.
       security:
@@ -146,6 +156,7 @@ paths:
     delete:
       tags: [session]
       operationId: logout
+      x-plumb-role: read
       summary: Log out
       security:
         - session: []
@@ -157,6 +168,7 @@ paths:
     put:
       tags: [session]
       operationId: changePassword
+      x-plumb-role: read
       summary: Change the own password
       description: Required after the first login. Other sessions of the user end.
       security:
@@ -177,6 +189,137 @@ paths:
         "422": { $ref: "#/components/responses/Unprocessable" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /users:
+    get:
+      tags: [session]
+      operationId: listUsers
+      x-plumb-planned: T-147
+      summary: List the human users
+      description: |
+        Admin session only (D-330). Disabled users stay in the list; their names are never given
+        again. Sorted by name.
+      security:
+        - session: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of users.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/User" }
+              example:
+                items:
+                  - name: admin
+                    role: admin
+                    disabled: false
+                    locked: false
+                    must_change_password: false
+                    created_at: "2026-11-10T08:00:00Z"
+                    created_by: system
+                    last_login_at: "2026-11-13T07:58:12Z"
+                  - name: alice
+                    role: apply
+                    disabled: false
+                    locked: false
+                    must_change_password: true
+                    created_at: "2026-11-13T09:00:00Z"
+                    created_by: "user:admin"
+                    last_login_at: null
+                next: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [session]
+      operationId: createUser
+      x-plumb-planned: T-147
+      summary: Make a new user with a one-time password
+      description: |
+        Admin session only, never a token (D-330). The server makes a random one-time password,
+        shows it once in the response and stores only its hash (rules of D-321); the user must
+        change it at the first login. A name that exists, also a disabled one, is 409
+        `user-exists`. Works also in restored mode. Emits `user.created` (no password).
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateUserRequest" }
+            example: { name: alice, role: apply }
+      responses:
+        "201":
+          description: The user and its one-time password. The password is not shown again.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OneTimePassword" }
+              example:
+                username: alice
+                password: Zq0v3cN1x9LkPq2aR7sT8w
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /users/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: User name.
+        schema: { type: string, minLength: 1, maxLength: 64 }
+        example: alice
+    patch:
+      tags: [session]
+      operationId: changeUser
+      x-plumb-planned: T-147
+      summary: Change the role of a user, or disable or enable it
+      description: |
+        Admin session only, never a token (D-330). There is no delete: a disabled user cannot log
+        in and keeps its name for ever. A change of `role` or `disabled` ends every session of
+        that user. When the user loses `admin` or is disabled, every API token it created that
+        is not revoked gets `disabled_at` (401 until `POST /tokens/{id}/enable`). The own user is
+        409 `own-user`. Demoting or disabling the last enabled `admin` is 409 `last-admin`; the
+        server counts and changes in one transaction. A change that changes nothing is 200 with
+        the user. Emits `user.changed` with `{role, disabled}`.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangeUserRequest" }
+            example: { role: plan }
+      responses:
+        "200":
+          description: The user after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+              example:
+                name: alice
+                role: plan
+                disabled: false
+                locked: false
+                must_change_password: true
+                created_at: "2026-11-13T09:00:00Z"
+                created_by: "user:admin"
+                last_login_at: null
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /users/{name}/password:
     parameters:
       - name: name
@@ -213,6 +356,55 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /catalog/blocks:
+    get:
+      tags: [blocks]
+      operationId: listCatalogBlocks
+      x-plumb-planned: T-146
+      summary: List the starter Blocks that ship with Plumb
+      description: |
+        The Blocks embedded in this binary (D-328), sorted by name, compared with the head
+        revision: `stored` is `none` (no Block of this name), `same` (the stored Block equals the
+        catalogue Block) or `differs`. Plumb never puts a catalogue Block by itself: a client adds
+        or updates one with a normal proposal (`POST /plans`, `put` of the `yaml`), and the Plan
+        shows the diff. No paging (the catalogue is small).
+      responses:
+        "200":
+          description: The catalogue.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogBlock" }
+              example:
+                items:
+                  - name: motd
+                    title: Message of the day
+                    description: Set /etc/motd.
+                    kinds: [vm, lxc]
+                    sha256: "5f0c3d2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a392817060"
+                    stored: differs
+                    yaml: "kind: Block\nname: motd\nspec:\n  ...\n"
+                    document:
+                      kind: Block
+                      name: motd
+                      spec:
+                        title: Message of the day
+                        params:
+                          type: object
+                          properties:
+                            text: { type: string, default: "Managed by Plumb\n" }
+                        resources:
+                          - file:
+                              path: /etc/motd
+                              content: "{{ .text }}"
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /images:
     get:
@@ -360,6 +552,102 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /images/{name}/refresh:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [images]
+      operationId: refreshImagePin
+      x-plumb-planned: T-152
+      summary: Propose the newest checksum of the base image from its source
+      description: |
+        For an Image with `verify` (D-335): the server fetches the checksum list of the source,
+        checks the signature with a key pinned in the binary (not for `debian-https`, which has
+        no signature), and finds the one entry for the file name of `url`. If the pin differs, it
+        makes a Plan of origin `pin_refresh` that changes only the pin (`sha256` or `sha512`);
+        `Plan.pins` shows source, key fingerprint, old and new pin. If the pin is current: 200
+        `{status: unchanged}`, no Plan. The build schedule makes the same Plan before a
+        scheduled build (author `system`).
+        Approval: `human_only` gets `unverified-pin` when the source has no signature, when the
+        signature creation time is not strictly newer than that of the last list this Image
+        accepted from the same source (a replay or downgrade; the aplinfo index comes over plain
+        http), when no signature time is stored yet for this Image and source (its first
+        refresh), or when this Image used the new pin before; else a human with role `apply`, an
+        `apply` token or `system` approves it, also for a built Image or an lxc Image (D-335 is the one
+        exception to `image-recipe` of D-201, D-235). An Image without `verify` is 422. A fetch
+        or signature failure is 502 `pin-source-failed`; the `detail` says which step failed and
+        never holds the fetched data.
+      security:
+        - session: []
+        - token: [plan]
+      responses:
+        "200":
+          description: The pin is current. No Plan.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, pin]
+                properties:
+                  status: { const: unchanged }
+                  pin: { $ref: "#/components/schemas/PinRefresh" }
+              example:
+                status: unchanged
+                pin:
+                  image: ubuntu-web
+                  source: ubuntu-cloud
+                  signed: true
+                  key_fingerprint: D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
+                  file: ubuntu-26.04-server-cloudimg-amd64.img
+                  algorithm: sha256
+                  old: "3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382"
+                  new: "3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382"
+                  used_before: true
+                  signed_at: "2026-11-12T04:11:09Z"
+                  last_signed_at: "2026-11-12T04:11:09Z"
+        "201":
+          description: A Plan of origin `pin_refresh`.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 31
+                origin: pin_refresh
+                issue_id: null
+                status: pending
+                risk: reversible
+                reason: "Refresh the base pin of ubuntu-web from ubuntu-cloud."
+                author: system
+                created_at: "2026-11-15T02:59:00Z"
+                base_revision: 40
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                targets: []
+                warnings: []
+                human_only: []
+                pins:
+                  - image: ubuntu-web
+                    source: ubuntu-cloud
+                    signed: true
+                    key_fingerprint: D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
+                    file: ubuntu-26.04-server-cloudimg-amd64.img
+                    algorithm: sha256
+                    old: "3f1c0a9e5d6b7c8a9f0e1d2c3b4a5968778695a4b3c2d1e0f9e8d7c6b5a49382"
+                    new: "8e2d4c6a0b1f3e5d7c9a8b6f4e2d0c1b3a5f7e9d8c6b4a2f0e1d3c5b7a9f8e6d"
+                    used_before: false
+                    signed_at: "2026-11-14T04:02:51Z"
+                    last_signed_at: "2026-10-20T03:55:10Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "502": { $ref: "#/components/responses/BadGateway" }
   /images/{name}/build:
     parameters:
       - $ref: "#/components/parameters/DocName"
@@ -1057,7 +1345,9 @@ paths:
       description: |
         Commits the Revision and starts a Run. An `apply` token can approve up to its `max_risk`
         (`reversible` or `disruptive`). Only a human session approves a `destructive` Plan or a
-        Plan with a non-empty `human_only` (403 `human-required`, D-099). A stale Plan returns
+        Plan with a non-empty `human_only` (403 `human-required`, D-099). A human with role
+        `apply` approves up to `disruptive` (also `human_only` Plans up to that risk); a
+        `destructive` Plan needs role `admin` (403 `risk-too-high`, D-329). A stale Plan returns
         409; a Plan is also stale when a secret that it uses has another version (D-089).
         A Plan of origin `build` commits no revision; it is stale when the recipe of its Image at
         the head differs from `images[].build.recipe_sha256`, and it returns 409 `build-running`
@@ -2271,7 +2561,7 @@ components:
       in: cookie
       name: __Host-plumb_session
       description: |
-        Human session (`POST /session`) with tier `admin`. `HttpOnly`, `Secure`,
+        Human session (`POST /session`); its tier is the role of the user (D-329). `HttpOnly`, `Secure`,
         `SameSite=Strict`. In `plumb serve --dev` (plain HTTP) the cookie is `plumb_session`
         without `Secure`. Every call that changes data, login included, must send a matching
         `Origin` header. Only a session approves `destructive` Plans and Plans with
@@ -2412,6 +2702,7 @@ components:
         to an agent are checked at creation and at approval; the Run checks again at start.
         Slice 4 (D-303): `restored-mode` (the controller waits for `POST /restore/confirm`),
         `backup-running`, `token-revoked`, `own-user` (D-321), `restore-check-failed` (D-322).
+        Slice 5: `user-exists`, `last-admin` (D-330).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -2447,6 +2738,18 @@ components:
             title: Too many attempts
             status: 429
             detail: Try again in 30 seconds.
+    BadGateway:
+      description: |
+        A source outside Plumb failed: `pin-source-failed` (D-335) when the checksum list or its
+        signature could not be fetched or checked. `detail` names the step, never the data.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "urn:plumb:problem:pin-source-failed"
+            title: Checksum source failed
+            status: 502
+            detail: "The signature of SHA256SUMS is not from the pinned key ubuntu-cloud."
 
   schemas:
     Name:
@@ -2552,7 +2855,9 @@ components:
         tier:
           type: string
           enum: [read, plan, apply, admin]
-          description: Effective tier. `admin` only for a human session; a token has the others.
+          description: |
+            Effective tier. For a session: the role of the user (D-329), one of all four. A token
+            has `read`, `plan` or `apply`.
         max_risk:
           type: string
           enum: [reversible, disruptive]
@@ -2581,6 +2886,105 @@ components:
       properties:
         current_password: { type: string, minLength: 1, maxLength: 1024, format: password }
         new_password: { type: string, minLength: 12, maxLength: 1024, format: password }
+    Role:
+      type: string
+      enum: [read, plan, apply, admin]
+      description: Role of a human user, on the scale of the token tiers (D-329).
+    UserName:
+      type: string
+      pattern: "^[a-z_][a-z0-9_-]{0,31}$"
+      description: User name. Lower case; never given twice, also after a disable (D-330).
+    User:
+      type: object
+      additionalProperties: false
+      required:
+        [name, role, disabled, locked, must_change_password, created_at, created_by, last_login_at]
+      properties:
+        name: { $ref: "#/components/schemas/UserName" }
+        role: { $ref: "#/components/schemas/Role" }
+        disabled:
+          type: boolean
+          description: A person disabled the user (D-330). No login; the name stays taken.
+        locked:
+          type: boolean
+          description: Locked by a restore until it gets a one-time password (D-303, D-321).
+        must_change_password: { type: boolean }
+        created_at: { $ref: "#/components/schemas/Time" }
+        created_by:
+          $ref: "#/components/schemas/Principal"
+          description: "`system` for the user that the installer made."
+        last_login_at: { $ref: "#/components/schemas/NullableTime" }
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required: [name, role]
+      properties:
+        name: { $ref: "#/components/schemas/UserName" }
+        role: { $ref: "#/components/schemas/Role" }
+    ChangeUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        disabled: { type: boolean }
+    CatalogBlock:
+      type: object
+      additionalProperties: false
+      required: [name, title, description, kinds, sha256, stored, yaml, document]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        title: { type: string }
+        description: { type: string }
+        kinds:
+          type: array
+          description: Target kinds on which every resource of the Block works.
+          items: { type: string, enum: [vm, lxc] }
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the canonical JSON of `document`.
+        stored:
+          type: string
+          enum: [none, same, differs]
+          description: The Block of the same name at the head revision, compared by `sha256`.
+        yaml: { type: string, description: The Block file as shipped. }
+        document: { $ref: "#/components/schemas/Block" }
+    PinRefresh:
+      type: object
+      additionalProperties: false
+      required:
+        [image, source, signed, key_fingerprint, file, algorithm, old, new, used_before, signed_at, last_signed_at]
+      properties:
+        image: { $ref: "#/components/schemas/Name" }
+        source:
+          type: string
+          enum: [ubuntu-cloud, proxmox-aplinfo, debian-https]
+        signed: { type: boolean, description: "`false` only for `debian-https`." }
+        key_fingerprint:
+          type: [string, "null"]
+          pattern: "^[0-9A-F]{40}$"
+          description: The pinned key that signed the list. `null` when `signed` is false.
+        file: { type: string, description: The file name of `url` that the list entry matched. }
+        algorithm: { type: string, enum: [sha256, sha512] }
+        old:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{64}([0-9a-f]{64})?$"
+        new:
+          type: string
+          pattern: "^[0-9a-f]{64}([0-9a-f]{64})?$"
+        used_before:
+          type: boolean
+          description: A version or template of this Image used `new` before (a downgrade).
+        signed_at:
+          $ref: "#/components/schemas/NullableTime"
+          description: Creation time of the signature of the list. `null` when `signed` is false.
+        last_signed_at:
+          $ref: "#/components/schemas/NullableTime"
+          description: |
+            Signature time of the last list this Image accepted from this source; `null` for the
+            first refresh, which a person approves. An approval without a person needs `signed_at`
+            strictly after it.
 
     # Documents. The shapes live in internal/state/schema (D-043): the server validates
     # against the same files, so there is one source.
@@ -3070,9 +3474,10 @@ components:
         id: { $ref: "#/components/schemas/Id" }
         origin:
           type: string
-          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update]
+          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update, pin_refresh]
           description: |
-            What made the Plan. `build`: a manual or scheduled image build with no document
+            What made the Plan. `pin_refresh`: `POST /images/{name}/refresh` or the build schedule
+            changes only the pin of an Image (D-335). `build`: a manual or scheduled image build with no document
             change (D-199). `agent_update`: replaces the agent binary of one Target, no document
             change (D-257).
         issue_id:
@@ -3121,12 +3526,50 @@ components:
             `image-recipe`: the Plan makes or deletes a built Image, or changes its recipe,
             `schedule` or `retention`, also through a changed Block (D-201).
             `accept-guest-data`: the Plan was made by an Accept of an Issue (origin `accept`) and
-            adopts values that a guest reported (D-323).
+            adopts values that a guest reported (D-323), or a change of the Plan sets a value (or
+            adds a list element) that any guest reported as drift in the last 30 days, on any
+            Target, whether its Issue is open, closed or ignored, whatever the origin (D-331;
+            `guest_data_issues` names the Issues), or the Target is flagged because its stored
+            reported values reached the cap (an Issue `agent:values` is open; no match is listed).
+            Checked when the Plan is made and again at
+            approval: a report that arrives in between adds the reason, and the approval returns
+            403 `human-required` for a token. `unverified-pin`: a
+            `pin_refresh` Plan from a source without a signature, with a signature that is not
+            strictly newer than the last accepted one, or to a pin that this Image used before
+            (D-335).
             The server computes it from the content of the proposal, for every origin, and from
-            the origin for `accept-guest-data`; no client field sets or clears it.
+            the origin for `accept-guest-data` and `unverified-pin`; no client field sets or
+            clears it.
           items:
             type: string
-            enum: [secret-binding, rule-change, image-recipe, accept-guest-data]
+            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin]
+        guest_data_issues:
+          type: array
+          description: |
+            The Issues (open or closed) whose guest-reported values this Plan copies (D-331).
+            Missing means none. Always set together with `accept-guest-data`, except for origin
+            `accept`. `guest_data_matches` says what matched.
+          items: { $ref: "#/components/schemas/Id" }
+        guest_data_matches:
+          type: array
+          description: |
+            One entry per change value or list element of this Plan that matched a value a guest
+            reported (D-331). `element` is the Plan's own value (never from the guest), missing
+            for a sensitive change. Missing means none.
+          items:
+            type: object
+            additionalProperties: false
+            required: [issue_id, target, resource, attr]
+            properties:
+              issue_id: { $ref: "#/components/schemas/Id" }
+              target: { $ref: "#/components/schemas/Name" }
+              resource: { type: string, examples: ["user:alice"] }
+              attr: { type: string, examples: [ssh_keys] }
+              element: { type: string }
+        pins:
+          type: array
+          description: The pin changes of a `pin_refresh` Plan (D-335). Missing for other origins.
+          items: { $ref: "#/components/schemas/PinRefresh" }
         images:
           type: array
           description: |
@@ -3406,6 +3849,13 @@ components:
         `system` resolves them as `gone` when the guest or the hello comes back, or when an
         applied Plan deletes the Target (then with the system comment "Resolved: the Target was
         deleted."; a foreign guest stays and is never deleted, D-322).
+
+        Slice 5 (D-331): `system` opens `agent:values` when the stored values that the guest of
+        a Target reported as drift reach the cap (10 000). Nothing is evicted; for 30 days every
+        Plan that touches the Target is human-only (`accept-guest-data`). One change
+        `{attr: reported_values, from: null, to: "cap reached", risk: read}`; only `ignore_once`
+        and `ignore_rule`, and the ignore does not end the flag. `system` resolves it as `gone`
+        when the 30 days end.
       required:
         - id
         - target
@@ -3863,6 +4313,8 @@ components:
             - restore.confirmed
             - token.enabled
             - user.password_reset
+            - user.created
+            - user.changed
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string
@@ -3871,7 +4323,9 @@ components:
             `<kind>:<id or name>`, for example `plan:12` or `target:web1`. `image.version` (subject
             `image:<name>`): a version of the Image changed its status. `backup.finished` (subject
             `backup:<file name>`, data `{result: ok|failed}`) and `restore.confirmed` (subject
-            `restore:1`) are D-302, D-303. `user.password_reset` (subject `user:<name>`) is D-321.
+            `restore:1`) are D-302, D-303. `user.password_reset` (subject `user:<name>`) is D-321. `user.created` (data
+            `{role}`) and `user.changed` (data `{role, disabled}`) are D-330; no event holds a
+            password.
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }
         data:
