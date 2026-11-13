@@ -238,12 +238,11 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
    address as before: the agents in the guests know only this address.
 
    ```sh
-   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway> --backup-storage <storage>
+   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway>
    ```
 
-   Give `--backup-storage` again: without it, the restored Plumb makes no off-host copy. The
-   installer asks for the recovery key and checks the file before it changes anything. A wrong key
-   stops the run.
+   The installer reuses the kept backup storage. It asks for the recovery key and checks the
+   file before it changes anything. A wrong key stops the run.
 
 ### After a restore
 

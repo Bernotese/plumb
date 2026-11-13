@@ -64,6 +64,21 @@ func TestBootWaitAfterFirstStart(t *testing.T) {
 	}
 }
 
+// A degraded system has finished booting, even though systemctl exits nonzero.
+func TestBootWaitDegraded(t *testing.T) {
+	t.Parallel()
+	h := newHost(t)
+	code, out, errOut := h.run(append(asRoot, "FAKE_BOOT_STATE=degraded"), "--yes", "--plumb-binary", h.plumb)
+	if code != 0 {
+		t.Fatalf("degraded boot: %d\n%s\n%s", code, out, errOut)
+	}
+	calls := h.calls()
+	wait, push := index(calls, bootWait), index(calls, "pct push 105")
+	if wait < 0 || push <= wait || !strings.Contains(out, "Plumb runs:") {
+		t.Fatalf("install did not continue after degraded boot:\n%s\n%s", strings.Join(calls, "\n"), out)
+	}
+}
+
 // T-122 F7: the mv ran, then pct exec reported SIGHUP. The run checks the
 // file and goes on; a mv that did not run still stops it.
 func TestMvHangupIsChecked(t *testing.T) {
