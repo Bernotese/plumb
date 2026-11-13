@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +38,10 @@ type fakePVE struct {
 	files    map[string]bool // volids in the image storage
 	tasks    map[string]*fakeTask
 	failNext map[string]string // request key → task exit status (one shot)
+	// refuseTags: a config write with tags (or a delete of them) is 403,
+	// as with a datacenter user-tag-access other than free (D-299).
+	refuseTags bool
+	resizes    []string // "<vmid> <disk> <size>" of each resize
 	// failCloudinit: the next PUT …/cloudinit (regenerate) fails.
 	failCloudinit bool
 	taskPolls     int      // polls before a task stops
@@ -635,6 +640,13 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// tagWrite reports whether a config write sets or deletes the tags while
+// refuseTags is on.
+func (f *fakePVE) tagWrite(form url.Values) bool {
+	_, set := form["tags"]
+	return f.refuseTags && (set || slices.Contains(strings.Split(form.Get("delete"), ","), "tags"))
+}
+
 func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id int, vm *fakeVM, sub string) {
 	switch {
 	case r.Method == "GET" && sub == "/config":
@@ -672,6 +684,10 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 	case r.Method == "POST" && sub == "/config":
 		if d := r.Form.Get("digest"); d != "" && d != vmDigest(vm) {
 			fail(w, 500, "detected modified configuration - file changed by other user? Try again.", nil)
+			return
+		}
+		if f.tagWrite(r.Form) {
+			fail(w, 403, "Permission check failed (user-tag-access)", nil)
 			return
 		}
 		for _, k := range strings.Split(r.Form.Get("delete"), ",") {
@@ -730,6 +746,7 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			return
 		}
 		vm.cfg["scsi0"] = replaceProp(vm.cfg["scsi0"], "size", want)
+		f.resizes = append(f.resizes, fmt.Sprintf("%d %s %s", id, r.Form.Get("disk"), want))
 		reply(w, 200, f.task(key))
 	case r.Method == "POST" && sub == "/template":
 		if f.failTemplate {

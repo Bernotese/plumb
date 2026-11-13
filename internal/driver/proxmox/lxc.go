@@ -89,6 +89,7 @@ func specOfCT(cfg map[string]string) driver.GuestSpec {
 	s.Bridge = net["bridge"]
 	s.IP, s.Gateway = net["ip"], net["gw"]
 	s.DiskGB = sizeGB(parseProps(cfg["rootfs"])["size"])
+	s.Tags = parseTags(cfg["tags"])
 	s.Features = sortedProps(cfg["features"])
 	for k, v := range cfg {
 		switch {
@@ -257,6 +258,11 @@ func (d *Driver) createFromFile(ctx context.Context, spec driver.GuestSpec, boot
 	if len(spec.SSHKeys) > 0 {
 		params.Set("ssh-public-keys", strings.Join(spec.SSHKeys, "\n"))
 	}
+	if tags, err := tagsParam(spec.Tags); err != nil {
+		return "", err
+	} else if tags != "" {
+		params.Set("tags", tags)
+	}
 	err = d.c.Task(ctx, d.cfg.Node, "POST", d.node()+"/lxc", params)
 	if err != nil && archiveError(err) && ctx.Err() == nil {
 		// A reused file may be damaged (review S10): remove the half-made
@@ -382,7 +388,8 @@ func equalCTSpec(a, b driver.GuestSpec) bool {
 	return a.Name == b.Name && a.Cores == b.Cores && a.MemoryMB == b.MemoryMB && a.Bridge == b.Bridge &&
 		a.IP == b.IP && a.Gateway == b.Gateway && a.DiskGB == b.DiskGB && a.ImageName == b.ImageName &&
 		a.ImageVersion == b.ImageVersion && slices.Equal(a.SSHKeys, b.SSHKeys) && a.Features == b.Features &&
-		slices.Equal(a.Mounts, b.Mounts) && slices.Equal(a.Devices, b.Devices) && slices.Equal(a.RawLXC, b.RawLXC)
+		slices.Equal(a.Mounts, b.Mounts) && slices.Equal(a.Devices, b.Devices) && slices.Equal(a.RawLXC, b.RawLXC) &&
+		slices.Equal(a.Tags, b.Tags)
 }
 
 // ctAddresses reads the IPv4 addresses of eth0 that Proxmox sees from the
@@ -414,21 +421,35 @@ func (d *Driver) ctAddresses(ctx context.Context, id int) []string {
 }
 
 // ctUpdateKeys are the only keys that updateCT writes.
-var ctUpdateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "env": true, "features": true}
+var ctUpdateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "env": true, "features": true,
+	"tags": true, "delete": true} // tags: D-299; delete only of the tags
 
-// updateCT changes cores, memory and the bridge (live, host C5) and for a
-// re-enrollment sets the new token in env; the caller restarts.
+// updateCT changes cores, memory, the bridge (live, host C5) and the
+// tags, and for a re-enrollment sets the new token in env; the caller
+// restarts. A disk change grows rootfs after the config write; Proxmox
+// grows the file system of the container with it (D-299).
 func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, boot *driver.Bootstrap) error {
 	cfg, err := d.ctConfig(ctx, id, true)
 	if err != nil {
 		return err
 	}
 	params := url.Values{"digest": {cfg["digest"]}}
+	grow := 0
 	for _, c := range changes {
 		if driver.IsCreateOnly(c.Attr) {
 			return &driver.CreateOnlyError{Attr: c.Attr}
 		}
 		switch c.Attr {
+		case driver.AttrTags:
+			if err := setTags(params, c.To); err != nil {
+				return err
+			}
+		case driver.AttrDisk:
+			n, err := growTo(c.To, sizeGB(parseProps(cfg["rootfs"])["size"]))
+			if err != nil {
+				return err
+			}
+			grow = n
 		case driver.AttrCores:
 			n, err := driver.IntValue(c.To)
 			if err != nil || n < 1 {
@@ -466,22 +487,30 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 			return fmt.Errorf("proxmox: unknown attribute %q", c.Attr)
 		}
 	}
-	if len(params) == 1 {
-		return nil
-	}
-	for k := range params {
-		if !ctUpdateKeys[k] {
-			return fmt.Errorf("proxmox: Update must not write %q to a container", k)
+	if len(params) > 1 {
+		for k := range params {
+			if !ctUpdateKeys[k] {
+				return fmt.Errorf("proxmox: Update must not write %q to a container", k)
+			}
+		}
+		if del, ok := params["delete"]; ok && (len(del) != 1 || del[0] != "tags") {
+			return fmt.Errorf("proxmox: Update may delete only the tags, not %q", del)
+		}
+		if net0, ok := params["net0"]; ok && (len(net0) != 1 || !sameExcept(cfg["net0"], net0[0], "bridge")) {
+			return errors.New("proxmox: a net0 change must keep every property but the bridge")
+		}
+		token := ""
+		if boot != nil {
+			token = boot.Token
+		}
+		if err := scrub(d.c.MaybeTask(ctx, d.cfg.Node, "PUT", ctPath(d, id)+"/config", params), token); err != nil {
+			return tagRefusal(err, params)
 		}
 	}
-	if net0, ok := params["net0"]; ok && (len(net0) != 1 || !sameExcept(cfg["net0"], net0[0], "bridge")) {
-		return errors.New("proxmox: a net0 change must keep every property but the bridge")
+	if grow > 0 {
+		return d.resize(ctx, ctPath(d, id), "rootfs", grow)
 	}
-	token := ""
-	if boot != nil {
-		token = boot.Token
-	}
-	return scrub(d.c.MaybeTask(ctx, d.cfg.Node, "PUT", ctPath(d, id)+"/config", params), token)
+	return nil
 }
 
 // ClearBootstrap removes the enrollment token from the env of a container
