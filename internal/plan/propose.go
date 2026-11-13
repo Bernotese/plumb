@@ -48,6 +48,10 @@ var ErrTargetBusy = errors.New("a Run is working on the target")
 // ErrCreateOnly is wrapped when a proposal changes a create-only setting.
 var ErrCreateOnly = errors.New("create-only setting")
 
+// ErrShrink is wrapped when a proposal would shrink the disk of a guest:
+// Proxmox cannot (D-291, D-299).
+var ErrShrink = errors.New("a disk cannot shrink")
+
 // ErrOutside: a container has a mount point, a device or a raw lxc line
 // that a person added on the host; Plumb cannot remove it (T-038 §3).
 var ErrOutside = errors.New("addition outside Plumb")
@@ -240,6 +244,11 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if err := e.checkIdle(names); err != nil {
 		return store.Plan{}, err
 	}
+	// Grow only (D-299): no proposal lowers the disk of a bound Target
+	// below the base revision.
+	if err := e.checkNoShrink(ctx, base, next, names); err != nil {
+		return store.Plan{}, err
+	}
 	// A touched target that refers to a missing secret is 422 (D-089).
 	if err := e.checkSecretsPresent(ctx, next, names, in.Imported); err != nil {
 		return store.Plan{}, err
@@ -283,6 +292,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if note := e.diskNote(ctx, next, plans); note != "" {
 		in.Proposal.Notes = append(in.Proposal.Notes, note)
 	}
+	in.Proposal.Notes = append(in.Proposal.Notes, startNotes(plans)...)
 	markIgnored(next.Rules(), plans)
 	// The image part: builds of new or changed recipes and removals
 	// (D-199, D-209), and the Targets that cannot be made yet (D-200).
@@ -516,6 +526,10 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	if errors.As(err, &oe) {
 		return tp, &ProposalError{Target: target, Err: ErrOutside, Msg: outsideText(bind.Ref, observed)}
 	}
+	var se *driver.ShrinkError
+	if errors.As(err, &se) {
+		return tp, &ProposalError{Target: target, Err: ErrShrink, Msg: fmt.Sprintf(textShrink, se.Have, se.Want)}
+	}
 	var co *driver.CreateOnlyError
 	if errors.As(err, &co) {
 		if c := pendingChange(desired, observed, co.Attr); c != nil {
@@ -528,9 +542,19 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	if err != nil {
 		return tp, err
 	}
+	// A VM disk that grew while its root file system did not (review M1
+	// of #217): the Plan grows the file system again.
+	if !reenroll && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
+		gchanges = append(gchanges, rootFSChange(bind.RootGrow))
+	}
+	if !reenroll {
+		if err := e.checkDay2(ctx, target, desired, observed, gchanges, r.AllowRestart); err != nil {
+			return tp, err
+		}
+	}
 	// One rule for Plan and Run (D-194): the restart, or the flag that a
 	// value waits for one.
-	gchanges, _, err = restartRule(desired.Kind, gchanges, driver.WaitingGuest(desired, observed), observed.Power, r.AllowRestart, reenroll)
+	gchanges, _, err = restartRule(desired.Kind, gchanges, driver.WaitingGuest(desired, observed), rulePower(desired, observed, reenroll), r.AllowRestart, reenroll)
 	if err != nil {
 		return tp, &ProposalError{Target: target, Msg: err.Error()}
 	}
@@ -549,6 +573,21 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	}
 	if reenroll {
 		return tp, nil // the agent is lost or about to be replaced; nothing to observe
+	}
+
+	// A stopped guest (D-299): it stays stopped, so its agent steps are
+	// skipped; or the Run starts it, so its agent cannot observe now and
+	// its resources are planned as for a new guest (D-308).
+	if observed.Power != driver.PowerRunning {
+		switch desired.Power {
+		case driver.PowerStopped:
+			return tp, nil
+		case driver.PowerRunning:
+			if err := e.planUnobserved(ctx, &tp, r, r.Resources); err != nil {
+				return tp, err
+			}
+			return tp, nil
+		}
 	}
 
 	// Then the agent level.
@@ -610,6 +649,13 @@ func createChanges(s driver.GuestSpec) []wire.Change {
 		}
 		c = append(c, wire.Change{Attr: kv.attr, To: kv.v, Risk: wire.RiskReversible})
 	}
+	if s.TagsSet && len(s.Tags) > 0 {
+		c = append(c, wire.Change{Attr: driver.AttrTags, To: s.Tags, Risk: wire.RiskReversible})
+	}
+	if s.Power == driver.PowerStopped {
+		// Created, enrolled and applied, then stopped (D-299).
+		c = append(c, wire.Change{Attr: driver.AttrPower, From: string(driver.PowerRunning), To: string(driver.PowerStopped), Risk: driver.PowerRisk(driver.PowerStopped)})
+	}
 	return c
 }
 
@@ -657,6 +703,20 @@ func (e *Engine) guestSpec(target string, r *state.Rendered) (driver.GuestSpec, 
 	spec.IP, _ = a[driver.AttrIP].(string)
 	spec.Gateway, _ = a[driver.AttrGateway].(string)
 	spec.User, _ = a[driver.AttrUser].(string)
+	// Slice 4 (D-299): a missing power or tags attribute is not managed.
+	if p, ok := a[driver.AttrPower].(string); ok {
+		spec.Power = driver.Power(p)
+	}
+	if v, ok := a[driver.AttrTags]; ok {
+		spec.TagsSet = true
+		l, _ := v.([]any)
+		for _, t := range l {
+			if s, ok := t.(string); ok {
+				spec.Tags = append(spec.Tags, s)
+			}
+		}
+		spec.Tags = driver.NormTags(spec.Tags)
+	}
 	keys, _ := a[driver.AttrSSHKeys].([]any)
 	for _, k := range keys {
 		if s, ok := k.(string); ok {
@@ -764,8 +824,19 @@ func plannedRestarts(tp *TargetPlan, r *state.Rendered, left []wire.Resource) {
 // names the storage and the numbers. The Run checks again at each create.
 func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPlan) string {
 	var total int64
-	var n int
+	var n, grows int
 	for _, tp := range plans {
+		if tp.Guest == "update" {
+			for _, rc := range tp.Resources {
+				if g := driver.Grow(rc.Changes); rc.Resource == wire.GuestConfigID && g != nil {
+					from, _ := driver.IntValue(g.From)
+					to, _ := driver.IntValue(g.To)
+					total = addBytes(total, DiskBytes(to-from))
+					grows++
+				}
+			}
+			continue
+		}
 		if tp.Guest != "create" {
 			continue
 		}
@@ -780,14 +851,20 @@ func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPl
 		total = addBytes(total, DiskBytes(disk))
 		n++
 	}
-	if n == 0 {
+	if n == 0 && grows == 0 {
 		return ""
 	}
 	what := fmt.Sprintf("the %d GiB disk of the new guest", total/GiB)
-	if n > 1 {
+	switch {
+	case grows > 0:
+		what = fmt.Sprintf("the %d GiB that the new and grown disks of this Plan add", total/GiB)
+	case n > 1:
 		what = fmt.Sprintf("the %d GiB disks of the %d new guests", total/GiB, n)
 	}
 	if err := e.disk.Check(ctx, total, what); err != nil {
+		if grows > 0 {
+			return "The disk step will fail if nothing changes: " + err.Error() + "."
+		}
 		return "The create will fail if nothing changes: " + err.Error() + "."
 	}
 	return ""

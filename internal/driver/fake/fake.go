@@ -108,6 +108,7 @@ type Driver struct {
 	// bridgeStuck: a running guest does not take a bridge change live (a
 	// failed hot-unplug).
 	bridgeStuck bool
+	tagRefused  error // RefuseTags
 	// keepPending: a write of the running value on a running guest keeps
 	// the pending value (a Proxmox that needs revert=<key>, review B1).
 	keepPending bool
@@ -161,6 +162,14 @@ func (d *Driver) SetHotplug(on bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.hotplug = on
+}
+
+// RefuseTags makes every tags write fail with err (a datacenter
+// user-tag-access other than free, D-299); nil writes again.
+func (d *Driver) RefuseTags(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.tagRefused = err
 }
 
 // SetBridgeStuck makes a running guest keep a bridge change pending.
@@ -520,10 +529,14 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		}
 		d.nextID++
 		spec.SSHKeys = append([]string(nil), spec.SSHKeys...)
+		// Like Proxmox: the config holds the tags; the power state is no
+		// setting (D-299).
+		spec.Tags, spec.TagsSet, spec.Power = driver.NormTags(spec.Tags), false, ""
 		ref := spec.Image
 		spec.Image = "" // like Proxmox: the guest keeps the Image name, not the ref (D-189)
 		next := spec
 		next.SSHKeys = append([]string(nil), spec.SSHKeys...)
+		next.Tags = append([]string(nil), spec.Tags...)
 		g := &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
 			env: spec.Kind == wire.KindLXC}
 		if g.env {
@@ -543,10 +556,12 @@ func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestSt
 		}
 		spec := g.spec
 		spec.SSHKeys = append([]string(nil), g.spec.SSHKeys...)
+		spec.Tags, spec.TagsSet = append([]string(nil), g.spec.Tags...), true
 		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != "", TokenInConfig: g.env}
 		if !equalSpec(g.spec, g.next) {
 			next := g.next
 			next.SSHKeys = append([]string(nil), g.next.SSHKeys...)
+			next.Tags, next.TagsSet = append([]string(nil), g.next.Tags...), true
 			st.Pending = &next
 		}
 		if g.power == driver.PowerRunning {
@@ -625,6 +640,36 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				if !running || !d.bridgeStuck {
 					run.Bridge = s
 				}
+			case driver.AttrTags:
+				// Tags are no hardware: both views at once (D-299).
+				var tags []string
+				if l, ok := c.To.([]string); ok {
+					tags = l
+				} else if l, ok := c.To.([]any); ok {
+					for _, t := range l {
+						if s, ok := t.(string); ok {
+							tags = append(tags, s)
+						}
+					}
+				} else if c.To != nil {
+					err = fmt.Errorf("fake: tags %v", c.To)
+				}
+				if d.tagRefused != nil {
+					err = d.tagRefused
+				}
+				run.Tags, next.Tags = driver.NormTags(tags), driver.NormTags(tags)
+			case driver.AttrDisk:
+				// Grow only, at once in both views, running or not.
+				v, verr := driver.IntValue(c.To)
+				switch {
+				case verr != nil:
+					err = verr
+				case v < run.DiskGB || v < next.DiskGB:
+					err = fmt.Errorf("fake: disk %d GiB is smaller than %d GiB; a disk cannot shrink", v, max(run.DiskGB, next.DiskGB))
+				}
+				run.DiskGB, next.DiskGB = v, v
+			case driver.AttrPower:
+				err = errors.New("fake: power is no config setting; use Power")
 			case driver.AttrFeatures:
 				// A container takes its features at the next start (host D4).
 				if v, _ := c.To.(string); !g.lxc() || v != driver.CTFeatures {

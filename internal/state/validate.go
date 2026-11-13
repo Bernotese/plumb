@@ -735,6 +735,16 @@ func (s *Set) checkTarget(name string) Errors {
 				"disk %d GiB is smaller than the disk of Image %q (%d GiB); a disk cannot shrink (D-202)", have, t.Image, want))
 		}
 	}
+	// A Run may stop the guest only with allow_restart (D-291, D-299),
+	// also when an override of guest:config sets the power.
+	if !t.AllowRestart {
+		if p, _ := t.Guest["power"].(string); p == "stopped" {
+			errs = append(errs, errf("/spec/guest/power", "power: stopped needs allow_restart: true (a Run may stop the guest only then, D-291)"))
+		}
+		if p, _ := t.Overrides["guest:config"]["power"].(string); p == "stopped" {
+			errs = append(errs, errf("/spec/overrides/guest:config/power", "power: stopped needs allow_restart: true (a Run may stop the guest only then, D-291)"))
+		}
+	}
 	if t.Type == string(wire.KindLXC) {
 		// Proxmox has no cloud-init for containers: keys go to root (D-226).
 		if _, ok := t.Guest["user"]; ok {

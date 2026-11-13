@@ -162,6 +162,10 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 			fail(w, 500, "unable to modify read-only option: 'unprivileged'", nil)
 			return
 		}
+		if f.tagWrite(r.Form) {
+			fail(w, 403, "Permission check failed (user-tag-access)", nil)
+			return
+		}
 		if st, msg := ctPerm(r.Form); st != 0 {
 			fail(w, st, msg, nil)
 			return
@@ -266,7 +270,12 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 		reply(w, 200, f.task(key))
 
 	case r.Method == "PUT" && sub == "/resize":
+		if sizeGB(r.Form.Get("size")) < sizeGB(parseProps(vm.cfg["rootfs"])["size"]) {
+			fail(w, 500, "shrinking disks is not supported", nil)
+			return
+		}
 		vm.cfg["rootfs"] = strings.Replace(vm.cfg["rootfs"], "size="+parseProps(vm.cfg["rootfs"])["size"], "size="+r.Form.Get("size"), 1)
+		f.resizes = append(f.resizes, fmt.Sprintf("%d %s %s", id, r.Form.Get("disk"), r.Form.Get("size")))
 		reply(w, 200, f.task(key))
 
 	case r.Method == "GET" && sub == "/interfaces":

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestApprovePlan(t *testing.T) {
@@ -146,5 +147,29 @@ func TestIssues(t *testing.T) {
 	s.DeleteBinding(ctx, "Target", "web1")
 	if _, err := s.GetBinding(ctx, "Target", "web1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleted binding: %v", err)
+	}
+}
+
+// T-115 (review M1 of #217): the pending root grow rides in the waiting
+// column and never shows as a waiting value.
+func TestBindingRootGrow(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	w := []Waiting{{Attr: "cores", From: 2, To: 4, Since: time.Now()}}
+	if err := s.PutBinding(ctx, Binding{Kind: "Target", Name: "web1", Ref: "100", Waiting: w, RootGrow: 20}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.GetBinding(ctx, "Target", "web1")
+	if err != nil || b.RootGrow != 20 || len(b.Waiting) != 1 || b.Waiting[0].Attr != "cores" {
+		t.Fatalf("%+v %v", b, err)
+	}
+	all, _ := s.Bindings(ctx, "Target")
+	if len(all) != 1 || all[0].RootGrow != 20 || len(all[0].Waiting) != 1 {
+		t.Errorf("Bindings: %+v", all)
+	}
+	b.RootGrow, b.Waiting = 0, nil
+	s.PutBinding(ctx, b)
+	if b, _ = s.GetBinding(ctx, "Target", "web1"); b.RootGrow != 0 || b.Waiting != nil {
+		t.Errorf("cleared: %+v", b)
 	}
 }

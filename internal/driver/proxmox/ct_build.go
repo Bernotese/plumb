@@ -297,6 +297,11 @@ func (d *Driver) cloneCT(ctx context.Context, spec driver.GuestSpec, boot driver
 		"description":  {ctDescription(driver.GuestSpec{ImageName: spec.ImageName, ImageVersion: spec.ImageVersion})},
 		"env":          {tokenPrefix + boot.Token},
 	}
+	if tags, err := tagsParam(spec.Tags); err != nil {
+		return fail(err)
+	} else if tags != "" {
+		params.Set("tags", tags)
+	}
 	if err := d.c.MaybeTask(ctx, d.cfg.Node, "PUT", ctPath(d, id)+"/config", params); err != nil {
 		return fail(fmt.Errorf("proxmox: configure: %w", err))
 	}

@@ -2795,9 +2795,10 @@ components:
         agent_missing:
           type: array
           description: |
-            What the desired state needs and the agent lacks: `<type>`, `<type>.<attr>` or
-            `command:<name>` (D-299), sorted. Empty when nothing is missing. Missing on an older
-            controller.
+            What the desired state needs and the agent lacks: `<type>` or `<type>.<attr>`, sorted.
+            Empty when nothing is missing. Missing on an older controller. `command:grow` is not
+            listed here (D-310): a disk grow of a VM checks it only at the Plan (409
+            `agent-outdated`) and in the Run.
           items: { type: string }
         agent_reverted:
           oneOf:
