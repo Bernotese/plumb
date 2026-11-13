@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -61,4 +63,40 @@ func TestFirewallNoSSHRuleMessage(t *testing.T) {
 		strings.Contains(string(body), "'not' failed") {
 		t.Fatalf("firewall without SSH and with ssh_port: %d %s", code, body)
 	}
+}
+
+// Review S1 of #236: a 422 never repeats a value that failed a pattern:
+// a private key in ssh_keys and a password in a URL, in a proposal (the
+// Block check at save and the render of a Target) and in an import.
+func TestSchemaErrorNoValueEcho(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	const privKey = `-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA-secret-key-body\n-----END OPENSSH PRIVATE KEY-----`
+	const credURL = `ftp://deploy:hunter2-secret-pass@repo.example.invalid/debian`
+	literal := doc(state.KindBlock, "keys", `{"resources":[{"user":{"name":"deploy","ssh_keys":["`+privKey+`"]}},`+
+		`{"apt_repository":{"name":"r","uris":["`+credURL+`"],"suites":["s"],"key":"x"}}]}`)
+	param := doc(state.KindBlock, "keys", `{"params":{"type":"object","properties":{"k":{"type":"string"},"u":{"type":"string"}}},`+
+		`"resources":[{"user":{"name":"deploy","ssh_keys":["{{ .k }}"]}},{"apt_repository":{"name":"r","uris":["{{ .u }}"],"suites":["s"],"key":"x"}}]}`)
+	web := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},`+
+		`"blocks":[{"use":"keys","params":{"k":"`+privKey+`","u":"`+credURL+`"}}]}`)
+	clean := func(what, want string, code int, body []byte) {
+		t.Helper()
+		if code != 422 || !strings.Contains(string(body), want) ||
+			strings.Contains(string(body), "secret-key-body") || strings.Contains(string(body), "hunter2-secret-pass") {
+			t.Errorf("%s: %d %s", what, code, body)
+		}
+	}
+	code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "put": []state.Doc{literal}})
+	clean("Block at save", "must be one public key line", code, body)
+	clean("Block at save", "must be an http or https URL without spaces", code, body)
+	code, body = adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "put": []state.Doc{doc(state.KindImage, "ubuntu", imageSpec), param, web}})
+	clean("render", "must be one public key line", code, body)
+
+	var file bytes.Buffer
+	docs := []state.Doc{doc(state.KindImage, "ubuntu", imageSpec), literal}
+	if err := state.Encode(&file, state.ExportHeader{Format: state.ExportFormat, ExportedAt: time.Now(), Secrets: []string{}}, docs, nil); err != nil {
+		t.Fatal(err)
+	}
+	code, body = adm.do("POST", "/api/v1/import", map[string]any{"content": file.String(), "reason": "x", "mode": "merge"})
+	clean("import", "must be one public key line", code, body)
 }
