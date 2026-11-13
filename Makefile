@@ -38,9 +38,11 @@ test: test-go test-web
 test-go:
 	go test ./...
 
-## test-race: Go tests with the race detector (needs cgo and a C compiler; CI runs it)
+## test-race: Go tests with the race detector (needs cgo and a C compiler; CI runs it).
+## Without ./install: those tests run bash scripts against fakes, so the
+## detector sees only the test harness, and they doubled the job time (T-136).
 test-race:
-	CGO_ENABLED=1 go test -race -count=1 ./...
+	CGO_ENABLED=1 go test -race -count=1 $$(go list ./... | grep -v '/install$$')
 
 ## test-web: unit tests of the web UI (vitest)
 test-web: $(WEB_DEPS)

@@ -14,6 +14,7 @@ import (
 // On a terminal, no pct exec gets one (lxc-attach would give the command a
 // pty in the container); the key prompt keeps it (D-180).
 func TestPctExecWithoutTerminal(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, out, errOut := h.runTTY(t, "y\n\n", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -36,6 +37,7 @@ const bootWait = "pct exec 105 -- timeout 120 systemctl is-system-running --wait
 // After the first start the run waits for the boot before any other step
 // in the LXC; a boot that does not finish stops the run with a clear error.
 func TestBootWaitAfterFirstStart(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -65,6 +67,7 @@ func TestBootWaitAfterFirstStart(t *testing.T) {
 // T-122 F7: the mv ran, then pct exec reported SIGHUP. The run checks the
 // file and goes on; a mv that did not run still stops it.
 func TestMvHangupIsChecked(t *testing.T) {
+	t.Parallel()
 	h := newHost(t)
 	code, out, errOut := h.run(append(asRoot, "FAKE_MV_HUP_ONCE=/usr/local/bin/plumb"), "--yes", "--plumb-binary", h.plumb)
 	if code != 0 {
@@ -90,6 +93,7 @@ func TestMvHangupIsChecked(t *testing.T) {
 // T-122 F6: the dry run of a --restore rerun over the half-made LXC of a
 // failed restore shows what the real run does and changes nothing.
 func TestRestoreRerunDryRun(t *testing.T) {
+	t.Parallel()
 	b, file := keptHost(t)
 	net := []string{"--lxc-ip", "192.168.1.50/24", "--lxc-gw", "192.168.1.1"}
 	if code, _, errOut := b.restore([]string{"FAKE_RESTORE_FAIL=1"}, file, net...); code == 0 {
