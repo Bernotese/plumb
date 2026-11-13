@@ -40,6 +40,7 @@ func (h *host) newBinary() string {
 }
 
 func TestRepairReplacesRunningBinary(t *testing.T) {
+	t.Parallel()
 	h := installed(t)
 	want := h.newBinary()
 	code, out, errOut := h.run(asRoot, "--yes", "--plumb-binary", h.plumb)
@@ -60,6 +61,7 @@ func TestRepairReplacesRunningBinary(t *testing.T) {
 // A push that fails silently (exit 0) stops the run before the rename and
 // before the restart; the file in place and the running service stay.
 func TestSilentPushFailureStops(t *testing.T) {
+	t.Parallel()
 	for _, dest := range []string{"/usr/local/bin/plumb", "/etc/plumb/pve-root-ca.pem", "/etc/systemd/system/plumb.service"} {
 		t.Run(dest, func(t *testing.T) {
 			h := installed(t)
@@ -96,6 +98,7 @@ func TestSilentPushFailureStops(t *testing.T) {
 
 // After the restart the service must run the new binary.
 func TestRestartMustRunNewBinary(t *testing.T) {
+	t.Parallel()
 	h := installed(t)
 	h.newBinary()
 	code, _, errOut := h.run(append(asRoot, "FAKE_RESTART_OLD=1", "PLUMB_INSTALL_RUNNING_TRIES=2"), "--yes", "--plumb-binary", h.plumb)
@@ -106,6 +109,7 @@ func TestRestartMustRunNewBinary(t *testing.T) {
 
 // A failed pct exec names itself and stops the run.
 func TestFailedPctExecStops(t *testing.T) {
+	t.Parallel()
 	h := installed(t)
 	os.Remove(filepath.Join(h.state, "calls"))
 	code, _, errOut := h.run(append(asRoot, "FAKE_EXEC_FAIL=systemctl daemon-reload"), "--yes", "--plumb-binary", h.plumb)
@@ -120,6 +124,7 @@ func TestFailedPctExecStops(t *testing.T) {
 // Review nit 1: a new binary in a crash loop fails the run; the journal
 // lines are shown with the password masked.
 func TestCrashLoopFails(t *testing.T) {
+	t.Parallel()
 	h := installed(t)
 	h.newBinary()
 	code, _, errOut := h.run(append(asRoot, "FAKE_CRASH_LOOP=1", "PLUMB_INSTALL_RUNNING_TRIES=2", "PLUMB_INSTALL_STAY_WAIT=0"), "--yes", "--plumb-binary", h.plumb)
@@ -133,6 +138,7 @@ func TestCrashLoopFails(t *testing.T) {
 
 // Review nit 2: a failed rename removes the temp file.
 func TestFailedRenameRemovesTemp(t *testing.T) {
+	t.Parallel()
 	h := installed(t)
 	h.newBinary()
 	code, _, errOut := h.run(append(asRoot, "FAKE_MV_FAIL=1"), "--yes", "--plumb-binary", h.plumb)

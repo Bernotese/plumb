@@ -15,6 +15,7 @@ import (
 // the engine's clean-up grace plus the HTTP shutdown (5 s), else a stop
 // during a build ends in SIGKILL.
 func TestUnitStopTimeoutAboveShutdownGrace(t *testing.T) {
+	t.Parallel()
 	src, err := os.ReadFile("install.sh")
 	if err != nil {
 		t.Fatal(err)
