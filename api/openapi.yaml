@@ -2139,6 +2139,7 @@ paths:
                 confirmed_at: null
                 confirmed_by: null
                 disabled_tokens: 2
+                locked_users: [bob]
                 unknown_guests:
                   - { guest_id: "112", name: web3, type: vm, template: false }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -2179,6 +2180,7 @@ paths:
                 confirmed_at: "2026-11-13T11:10:00Z"
                 confirmed_by: "user:admin"
                 disabled_tokens: 2
+                locked_users: [bob]
                 unknown_guests:
                   - { guest_id: "112", name: web3, type: vm, template: false }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -3793,6 +3795,13 @@ components:
           type: integer
           minimum: 0
           description: Tokens that the restore disabled and nobody enabled yet.
+        locked_users:
+          type: array
+          description: |
+            Names of the users that the restore locked and nobody gave a new password yet, sorted.
+            `POST /users/{name}/password` gives one a one-time password (D-321).
+          items: { type: string }
+          example: [alice, bob]
         unknown_guests:
           type: array
           description: |

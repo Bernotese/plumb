@@ -26,6 +26,7 @@ type restoreView struct {
 	ConfirmedAt     *time.Time         `json:"confirmed_at,omitempty"`
 	ConfirmedBy     *string            `json:"confirmed_by,omitempty"`
 	DisabledTokens  *int               `json:"disabled_tokens,omitempty"`
+	LockedUsers     []string           `json:"locked_users,omitempty"`
 	UnknownGuests   []unknownGuestView `json:"unknown_guests,omitempty"`
 }
 
@@ -59,6 +60,9 @@ func (s *Server) restoreView(r *http.Request, rs store.RestoreState) (restoreVie
 		return v, err
 	}
 	v.DisabledTokens = &n
+	if v.LockedUsers, err = s.st.LockedUsers(r.Context()); err != nil {
+		return v, err
+	}
 	v.UnknownGuests = []unknownGuestView{}
 	guests, err := s.cfg.Plans.UnknownGuests(r.Context())
 	if err != nil {
@@ -82,7 +86,7 @@ func (s *Server) writeRestore(w http.ResponseWriter, status int, v restoreView) 
 	writeJSON(w, status, map[string]any{
 		"restored": true, "restored_mode": v.RestoredMode, "backup_created_at": v.BackupCreatedAt,
 		"restored_at": v.RestoredAt, "confirmed_at": v.ConfirmedAt, "confirmed_by": v.ConfirmedBy,
-		"disabled_tokens": *v.DisabledTokens, "unknown_guests": v.UnknownGuests,
+		"disabled_tokens": *v.DisabledTokens, "locked_users": v.LockedUsers, "unknown_guests": v.UnknownGuests,
 	})
 }
 
