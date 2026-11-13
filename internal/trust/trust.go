@@ -256,7 +256,9 @@ func (c *Client) fetch(ctx context.Context, rawURL string, limit int64) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrFetch, path.Base(rawURL))
 	}
-	resp, err := c.http().Do(req)
+	hc := *c.http()
+	hc.CheckRedirect = sameOrigin
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrFetch, path.Base(rawURL))
 	}
@@ -272,6 +274,24 @@ func (c *Client) fetch(ctx context.Context, rawURL string, limit int64) ([]byte,
 		return nil, fmt.Errorf("%w: %s", ErrTooLarge, path.Base(rawURL))
 	}
 	return b, nil
+}
+
+// errRedirect refuses a redirect to another scheme or host (review R1 of
+// #247): a list must come from the vendor's own server, so a redirect may
+// change the path only.
+var errRedirect = errors.New("trust: redirect to another scheme or host refused")
+
+// sameOrigin is the redirect rule of every fetch: at most 5 redirects, each
+// on the scheme and host of the first request.
+func sameOrigin(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errRedirect
+	}
+	first := via[0].URL
+	if req.URL.Scheme != first.Scheme || req.URL.Host != first.Host {
+		return errRedirect
+	}
+	return nil
 }
 
 func gunzip(b []byte, limit int64) ([]byte, error) {

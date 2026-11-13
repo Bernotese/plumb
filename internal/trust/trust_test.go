@@ -344,3 +344,40 @@ func FuzzVerify(f *testing.F) {
 		}
 	})
 }
+
+// Review R1 of #247: a redirect to another host is refused; one on the
+// same host is followed.
+func TestFetchRedirects(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("foreign"))
+	}))
+	t.Cleanup(other.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/away":
+			http.Redirect(w, r, other.URL+"/list", http.StatusFound)
+		case "/here":
+			http.Redirect(w, r, "/list", http.StatusFound)
+		case "/loop":
+			http.Redirect(w, r, "/loop", http.StatusFound)
+		case "/list":
+			_, _ = w.Write([]byte("list"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{HTTP: srv.Client()}
+	if _, err := c.fetch(context.Background(), srv.URL+"/away", MaxList); !errors.Is(err, ErrFetch) {
+		t.Fatalf("redirect to another host: %v", err)
+	}
+	if _, err := c.fetch(context.Background(), srv.URL+"/loop", MaxList); !errors.Is(err, ErrFetch) {
+		t.Fatalf("redirect loop: %v", err)
+	}
+	b, err := c.fetch(context.Background(), srv.URL+"/here", MaxList)
+	if err != nil || string(b) != "list" {
+		t.Fatalf("same-host redirect: %q %v", b, err)
+	}
+	// The caller's client keeps its own redirect rule.
+	if srv.Client().CheckRedirect != nil {
+		t.Fatal("the caller's client was changed")
+	}
+}
