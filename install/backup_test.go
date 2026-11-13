@@ -191,6 +191,15 @@ func TestCopyTimer(t *testing.T) {
 	if b.stateFile()["backup_storage"] != "backups" {
 		t.Errorf("repair dropped the storage: %v", b.stateFile())
 	}
+	// A repair run while that storage fails its checks only warns; the
+	// timer stays.
+	code, out, errOut := b.run(append([]string{"FAKE_STORAGE_INACTIVE=backups"}, asRoot...), "--yes", "--plumb-binary", b.plumb)
+	if code != 0 || !strings.Contains(out, "fails its checks now; the copy timer is kept") || b.stateFile()["backup_storage"] != "backups" {
+		t.Errorf("repair with an inactive copy storage: %d %s %s %v", code, out, errOut, b.stateFile())
+	}
+	if _, err := os.Stat(b.conf); err != nil {
+		t.Error("the repair removed the timer config")
+	}
 	b.install("--backup-storage", "none")
 	if _, err := os.Stat(b.conf); err == nil || b.stateFile()["backup_storage"] != "" {
 		t.Errorf("none kept the timer: %v", b.stateFile())
