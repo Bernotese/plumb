@@ -167,11 +167,101 @@ func (e *Engine) ProposeAdopt(ctx context.Context, req AdoptRequest, author, rea
 	if err != nil {
 		return store.Plan{}, err
 	}
+	// D-395: a Target of the same name may exist only as a not-adopted
+	// Target of the same guest (the new document replaces it); other
+	// not-adopted Targets that claim this guest are removed by the same
+	// Plan, so one Target claims it.
+	_, base, err := e.base(ctx)
+	if err != nil {
+		return store.Plan{}, err
+	}
+	var drop []DocKey
+	for _, t := range base.Targets() {
+		a, adopted := base.AdoptedOf(t)
+		same := adopted && a.Node == req.Node && a.VMID == req.VMID
+		if t != req.Target && !same {
+			continue
+		}
+		if t == req.Target && !same {
+			return store.Plan{}, fmt.Errorf("%w: a Target %s exists", ErrDocumentExists, t)
+		}
+		bound, err := e.isBound(ctx, t)
+		if err != nil {
+			return store.Plan{}, err
+		}
+		if bound {
+			return store.Plan{}, fmt.Errorf("%w: Target %s holds the guest", ErrGuestBound, t)
+		}
+		if t != req.Target {
+			drop = append(drop, DocKey{Kind: state.KindTarget, Name: t})
+		}
+	}
 	if reason == "" {
 		reason = fmt.Sprintf("adopt the guest %d on %s as Target %s", req.VMID, req.Node, req.Target)
 	}
 	return e.Propose(ctx, Input{Author: author, Reason: reason, Origin: OriginAdopt,
-		Proposal: Proposal{Put: []state.Doc{doc}, Adopt: []AdoptRequest{req}}})
+		// Targets: the same document as a stale one is no render change,
+		// so the adopted Target is named to be planned (D-395).
+		Proposal: Proposal{Put: []state.Doc{doc}, Delete: drop, Targets: []string{req.Target}, Adopt: []AdoptRequest{req}}})
+}
+
+// ErrDocumentExists: the adopt route found a Target of that name that is
+// not a not-adopted Target of the same guest.
+var ErrDocumentExists = errors.New("document-exists")
+
+// ErrAdoptClaimed: a Plan would make two Targets claim one guest (D-395).
+var ErrAdoptClaimed = errors.New("adopt-claimed")
+
+func (e *Engine) isBound(ctx context.Context, target string) (bool, error) {
+	_, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// adoptClaims refuses a Plan after which two Targets claim the same
+// adopted node and VMID (D-395 rule 1). A pair that the base has already
+// (made before this rule) is tolerated, so the head stays plannable and a
+// person can remove one of them.
+func adoptClaims(base, next *state.Set) error {
+	claims := func(s *state.Set) map[[2]string][]string {
+		out := map[[2]string][]string{}
+		for _, t := range s.Targets() {
+			if a, ok := s.AdoptedOf(t); ok {
+				k := [2]string{a.Node, strconv.Itoa(a.VMID)}
+				out[k] = append(out[k], t)
+			}
+		}
+		return out
+	}
+	old := claims(base)
+	for k, names := range claims(next) {
+		if len(names) < 2 {
+			continue
+		}
+		for _, n := range names {
+			if !slices.Contains(old[k], n) {
+				others := slices.DeleteFunc(slices.Clone(names), func(x string) bool { return x == n })
+				return &ProposalError{Target: n, Err: ErrAdoptClaimed,
+					Msg: fmt.Sprintf("guest %s on %s is claimed by Target %s already; one guest has one Target (D-395)", k[1], k[0], strings.Join(others, ", "))}
+			}
+		}
+	}
+	return nil
+}
+
+// notAdoptedIn are the adopted Targets of the base. A Plan that touches
+// one of them without binding it (no adopt request) plans nothing for it
+// when it has no binding (adoptPlans, D-395).
+func notAdoptedIn(base *state.Set) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range base.Targets() {
+		if _, ok := base.AdoptedOf(t); ok {
+			out[t] = true
+		}
+	}
+	return out
 }
 
 // adoptBind is the Run step of an adopt Plan: it reads the guest again
@@ -356,7 +446,7 @@ func adoptedGuestDelete(plans []TargetPlan) bool {
 // refuses an adopt without its request: a Target with spec.adopted is
 // bound only through the adopt route, which checked the guest (D-386).
 // It returns the notes in clear words for the Plan (D-388).
-func adoptPlans(reqs []AdoptRequest, plans []TargetPlan) ([]string, error) {
+func adoptPlans(reqs []AdoptRequest, plans []TargetPlan, inBase map[string]bool) ([]string, error) {
 	var notes []string
 	for i := range plans {
 		tp := &plans[i]
@@ -367,6 +457,14 @@ func adoptPlans(reqs []AdoptRequest, plans []TargetPlan) ([]string, error) {
 					r := reqs[j]
 					tp.Adopt = &r
 				}
+			}
+			if tp.Adopt == nil && inBase[tp.Target] {
+				// D-395: a not-adopted Target (its adopt Run was refused).
+				// Only a new adopt Plan binds it; this Plan does nothing
+				// for it, and says so.
+				tp.Guest, tp.Resources, tp.NotAdopted = "", []ResourceChange{}, true
+				notes = append(notes, fmt.Sprintf("Target %s is not adopted: its adopt Run did not bind the guest (it changed). This Plan does nothing for it; adopt the guest again or delete the Target (D-395).", tp.Target))
+				continue
 			}
 			if tp.Adopt == nil {
 				return nil, &ProposalError{Target: tp.Target, Err: ErrNotAdoptable,

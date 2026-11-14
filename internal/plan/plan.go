@@ -106,6 +106,9 @@ type TargetPlan struct {
 	// spec.adopted of the base for "unbind" and "delete" of an adopted
 	// Target, so the Run knows the VMID and delete_guest.
 	Adopt     *AdoptRequest    `json:"adopt,omitempty"`
+	// NotAdopted: an adopted Target whose adopt Run did not bind (D-395).
+	// This Plan does nothing for it: no guest step, no agent step.
+	NotAdopted bool `json:"not_adopted,omitempty"`
 	Adopted   *state.Adopted   `json:"adopted,omitempty"`
 	Resources []ResourceChange `json:"resources"`
 	// Secrets are the secrets of the desired state of this target, with

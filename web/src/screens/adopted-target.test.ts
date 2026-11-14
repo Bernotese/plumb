@@ -86,3 +86,26 @@ describe("the form of an adopted Target", () => {
     expect(doc.spec.adopted).toEqual({ node: "pve", vmid: 9123, delete_guest: false });
   });
 });
+
+describe("not adopted (T-204, D-395)", () => {
+  it("shows the banner with both actions when the adopt run did not bind", async () => {
+    const api = await adoptedApi(false);
+    const get = api.getTarget;
+    api.getTarget = async (n: string) => {
+      const v = await get(n);
+      return { ...v, status: { ...v.status, not_adopted: true } };
+    };
+    show(TargetForm, { api, name: "web1" });
+    await until(() => document.querySelector("#not-adopted"));
+    const banner = text(el("#not-adopted"));
+    expect(banner).toContain("Not adopted: the guest changed");
+    expect(banner).toContain("adopt the guest again");
+    expect(banner).toContain("never touches the guest");
+    expect(el("#not-adopted a").getAttribute("href")).toContain("adopt");
+  });
+  it("shows no banner for a bound adopted Target", async () => {
+    show(TargetForm, { api: await adoptedApi(false), name: "web1" });
+    await until(() => document.querySelector("#delete-adopted-keep"));
+    expect(document.querySelector("#not-adopted")).toBeNull();
+  });
+});

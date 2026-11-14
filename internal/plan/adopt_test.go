@@ -405,3 +405,150 @@ func TestAdoptBindSecondReadFails(t *testing.T) {
 		}
 	}
 }
+
+// TestAdoptStaleHostSequence (T-204, host finding F5 of T-192, D-395):
+// the guest is renamed between the adopt Plan and its approval. The Run
+// binds nothing and the document stays as a not-adopted Target. Plans that
+// touch it do nothing for it; a second claim of the guest is refused; an
+// adopt under the new name binds and removes the stale Target in one Plan;
+// the delete of a stale Target makes no hypervisor call.
+func TestAdoptStaleHostSequence(t *testing.T) {
+	a := newAdoptEnv(t)
+	writes := func() int {
+		return a.drv.Calls(fake.OpUpdate) + a.drv.Calls(fake.OpCreate) + a.drv.Calls(fake.OpDelete) + a.drv.Calls(fake.OpPower)
+	}
+	id, u := a.person("wiki")
+	p, err := a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, id), Digest: u.Digest}, "user:admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.drv.RenameGuest(id, "wiki-new") // a person renames it before the approval
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if run := a.lastRun(t); run.Status != "failed" {
+		t.Fatalf("run %s", run.Status)
+	}
+	if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("binding: %v", err)
+	}
+	before := writes()
+
+	// An unrelated Plan that touches the stale Target (named, or its
+	// document changed by a token) plans and runs nothing for it.
+	_, set, _ := a.e.base(a.ctx)
+	var stale state.Doc
+	for _, d := range set.Docs() {
+		if d.Kind == state.KindTarget && d.Name == "wiki" {
+			stale = d
+		}
+	}
+	more := state.Doc{Kind: stale.Kind, Name: stale.Name, Spec: []byte(strings.Replace(string(stale.Spec), `"cores":2`, `"cores":4`, 1))}
+	for _, in := range []Input{
+		{Author: "token:tok_qa", Reason: "touch", Proposal: Proposal{Targets: []string{"wiki"}}},
+		{Author: "token:tok_qa", Reason: "cores", Proposal: Proposal{Put: []state.Doc{more}}},
+	} {
+		p, err := a.e.Propose(a.ctx, in)
+		if err != nil {
+			t.Fatalf("%s: %v", in.Reason, err)
+		}
+		var tps []TargetPlan
+		json.Unmarshal(p.Changes, &tps)
+		if len(tps) != 1 || !tps[0].NotAdopted || tps[0].Guest != "" || len(tps[0].Resources) != 0 ||
+			!strings.Contains(strings.Join(adoptNotes(t, p), " "), "is not adopted") {
+			t.Fatalf("%s: %s %v", in.Reason, p.Changes, adoptNotes(t, p))
+		}
+		if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+			t.Fatal(err)
+		}
+		a.e.Wait()
+		if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%s bound the stale Target", in.Reason)
+		}
+	}
+	if writes() != before {
+		t.Fatalf("Plans for the stale Target wrote to the hypervisor: %d", writes()-before)
+	}
+
+	// Rule 1: a second Target never claims the same guest.
+	nu, _ := a.drv.InspectGuest(a.ctx, id)
+	other, err := a.e.AdoptDoc(a.ctx, AdoptRequest{Target: "wiki-new", Node: "pve", VMID: vmidOf(t, id), Digest: nu.Digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.e.Propose(a.ctx, Input{Author: "user:admin", Reason: "second claim", Origin: OriginAdopt,
+		Proposal: Proposal{Put: []state.Doc{other}, Adopt: []AdoptRequest{{Target: "wiki-new", Node: "pve", VMID: vmidOf(t, id), Digest: nu.Digest}}}}); !errors.Is(err, ErrAdoptClaimed) {
+		t.Fatalf("second claim: %v", err)
+	}
+
+	// Adopt again under the new name: the same Plan removes the stale one.
+	p, err = a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki-new", Node: "pve", VMID: vmidOf(t, id), Digest: nu.Digest}, "user:admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.HumanOnly, HumanOnlyAcceptGuestData) {
+		t.Fatalf("the new adopt is not human-only: %v", p.HumanOnly)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if b, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki-new"); err != nil || b.Ref != string(id) {
+		t.Fatalf("binding %+v %v", b, err)
+	}
+	_, set, _ = a.e.base(a.ctx)
+	if slices.Contains(set.Targets(), "wiki") {
+		t.Fatal("the stale Target stays")
+	}
+	if writes() != before {
+		t.Fatal("the adoption wrote to the hypervisor")
+	}
+}
+
+// D-395: adopt again under the same name (the guest was renamed back)
+// replaces the stale Target; the delete of a stale Target is no
+// hypervisor call and never touches the guest.
+func TestAdoptStaleSameNameAndDelete(t *testing.T) {
+	a := newAdoptEnv(t)
+	id, u := a.person("wiki")
+	p, _ := a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, id), Digest: u.Digest}, "user:admin", "")
+	a.drv.RenameGuest(id, "x")
+	a.e.Approve(a.ctx, p.ID, "user:admin", nil)
+	a.e.Wait()
+	a.drv.RenameGuest(id, "wiki")
+	nu, _ := a.drv.InspectGuest(a.ctx, id)
+	p, err := a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, id), Digest: nu.Digest}, "user:admin", "")
+	if err != nil {
+		t.Fatalf("adopt again, same name: %v", err)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); err != nil {
+		t.Fatalf("not bound: %v", err)
+	}
+
+	// A second stale Target: its delete makes no call and the guest stays.
+	id2, u2 := a.person("db")
+	p, _ = a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "db", Node: "pve", VMID: vmidOf(t, id2), Digest: u2.Digest}, "user:admin", "")
+	a.drv.RenameGuest(id2, "db2")
+	a.e.Approve(a.ctx, p.ID, "user:admin", nil)
+	a.e.Wait()
+	calls := a.drv.Calls(fake.OpDelete) + a.drv.Calls(fake.OpObserve)
+	p, err = a.e.Propose(a.ctx, Input{Author: "token:tok_qa", Reason: "drop", Proposal: Proposal{Delete: []DocKey{{Kind: state.KindTarget, Name: "db"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if n := a.drv.Calls(fake.OpDelete) + a.drv.Calls(fake.OpObserve); n != calls {
+		t.Fatalf("the delete of a stale Target called the hypervisor %d times", n-calls)
+	}
+	if _, err := a.drv.InspectGuest(a.ctx, id2); err != nil {
+		t.Fatalf("the guest is gone: %v", err)
+	}
+}
