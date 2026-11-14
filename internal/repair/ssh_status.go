@@ -27,7 +27,9 @@ func (s *Service) guestOf(ctx context.Context, target string) (string, error) {
 	if errors.Is(err, store.ErrNotFound) {
 		return "", nil
 	}
-	return b.Ref, err
+	// The guest of this binding generation (T-209): pins and reports of an
+	// older binding with the same name or VMID never count.
+	return b.GuestKey(), err
 }
 
 // OnReport takes the checked repair report of a bound Target (D-384): it

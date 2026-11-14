@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -294,7 +295,7 @@ func TestRepairHostKeyChangedRefused(t *testing.T) {
 	if _, sent, _, err := send(e, newFP); err != nil || !sent {
 		t.Fatalf("accepted key: sent %v err %v", sent, err)
 	}
-	pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101")
+	pins := e.pinsOf("web1", "vm/101")
 	if len(pins) != 2 || (pins[0] != newFP && pins[1] != newFP) {
 		t.Fatalf("pins %v", pins)
 	}
@@ -314,7 +315,7 @@ func TestRepairPinsFromFirstReportOnly(t *testing.T) {
 	e.report("web1", nil, 22, a)
 	e.report("web1", nil, 22, b)
 	e.report("web1", nil, 22, b)
-	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101"); len(pins) != 1 || pins[0] != a {
+	if pins := e.pinsOf("web1", "vm/101"); len(pins) != 1 || pins[0] != a {
 		t.Fatalf("pins %v", pins)
 	}
 	st, _ := e.s.Status(e.ctx, "web1")
@@ -336,10 +337,10 @@ func TestRepairPinsFromFirstReportOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.report("web1", nil, 22, b)
-	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/102"); len(pins) != 1 || pins[0] != b {
+	if pins := e.pinsOf("web1", "vm/102"); len(pins) != 1 || pins[0] != b {
 		t.Fatalf("pins of the new guest %v", pins)
 	}
-	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101"); len(pins) != 0 {
+	if pins := e.pinsOf("web1", "vm/101"); len(pins) != 0 {
 		t.Fatalf("old pins stay %v", pins)
 	}
 }
@@ -422,7 +423,7 @@ func TestRepairSharedHostKey(t *testing.T) {
 	// web1 reports the same host key (a clone, or a hostile guest).
 	e.bind("web1", "vm/101")
 	e.report("web1", []string{e.currentID()}, f.port(), f.fp())
-	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101"); len(pins) != 0 {
+	if pins := e.pinsOf("web1", "vm/101"); len(pins) != 0 {
 		t.Fatalf("a shared key was pinned: %v", pins)
 	}
 	st, _ := e.s.Status(e.ctx, "web1")
@@ -438,7 +439,7 @@ func TestRepairSharedHostKey(t *testing.T) {
 	}
 	// A pin made before (or by hand) that another Target holds too is
 	// refused in the session before anything is sent.
-	e.st.AddHostKeyPin(e.ctx, "web1", "vm/101", f.fp(), "test", e.now)
+	e.st.AddHostKeyPin(e.ctx, "web1", e.guestKey("web1"), f.fp(), "test", e.now)
 	_, sent, _, err := send(e, "")
 	if !errors.Is(err, ErrHostKey) || !strings.Contains(err.Error(), "Target db1") || sent || len(f.stdin) != 0 {
 		t.Fatalf("shared pin: sent %v err %v", sent, err)
@@ -661,5 +662,75 @@ func TestRepairKeyForgottenWithValidKeyStays(t *testing.T) {
 	}
 	if rows, _ := e.st.LeftBehind(e.ctx); len(rows) != 1 {
 		t.Fatalf("rows %+v", rows)
+	}
+}
+
+// pinsOf returns the pins of target's guest ref (T-209: pins belong to a
+// binding generation). For a ref that is not the current one it returns
+// the pins of every generation so far, so a test sees leftovers.
+func (e *env) pinsOf(target, ref string) []string {
+	e.t.Helper()
+	b, err := e.st.GetBinding(e.ctx, state.KindTarget, target)
+	if err == nil && b.Ref == ref {
+		pins, _ := e.st.HostKeyPins(e.ctx, target, b.GuestKey())
+		return pins
+	}
+	var all []string
+	for g := int64(0); g <= b.Gen+10; g++ {
+		p, _ := e.st.HostKeyPins(e.ctx, target, fmt.Sprintf("%s@%d", ref, g))
+		all = append(all, p...)
+	}
+	return all
+}
+
+func (e *env) guestKey(target string) string {
+	e.t.Helper()
+	b, err := e.st.GetBinding(e.ctx, state.KindTarget, target)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return b.GuestKey()
+}
+
+// T-209 (host finding F10): the host case. The adopted guest 9100 is
+// deleted as "wiki" and adopted again as "wiki2": its keys are pinned for
+// wiki2, and repair is not off for host-key-shared or no-pin. A reused
+// name with another guest starts with that guest's first report.
+func TestRepairPinsAfterReadopt(t *testing.T) {
+	e := newEnv(t)
+	fp := "SHA256:" + strings.Repeat("K", 43)
+	id := e.currentID()
+	e.bind("wiki", "9100")
+	e.report("wiki", []string{id}, 22, fp)
+	if pins := e.pinsOf("wiki", "9100"); len(pins) != 1 {
+		t.Fatalf("first pins %v", pins)
+	}
+	// The delete step: revoke, then drop the binding.
+	if err := e.st.RevokeAgent(e.ctx, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.DeleteBinding(e.ctx, state.KindTarget, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	e.bind("wiki2", "9100")
+	e.report("wiki2", []string{id}, 22, fp)
+	if pins := e.pinsOf("wiki2", "9100"); len(pins) != 1 || pins[0] != fp {
+		t.Fatalf("pins after re-adopt %v", pins)
+	}
+	st, err := e.s.Status(e.ctx, "wiki2")
+	if err != nil || st == nil {
+		t.Fatalf("status %+v %v", st, err)
+	}
+	for _, r := range st.Reasons {
+		if r == "host-key-shared" || r == "no-pin" {
+			t.Fatalf("reasons %v", st.Reasons)
+		}
+	}
+	// The name wiki again, now for another guest: its own first report pins.
+	other := "SHA256:" + strings.Repeat("O", 43)
+	e.bind("wiki", "9200")
+	e.report("wiki", []string{id}, 22, other)
+	if pins := e.pinsOf("wiki", "9200"); len(pins) != 1 || pins[0] != other {
+		t.Fatalf("pins of the reused name %v", pins)
 	}
 }

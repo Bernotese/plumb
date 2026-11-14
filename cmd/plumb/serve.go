@@ -297,9 +297,10 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	eng, err = plan.New(plan.Config{
 		Restore: restore,
 		Store:   st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
-		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
-		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
-		AddrStable: devAddrStable(f.devDemo), DiskLimitPercent: limit,
+		OnDrift:         func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
+		OnTargetDeleted: func(ctx context.Context, target, reason string) error { return iss.TargetDeleted(ctx, target, reason) },
+		OnPlanDone:      func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
+		AddrStable:      devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
 		// The transport comes with T-191; without it a repair is not ready.
 		Repair: repairConfig(ctx, log, rep, lk, agentURL(f.hosts, f.agentListen)),
