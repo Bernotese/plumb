@@ -259,8 +259,8 @@ func TestForgetTargetMarks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.ForgetTargetMarks(ctx, "web1"); err != nil {
-		t.Fatal(err)
+	if n, err := s.ForgetTargetMarks(ctx, "web1"); err != nil || n != 2 {
+		t.Fatalf("dropped %d marks, %v; want 2", n, err)
 	}
 	var flags int
 	s.db.QueryRow(`SELECT count(*) FROM guest_value_flag`).Scan(&flags)

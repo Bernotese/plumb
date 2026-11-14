@@ -339,6 +339,12 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	if err := eng.Recover(ctx); err != nil {
 		return err
 	}
+	// The Issues and marks of Targets deleted before D-397 (T-212).
+	if swept, err := iss.SweepDeletedTargets(ctx); err != nil {
+		return fmt.Errorf("issues of deleted Targets: %w", err)
+	} else if len(swept) > 0 {
+		log.Info("ended the Issues of deleted Targets", "targets", len(swept))
+	}
 	if password, created, err := api.BootstrapAdmin(ctx, st, api.DefaultPasswordParams); err != nil {
 		return err
 	} else if created {

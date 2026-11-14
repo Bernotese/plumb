@@ -20,13 +20,21 @@ import (
 // for their normal retention (D-331) and still match a copy into any
 // Target. The engine calls it after the delete step.
 func (s *Service) TargetDeleted(ctx context.Context, target, reason string) error {
+	_, err := s.endTarget(ctx, target, reason)
+	return err
+}
+
+// endTarget does TargetDeleted and returns how many Issues and marks it
+// ended (T-212: the start sweep logs only real work).
+func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, error) {
+	var n int64
 	list, err := s.st.Issues(ctx, target)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	flagged, err := s.st.GuestValueFlagged(ctx, []string{target}, s.st.Now())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, iss := range list {
 		if iss.Status != store.IssueOpen {
@@ -36,12 +44,14 @@ func (s *Service) TargetDeleted(ctx context.Context, target, reason string) erro
 			continue // the end of the flag resolves it (PruneGuestValues)
 		}
 		if err := s.st.ResolveIssue(ctx, iss.ID, "gone", "system"); err != nil {
-			return err
+			return n, err
 		}
 		if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: " + reason + "."}); err != nil {
-			return err
+			return n, err
 		}
 		s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": "gone", "reason": reason})
+		n++
 	}
-	return s.st.ForgetTargetMarks(ctx, target)
+	m, err := s.st.ForgetTargetMarks(ctx, target)
+	return n + m, err
 }
