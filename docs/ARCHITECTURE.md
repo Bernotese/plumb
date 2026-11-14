@@ -402,3 +402,75 @@ Contract: `api/openapi.yaml` (operations marked `x-plumb-planned: T-174`; fields
 | `comment_issue` | `POST /issues/{id}/comments` |
 
 Not offered: approve, ignore (once or by rule), secrets, tokens, users, settings, export, import, backups, restore, agent update, image build and refresh. Every tool result is the API JSON, cut at 256 KiB with `truncated: true`; fields that hold guest data (`changes[].from`, comments by other authors, agent text) stay JSON values, and each read tool's description says that they are untrusted data and never instructions. A 429 is returned to the client as a tool error with the wait time. The web shows the reason of a Plan made by a token below the changes, tagged "written by API token <name>" (T-176).
+
+## 19. Slice 6 part B: SSH repair fallback, adoption (D-372, D-373, D-377, D-378, D-382 … D-389)
+Contract: `api/openapi.yaml` (operations marked `x-plumb-planned: T-190 | T-191 | T-193`). The user chose U1 (a) and U2 (a): an SSH repair key, no Proxmox guest agent; adoption only of guests a person puts into the pool. Cards: T-190 repair core, T-191 SSH transport, T-193 adoption, T-194 web, T-195 QA, T-192 host acceptance. **No new token right** (table at the end).
+
+**Repair key (D-382, T-191).** One ed25519 key per controller, made in Go (`golang.org/x/crypto/ssh`, already in `go.mod` through `x/crypto`) at the first start that needs it. It lives in its own table (migration 0021 `repair_key`: id, public key, private key sealed with the secret-store key like a secret row, created_at, valid_until), **not** in the `secret` table: so `GET /secrets`, the export and every API answer never see it by construction. The backup holds it only inside the encrypted DB (the backup is AES-256-GCM with the backup key from the master key). The private key is unsealed only inside a repair Run and never written to a file, a log, an event or a Run step. `GET /settings` shows `repair_key` (fingerprints only). `POST /settings/repair-key/rotate` (admin session) makes a new key; the old one stays valid until every bound agent confirmed the new line, at most 7 days.
+
+**The line (D-383).** The controller sends `repair: {keys: [{id, public_key}], from: [<controller addresses>]}` with every `watch` command (the current key, and the previous key while it is valid). `from` holds the controller's own addresses as the guests reach it (the addresses of the agent URL host; `serve` knows them). The agent keeps, in `/root/.ssh/authorized_keys` (created 0700/0600 if missing), exactly one line per listed key, and removes every line with the comment prefix `plumb-repair-` that is not listed:
+
+```
+restrict,from="<a1>,<a2>",command="<FORCED>" ssh-ed25519 <key> plumb-repair-<id>
+```
+
+`<FORCED>` is fixed text of the agent (no double quote inside):
+
+```
+umask 077; d=/run/plumb-repair; rm -rf $d; mkdir -m 700 $d && head -c 67108864 | tar -x -f - -C $d --no-same-owner --no-same-permissions install.sh plumb-agent plumb-agent.sha256 ca.pem enroll.json && cd $d && sha256sum -c --status plumb-agent.sha256 && sh ./install.sh; r=$?; cd /; rm -rf $d; exit $r
+```
+
+It needs GNU `tar`, coreutils and `/run` (Debian and Ubuntu, the supported guests). `restrict` turns off every forwarding, PTY and `~/.ssh/rc`; `from=` limits the source; `command=` ignores what the client asks to run. The agent writes the line at enrollment and at every start, so every guest whose agent ran once has it.
+
+**The bundle (D-383, T-190).** A ustar archive on the SSH stdin, at most 64 MiB, with exactly these members: `plumb-agent` (the binary this controller serves at `GET /agent/v1/binary`), `plumb-agent.sha256`, `ca.pem`, `enroll.json` (`{url, token}`: the agent URL and a new one-time enrollment token, 15 min, one use, D-025), `install.sh` (the install script embedded in the controller). Nothing in it comes from an API request; the action set is fixed by the Plumb release. `install.sh` is one script for two modes: with `plumb-agent` next to it (repair) it installs that binary; without it (install command, D-387) it fetches `GET /agent/v1/binary` with the CA. Both modes then write `/etc/plumb-agent/{ca.pem,agent.json}` (`agent.json` names `token_file: /etc/plumb-agent/enroll.token`, mode 0600), install the agent unit, run `systemctl unmask`, `daemon-reload`, `enable` and `restart plumb-agent.service`. The agent deletes `enroll.token` after a successful enrollment. `GET /agent/v1/install.sh` on the agent listener serves the same script (no auth, rate-limited like `/binary`).
+
+**Readiness and host keys (D-384, T-191).** The agent sends a report `repair` at enrollment, at every start and when one of its parts changes: `{lines: [<key id>…], sshd: {status: ok|absent|root-refused, port}, host_keys: ["SHA256:…" …]}` (`sshd -T` for `permitrootlogin` (`yes`, `prohibit-password`, `without-password` or `forced-commands-only` is ok) and `port`; the fingerprints of `/etc/ssh/ssh_host_*_key.pub`; at most 8 keys, each ≤ 64 bytes, guest data with the size and schema limits of every report). The controller pins the host keys of the first report after a new binding (migration 0021 `guest_host_key`: target, guest id, fingerprint, pinned_at, pinned_by). The pins are trusted because they come over the agent's pinned TLS link, never from an SSH connection (no SSH TOFU). A later report with other keys never changes the pins: the new ones show in `TargetStatus.repair.host_keys_seen` and in the event `target.hostkeys`; a person accepts one only through `accept_host_key` of an approved repair Plan. A new guest on the Target (new binding) clears the pins. `TargetStatus.repair.state` is `ready` only when a line holds a valid key, `sshd` is ok and a pin exists; `off` lists the reasons, also `firewall` when the Target's `firewall` resource has `ssh_sources` without the controller address. The starter Block `ssh-hardening` gets `forced-commands-only` as a value of `permit_root_login`; `no` gives `root-refused`.
+
+**The repair Run (D-372, D-385, T-190).** `POST /targets/{name}/repair` makes the Plan (origin `repair`, risk `disruptive`, human-only `repair`); the server checks again at approval that the agent is still offline. The Run: makes the enrollment token (this revokes the old credential, `PutEnrollToken`), builds the bundle, connects as `root` with the repair key (public key auth only, no agent forwarding, no PTY, no env, no subsystem) to the Target's static `ip`, else to each address the agent last reported (D-216: guest data, so only the host key pin authenticates the peer), on the reported `sshd` port, 10 s connect timeout, 120 s for the session. The host key callback accepts only a pinned fingerprint (or the one the Plan accepted, which it then pins). It sends the bundle on stdin and closes it. Exit 0 and a new hello with the new credential within 5 minutes = success; else the Run fails and the token expires. The Run step keeps the exit code and at most 4 KiB of stdout and stderr together, with control characters escaped; nothing is parsed. Events `repair.finished` `{result}`. An LXC without `sshd`, a guest that never had the line, or a person who prefers it: `POST /targets/{name}/install-command` (D-387).
+
+**Install command (D-387, T-193).** Admin session only (it holds a credential). For a Target whose guest exists. It makes a one-time enrollment token (revokes the old credential) and answers once (`no-store`) with:
+
+```
+umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'
+<the controller CA PEM>
+PLUMB_CA
+curl -fsS --cacert /etc/plumb-agent/ca.pem https://<agent host>:<agent port>/agent/v1/install.sh | PLUMB_URL=https://<agent host>:<agent port> PLUMB_ENROLL_TOKEN=<token> sh
+```
+
+The script writes the token to `/etc/plumb-agent/enroll.token` and continues as above. The event `target.install_command` names the Target and the actor, never the token.
+
+**Adoption (D-373, D-386, T-193).** `GET /guests/unmanaged` reads `GET /pools?poolid=plumb` and, for each member that is not a Target binding, Image binding, build guest or template, its config (`GET …/config`, which holds `digest`) and `status/current`. `cipassword`, `sshkeys` and `description` are dropped right after the read: only `present` is kept, never a value in memory past the request, a document, a Plan, an event or a log. `adoptable` needs a layout that a Target can describe: VM: exactly one disk `scsi0` and one NIC `net0` without a tag; LXC: `rootfs` and `net0` only, unprivileged; the disk on the Target disk storage of the install; the bridge one that the install has an ACL line for; a name that is a valid document name. `POST /targets/{name}/adopt` makes a Plan (origin `adopt`, human-only `accept-guest-data`, risk `reversible`) that puts the Target: `type`, `guest` (`cores`, `memory`, `disk`, `bridge`, and `ip`, `gateway`, `user` only when Proxmox has them; `ssh_keys` never), `spec.adopted: {node, vmid, delete_guest: false}` and no `image` (`image` is optional only with `adopted`). The Run checks node, VMID, name and `digest` again, then binds; it writes nothing to Proxmox. For an adopted Target: a create-only field that the Target leaves out is not compared (no drift); Plumb never writes `description`, `smbios1`, `cicustom` or `sshkeys`; the VMID may be outside Plumb's own range (`own()` accepts an adopted binding). The UI says that the guest is not sealed (old SSH host keys, machine-id and root users stay, D-340). The agent comes by the install command.
+
+**Delete of an adopted Target (D-388, T-193).** With `spec.adopted.delete_guest: false` (the default), the Run does not call `Driver.Delete`: it sends the agent the command `unbind` (remove the `plumb-repair-` lines, disable and remove the unit, the binary and `/etc/plumb-agent`), revokes the credential and drops the binding; the guest stays in the pool and shows again in `GET /guests/unmanaged`. An offline agent: the Run says so and names the two commands that a person runs. Setting `delete_guest: true` is human-only `adopted-guest-delete` and risk `destructive`; the Plan says in clear words "Deleting this Target deletes the Proxmox guest <vmid> and its disks." A Target delete with `delete_guest: true` is human-only `adopted-guest-delete` too and deletes the guest as for any Target.
+
+**Agent protocol additions (T-190, T-191).** `watch.repair` (keys, from); report type `repair` (above); command `unbind`; agent subcommand none (the forced command and `install.sh` do the work). Capability `repair:v1` in the hello; an agent without it gets no repair line and `TargetStatus.repair` is `off` `no-line` (an agent update fixes it).
+
+**Proxmox calls of part B and the ACL line that allows each (D-389).** Lines of `install/install.sh:360-386`; nothing new.
+
+| Call | Used by | ACL line |
+|---|---|---|
+| `GET /pools?poolid=plumb` | unmanaged list | `/pool/plumb` PlumbGuests (`Pool.Audit`) |
+| `GET /nodes/{n}/qemu/{id}/config`, `…/lxc/{id}/config` | unmanaged list, adopt Run | `/pool/plumb` PlumbGuests (`VM.Audit`, propagated to the pool members) |
+| `GET …/status/current` | unmanaged list, repair precheck | `/pool/plumb` PlumbGuests (`VM.Audit`) |
+| config writes (`POST …/qemu/{id}/config`, `PUT …/lxc/{id}/config`, resize, power) | day 2 of an adopted Target, as for every Target | `/pool/plumb` PlumbGuests (`VM.Config.*`, `VM.PowerMgmt`) + `/storage/<disk>` PlumbDisk for a grow |
+| `DELETE …?purge=1&destroy-unreferenced-disks=1` | only with `delete_guest: true` | `/pool/plumb` PlumbGuests (`VM.Allocate`) |
+| SSH to the guest | repair Run | no Proxmox call (the controller LXC reaches the guest on the bridge) |
+
+The guest must be in the pool for every row: a guest outside it is invisible to the token (T-139 §2), so a person's move into the pool is the only way in (D-378).
+
+**Rules of T-140 §2, §3 and the test that proves each (T-195 unless named).**
+
+| Rule | Test |
+|---|---|
+| repair key never in an export, a log, an event, an API answer | export with and without passphrase, `GET /secrets`, `GET /settings`, all events and the log of a repair Run: grep for the private key bytes and their base64 → 0 hits |
+| repair key only encrypted in the backup | decrypt-less scan of a backup file: no key bytes; restore of the backup: the same key works |
+| no TOFU: host key pinned from the agent link; a changed key refuses | fake SSH server with another host key → the Run fails before it sends anything; with `accept_host_key` of an approved Plan → it pins and sends |
+| repair is a fixed action set | the bundle members are exactly the five names; no request field reaches the bundle (fuzz the request) |
+| the line has `restrict`, `from=`, `command=`; a forwarding request is refused | CI guest test (VM job, T-191): read the line; `ssh -L` / `-A` / a PTY request fail |
+| guest output untrusted | a forced command that prints 1 MiB with escapes → the Run step holds ≤ 4 KiB, escaped |
+| repair, adopt and `delete_guest` Plans are human-only | `apply` token approve → 403 `human-required` for each |
+| wrong guest (VMID reuse, rename, config change) between Plan and Run | fake driver swaps name or digest → the adopt Run refuses and binds nothing |
+| adopted Target delete keeps the guest unless `delete_guest` | fake driver: no `Delete` call; with `delete_guest: true` one call |
+| `cipassword`, `sshkeys`, `description` never stored or shown | fake PVE config with marked values → no hit in the DB file, events, logs, API answers |
+| the line goes on unbind and rotation | CI guest test: after `unbind` no `plumb-repair-` line; after a rotation only the new one |
+| first report size and schema limits | an oversized or malformed `repair` report → refused, nothing pinned |

@@ -1115,6 +1115,228 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /targets/{name}/repair:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [targets]
+      operationId: repairTarget
+      x-plumb-planned: T-190
+      x-plumb-rate: proposal
+      summary: Propose a repair of a dead agent over SSH
+      description: |
+        SSH repair fallback (D-372, D-377, D-382 … D-385, ARCHITECTURE §19). Makes a Plan of origin
+        `repair`, risk `disruptive`, human-only reason `repair`: only a human session with role
+        `apply` or higher approves it. The Run connects from the controller to the guest over SSH
+        with the Plumb repair key, checks the host key against the pins of this Target, and sends
+        the fixed repair bundle (the agent binary of this controller, the CA, a new one-time
+        enrollment token, the install script); the forced command of the guest's key line installs
+        and restarts the agent. The old credential is revoked when the Run makes the token.
+        Nothing else runs in the guest, and no field of this request changes the bundle.
+
+        409 `repair-not-needed`: the agent is online, the guest is not running, or the agent has
+        been offline for less than 10 minutes (and no `agent:silent` Issue is open). 409
+        `repair-not-ready`: the Target has no repair line, no host key pin, or its `sshd` refuses
+        root with a forced command (`TargetStatus.repair` says which); use
+        `POST /targets/{name}/install-command` instead. `accept_host_key` takes a fingerprint
+        that `TargetStatus.repair.host_keys_seen` shows as new; the Plan shows it, and the Run
+        pins it only after a person approved the Plan.
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepairRequest" }
+            example: { reason: The agent of db1 is dead since the disk filled up. }
+      responses:
+        "201":
+          description: The Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 31
+                origin: repair
+                issue_id: null
+                status: pending
+                risk: disruptive
+                reason: The agent of db1 is dead since the disk filled up.
+                author: "token:tok_claude"
+                created_at: "2026-11-14T10:00:00Z"
+                base_revision: 40
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                human_only: [repair]
+                targets:
+                  - target: db1
+                    resources: []
+                warnings: []
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /targets/{name}/install-command:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [targets]
+      operationId: createInstallCommand
+      x-plumb-planned: T-193
+      summary: A one-time command that installs the agent by hand
+      description: |
+        Human admin session only (D-387). For a Target whose guest exists and whose agent is
+        offline or was never installed (an adopted guest, an LXC without `sshd`, a guest without
+        the repair line). The answer holds, once and `no-store`, a shell command for a person to
+        run as root in the guest: it writes the controller CA, fetches the install script from
+        `GET /agent/v1/install.sh` of the agent listener with that CA, and enrolls with a new
+        one-time token (15 minutes, one use). Making the token revokes the old credential of the
+        Target at once. The command holds no other secret. Event `target.install_command`
+        (no token).
+      security:
+        - session: []
+      responses:
+        "201":
+          description: The command, shown once.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstallCommand" }
+              example:
+                command: "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA' … PLUMB_CA … | PLUMB_ENROLL_TOKEN=<one-time token> sh"
+                expires_at: "2026-11-14T10:15:00Z"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /targets/{name}/adopt:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [targets]
+      operationId: adoptTarget
+      x-plumb-planned: T-193
+      x-plumb-rate: proposal
+      summary: Propose to adopt a guest of the pool as a new Target
+      description: |
+        Adoption (D-373, D-378, D-386, ARCHITECTURE §19). `{name}` is the new Target. The guest
+        must be in `GET /guests/unmanaged` with `adoptable: true`. Makes a Plan of origin `adopt`,
+        human-only `accept-guest-data`, that puts a Target with `spec.adopted: {node, vmid,
+        delete_guest: false}` and the guest fields read from Proxmox (never `cipassword`,
+        `sshkeys` or the description). The Run checks node, VMID, name and the config `digest`
+        again before it binds the guest, and writes nothing to Proxmox. 409 `guest-changed`: the
+        digest or the name differs from the request; 409 `not-adoptable`; 409 `guest-bound`: a
+        Target or Image already holds the guest; 409 `document-exists`: a Target of that name
+        exists.
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdoptRequest" }
+            example: { node: pve, vmid: 9123, digest: 3f1c0d5e8a9b7c6d5e4f3a2b1c0d9e8f7a6b5c4d, reason: Bring the old wiki VM under Plumb. }
+      responses:
+        "201":
+          description: The Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 31
+                origin: adopt
+                issue_id: null
+                status: pending
+                risk: reversible
+                reason: Bring the old wiki VM under Plumb.
+                author: "token:tok_claude"
+                created_at: "2026-11-14T10:00:00Z"
+                base_revision: 40
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                human_only: [accept-guest-data]
+                targets:
+                  - target: wiki
+                    resources: []
+                warnings: []
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /guests/unmanaged:
+    get:
+      tags: [targets]
+      operationId: listUnmanagedGuests
+      x-plumb-planned: T-193
+      x-plumb-rate: read
+      summary: Guests of the pool that no Target or Image holds
+      description: |
+        Guests that a person put into the pool `plumb` and that are no Target, no Image binding,
+        no build guest and no template (D-373, D-378). Plumb never moves a guest into the pool.
+        Secrets of the Proxmox config are never read into the answer: `cipassword`, `sshkeys` and
+        the description show only as `present` (D-340). `adoptable: false` comes with `reasons`.
+      responses:
+        "200":
+          description: The guests.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/UnmanagedGuest" }
+              example:
+                items:
+                  - node: pve
+                    vmid: 9123
+                    name: wiki
+                    type: vm
+                    power: running
+                    digest: 3f1c0d5e8a9b7c6d5e4f3a2b1c0d9e8f7a6b5c4d
+                    adoptable: true
+                    reasons: []
+                    warnings: [not-sealed, no-cloud-init]
+                    guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0 }
+                    present: { cipassword: false, sshkeys: false, description: true }
+                  - node: pve
+                    vmid: 9124
+                    name: old-db
+                    type: lxc
+                    power: stopped
+                    digest: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+                    adoptable: false
+                    reasons: [privileged, disk-layout]
+                    warnings: [not-sealed]
+                    guest: { cores: 1, memory: 512, disk: 8, bridge: vmbr0 }
+                    present: { cipassword: false, sshkeys: true, description: false }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+
   /targets/{name}/agent-update:
     parameters:
       - $ref: "#/components/parameters/DocName"
@@ -2659,6 +2881,37 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/Unprocessable" }
 
+  /settings/repair-key/rotate:
+    post:
+      tags: [settings]
+      operationId: rotateRepairKey
+      x-plumb-planned: T-191
+      summary: Make a new repair SSH key
+      description: |
+        Human admin session only (D-382). Makes a new ed25519 repair key. Online agents get the new
+        public key with their next watch list, write the new line and remove the old one. The old
+        key stays valid for a repair until every bound agent confirmed the new line, at most 7
+        days; then it is deleted. 409 `rotation-running` while an old key is still valid. Event
+        `repair_key.rotated` (fingerprints only).
+      security:
+        - session: []
+      responses:
+        "200":
+          description: The repair key state after the rotation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepairKeyView" }
+              example:
+                fingerprint: "SHA256:Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5"
+                created_at: "2026-11-14T10:00:00Z"
+                previous:
+                  fingerprint: "SHA256:b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2w"
+                  valid_until: "2026-11-21T10:00:00Z"
+                  waiting: 3
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /events:
     get:
       tags: [events]
@@ -3382,6 +3635,10 @@ components:
           properties:
             network: { type: boolean }
             firewall: { type: boolean }
+        repair: { $ref: "#/components/schemas/RepairState" }
+        adopted:
+          type: boolean
+          description: The Target holds an adopted guest (D-386); its delete keeps the guest unless `spec.adopted.delete_guest` is true. Missing before T-193.
         power: { type: string, enum: [running, stopped, unknown] }
         last_seen: { $ref: "#/components/schemas/NullableTime" }
         agent_version:
@@ -3635,7 +3892,7 @@ components:
         id: { $ref: "#/components/schemas/Id" }
         origin:
           type: string
-          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update, pin_refresh]
+          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update, pin_refresh, repair, adopt]
           description: |
             What made the Plan. `pin_refresh`: `POST /images/{name}/refresh` or the build schedule
             changes only the pin of an Image (D-335). `build`: a manual or scheduled image build with no document
@@ -3702,13 +3959,15 @@ components:
             strictly newer than the last accepted one, or to a pin that this Image used before
             (D-335). `firewall-off`: the Plan removes a `firewall` resource from a Target
             (`state: absent`, or the resource leaves the render, also by a Block, Target or
-            override change), always, whatever the origin (D-368).
+            override change), always, whatever the origin (D-368). `repair`: a Plan of origin
+            `repair` (D-372). `adopted-guest-delete`: the Plan sets `spec.adopted.delete_guest` of
+            an adopted Target to `true`, or deletes an adopted Target that has it (D-388).
             The server computes it from the content of the proposal, for every origin, and from
             the origin for `accept-guest-data` and `unverified-pin`; no client field sets or
             clears it.
           items:
             type: string
-            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off]
+            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off, repair, adopted-guest-delete]
         guest_data_issues:
           type: array
           description: |
@@ -4520,6 +4779,115 @@ components:
           const: true
           description: The person states that the controller of the backup no longer runs.
         reason: { type: string, maxLength: 2000 }
+    RepairRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: { type: string, maxLength: 2000 }
+        accept_host_key:
+          type: string
+          pattern: "^SHA256:[A-Za-z0-9+/]{43}$"
+          description: A new host key fingerprint that the person accepts (shown in the Plan).
+    InstallCommand:
+      type: object
+      additionalProperties: false
+      required: [command, expires_at]
+      properties:
+        command:
+          type: string
+          description: Run as root in the guest. Holds the CA and a one-time enrollment token.
+        expires_at: { $ref: "#/components/schemas/Time" }
+    AdoptRequest:
+      type: object
+      additionalProperties: false
+      required: [node, vmid, digest]
+      properties:
+        node: { type: string, maxLength: 64 }
+        vmid: { type: integer, minimum: 100, maximum: 999999999 }
+        digest:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+          description: The Proxmox config digest from `GET /guests/unmanaged`.
+        reason: { type: string, maxLength: 2000 }
+    UnmanagedGuest:
+      type: object
+      additionalProperties: false
+      required: [node, vmid, name, type, digest, adoptable, reasons, warnings, guest, present]
+      properties:
+        node: { type: string }
+        vmid: { type: integer }
+        name: { type: string, maxLength: 128, description: Proxmox name or hostname (guest text). }
+        type: { type: string, enum: [vm, lxc] }
+        power: { type: string, enum: [running, stopped, unknown] }
+        digest: { type: string, pattern: "^[0-9a-f]{40}$" }
+        adoptable: { type: boolean }
+        reasons:
+          type: array
+          description: |
+            Why it cannot be adopted (empty when adoptable): `disk-layout` (VM: not exactly one disk
+            `scsi0`; LXC: a mount point), `disk-storage` (a disk on another storage than the Target
+            disk storage of the install), `nic-layout` (not exactly one NIC `net0`), `bridge` (a
+            bridge without an ACL line of the install), `vlan` (a tag), `privileged` (a privileged
+            LXC), `host-device` (`devN`, `usbN`, `hostpciN`), `template`, `name` (not a valid
+            document name; rename it in Proxmox).
+          items: { type: string }
+        warnings:
+          type: array
+          description: |
+            Shown in red (D-340): `not-sealed` (always: old SSH host keys, machine-id and root users
+            stay), `nesting`, `keyctl`, `no-cloud-init` (create-only fields stay as Proxmox has
+            them).
+          items: { type: string }
+        guest:
+          type: object
+          description: The Target `guest` fields that the adoption writes (cores, memory, disk, bridge, and ip/gateway/user when Proxmox has them).
+        present:
+          type: object
+          additionalProperties: false
+          required: [cipassword, sshkeys, description]
+          description: Only whether these config keys exist; their values are never read into Plumb.
+          properties:
+            cipassword: { type: boolean }
+            sshkeys: { type: boolean }
+            description: { type: boolean }
+    RepairKeyView:
+      type: object
+      additionalProperties: false
+      required: [fingerprint, created_at, previous]
+      properties:
+        fingerprint: { type: string, description: "`SHA256:…` of the current public key." }
+        created_at: { $ref: "#/components/schemas/Time" }
+        previous:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [fingerprint, valid_until, waiting]
+          properties:
+            fingerprint: { type: string }
+            valid_until: { $ref: "#/components/schemas/Time" }
+            waiting: { type: integer, description: Bound agents that did not confirm the new line yet. }
+    RepairState:
+      type: [object, "null"]
+      additionalProperties: false
+      description: |
+        SSH repair readiness (D-384, D-385), from the agent's last hello. `null` before an agent
+        that reports it. `state`: `ready` (line written, `sshd` allows root with a forced command,
+        host keys pinned), `off` (`reasons` says why: `no-line`, `no-sshd`, `root-refused`,
+        `no-pin`, `firewall` (the `firewall` resource does not let the controller reach the SSH
+        port)), `unknown` (no report yet). Missing on a controller before T-191.
+      required: [state, reasons]
+      properties:
+        state: { type: string, enum: [ready, off, unknown] }
+        reasons: { type: array, items: { type: string } }
+        port: { type: [integer, "null"], description: The port of `sshd -T`. }
+        host_keys:
+          type: array
+          description: The pinned host key fingerprints.
+          items: { type: string }
+        host_keys_seen:
+          type: array
+          description: Fingerprints that the agent reports and that are not pinned (after a key change of the guest).
+          items: { type: string }
+        key_confirmed: { type: boolean, description: The line holds the current repair key. }
     SettingSource:
       type: string
       enum: [default, env, setting]
@@ -4548,6 +4916,9 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ProxmoxView"
             - type: "null"
+        repair_key:
+          description: The repair SSH key (D-382); public data only. Missing before T-191.
+          $ref: "#/components/schemas/RepairKeyView"
     ProxmoxView:
       type: object
       additionalProperties: false
@@ -4643,6 +5014,10 @@ components:
             - settings.changed
             - token.rate_limited
             - agent.rate_limited
+            - repair.finished
+            - repair_key.rotated
+            - target.hostkeys
+            - target.install_command
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string
