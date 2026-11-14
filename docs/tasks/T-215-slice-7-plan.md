@@ -25,7 +25,8 @@ Slice 6 is done (2026-11-15). By D-326 the next slice is planned at once. The us
 
 > **USER points for pl-lead (D-326 (4); ask, never assume):**
 > - **U7** – the user's own install gets the new ACL lines only by a repair run of the installer that **the user** starts. Ask when C2 is merged, with the exact `--dry-run` text of C2 for the user's flags. Until then the user's controller refuses every new NIC bridge/tag and every guest backup with a clear reason (nothing fails half way).
-> - **U8** – which **extra bridges and VLAN tags** (`--extra-bridge`, `--extra-vlan`) and which **guest backup storage** (`--guest-backup-storage`) on the user's own host. If that storage is not a PBS with client-side encryption: does the user accept backups **in clear** there (`--guest-backup-clear`, D-406)? No code depends on the answer.
+> - **U8** – which **extra bridges and VLAN tags** (`--extra-bridge`, `--extra-vlan`) and which **guest backup storage** (`--guest-backup-storage`) on the user's own host. If that storage is not a PBS with client-side encryption: does the user accept backups **in clear** there (`--guest-backup-clear`, D-406)? No code depends on the answer. Tell the user plainly (M3 of #321): with the D-380 rights, **the token itself** can back up, restore over (overwrite) and delete the backups of every pool guest directly at the Proxmox API; the human-only rule of Plumb holds only inside Plumb.
+> - **Later (not slice 7):** a restore after the guest is gone would need `Datastore.Allocate` on the backup storage, a new right (B1 of #321). pl-lead tells the user; it is a later USER question (ROADMAP row 34).
 > - Nothing else of slice 7 needs a right beyond D-379 / D-380 or touches the user's install. The only host network change is `vmbr9` on `pve-dev` (C8, D-414).
 
 Inputs: draft `docs/plans/slice-7-draft.md` (`pl-architect/slice-7-draft`), host facts `docs/plans/host-facts-slice-7.md` (T-214, `pl-backend/T-214-host-facts-slice-7`) and `host-facts.md` §1, §3 (T-139), risks §6 (T-140), D-379, D-380, D-394 … D-397, `T-192.log.md`, review sweep of #272 … #320. Code: `main` after #318. Decisions: `docs/decisions/T-215.md` (D-398 … D-415).
@@ -40,7 +41,7 @@ Inputs: draft `docs/plans/slice-7-draft.md` (`pl-architect/slice-7-draft`), host
 4. Target field `backup` (schedule, keep); backups are controller jobs, not Plans; "Back up now" (D-408).
 5. Rights exactly by D-380 (D-405); the encryption state of the storage is read; a clear storage only with the install flag (D-406).
 6. Identity: notes marker with a per-Target backup lineage (D-407).
-7. Delete one backup: human admin session only (D-409). Restore over the guest and restore as a new guest: Plans, human-only `guest-restore`, `destructive`; the credential is revoked and the agent re-enrolls (D-410, D-411).
+7. Delete one backup: human admin session only (D-409). Restore **over the same bound guest** only: a Plan, human-only `guest-restore`, `destructive`; the credential is revoked and the agent re-enrolls (D-410). No restore after the guest is gone in slice 7 (D-411).
 
 **Part C – slice 6 follow-ups** (D-415): the ROADMAP rows 28 … 33 below.
 
@@ -55,13 +56,14 @@ Inputs: draft `docs/plans/slice-7-draft.md` (`pl-architect/slice-7-draft`), host
   - `GET /targets/{name}/backups` (read): `{storage: {id, type, encrypted: "pbs-key" | "stated-clear" | "clear-refused", free_pct}, items: [{volid, time, size, kind: "plumb" | "older-guest" | "unmarked", lineage_ok}], next_at, last: {at, result, message}}`;
   - `POST /targets/{name}/backups` (tier `apply`, rate `proposal`) "Back up now" → 202 with the job;
   - `DELETE /targets/{name}/backups/{volid}` (**human admin session only**, D-409) → 204;
-  - `POST /targets/{name}/restore` (tier `plan`, rate `proposal`) `{volid, mode: "over" | "new", reason}` → 201 Plan (origin `restore`, risk `destructive`, human-only `guest-restore`).
+  - `POST /targets/{name}/restore` (tier `plan`, rate `proposal`) `{volid, reason}` (over the same bound guest only, D-411) → 201 Plan (origin `restore`, risk `destructive`, human-only `guest-restore`).
 - **Events:** `guest_backup.started|done|failed|deleted`.
 - **Settings ACL view:** every new line with its state.
 - **Hello / agent:** no new command type (the `network` resource only gains a match by MAC, C4).
 - **Repair key view (ROADMAP row 32):** `RepairKeyView.left_behind` moves out of `previous` to the top level, so the parked and forgotten guests show also without a previous key; `previous.left_behind` stays one release as a copy.
 - Every new operation in `roleHints.ts`, the tier test and the `x-plumb-rate` marks (A1 rule of slice 6).
 - **MCP:** no new tool in slice 7 (the fixed set of D-364 stays; backups are not offered to a client).
+- **ARCH §20** says in one sentence that `guest-restore` is human-only inside Plumb, but the D-380 rights let the token restore, back up and delete pool guests' backups at the PVE API directly (M3 of #321).
 
 ### Child cards (numbers from pl-lead)
 Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in backups, credential revoke and re-enroll) → **pl-reviewer**; others → a free agent, never the author.
@@ -69,17 +71,17 @@ Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in
 | # | Title | Owner | Reviewer | Size | Depends on | Files it owns | CI job that proves it |
 |---|---|---|---|---|---|---|---|
 | C1 | Contract slice 7 (above) | pl-architect | pl-reviewer | M | – (**now**) | `api/openapi.yaml`, `web/src/lib/api.gen.ts`, `internal/state/schema/target.json`, `docs/ARCHITECTURE.md` §20 | `make lint test` (check:api, schema tests) |
-| C2 | Installer + env + ACL view: `--extra-bridge <b>` (untagged), `--extra-vlan <b>:<T>[,<T>…]`, `--guest-backup-storage <id>`, `--guest-backup-clear`; roles `PlumbBridge` per path, `VM.Backup` in `PlumbGuests`, new `PlumbGuestBackup`; dry-run lists each line; a repair run removes lines no longer named; `PLUMB_PVE_EXTRA_NETS`, `PLUMB_PVE_GUEST_BACKUP_STORAGE`, `PLUMB_PVE_GUEST_BACKUP_CLEAR`; settings ACL check knows the lines | pl-backend | **pl-reviewer** | M | C1 | `install/install.sh`, `install/testdata/**`, `internal/driver/proxmox/acl*.go`, `internal/api/settings*.go`, `cmd/plumb/serve.go` (**first**) | `make test` (install fakes) + host C9.1 |
+| C2 | Installer + env + ACL view: `--extra-bridge <b>` (untagged), `--extra-vlan <b>:<T>[,<T>…]`, `--guest-backup-storage <id>`, `--guest-backup-clear`; roles `PlumbBridge` per path, new `PlumbGuestBackupVM` (`VM.Backup` on `/pool/plumb`, its own line, M1 of #321) and new `PlumbGuestBackup`; dry-run lists each line; a repair run removes lines no longer named (test: a run without `--guest-backup-storage` removes both backup lines); the **second-storage check** (D-405, M2 of #321): every other storage with a Plumb `AllocateSpace` line whose `content` has `backup` → the installer refuses with the fix, and the settings view shows it at run time; the installer (root) warns about backups of VMIDs in Plumb's range on the backup storage that are not Plumb's (L2 of #321); `PLUMB_PVE_EXTRA_NETS`, `PLUMB_PVE_GUEST_BACKUP_STORAGE`, `PLUMB_PVE_GUEST_BACKUP_CLEAR`; settings ACL check knows the lines | pl-backend | **pl-reviewer** | M | C1 | `install/install.sh`, `install/testdata/**`, `internal/driver/proxmox/acl*.go`, `internal/api/settings*.go`, `cmd/plumb/serve.go` (**first**) | `make test` (install fakes) + host C9.1 |
 | C3 | Driver + plan: `netN` with Plumb's MAC, tag, hot-plug add/remove, update keeps MACs, server check `network-not-allowed`, risk of NIC changes, LXC `netN` `ip=`/`gw=`, firewall Block text (input on every interface, checked) | pl-backend | pl-architect | L | C1, C2 (env) | `internal/driver/{driver,guard*}.go` (**first**), `internal/driver/proxmox/{create,update,nics*}.go`, `internal/driver/fake/**`, `internal/plan/nics*.go`, `internal/plan/propose.go` (**first**), `blocks/firewall.yaml` (text only) | `make test`; host C9.2 |
 | C4 | `network` resource for NIC N: match by MAC (D-403), `permaddr` rule (D-370), ip/dhcp/no-address per NIC; render from `guest.nics` | pl-reviewer (implementer) | pl-architect | M | C1, C3 (MAC function) | `internal/resource/network*.go`, `internal/state/render_nics*.go` | **VM guest job** (netplan; skips locally) |
-| C5 | Backups: driver `vzdump` (notes-template, no protected/prune/bwlimit), list with marker read-back, delete one volume, storage status + encryption read (`GET /storage`), job runner + schedule (waits in restored mode, D-303), retention of marked lineage volumes only, free-space gate, migration **0025** (`guest_backup_lineage`, `guest_backup_run`), routes list/back-up-now/delete | pl-architect (implementer) | **pl-reviewer** | L | C1, C2, `driver.go` after C3 | `internal/driver/proxmox/backup*.go`, `internal/driver/fake/backup*.go`, `internal/backup/guest*.go` (new), `internal/store/migrations/0025_guest_backup.sql`, `internal/store/guestbackup*.go`, `internal/api/guestbackup*.go`, route lines in `api.go` (**first**), `cmd/plumb/serve.go` (after C2) | `make test`; race job; host C9.3–C9.5 |
-| C6 | Restore: Plan origin `restore`, reason `guest-restore`, `over` (guest stopped, marker + lineage + binding checked in the Run, revoke, then re-enroll Plan or install command) and `new` (after `guest:missing`: next free VMID in the range, rebind, lineage kept) | pl-backend | **pl-reviewer** | L | C5 | `internal/plan/restore_guest*.go`, `internal/plan/humanonly.go`, `internal/plan/propose.go` (after C3), route line in `api.go` (after C5), `internal/driver/proxmox/restore*.go` | `make test`; host C9.6 |
+| C5 | Backups: driver `vzdump` (notes-template, no protected/prune/bwlimit; for an LXC `exclude-path` for `/etc/plumb-agent` and `/var/lib/plumb-agent` if C9.11 shows it needs no other right, L1 of #321), list with marker read-back, delete one volume, storage status + encryption read (`GET /storage`), job runner + schedule (waits in restored mode, D-303), retention of marked lineage volumes only, free-space gate, migration **0025** (`guest_backup_lineage`, `guest_backup_run`), routes list/back-up-now/delete | pl-architect (implementer) | **pl-reviewer** | L | C1, C2, `driver.go` after C3 | `internal/driver/proxmox/backup*.go`, `internal/driver/fake/backup*.go`, `internal/backup/guest*.go` (new), `internal/store/migrations/0025_guest_backup.sql`, `internal/store/guestbackup*.go`, `internal/api/guestbackup*.go`, route lines in `api.go` (**first**), `cmd/plumb/serve.go` (after C2) | `make test`; race job; host C9.3–C9.5 |
+| C6 | Restore over the same bound guest (D-410): Plan origin `restore`, reason `guest-restore`; the guest is stopped, marker + lineage + binding checked in the Run, revoke, then re-enroll Plan or install command. No restore after the guest is gone (D-411) | pl-backend | **pl-reviewer** | L | C5 | `internal/plan/restore_guest*.go`, `internal/plan/humanonly.go`, `internal/plan/propose.go` (after C3), route line in `api.go` (after C5), `internal/driver/proxmox/restore*.go` | `make test`; host C9.6 |
 | C7 | Web: NIC list in the Target form, backups tab on the Target (state, encryption, items by kind, back up now, delete with confirm, restore wizard with the human-only text); the note for an object parameter whose nested defaults make it look fixed (#283 n1, ROADMAP row 32) | pl-frontend | pl-architect | M | C1 (mock), C5, C6 | `web/src/screens/{TargetForm,TargetBackups}.svelte` (new tab), `web/src/lib/{router,client,http}.ts`, `web/src/lib/mock/**`, e2e | `make test` (vitest, e2e) |
 | C8 | `pve-dev`: make `vmbr9` (D-414): a card by **pl-lead**, exact stanza, undo | pl-backend (host) | **pl-reviewer** | S | – (**now**) | `docs/tasks/T-NNN.log.md` | host |
 | C9 | Real-host acceptance (below) | pl-backend | **pl-reviewer** | M | C2–C7, C8 | `docs/tasks/T-NNN.log.md` | host |
 | C10 | QA: risks §6 tests, VMID reuse, foreign volume, two agents, NIC rights, mutants per card | pl-codex-qa | – | M | per card | `*_qa_test.go` next to each card's files | `make test` |
 | C11 | Slice 6 follow-ups (ROADMAP rows 28 … 32; row 33 is dropped). One PR per row, each ≤ ~150 lines | pl-codex-fix | pl-backend | S | – (**now**; row 32's field after C1) | row 28: the named test files and `.github/workflows/ci.yml` (one vet line); row 29: `internal/store/migrations/0026_unbind_pending_strict.sql`; row 30: `internal/{issue,store}/*_test.go` env helpers; row 31: `internal/store/issue.go`, `internal/issue/targetgone.go`; row 32: `web/src/screens/{General,TargetAgent}.svelte`, `internal/repair/ssh_key.go` (the #283 n1 note is in C7, which owns `TargetForm.svelte`) | `make test`; the race job for row 30 |
-| C12 | README: more NICs, guest backups (encryption, what a backup holds, what stays after a Target delete), U7 note | pl-frontend | pl-architect | S | C9 | `README.md` | – |
+| C12 | README: more NICs, guest backups (encryption, what a backup holds, what stays after a Target delete), U7 note; **one plain sentence that the token itself can back up, restore over and delete pool guests' backups at the PVE API** (M3 of #321); a guest that is gone: restore it in Proxmox into pool `plumb`, then adopt it (D-411) | pl-frontend | pl-architect | S | C9 | `README.md` | – |
 
 **Shared files and their order (D-371 (4)):**
 - `api/openapi.yaml`, `api.gen.ts`, `target.json` → C1 only.
@@ -96,8 +98,12 @@ Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in
 **Parallel at once:** C1, C8, C11. After C1: C2 and C3 (C3 reads the env of C2 behind an interface; the files do not overlap except `serve.go`, which C3 does not touch). Then C4 after C3; C5 after C2; C6 after C5; C7 after C5 and C6. Codex cards (C10, C11) stay at ≤ ~150 lines each.
 
 **C8 detail (D-414, pl-lead writes the card; the only network change on `pve-dev`).**
-- Back up `/etc/network/interfaces` to a 0600 file outside the repo.
-- Append the stanza:
+B2 of #321: never `ifreload -a` (it applies the whole file and could change `vmbr0`, the host's SSH path).
+1. pl-lead makes sure a console path to `pve-dev` exists before the change.
+2. Copy `/etc/network/interfaces` to a 0600 file outside the repo.
+3. Run `ifquery -a -c` (running state against the file). **Stop** if anything differs.
+4. Record `ip -br link`, `ip -br addr` and `ip route` (before).
+5. Append the stanza:
   ```
   auto vmbr9
   iface vmbr9 inet manual
@@ -107,8 +113,9 @@ Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in
       bridge-vlan-aware yes
       bridge-vids 2-4094
   ```
-- Run `ifreload -a`. Check `ip -d link show vmbr9` (`vlan_filtering 1`, no port).
-- Undo: remove the stanza, `ifreload -a`, and check that `vmbr9` is gone.
+6. Bring up **only** `vmbr9`: `ifup vmbr9`. Check `ip -d link show vmbr9` (`vlan_filtering 1`, no port).
+7. Record link, addresses and routes again (after). Only `vmbr9` may differ. **Stop and undo** if anything of `vmbr0` (or any other line) differs.
+8. **Undo:** `ifdown vmbr9`, remove the stanza (or put the copy back), check that `vmbr9` is gone, and compare before = after again.
 - No address, no port, nothing else.
 
 ### Migrations
@@ -120,7 +127,7 @@ Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in
 ### Rules (lessons of slice 6, D-413)
 1. **Real link:** every new agent command type goes through the real link in a test (`TestEveryCommandTypeThroughRealLink` fails otherwise). Slice 7 plans none; a card that adds one adds it there.
 2. **Per-Target state:** every new per-Target table says what happens at delete, at unbind and at VMID reuse, in its migration comment and in the PR:
-   - `guest_backup_lineage`: dropped in the `DeleteBinding` transaction, so a new Target of the name starts a new lineage. **Not** dropped by Plumb's own rebind in a restore as new.
+   - `guest_backup_lineage`: dropped in the `DeleteBinding` transaction, so a new Target of the name starts a new lineage.
    - `guest_backup_run`: dropped with it.
    - The Proxmox volumes stay, D-408.
 3. **Token host step:** every human-only rule that a token could pass has a real-host step with a token (`guest-restore` C9.6; the delete of a backup C9.5; `network-not-allowed` C9.2).
@@ -140,6 +147,8 @@ Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in
 - **Two live agents after a restore:** the credential is revoked in the restore Run before the guest starts; the old one gets 401 (C9.6).
 - **The marker fails silently** (vzdump only warns): the volume is read back; no marker → `unmarked`, the job ends `warning` (D-396 style), and retention never deletes it.
 - **The storage fills:** keep ≤ 30, the free-space gate (< 10 % free → the job is refused with the reason), one job per Target at a time.
+- **The token is the second path (M3 of #321):** `guest-restore` is human-only inside Plumb, but the D-380 rights let a token holder back up, restore over and delete pool guests' backups straight at the PVE API (accepted by the user in U4). ARCH §20 (C1), the README (C12) and U8 say so in one sentence.
+- **A second backup storage (M2 of #321):** `VM.Backup` lets the token write a vzdump to any storage with a Plumb `AllocateSpace` line and `backup` content. C2 refuses such a storage at install and the settings view shows it at run time.
 - **Restore over a live guest is data loss:** human-only, `destructive`; the Plan names the volume and its time; the guest is stopped first (`allow_restart`).
 - **Restored mode:** guest backup jobs wait (D-303); a restore Plan is refused while restored.
 
@@ -152,7 +161,10 @@ Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in
 6. **Restore over:** a `plan` token proposes, an `apply` token gets 403 (`guest-restore`), a person approves. The guest is restored and the old credential gets 401. The agent re-enrolls (VM by the re-enroll Plan; adopted LXC by the install command), and the next Run converges to the head.
 7. **Leak hunt:** grep a real vzdump of the VM for the agent credential and a test secret value, and record the result (expected: present in clear on the clear storage, which is the D-406 warning). Grep the controller DB, events, logs and export for the volume notes: no secret.
 8. **VMID reuse:** delete the VM Target (the guest goes, the backups stay). A new Target gets the same VMID: its list shows the old volumes as `older-guest`, and restore and retention refuse them.
-9. **Host clean:** remove the test guests and backups; `vmbr9` stays until pl-lead's undo card.
+9. **The rights limit (B1 of #321):** delete a pool guest in Proxmox by hand (outside Plumb): its backups are invisible to the token (`GET …/content` with the token does not list them), as T-214 FACT 1 says. Its Target shows `guest:missing` and offers no restore.
+10. **Second storage (M2 of #321):** turn on `backup` content on the disk storage: the settings view shows the warning; a repair run of the installer refuses until it is off again (then turn it off).
+11. **LXC `exclude-path` (L1 of #321):** an LXC backup with `exclude-path` for `/etc/plumb-agent` and `/var/lib/plumb-agent` works with the token (no extra right) and the archive does not hold them; record it. If it needs another right, C5 drops the option and says so.
+12. **Host clean:** remove the test guests and backups; `vmbr9` stays until pl-lead's undo card.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
