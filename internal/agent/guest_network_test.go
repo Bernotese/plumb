@@ -168,10 +168,12 @@ func TestGuestNetplanMerge(t *testing.T) {
 // route of the guest.
 func guestDefault(t *testing.T) (dev string, gw, main netip.Addr) {
 	t.Helper()
-	out, err := exec.Command("ip", "-j", "-4", "route", "show", "default").Output()
-	var rs []struct{ Dev, Gateway string }
-	if err != nil || json.Unmarshal(out, &rs) != nil || len(rs) == 0 {
-		t.Fatalf("no default route: %v %s", err, out)
+	// A test before may have ended with a netplan apply: on a DHCP NIC the
+	// default route comes back only after the lease (CI run 43589617651,
+	// Ubuntu VM: TestGuestNetwatch saw no route 0 s after TestGuestNetwork).
+	rs, out, err := waitDefaultRoute(60 * time.Second)
+	if len(rs) == 0 {
+		t.Fatalf("no default route within 60 s: %v %s", err, out)
 	}
 	gw = netip.MustParseAddr(rs[0].Gateway)
 	out, err = exec.Command("ip", "-j", "route", "get", gw.String()).Output()
@@ -180,6 +182,20 @@ func guestDefault(t *testing.T) (dev string, gw, main netip.Addr) {
 		t.Fatalf("route get: %v %s", err, out)
 	}
 	return rs[0].Dev, gw, netip.MustParseAddr(get[0].Prefsrc)
+}
+
+// waitDefaultRoute polls the IPv4 default route for at most d.
+func waitDefaultRoute(d time.Duration) (rs []struct{ Dev, Gateway string }, out []byte, err error) {
+	for deadline := time.Now().Add(d); ; time.Sleep(500 * time.Millisecond) {
+		rs = nil
+		out, err = exec.Command("ip", "-j", "-4", "route", "show", "default").Output()
+		if err == nil && json.Unmarshal(out, &rs) == nil && len(rs) > 0 {
+			return rs, out, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, out, err
+		}
+	}
 }
 
 func liveHas(t *testing.T, dev, what string) bool {
@@ -234,6 +250,10 @@ func TestGuestNetwork(t *testing.T) {
 		_ = exec.Command("systemctl", "daemon-reload").Run()
 		os.Remove(file)
 		_ = exec.Command("netplan", "apply").Run()
+		// The next test needs the default route again (DHCP renews it).
+		if rs, _, _ := waitDefaultRoute(60 * time.Second); len(rs) == 0 {
+			t.Errorf("no default route 60 s after the cleanup's netplan apply")
+		}
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())

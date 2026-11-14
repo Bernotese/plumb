@@ -58,7 +58,8 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/tokens", nil, TierAdmin, true},
 	{"POST", "/api/v1/tokens", map[string]string{}, TierAdmin, true}, // allowed → 422, so no token is made
 	{"GET", "/api/v1/settings", nil, TierRead, false},
-	{"PATCH", "/api/v1/settings", map[string]any{}, TierAdmin, true}, // allowed → 400 (no field), nothing changes
+	{"PATCH", "/api/v1/settings", map[string]any{}, TierAdmin, true},                          // allowed → 400 (no field), nothing changes
+	{"POST", "/api/v1/settings/repair-key/rotate", map[string]any{"bad": 1}, TierAdmin, true}, // allowed → 409 (no repair) or 400
 	{"GET", "/api/v1/backups", nil, TierRead, false},
 	{"POST", "/api/v1/backups", nil, TierApply, false}, // allowed → 202 or 409 backup-running
 	{"GET", "/api/v1/restore", nil, TierRead, false},

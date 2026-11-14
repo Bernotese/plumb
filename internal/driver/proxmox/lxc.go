@@ -367,7 +367,7 @@ func (d *Driver) observeCT(ctx context.Context, id int) (driver.GuestState, erro
 	if err := d.c.Get(ctx, ctPath(d, id)+"/status/current", nil, &status); err != nil {
 		return driver.GuestState{}, notFound(err)
 	}
-	st := driver.GuestState{Spec: specOfCT(cfg), Digest: cfg["digest"], Power: driver.PowerStopped}
+	st := driver.GuestState{Spec: specOfCT(cfg), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
 	if p := specOfCT(next); !equalCTSpec(p, st.Spec) {
 		st.Pending = &p
 	}

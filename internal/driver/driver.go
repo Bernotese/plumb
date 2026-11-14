@@ -158,6 +158,11 @@ type GuestState struct {
 	Digest        string // changes whenever the guest config changes; covers both views
 	Power         Power
 	IPs           []string // addresses that the hypervisor reports
+	// MAC is the MAC address of the first NIC (net0) in the hypervisor
+	// config, lower case; "" when unknown. A repair Run dials a reported
+	// address only when the controller's neighbour table maps it to this
+	// MAC (review S1 of #298).
+	MAC string
 }
 
 // Next returns the settings after the next stop and start.

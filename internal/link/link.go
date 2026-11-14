@@ -949,6 +949,9 @@ func validateReport(rep wire.Report, build bool) error {
 	if rep.Type != wire.ReportAddrs && (rep.Addrs != nil || rep.AddrsTruncated || rep.AddrsUnknown) {
 		return errors.New("addrs only in an addrs report")
 	}
+	if rep.Type != wire.ReportRepair && rep.Repair != nil {
+		return errors.New("repair only in a repair report")
+	}
 	switch rep.Type {
 	case wire.ReportResult, wire.ReportProgress:
 		if rep.CommandID == "" {
@@ -980,6 +983,13 @@ func validateReport(rep wire.Report, build bool) error {
 		if !slices.Contains(wire.SafeApplyTypes, typ) || it.Status != wire.StatusRunning ||
 			len(it.Changes) > 0 || it.Output != "" || it.RolledBack {
 			return errors.New("confirm item: a safe-apply resource, running, nothing else")
+		}
+	case wire.ReportRepair:
+		if rep.CommandID != "" || rep.Hello != nil || len(rep.Items) > 0 || rep.Error != "" {
+			return errors.New("repair has only the repair field")
+		}
+		if err := wire.CheckRepairReport(rep.Repair); err != nil {
+			return err
 		}
 	case wire.ReportAddrs:
 		if rep.CommandID != "" || rep.Hello != nil || len(rep.Items) > 0 || rep.Error != "" {

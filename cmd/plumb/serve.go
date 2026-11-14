@@ -292,6 +292,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	// rawDrv is the unwrapped driver, for the dev agents of the fake one.
 	rawDrv := drv
 	drv = driver.ReadOnlyWhen(drv, restore.Active)
+	rep := repairService(ctx, log, st, secrets, events, agentURL(f.hosts, f.agentListen),
+		func(ctx context.Context) { eng.RewatchAll(ctx) }) // eng is set before the API takes a rotation
 	eng, err = plan.New(plan.Config{
 		Restore: restore,
 		Store:   st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
@@ -300,7 +302,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		AddrStable: devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
 		// The transport comes with T-191; without it a repair is not ready.
-		Repair: plan.RepairConfig{Tokens: lk, AgentBinary: agentBinary(), CA: lk.CA().CertPEM, AgentURL: agentURL(f.hosts, f.agentListen)},
+		Repair: repairConfig(ctx, log, rep, lk, agentURL(f.hosts, f.agentListen)),
 	})
 	if err != nil {
 		return err
@@ -368,7 +370,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		viewer := proxmox.NewViewer(pd, proxmox.TokenUser(os.Getenv("PLUMB_PVE_TOKEN_ID")))
 		pveView = func(ctx context.Context) *api.ProxmoxView { return proxmoxView(viewer.View(ctx)) }
 	}
-	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Proxmox: pveView, Secrets: secrets, Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
+	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Proxmox: pveView, Secrets: secrets, RepairKeys: repairKeys(rep), Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
 
 	errc := make(chan error, 2) // one send each: agent listener, API listener
 	goBG(func() { errc <- lk.Serve(ctx, f.agentListen) })
