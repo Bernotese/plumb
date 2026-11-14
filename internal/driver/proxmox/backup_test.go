@@ -107,8 +107,8 @@ func TestDeleteGuestBackup(t *testing.T) {
 	}
 }
 
-// The storage state from the index (T-214 FACT 2) and the second-storage
-// list (M2 of #321).
+// The storage state from the index (T-214 FACT 2). The second-storage
+// check (M2 of #321) is T-218's (acl_extras.go).
 func TestBackupStorageInfo(t *testing.T) {
 	f, d := backupFake(t)
 	ctx := context.Background()
@@ -126,10 +126,6 @@ func TestBackupStorageInfo(t *testing.T) {
 	}
 	if _, err := d.BackupStorageInfo(ctx, "nope"); !errors.Is(err, ErrNoBackupStorage) {
 		t.Fatalf("unknown storage: %v", err)
-	}
-	f.backup.others = []storageEntry{{Storage: "plumb-snippets", Type: "dir", Content: "snippets,backup"}, {Storage: "local-lvm", Type: "lvmthin", Content: "images,rootdir"}}
-	if o, _ := d.OtherBackupStorages(ctx, "plumb-backup"); !slices.Equal(o, []string{"plumb-snippets"}) {
-		t.Fatalf("others %v", o)
 	}
 }
 

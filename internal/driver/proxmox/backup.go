@@ -63,10 +63,6 @@ func (d *Driver) storageIndex(ctx context.Context) ([]storageEntry, error) {
 	return list, nil
 }
 
-func hasContent(content, kind string) bool {
-	return slices.Contains(strings.Split(content, ","), kind)
-}
-
 // BackupStorageInfo reads the state of storage.
 func (d *Driver) BackupStorageInfo(ctx context.Context, storage string) (BackupStorage, error) {
 	list, err := d.storageIndex(ctx)
@@ -89,24 +85,6 @@ func (d *Driver) BackupStorageInfo(ctx context.Context, storage string) (BackupS
 	if err := d.c.Get(ctx, "/nodes/"+url.PathEscape(d.cfg.Node)+"/storage/"+url.PathEscape(storage)+"/status", nil, &st); err == nil && st.Total > 0 {
 		out.FreePct = int(st.Avail * 100 / st.Total)
 	}
-	return out, nil
-}
-
-// OtherBackupStorages lists the storages in the token's index, other than
-// except, whose content holds backup (M2 of #321): with VM.Backup the
-// token could write a vzdump there.
-func (d *Driver) OtherBackupStorages(ctx context.Context, except string) ([]string, error) {
-	list, err := d.storageIndex(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, e := range list {
-		if e.Storage != except && hasContent(e.Content, "backup") {
-			out = append(out, e.Storage)
-		}
-	}
-	slices.Sort(out)
 	return out, nil
 }
 
