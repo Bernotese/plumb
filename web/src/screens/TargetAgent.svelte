@@ -246,8 +246,8 @@
         <p class="muted" id="install-command-curl">
           It needs <code>curl</code> in the guest; a stock Debian LXC has none. Install it first (<code
             >apt-get install -y curl</code
-          >). Without it, the command stops with a
-          <code>plumb-install:</code> line and installs nothing.
+          >). Every error line starts with <code>plumb-install:</code>; without curl the command
+          stops with one such line, installs nothing and leaves no file.
         </p>
         <ProblemBox error={commandError} />
         <button

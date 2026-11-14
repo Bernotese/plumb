@@ -70,7 +70,8 @@ for distro in \
   fi
   echo "$distro systemd state: $state"
   if [[ "$state" == degraded ]]; then run_test systemctl --failed --no-legend; fi
-  run_test /tests/guest.test -test.v -test.timeout=5m "$@"
+  # T-206: the install command test runs here only (it writes /etc/plumb-agent).
+  run_test env PLUMB_INSTALLCMD_GUEST=1 /tests/guest.test -test.v -test.timeout=5m "$@"
   # TestSymlinkRules includes the hard-link cases.
   run_test /tests/resource.test -test.v -test.timeout=1m -test.run 'Symlink|PathChecks|WriteAt'
   # guest.test installs cron and refreshes the apt lists needed by agent.test.

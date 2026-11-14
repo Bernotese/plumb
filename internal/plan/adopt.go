@@ -8,7 +8,6 @@ import (
 	"maps"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -452,9 +451,6 @@ var ErrInstallUnavailable = errors.New("plan: the install command needs the agen
 // only through a here document into a 0600 file (review R6 of #290).
 func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (string, time.Time, error) {
 	rc := e.repairConfig()
-	if strings.ContainsAny(rc.AgentURL, "' \n") {
-		return "", time.Time{}, ErrInstallUnavailable // never quote around a strange URL
-	}
 	if _, err := e.st.GetBinding(ctx, state.KindTarget, target); errors.Is(err, store.ErrNotFound) {
 		return "", time.Time{}, fmt.Errorf("%w: Target %s has no guest", ErrNoGuest, target)
 	} else if err != nil {
@@ -463,10 +459,19 @@ func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (stri
 	if rc.Tokens == nil || rc.AgentURL == "" || len(rc.CA) == 0 {
 		return "", time.Time{}, ErrInstallUnavailable
 	}
+	// The command refuses a URL or CA that could break its quoting
+	// (agentinstall.InstallCommand); ask before a token is made.
+	if _, err := agentinstall.InstallCommand(string(rc.CA), rc.AgentURL, "probe"); err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: %v", ErrInstallUnavailable, err)
+	}
 	tok, err := rc.Tokens.NewRepairToken(ctx, target)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	e.emit(ctx, "target.install_command", "target:"+target, actor, map[string]any{"expires_at": tok.Expires.UTC()})
-	return agentinstall.InstallCommand(string(rc.CA), rc.AgentURL, tok.Token), tok.Expires, nil
+	cmd, err := agentinstall.InstallCommand(string(rc.CA), rc.AgentURL, tok.Token)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return cmd, tok.Expires, nil
 }

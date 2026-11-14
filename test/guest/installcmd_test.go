@@ -30,8 +30,13 @@ import (
 // CA, a cut and an empty script, and a good one. The served "install
 // script" is a stub: the real install.sh is tested in agentinstall.
 func TestGuestInstallCommandFailsLoudly(t *testing.T) {
+	// L4 of #307: test/guest/run.sh sets the switch; there the test must
+	// run, and without root it fails instead of passing silently.
+	if os.Getenv("PLUMB_INSTALLCMD_GUEST") != "1" {
+		t.Skip("runs only in the CI guest job (PLUMB_INSTALLCMD_GUEST=1, test/guest/run.sh): it writes /etc/plumb-agent as root")
+	}
 	if os.Geteuid() != 0 {
-		t.Skip("needs root (writes /etc/plumb-agent)")
+		t.Fatal("requires root in the guest")
 	}
 	const etc = "/etc/plumb-agent"
 	const token = "tok-T206-guest-one-time-value"
@@ -51,7 +56,11 @@ func TestGuestInstallCommandFailsLoudly(t *testing.T) {
 	run := func(t *testing.T, ca string) (int, string) {
 		t.Helper()
 		os.RemoveAll(etc)
-		c := exec.Command("sh", "-c", agentinstall.InstallCommand(ca, srv.URL, token)+"echo \"after=$?\"\n")
+		text, err := agentinstall.InstallCommand(ca, srv.URL, token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := exec.Command("sh", "-c", "umask 022\n"+text+"echo \"after=$? umask=$(umask)\"\n")
 		out, _ := c.CombinedOutput()
 		s := string(out)
 		i := strings.LastIndex(s, "after=")
@@ -61,8 +70,12 @@ func TestGuestInstallCommandFailsLoudly(t *testing.T) {
 		if strings.Contains(s, token) {
 			t.Fatalf("the token is in the output:\n%s", s)
 		}
+		tail := strings.Fields(s[i+6:])
+		if len(tail) != 2 || tail[1] != "umask=0022" {
+			t.Fatalf("the person's shell changed (umask leak?): %q", s[i:])
+		}
 		code := 0
-		if strings.TrimSpace(s[i+6:]) != "0" {
+		if tail[0] != "0" {
 			code = 1
 		}
 		return code, s[:i]
@@ -83,6 +96,9 @@ func TestGuestInstallCommandFailsLoudly(t *testing.T) {
 		}
 		if _, err := os.Stat(etc + "/ran"); err == nil {
 			t.Fatal("the script ran")
+		}
+		if _, err := os.Stat(etc); err == nil {
+			t.Fatalf("a refused run made %s", etc)
 		}
 	}
 

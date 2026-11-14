@@ -133,7 +133,7 @@ func TestAdoptAPI(t *testing.T) {
 			curl = l
 		}
 	}
-	for _, flag := range []string{"--proto =https", "--capath /etc/plumb-agent", "--cacert /etc/plumb-agent/ca.pem"} {
+	for _, flag := range []string{"--proto =https", `--capath "$d"`, `--cacert "$d/ca.pem"`} {
 		if !strings.Contains(curl, flag) {
 			t.Fatalf("curl without %q: %s", flag, curl)
 		}

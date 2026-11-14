@@ -4,8 +4,10 @@
 #  - repair: the forced command of the repair line runs it in the
 #    extracted bundle dir; plumb-agent (sha256 checked), ca.pem and
 #    enroll.json are next to it.
-#  - install command: a person pipes it into sh with PLUMB_URL set; the
-#    command wrote /etc/plumb-agent/ca.pem and the one-shot token before.
+#  - install command: the command of agentinstall.InstallCommand
+#    downloads it to a temp file (CA pinned), checks its last line and
+#    runs it with PLUMB_URL set; the command wrote
+#    /etc/plumb-agent/ca.pem and the one-shot token before.
 # Both end with the agent unit unmasked, enabled and restarted. The token
 # goes only into the 0600 one-shot file, never into an argument or the
 # environment of a process; nothing here prints it.
@@ -16,7 +18,7 @@ etc=/etc/plumb-agent
 bin=/usr/local/bin/plumb-agent
 unit=/etc/systemd/system/plumb-agent.service
 
-die() { echo "plumb-agent-install: $*" >&2; exit 1; }
+die() { echo "plumb-install: $*" >&2; exit 1; }
 
 # The one-shot token file belongs to this script until the agent restart
 # succeeded: on every failure before that, it goes (review F1 of #295).
@@ -132,7 +134,7 @@ PLUMB_UNIT
   systemctl enable plumb-agent.service
   systemctl restart plumb-agent.service
   token_owned= # the agent owns the file now: it reads and deletes it (D-390)
-  echo "plumb-agent-install: the agent is installed and restarted"
+  echo "plumb-install: the agent is installed and restarted"
 }
 
 main "$@"

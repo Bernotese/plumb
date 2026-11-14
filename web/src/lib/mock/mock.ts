@@ -2845,24 +2845,27 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         "",
       );
       return {
-        // The shape of agentinstall.InstallCommand (T-206): download to a
-        // file with the CA pin, check the guard line, then the token.
+        // The shape of agentinstall.InstallCommand (T-206): one subshell,
+        // the CA in a temp dir, download with the CA pin, the guard line,
+        // only then /etc/plumb-agent and the token.
         command: [
-          "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'",
+          "(",
+          "umask 077",
+          "command -v curl >/dev/null 2>&1 || { echo 'plumb-install: curl is missing in this guest. Install it first (apt-get install -y curl), then run this command again. Nothing was installed.' >&2; exit 1; }",
+          "d=$(mktemp -d) || exit 1",
+          `trap 'rm -rf "$d"' EXIT`,
+          `cat > "$d/ca.pem" <<'PLUMB_CA'`,
           "-----BEGIN CERTIFICATE-----",
           "(mock CA)",
           "-----END CERTIFICATE-----",
           "PLUMB_CA",
-          "(",
-          "command -v curl >/dev/null 2>&1 || { echo 'plumb-install: curl is missing in this guest. Install it first (apt-get install -y curl), then run this command again. Nothing was installed.' >&2; exit 1; }",
-          "f=$(mktemp) || exit 1",
-          `trap 'rm -f "$f"' EXIT`,
-          `curl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath /etc/plumb-agent --cacert /etc/plumb-agent/ca.pem -o "$f" 'https://plumb.lan:8444/agent/v1/install.sh' || { echo 'plumb-install: the download of the install script failed (see the line above). Nothing was installed.' >&2; exit 1; }`,
-          `[ "$(tail -n 1 "$f")" = 'main "$@"' ] || { echo 'plumb-install: the install script is empty or incomplete. Nothing was installed.' >&2; exit 1; }`,
+          `curl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath "$d" --cacert "$d/ca.pem" -o "$d/install.sh" 'https://plumb.lan:8444/agent/v1/install.sh' || { echo 'plumb-install: the download of the install script failed (see the line above). Nothing was installed.' >&2; exit 1; }`,
+          `[ "$(tail -n 1 "$d/install.sh")" = 'main "$@"' ] || { echo 'plumb-install: the install script is empty or incomplete. Nothing was installed.' >&2; exit 1; }`,
+          `mkdir -p /etc/plumb-agent && cp "$d/ca.pem" /etc/plumb-agent/ca.pem || { echo 'plumb-install: cannot write /etc/plumb-agent. Nothing was installed.' >&2; exit 1; }`,
           "cat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'",
           token,
           "PLUMB_TOKEN",
-          `PLUMB_URL='https://plumb.lan:8444' sh "$f"`,
+          `PLUMB_URL='https://plumb.lan:8444' sh "$d/install.sh" || { r=$?; rm -f /etc/plumb-agent/ca.pem; rmdir /etc/plumb-agent 2>/dev/null; exit $r; }`,
           ")",
           "",
         ].join("\n"),
