@@ -502,7 +502,7 @@ Plan: `docs/tasks/T-215-slice-7-plan.md`. Contract: T-217 (this section, `api/op
 - **Rights:** `PlumbGuestBackupVM` (`VM.Backup` on `/pool/plumb`) and `PlumbGuestBackup` (`Datastore.AllocateSpace` + `Datastore.Audit` on the storage), each its own ACL line.
 - **The token is a second path:** with these rights the token itself can back up, restore over and delete the backups of every pool guest directly at the Proxmox API. The user accepted this in U4. Plumb's human-only rules hold only inside Plumb.
 - **Encryption:** a storage is `pbs-key` (PBS with client-side encryption, read from `GET /storage`). Any other storage needs `--guest-backup-clear` at install; else every job is refused.
-- **Identity:** the notes marker `plumb:<install-id>:<target>:<lineage>`, with one lineage per Target (`guest_backup_lineage`, migration 0026, dropped with the binding). The marker is read back after each job; a volume without it is `unmarked` and the job ends `warning`. Only `kind: plumb` volumes (current lineage) are kept by retention, deleted or restored. `older-guest` volumes may only be deleted by a person; `unmarked` volumes are never touched. A volume of a VMID that left the pool is invisible to the token.
+- **Identity:** the notes marker `plumb:<install-id>:<target>:<lineage>`, with one lineage per Target (`guest_backup_lineage`, a migration of T-221, dropped with the binding). The marker is read back after each job; a volume without it is `unmarked` and the job ends `warning`. Only `kind: plumb` volumes (current lineage) are kept by retention, deleted or restored. `older-guest` volumes may only be deleted by a person; `unmarked` volumes are never touched. A volume of a VMID that left the pool is invisible to the token.
 - **Delete of one volume:** human admin session only.
 
 **Restore (D-410, D-411).** A restore is only over the same bound guest. It is a Plan of origin `restore`, risk `destructive`, human-only `guest-restore`. The Run:
@@ -512,9 +512,9 @@ Plan: `docs/tasks/T-215-slice-7-plan.md`. Contract: T-217 (this section, `api/op
 - restores;
 - then re-enrolls the agent (Plumb-made) or shows the install command (adopted).
 
-The desired state is not rolled back. A restore after the guest is gone needs `Datastore.Allocate`, a new right (a later user question). Until then a person restores in Proxmox into pool `plumb` and adopts the guest. The `plan.origin` CHECK gets `restore` in migration 0027 (C6).
+The desired state is not rolled back. A restore after the guest is gone needs `Datastore.Allocate`, a new right (a later user question). Until then a person restores in Proxmox into pool `plumb` and adopts the guest. The `plan.origin` CHECK gets `restore` in a migration of T-222. Migration numbers are the next free one at merge time (D-337).
 
 **Per-Target state (D-413 rule 2):**
-- `guest_backup_lineage` and `guest_backup_run` (0026) go in the `DeleteBinding` transaction (Target delete, unbind of an adopted Target). A new Target of the name, or on a reused VMID, starts a new lineage and sees old volumes as `older-guest`.
+- `guest_backup_lineage` and `guest_backup_run` (T-221) go in the `DeleteBinding` transaction (Target delete, unbind of an adopted Target). A new Target of the name, or on a reused VMID, starts a new lineage and sees old volumes as `older-guest`.
 - The Proxmox volumes stay after a delete (README: remove them in Proxmox).
 - Planned until its card: `guest.nics` (T-219) and `backup` (T-221) pass the schema but are refused by `state.Validate` (`plannedFields`), so no document holds a field that Plumb would ignore.
