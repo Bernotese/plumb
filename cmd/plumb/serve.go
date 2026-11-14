@@ -294,13 +294,23 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	drv = driver.ReadOnlyWhen(drv, restore.Active)
 	rep := repairService(ctx, log, st, secrets, events, agentURL(f.hosts, f.agentListen),
 		func(ctx context.Context) { eng.RewatchAll(ctx) }) // eng is set before the API takes a rotation
+	// sweepDeleted ends the Issues and marks of Targets deleted before
+	// D-397 (T-212): at start, or after the restore confirm.
+	sweepDeleted := func(ctx context.Context) error {
+		swept, err := iss.SweepDeletedTargets(ctx)
+		if len(swept) > 0 {
+			log.Info("ended the Issues of deleted Targets", "targets", len(swept))
+		}
+		return err
+	}
 	eng, err = plan.New(plan.Config{
 		Restore: restore,
 		Store:   st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
-		OnDrift:         func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
-		OnTargetDeleted: func(ctx context.Context, target, reason string) error { return iss.TargetDeleted(ctx, target, reason) },
-		OnPlanDone:      func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
-		AddrStable:      devAddrStable(f.devDemo), DiskLimitPercent: limit,
+		OnDrift:             func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
+		OnTargetDeleted:     func(ctx context.Context, target, reason string) error { return iss.TargetDeleted(ctx, target, reason) },
+		AfterRestoreConfirm: sweepDeleted,
+		OnPlanDone:          func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
+		AddrStable:          devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
 		// The transport comes with T-191; without it a repair is not ready.
 		Repair: repairConfig(ctx, log, rep, lk, agentURL(f.hosts, f.agentListen)),
@@ -339,8 +349,12 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	if err := eng.Recover(ctx); err != nil {
 		return err
 	}
-	// The Issues and marks of Targets deleted before D-397 (T-212).
-	if swept, err := iss.SweepDeletedTargets(ctx); err != nil {
+	// The Issues and marks of Targets deleted before D-397 (T-212). In
+	// restored mode it waits for the confirm (D-303, review R1 of #319).
+	if restore.Active() {
+		log.Info("the Issues of deleted Targets are ended after the restore confirm")
+	}
+	if swept, err := iss.SweepAtStart(ctx, restore.Active()); err != nil {
 		return fmt.Errorf("issues of deleted Targets: %w", err)
 	} else if len(swept) > 0 {
 		log.Info("ended the Issues of deleted Targets", "targets", len(swept))

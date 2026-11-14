@@ -17,7 +17,11 @@ import (
 // binding and is no Target of the head revision, gets what a delete does
 // now (TargetDeleted: each open Issue resolved gone by system with the
 // comment and one event; issue_ignore and ignored_drift dropped; the copy
-// rule rows stay). serve runs it once at start, before the listeners.
+// rule rows stay; a "resolving" Issue whose Run is not running is ended
+// too). serve runs it at start, before the listeners, unless the
+// controller is in restored mode (D-303: system work waits); then the
+// restore confirm runs it (plan.Config.AfterRestoreConfirm, review R1 of
+// #319).
 // It is a start sweep, not a migration: a migration cannot emit the
 // events, and the sweep is idempotent (a second run changes nothing). It
 // returns the names where it ended something.
@@ -58,7 +62,7 @@ func (s *Service) SweepDeletedTargets(ctx context.Context) ([]string, error) {
 		if exists[t] || strings.HasPrefix(t, wire.BuildLinkPrefix) {
 			continue
 		}
-		n, err := s.endTarget(ctx, t, plan.TargetDeletedReason)
+		n, err := s.endTarget(ctx, t, plan.TargetDeletedReason, true)
 		if err != nil {
 			return swept, err
 		}
@@ -67,4 +71,14 @@ func (s *Service) SweepDeletedTargets(ctx context.Context) ([]string, error) {
 		}
 	}
 	return swept, nil
+}
+
+// SweepAtStart is the start of serve: the sweep, unless the controller is
+// in restored mode (D-303: system work waits for the confirm, which runs
+// the sweep through plan.Config.AfterRestoreConfirm; review R1 of #319).
+func (s *Service) SweepAtStart(ctx context.Context, restored bool) ([]string, error) {
+	if restored {
+		return nil, nil
+	}
+	return s.SweepDeletedTargets(ctx)
 }

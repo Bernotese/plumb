@@ -2,6 +2,7 @@ package issue
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Bernotese/plumb/internal/store"
 )
@@ -20,13 +21,16 @@ import (
 // for their normal retention (D-331) and still match a copy into any
 // Target. The engine calls it after the delete step.
 func (s *Service) TargetDeleted(ctx context.Context, target, reason string) error {
-	_, err := s.endTarget(ctx, target, reason)
+	_, err := s.endTarget(ctx, target, reason, false)
 	return err
 }
 
 // endTarget does TargetDeleted and returns how many Issues and marks it
 // ended (T-212: the start sweep logs only real work).
-func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, error) {
+// With stuck, an Issue that is "resolving" is ended too when the Run of
+// its Plan is not running (T-212 N1: a deleted Target's Plan can no
+// longer end it).
+func (s *Service) endTarget(ctx context.Context, target, reason string, stuck bool) (int64, error) {
 	var n int64
 	list, err := s.st.Issues(ctx, target)
 	if err != nil {
@@ -38,7 +42,14 @@ func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, 
 	}
 	for _, iss := range list {
 		if iss.Status != store.IssueOpen {
-			continue
+			if !stuck || iss.Status != store.IssueResolving {
+				continue
+			}
+			if running, err := s.planRunning(ctx, iss.PlanID); err != nil {
+				return n, err
+			} else if running {
+				continue // its Run decides
+			}
 		}
 		if iss.Resource == GuestValuesID && len(flagged) > 0 {
 			continue // the end of the flag resolves it (PruneGuestValues)
@@ -54,4 +65,16 @@ func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, 
 	}
 	m, err := s.st.ForgetTargetMarks(ctx, target)
 	return n + m, err
+}
+
+// planRunning reports whether the Run of a Plan is running.
+func (s *Service) planRunning(ctx context.Context, planID int64) (bool, error) {
+	if planID == 0 {
+		return false, nil
+	}
+	run, err := s.st.RunOfPlan(ctx, planID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil && run.Status == "running", err
 }

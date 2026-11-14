@@ -116,3 +116,72 @@ func TestSweepDeletedTargets(t *testing.T) {
 		t.Fatalf("second sweep %v %v", again, err)
 	}
 }
+
+// Review R1 of #319 (D-303): in restored mode the sweep waits. The start
+// does nothing; the restore confirm runs it once.
+func TestSweepWaitsForRestoreConfirm(t *testing.T) {
+	e, _, _, _ := restoredEnv(t)
+	gone, _, err := e.st.UpsertIssue(e.ctx, "gone1", "file:/etc/b", json.RawMessage(`[]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if swept, err := e.iss.SweepAtStart(e.ctx, true); err != nil || len(swept) != 0 {
+		t.Fatalf("restored start swept %v %v", swept, err)
+	}
+	if iss, _ := e.st.GetIssue(e.ctx, gone.ID); iss.Status != "open" {
+		t.Fatalf("restored start ended the Issue: %+v", iss)
+	}
+	adm := e.login("admin", "restored-password-1")
+	adm.do("PUT", "/api/v1/session/password", map[string]string{"current_password": "restored-password-1", "new_password": "another-good-password"})
+	if code, body := adm.do("POST", "/api/v1/restore/confirm", map[string]any{"old_controller_off": true}); code != 200 {
+		t.Fatalf("confirm: %d %s", code, body)
+	}
+	if iss, _ := e.st.GetIssue(e.ctx, gone.ID); iss.Status != "resolved" || iss.Resolution != "gone" {
+		t.Fatalf("after the confirm: %+v", iss)
+	}
+	// A normal start sweeps.
+	g2, _, _ := e.st.UpsertIssue(e.ctx, "gone2", "file:/etc/b", json.RawMessage(`[]`))
+	if swept, err := e.iss.SweepAtStart(e.ctx, false); err != nil || !slices.Equal(swept, []string{"gone2"}) {
+		t.Fatalf("start swept %v %v", swept, err)
+	}
+	if iss, _ := e.st.GetIssue(e.ctx, g2.ID); iss.Status != "resolved" {
+		t.Fatalf("gone2: %+v", iss)
+	}
+}
+
+// Review N1 of #319: a "resolving" Issue of a deleted Target ends too
+// when the Run of its Plan is not running. (Since D-397 the delete makes
+// the Plan stale and ends the Issue; this is the state of older data: an
+// orphan name whose Issue waits for a Plan that never runs.)
+func TestSweepEndsStuckResolving(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	e.motd("hand edit")
+	id := e.motdIssue()
+	if code, body := adm.do("POST", "/api/v1/issues/"+itoa(id)+"/resolve", map[string]any{"action": "revert", "reason": "back"}); code >= 300 {
+		t.Fatalf("revert: %d %s", code, body)
+	}
+	iss, _ := e.st.GetIssue(e.ctx, id)
+	if iss.Status != "resolving" || iss.PlanID == 0 {
+		t.Fatalf("setup: %+v", iss)
+	}
+	old, _, err := e.st.UpsertIssue(e.ctx, "gone1", "file:/etc/b", json.RawMessage(`[]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.SetIssueResolving(e.ctx, old.ID, iss.PlanID); err != nil {
+		t.Fatal(err)
+	}
+	swept, err := e.iss.SweepDeletedTargets(e.ctx)
+	if err != nil || !slices.Equal(swept, []string{"gone1"}) {
+		t.Fatalf("swept %v %v", swept, err)
+	}
+	if got, _ := e.st.GetIssue(e.ctx, old.ID); got.Status != "resolved" || got.Resolution != "gone" {
+		t.Fatalf("stuck resolving Issue: %+v", got)
+	}
+	// web1 exists: its resolving Issue stays for its Plan.
+	if got, _ := e.st.GetIssue(e.ctx, id); got.Status != "resolving" {
+		t.Fatalf("web1 Issue: %+v", got)
+	}
+}
