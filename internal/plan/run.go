@@ -111,22 +111,10 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 			e.release(slots)
 		}
 	}()
-	var prop Proposal
-	if err := json.Unmarshal(p.Proposal, &prop); err != nil {
-		return store.Run{}, err
-	}
-	// Rebuild exactly the planned set on the base of the Plan. When the
-	// head moved, ApprovePlan refuses it anyway.
-	var base *state.Set
-	if p.BaseRevision == 0 {
-		base, err = state.Validate(nil)
-	} else {
-		base, err = e.load(ctx, p.BaseRevision)
-	}
-	if err != nil {
-		return store.Run{}, err
-	}
-	next, err := apply(base, prop)
+	// Rebuild exactly the planned set on the base of the Plan (the same
+	// code as Plan.documents, T-170). When the head moved, ApprovePlan
+	// refuses it anyway.
+	base, next, err := e.plannedSets(ctx, p)
 	if err != nil {
 		return store.Run{}, err
 	}

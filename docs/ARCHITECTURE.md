@@ -110,6 +110,8 @@ spec:
 
 Contract: `api/openapi.yaml` (OpenAPI 3.1, written first). Errors are `application/problem+json`. Times are UTC RFC 3339. JSON fields are `snake_case`.
 
+- **Plan.documents (T-170):** an answer with one Plan lists the document changes that its approval commits (base revision vs the proposal applied, `plan.plannedSets`, the same code as `Approve`), as `RevisionDiff.changes`; references only, never a secret value; bounded at 500 entries / 8 MiB of text (`documents_truncated`).
+
 ## 5. Agent protocol and enrollment (D-024, D-025)
 | Call (`/agent/v1`, port 8444) | Use |
 |---|---|

@@ -392,6 +392,12 @@ func (s *Server) writePlan(w http.ResponseWriter, r *http.Request, status int, p
 		s.internal(w, err)
 		return
 	}
+	docs, cut, err := s.cfg.Plans.PlanDocuments(r.Context(), p)
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	v.Documents, v.DocumentsTruncated = &docs, cut
 	if status == http.StatusCreated {
 		w.Header().Set("Location", fmt.Sprintf("/api/v1/plans/%d", p.ID))
 	}

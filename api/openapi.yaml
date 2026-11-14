@@ -3570,6 +3570,28 @@ components:
           type: array
           description: The pin changes of a `pin_refresh` Plan (D-335). Missing for other origins.
           items: { $ref: "#/components/schemas/PinRefresh" }
+        documents:
+          type: array
+          description: |
+            The document changes that approving this Plan commits (T-170, host finding F1 of
+            T-158), as `RevisionDiff.changes`: the base revision of the Plan against the base with
+            the proposal applied, computed by the same code that the approval commits, sorted by
+            kind and name. Documents hold secret references only (`{secret: <name>}`, D-088), never
+            a value. `[]` for origin `build` and `agent_update` (no document change). A stale Plan
+            shows what it would have committed on its own base (it cannot be approved). A
+            `rollback` Plan shows the base against revision `rollback_to`; an `import` Plan every
+            imported change; a `pin_refresh` Plan the Image with its new pin. Bound: at most 500
+            entries carry `before`/`after`, and at most 8 MiB of document text in all; past either
+            bound the remaining entries keep `kind`, `name` and `op` with `before` and `after`
+            `null`, and `documents_truncated` is true. Present in every answer that returns one Plan
+            (`GET /plans/{id}`, `POST /plans` and every action that answers with a Plan); missing in the
+            items of `GET /plans` (computing it rebuilds the planned state).
+          items: { $ref: "#/components/schemas/DocumentChange" }
+        documents_truncated:
+          type: boolean
+          description: |
+            Some entries of `documents` have `before`/`after` `null` because of the size bound.
+            Missing or false otherwise.
         images:
           type: array
           description: |
