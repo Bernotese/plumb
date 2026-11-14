@@ -145,6 +145,23 @@ func TestGuestNetplanMerge(t *testing.T) {
 	if len(before.Addresses) != 1 || len(before.Routes) != 1 {
 		t.Fatalf("base file not read as written: %+v", before)
 	}
+
+	// D-358 (review of #261): when netplan generate fails on a file it
+	// cannot parse, the files of the earlier run stay, so a failing boot
+	// unit does not leave the network without configuration.
+	if out, err := exec.Command("netplan", "generate", "--root-dir", root).CombinedOutput(); err != nil {
+		t.Fatalf("netplan generate: %v\n%s", err, out)
+	}
+	generated, _ := filepath.Glob(filepath.Join(root, "run/systemd/network/*.network"))
+	write("70-broken.yaml", "network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: [broken\n")
+	if err := exec.Command("netplan", "generate", "--root-dir", root).Run(); err == nil {
+		t.Fatal("netplan generate took a broken file")
+	}
+	after2, _ := filepath.Glob(filepath.Join(root, "run/systemd/network/*.network"))
+	if len(generated) == 0 || !slices.Equal(generated, after2) {
+		t.Fatalf("a failed netplan generate changed the generated files: %v → %v", generated, after2)
+	}
+	t.Logf("a failed netplan generate keeps the generated files: %v", after2)
 }
 
 // guestDefault returns the NIC, gateway and main address of the default
@@ -212,6 +229,9 @@ func TestGuestNetwork(t *testing.T) {
 	file := resource.NetworkFile("ci")
 	t.Cleanup(func() {
 		_ = exec.Command("systemctl", "stop", resource.RollbackUnit("network")+".timer").Run()
+		_ = exec.Command("systemctl", "disable", resource.NetworkBootUnit).Run()
+		os.Remove("/etc/systemd/system/" + resource.NetworkBootUnit)
+		_ = exec.Command("systemctl", "daemon-reload").Run()
 		os.Remove(file)
 		_ = exec.Command("netplan", "apply").Run()
 	})
@@ -400,6 +420,38 @@ func TestGuestNetwork(t *testing.T) {
 	// Step 5 started right after the timer's netplan apply: on a DHCP NIC
 	// the route can still be missing, and the resource waits for it.
 	t.Logf("step 5 ok: duplicate-address probe refused: %q; around steps 4-5: %s", it.Output, meter.end(gw))
+
+	// 5b. The boot unit (n1 of #249): a change that was never confirmed
+	// (the agent did not come back after a reboot) is put back before
+	// systemd-networkd starts. The unit runs here without a reboot.
+	resource.SetFirewallRollbackAfter(600) // the timer must not race the unit
+	boot, err := resource.New(netResource(map[string]any{"addresses": "192.0.2.10/24,192.0.2.12/24"}), a.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := boot.(resource.SafeApplier).Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	obs, _ = boot.Observe(ctx)
+	if err := boot.Apply(ctx, boot.Diff(obs)); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := exec.Command("systemctl", "is-enabled", resource.NetworkBootUnit).Output(); strings.TrimSpace(string(out)) != "enabled" {
+		t.Fatalf("%s is %q", resource.NetworkBootUnit, out)
+	}
+	fwSh(t, "systemctl", "start", resource.NetworkBootUnit)
+	if got, _ := os.ReadFile(file); string(got) != string(confirmed) {
+		t.Fatalf("the boot unit did not put back the confirmed file: %s", got)
+	}
+	fwSh(t, "netplan", "apply") // at boot systemd-networkd starts after the unit
+	if liveHas(t, dev, "192.0.2.12/24") || !liveHas(t, dev, "192.0.2.10/24") {
+		t.Fatal("after the boot unit the live addresses are not the confirmed ones")
+	}
+	if err := boot.(resource.SafeApplier).Restore(ctx); err != nil { // the agent start: drops the copy
+		t.Fatal(err)
+	}
+	fwSh(t, "systemctl", "stop", resource.NetworkBootUnit)
+	t.Log("step 5b ok: the boot unit put back the unconfirmed change")
 
 	// 6. state absent.
 	if it := apply(map[string]any{"state": "absent"}); it.Status != wire.StatusApplied {
