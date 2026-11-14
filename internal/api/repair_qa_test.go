@@ -19,7 +19,7 @@ import (
 // the same clock here (agent:silent instead of a time offset), so the old
 // hello is after the session start (mutant R1 of docs/tasks/T-195.log.md).
 func TestRepairQAOldAgentHelloIsNoSuccess(t *testing.T) {
-	r := newRepairEnv(t)
+	r := newRepairEnv(t, time.Second) // the old agent says hello every 100 ms inside it
 	r.tr.mode = "silent"
 	r.old.Pause(true)
 	r.agents.off.Store(true)

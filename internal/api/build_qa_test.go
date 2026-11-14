@@ -26,7 +26,7 @@ func commitBuildRecipe(t *testing.T, e *env, motd string) {
 }
 
 func TestBuildApprovalChecksCurrentRecipe(t *testing.T) {
-	e := newEnv(t, false, withBuilds)
+	e := newEnv(t, false, withBuildsNoAgents)
 	adm := e.admin()
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": builtImageDoc("web", "hi")})
 	code, body := adm.do("POST", "/api/v1/images/web/build", nil)
@@ -57,7 +57,7 @@ func TestManualBuildOnByDefault(t *testing.T) {
 }
 
 func TestBuildRunStaysPinnedAfterApproval(t *testing.T) {
-	e := newEnv(t, false, withBuilds)
+	e := newEnv(t, false, withBuildsNoAgents)
 	adm := e.admin()
 	e.runPlanAnyStatus(adm, map[string]any{"reason": "setup", "put": builtImageDoc("web", "hi")})
 	head, err := e.st.Head(e.ctx)
