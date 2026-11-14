@@ -33,6 +33,7 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/targets/web1", nil, TierRead, false},
 	{"POST", "/api/v1/targets/nope/reenroll", nil, TierPlan, false},
 	{"POST", "/api/v1/targets/nope/agent-update", nil, TierPlan, false},
+	{"POST", "/api/v1/targets/nope/repair", nil, TierPlan, false},
 	{"GET", "/api/v1/plans", nil, TierRead, false},
 	{"POST", "/api/v1/plans", []byte(`{"bad":1}`), TierPlan, false},
 	{"GET", "/api/v1/plans/1", nil, TierRead, false},

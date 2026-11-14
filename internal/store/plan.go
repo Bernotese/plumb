@@ -207,9 +207,8 @@ func (s *Store) ApprovePlan(ctx context.Context, planID int64, approvedBy string
 // revision that the caller checked. The caller checks again.
 var ErrHeadMoved = errors.New("store: the head revision moved")
 
-// ApproveBuildPlan approves a pending Plan of origin build (D-199) or
-// agent_update (D-267): it
-// commits no revision. The Run is pinned to the head revision, which must
+// ApproveBuildPlan approves a pending Plan of origin build (D-199),
+// agent_update (D-267) or repair (D-385): it commits no revision. The Run is pinned to the head revision, which must
 // be head: the revision whose recipe the caller compared with the Plan.
 func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy string, head int64) (Run, error) {
 	var run Run
@@ -222,8 +221,8 @@ func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy s
 		if err != nil {
 			return err
 		}
-		if origin != "build" && origin != "agent_update" {
-			return fmt.Errorf("store: plan %d has origin %s, not build or agent_update", planID, origin)
+		if origin != "build" && origin != "agent_update" && origin != "repair" {
+			return fmt.Errorf("store: plan %d has origin %s, not build, agent_update or repair", planID, origin)
 		}
 		if status != PlanPending {
 			return ErrPlanNotPending

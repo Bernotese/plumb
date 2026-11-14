@@ -230,6 +230,7 @@ func (l *Link) Handler() http.Handler {
 	mux.HandleFunc("GET "+wire.PathPoll, l.handlePoll)
 	mux.HandleFunc("POST "+wire.PathReport, l.handleReport)
 	mux.HandleFunc("GET "+wire.PathBinary, l.handleBinary)
+	mux.HandleFunc("GET "+wire.PathInstallScript, l.handleInstallScript)
 	return mux
 }
 

@@ -116,3 +116,29 @@ describe("agent page", () => {
     expect(document.querySelectorAll("#page-title")).toHaveLength(1);
   });
 });
+
+describe("live watch of hand changes (T-176, D-367)", () => {
+  it("says per type whether the agent sees ip and nft changes at once", async () => {
+    const api = adminApi();
+    const t = await api.getTarget("web1");
+    api.getTarget = async () => ({
+      ...t,
+      status: { ...t.status, agent_live_watch: { network: true, firewall: false } },
+    });
+    show(TargetAgent, { api, name: "web1" });
+    await until(() => document.querySelector("#live-watch"));
+    expect(text(el("#live-watch-network"))).toContain(
+      "The agent sees a change by hand of the network settings (ip) within seconds.",
+    );
+    expect(el("#live-watch-firewall").className).toContain("warn");
+    expect(text(el("#live-watch-firewall"))).toContain(
+      "is seen at the full check, every 15 minutes.",
+    );
+  });
+
+  it("shows nothing without the field (an older controller or no such resource)", async () => {
+    show(TargetAgent, { api: adminApi(), name: "web1" });
+    await until(() => document.querySelector("#agent-title, h1"));
+    expect(document.querySelector("#live-watch")).toBeNull();
+  });
+});

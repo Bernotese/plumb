@@ -46,6 +46,9 @@
     }
   }
 
+  // A Plan made by an API token: its reason is shown below the changes (#272 F4).
+  const byToken = $derived(plan?.author.startsWith("token:") ?? false);
+
   const load = () =>
     api.getPlan(id).then(
       (p) => (plan = p),
@@ -179,7 +182,13 @@
   <div class="card">
     <dl class="facts">
       <dt>Reason</dt>
-      <dd>{plan.reason}</dd>
+      {#if byToken}
+        <dd>
+          <a href="#token-reason" id="reason-below">Below the changes</a>: written by an API token
+        </dd>
+      {:else}
+        <dd>{plan.reason}</dd>
+      {/if}
       <dt>Author</dt>
       <dd class="mono">{plan.author}</dd>
       <dt>Created</dt>
@@ -424,6 +433,20 @@
     {/each}
   {/each}
 
+  {#if byToken}
+    <!-- #272 F4 (D-364): text of a token (an AI client, a script) comes after the real changes. -->
+    <section class="card token-reason" id="token-reason" aria-labelledby="token-reason-title">
+      <h2 id="token-reason-title">
+        Reason, written by API token <span class="mono">{plan.author.slice("token:".length)}</span>
+      </h2>
+      <p class="muted">
+        An API token wrote this text, for example an AI client or a script. It does not change what
+        the plan does: check the changes above.
+      </p>
+      <blockquote class="wrap">{plan.reason}</blockquote>
+    </section>
+  {/if}
+
   {#if plan.status === "pending"}
     <form class="card" onsubmit={approve}>
       <h2>Approve</h2>
@@ -496,6 +519,20 @@
 {/if}
 
 <style>
+  .token-reason {
+    border-left: 4px solid var(--color-warn);
+  }
+  .token-reason h2 {
+    margin-top: 0;
+    font-size: var(--text-md);
+  }
+  .token-reason blockquote {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-muted-bg);
+    border-radius: var(--radius);
+    white-space: pre-wrap;
+  }
   .link {
     background: none;
     border: 0;

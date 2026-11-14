@@ -158,7 +158,14 @@
               </div>
             </td>
             <td data-label="Risk"><RiskBadge risk={p.risk} /></td>
-            <td data-label="Reason" class="reason">{p.reason}</td>
+            <td data-label="Reason" class="reason"
+              >{#if p.author.startsWith("token:")}<span class="by-token"
+                  ><Badge tone="warn" label="by token" /><span class="sr-only">:&nbsp;</span><span
+                    class="line"
+                    title={p.reason}>{p.reason}</span
+                  ></span
+                >{:else}{p.reason}{/if}</td
+            >
             <td data-label="Changes" class="mono">{targetsOf(p)}</td>
             <td data-label="Author" class="mono">{p.author}</td>
             <td data-label="Created" class="nowrap">{formatTime(p.created_at)}</td>
@@ -206,6 +213,20 @@
 {/if}
 
 <style>
+  /* A token's reason (#272 F4, review of #291): marked and cut to one line. */
+  .by-token {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    min-width: 0;
+  }
+  .by-token .line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    max-width: 24rem;
+  }
   /* Narrow screens (table.stack): a badge or a button keeps its size. */
   td > :global(.badge),
   td > .btn {

@@ -1,11 +1,13 @@
 <script lang="ts">
-  // Settings (T-035): API tokens, secrets, export and import, backups (T-118). Only a person
+  // Settings (T-035): general (T-176: backup schedule, Proxmox view), API tokens, secrets,
+  // export and import, backups (T-118), users. Only a person
   // who logged in (tier admin) manages these (D-046, D-087, D-095).
   import type { PlumbApi } from "../lib/client";
   import { href, type SettingsTab } from "../lib/router";
   import type { RestoreState, Session } from "../lib/types";
   import Backups from "./Backups.svelte";
   import ExportImport from "./ExportImport.svelte";
+  import General from "./General.svelte";
   import Secrets from "./Secrets.svelte";
   import Tokens from "./Tokens.svelte";
   import Users from "./Users.svelte";
@@ -22,6 +24,7 @@
     onRestore?: (r: RestoreState) => void;
   } = $props();
   const tabs: { tab: SettingsTab; label: string }[] = [
+    { tab: "general", label: "General" },
     { tab: "tokens", label: "API tokens" },
     { tab: "secrets", label: "Secrets" },
     { tab: "export", label: "Export and import" },
@@ -51,7 +54,9 @@
       >
     {/each}
   </nav>
-  {#if tab === "tokens"}
+  {#if tab === "general"}
+    <General {api} />
+  {:else if tab === "tokens"}
     <Tokens {api} />
   {:else if tab === "secrets"}
     <Secrets {api} />

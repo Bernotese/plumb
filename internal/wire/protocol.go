@@ -8,7 +8,37 @@ const (
 	PathPoll   = "/agent/v1/poll"   // GET ?wait=<seconds> → 204 or Command
 	PathReport = "/agent/v1/report" // POST Report → 204
 	PathBinary = "/agent/v1/binary" // GET the agent binary
+	// PathInstallScript serves the install script of this controller
+	// (D-383, D-387): no auth, rate-limited like PathBinary.
+	PathInstallScript = "/agent/v1/install.sh"
 )
+
+// The repair bundle (D-383, ARCHITECTURE §19): a ustar archive on the
+// SSH stdin with exactly RepairMembers, at most MaxRepairBundle bytes.
+// The forced command of the repair line extracts only these names.
+const (
+	MaxRepairBundle = 64 << 20
+	// RepairTokenFile is the one-shot enrollment token (D-390): written
+	// 0600 by the install script, it wins over the stored credential at
+	// the agent's next start and is deleted after its use.
+	RepairTokenFile = "/etc/plumb-agent/enroll.token"
+)
+
+// RepairForcedCommand is <FORCED> of the repair line (D-383): fixed text
+// of the agent, with no double quote. It reads at most MaxRepairBundle
+// bytes, extracts exactly RepairMembers into a 0700 dir, checks the
+// binary and runs the bundled install.sh.
+const RepairForcedCommand = `umask 077; d=/run/plumb-repair; rm -rf $d; mkdir -m 700 $d && head -c 67108864 | tar -x -f - -C $d --no-same-owner --no-same-permissions install.sh plumb-agent plumb-agent.sha256 ca.pem enroll.json && cd $d && sha256sum -c --status plumb-agent.sha256 && sh ./install.sh; r=$?; cd /; rm -rf $d; exit $r`
+
+// RepairMembers are the members of the repair bundle, in archive order.
+var RepairMembers = []string{"install.sh", "plumb-agent", "plumb-agent.sha256", "ca.pem", "enroll.json"}
+
+// RepairEnroll is enroll.json of the repair bundle: the agent URL and a
+// new one-time enrollment token.
+type RepairEnroll struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
 
 // After enrollment the agent sends its credential on every call as
 // "Authorization: Bearer <credential>". A 401 means: enroll again (D-038).
@@ -66,6 +96,11 @@ const (
 	// the gate (GateCommandPrefix). The agent of this build lists it only
 	// when T-117 adds the handler (AgentCommands).
 	CommandGrow CommandType = "grow"
+	// CommandUnbind ends the agent in a guest that Plumb keeps (D-388):
+	// remove the repair lines, the unit, the binary and /etc/plumb-agent.
+	// No body. The agent handler comes with T-193; an agent that does not
+	// list it in Capabilities.Commands never gets it.
+	CommandUnbind CommandType = "unbind"
 )
 
 // BuildLinkPrefix starts the link name of an image build guest:
@@ -73,7 +108,8 @@ const (
 const BuildLinkPrefix = "build:"
 
 // Command is the answer to a poll. Body depends on Type:
-// ObserveBody, ApplyBody, WatchBody, SealBody, UpdateBody or GrowBody.
+// ObserveBody, ApplyBody, WatchBody, SealBody, UpdateBody or GrowBody
+// (unbind has none).
 type Command struct {
 	ID   string          `json:"id"`
 	Type CommandType     `json:"type"`

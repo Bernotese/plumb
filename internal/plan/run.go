@@ -64,6 +64,9 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if p.Origin == OriginAgentUpdate {
 		return e.approveAgentUpdate(ctx, p, principal)
 	}
+	if p.Origin == OriginRepair {
+		return e.approveRepair(ctx, p, principal)
+	}
 	var targets []TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return store.Run{}, err
@@ -318,6 +321,9 @@ func (s *stepper) skip(ctx context.Context, resource, output string) {
 func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set *state.Set, tp TargetPlan) bool {
 	if p.Origin == OriginAgentUpdate {
 		return e.runAgentUpdate(ctx, p, run, set, tp)
+	}
+	if p.Origin == OriginRepair {
+		return e.runRepair(ctx, p, run, set, tp)
 	}
 	s := &stepper{e: e, run: run, target: tp.Target, seq: map[string]int64{}, final: map[string]bool{}, ok: true}
 	r, err := renderOrNil(set, tp.Target)

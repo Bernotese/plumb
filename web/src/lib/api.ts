@@ -57,10 +57,21 @@ export function buildUrl(
 
 /** The problem of a non-2xx answer: its problem+json body, else a generic one. */
 export async function toProblem(res: Response): Promise<Problem> {
-  if (res.headers.get("content-type")?.includes("application/problem+json")) {
-    return (await res.json()) as Problem;
-  }
-  return { type: "about:blank", title: res.statusText || "Request failed", status: res.status };
+  const p: Problem = res.headers.get("content-type")?.includes("application/problem+json")
+    ? ((await res.json()) as Problem)
+    : { type: "about:blank", title: res.statusText || "Request failed", status: res.status };
+  return res.status === 429 ? withRetry(p, res.headers.get("retry-after")) : p;
+}
+
+/**
+ * A 429 answer (D-365 rate limit, login limit) says when to try again: the
+ * Retry-After seconds go into the text when the server did not say it.
+ */
+export function withRetry(p: Problem, retryAfter: string | null): Problem {
+  const s = Number(retryAfter);
+  if (!Number.isInteger(s) || s <= 0 || /try again/i.test(p.detail ?? "")) return p;
+  const wait = s === 1 ? "1 second" : s < 120 ? `${s} seconds` : `${Math.ceil(s / 60)} minutes`;
+  return { ...p, detail: `${p.detail ? `${p.detail} ` : ""}Try again in ${wait}.` };
 }
 
 /** GET a JSON resource. Throws ApiError on a non-2xx answer. */
