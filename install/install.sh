@@ -402,9 +402,10 @@ check_extra_bridges() {
 		print "$e->{iface} ", ($t eq "OVSBridge" || ($e->{bridge_vlan_aware} // 0) ? 1 : 0), "\n" }' <<<"$rows") ||
 		die "cannot read the network of node $NODE for --extra-bridge/--extra-vlan. Nothing was changed."
 	for net in "${EXTRA_NETS[@]}"; do
-		grep -q "^${net%/*} " <<<"$bridges" ||
+		# Exact names: a "." in a bridge name is no pattern (review n1 of #330).
+		awk -v b="${net%/*}" '$1 == b { f = 1 } END { exit !f }' <<<"$bridges" ||
 			die "bridge ${net%/*} (--extra-bridge/--extra-vlan) is not a bridge of node $NODE. Nothing was changed."
-		if [[ $net == */* ]] && ! grep -qx "${net%/*} 1" <<<"$bridges"; then
+		if [[ $net == */* ]] && ! awk -v b="${net%/*}" '$1 == b && $2 == 1 { f = 1 } END { exit !f }' <<<"$bridges"; then
 			die "bridge ${net%/*} is not VLAN-aware, so a NIC with tag ${net#*/} fails (--extra-vlan). Set \"VLAN aware\" on the bridge, or use --extra-bridge. Nothing was changed."
 		fi
 	done
