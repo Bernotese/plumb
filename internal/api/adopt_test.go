@@ -125,4 +125,17 @@ func TestAdoptAPI(t *testing.T) {
 	if !strings.Contains(ic.Command, adoptCA) || !strings.Contains(ic.Command, "'https://plumb.lan:8444/agent/v1/install.sh'") {
 		t.Fatalf("command:\n%s", ic.Command)
 	}
+	// A2 of #299: curl trusts only the Plumb CA (--capath to a dir without
+	// hashed names replaces the system store) and only https.
+	curl := ""
+	for _, l := range lines {
+		if strings.HasPrefix(l, "curl ") {
+			curl = l
+		}
+	}
+	for _, flag := range []string{"--proto =https", "--capath /etc/plumb-agent", "--cacert /etc/plumb-agent/ca.pem"} {
+		if !strings.Contains(curl, flag) {
+			t.Fatalf("curl without %q: %s", flag, curl)
+		}
+	}
 }
