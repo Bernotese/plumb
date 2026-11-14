@@ -96,6 +96,7 @@ type Agent struct {
 	resolved map[string]wire.Item // drift that went away, not yet sent
 
 	watcher     *watcher      // set by Run (tests read it)
+	net         *netWatch     // live ip/nft watch (D-367); its subscriptions belong to the drift loop
 	listChanged chan struct{} // the desired list changed
 	applyDone   chan []string // an apply ended; ids of its resources
 	sendMu      sync.Mutex    // one drift report at a time
@@ -197,6 +198,7 @@ func New(opt Options) (*Agent, error) {
 		applyDone:   make(chan []string, 64),
 		caps:        Capabilities(),
 	}
+	a.net = newNetWatch(opt.Log, opt.Debounce, a.isApplying)
 	a.upd = &updater{state: a.state, bin: binPaths{bin: opt.BinaryPath}, unitDir: opt.UnitDir,
 		config: opt.ConfigPath, run: opt.Runner, log: opt.Log}
 	if a.binarySHA, err = hashFile(opt.SelfExe); err != nil {
@@ -234,6 +236,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.mu.Lock()
 	a.watcher = w
 	a.mu.Unlock()
+	a.net.probe() // before the first hello, which carries live_watch (D-367)
 	go a.driftLoop(ctx, w)
 
 	b := backoff{min: a.opt.BackoffMin, max: a.opt.BackoffMax}
@@ -426,7 +429,7 @@ func (a *Agent) send(ctx context.Context, r wire.Report) error {
 func (a *Agent) hello() *wire.Hello {
 	caps := a.caps
 	h := &wire.Hello{Version: a.opt.Version, Hostname: a.opt.Hostname, OS: osName(a.opt.Root),
-		BinarySHA256: a.binarySHA, Capabilities: &caps, Reverted: a.upd.reverted()}
+		BinarySHA256: a.binarySHA, Capabilities: &caps, Reverted: a.upd.reverted(), LiveWatch: a.net.liveWatch()}
 	if l, ok := a.readAddrs(); ok {
 		h.Addrs, h.AddrsTruncated = l.List, l.Truncated
 	}

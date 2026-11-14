@@ -353,6 +353,16 @@ type Hello struct {
 	// The controller fails an open update step with it and shows it in the
 	// Target status. nil: no revert since the last update command.
 	Reverted *UpdateRevert `json:"reverted,omitempty"`
+	// LiveWatch says for which resource types the agent sees ip and nft
+	// hand changes at once by netlink (D-367). A false type is found only
+	// by the full check. nil: an agent before slice 6 (full check only).
+	LiveWatch *LiveWatch `json:"live_watch,omitempty"`
+}
+
+// LiveWatch is the live drift watch of an agent per resource type (D-367).
+type LiveWatch struct {
+	Network  bool `json:"network"`
+	Firewall bool `json:"firewall"`
 }
 
 // UpdateRevert describes a failed update that the agent rolled back.
