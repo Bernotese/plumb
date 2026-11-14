@@ -164,7 +164,6 @@ Order with the test host: real-host part of T-015 on the running install → `--
 
 ## Open for the user
 - Answered 2026-11-14: U1 … U5 (D-377 … D-381). Still to ask when it is time: U6 release steps, U7 repair run of the user's own install for the new ACL lines of slice 7 (asked with the slice 7 plan).
-- Asked 2026-11-14, no answer yet: may `~/.config/plump/t192-secrets.json` on the dev VM be deleted (tokens in it are revoked)?
 - **Working rule D-326 (user, 2026-11-13):** no release until all of BRIEF §5/§6 is done; the team plans and builds slice after slice on its own and sends short notes. The user is asked only for: new token rights or ACLs, public steps, anything outside `pve-dev`, changes to the user's own installation.
 - First release: **rests** (D-326). The workflow of T-124 is ready and stays unused.
 - Slice 4, user question 1: a real install needs the name of the backup storage from the user (`--backup-storage`). For the test host pl-lead proposes one (T-122).
