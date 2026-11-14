@@ -130,7 +130,10 @@
   });
 </script>
 
-<p class="back"><a href={href({ name: "target-edit", target: name })}>← Target {name}</a></p>
+<p class="back">
+  <a href={href({ name: "target-edit", target: name })}>← Target {name}</a> ·
+  <a href={href({ name: "target-backups", target: name })}>Backups</a>
+</p>
 {#if target}
   <ProblemBox {error} />
   <AgentCard {api} {target} headingLevel={1} />

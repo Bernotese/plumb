@@ -22,6 +22,7 @@
   import TargetForm from "./screens/TargetForm.svelte";
   import Adopt from "./screens/Adopt.svelte";
   import TargetAgent from "./screens/TargetAgent.svelte";
+  import TargetBackups from "./screens/TargetBackups.svelte";
   import Targets from "./screens/Targets.svelte";
   import Images from "./screens/Images.svelte";
   import ImageForm from "./screens/ImageForm.svelte";
@@ -196,6 +197,7 @@
           "target-adopt",
           "target-edit",
           "target-agent",
+          "target-backups",
         ])}>Targets</a
       >
       <a
@@ -266,6 +268,8 @@
     {#key route.target}<TargetForm {api} name={route.target} />{/key}
   {:else if route.name === "target-agent"}
     {#key route.target}<TargetAgent {api} name={route.target} />{/key}
+  {:else if route.name === "target-backups"}
+    {#key route.target}<TargetBackups {api} name={route.target} />{/key}
   {:else if route.name === "images"}
     <Images {api} />
   {:else if route.name === "image-new"}

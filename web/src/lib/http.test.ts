@@ -26,6 +26,29 @@ const problem = (status: number, title: string) =>
   });
 
 describe("http api", () => {
+  it("calls the guest backup routes of slice 7 (T-223)", async () => {
+    const f = fakeFetch((c) =>
+      c.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : c.method === "POST" && c.url.endsWith("/backups")
+          ? new Response(null, { status: 202 })
+          : Response.json({ id: 31 }),
+    );
+    const api = createHttpApi({ fetch: f.fn });
+    await api.listGuestBackups("db1");
+    await api.backUpGuestNow("db1");
+    await api.backUpGuestNow("db1", " Before the update. ");
+    await api.deleteGuestBackup("db1", "3f2a9c0d1e4b5a67");
+    await api.restoreGuest("db1", { backup: "3f2a9c0d1e4b5a67", reason: "Broken." });
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["GET", "/api/v1/targets/db1/backups", undefined],
+      ["POST", "/api/v1/targets/db1/backups", undefined],
+      ["POST", "/api/v1/targets/db1/backups", { reason: "Before the update." }],
+      ["DELETE", "/api/v1/targets/db1/backups/3f2a9c0d1e4b5a67", undefined],
+      ["POST", "/api/v1/targets/db1/restore", { backup: "3f2a9c0d1e4b5a67", reason: "Broken." }],
+    ]);
+  });
+
   it("follows next until the last page", async () => {
     const f = fakeFetch((c) =>
       Response.json(
