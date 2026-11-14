@@ -437,6 +437,8 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 			}
 		}
 		return nil // a report without a waiter (it timed out) is dropped
+	case wire.ReportRepair:
+		return e.handleRepairReport(ctx, d)
 	case wire.ReportDrift:
 		if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
 			return err // no Target: no Issue, no event (D-211)
@@ -582,7 +584,7 @@ func (e *Engine) watch(ctx context.Context, target string, r *state.Rendered) er
 	if err != nil {
 		return fmt.Errorf("plan: watch list of %s not sent: %w", target, err)
 	}
-	_, err = e.cfg.Agents.Send(target, wire.CommandWatch, wire.WatchBody{Resources: body})
+	_, err = e.cfg.Agents.Send(target, wire.CommandWatch, wire.WatchBody{Resources: body, Repair: e.repairWatch(ctx)})
 	return err
 }
 

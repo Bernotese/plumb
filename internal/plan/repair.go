@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +69,12 @@ type RepairSend struct {
 	// Bundle writes the bundle. The transport calls it only after the
 	// host key check passed, so nothing reaches an unknown peer.
 	Bundle func(w io.Writer) error
+	// StaticIP is the static address of the Target (spec.guest.ip without
+	// the prefix); "" for dhcp. Reported is the address list that the
+	// agent reported last (guest data, D-216): the transport dials one of
+	// them only on-link (review R5 of #290).
+	StaticIP string
+	Reported []string
 	// Output receives the guest's stdout and stderr. The Run bounds and
 	// escapes it; the transport may stop reading after MaxRepairOutput.
 	Output io.Writer
@@ -82,6 +89,30 @@ type RepairTransport interface {
 	// left the controller; exit is the exit code of the forced command
 	// (meaningful with a nil error).
 	Send(ctx context.Context, s RepairSend) (exit int, sent bool, err error)
+}
+
+// RepairStatus is TargetStatus.repair (D-384): ready, off with the
+// reasons, or unknown.
+type RepairStatus struct {
+	State        string   `json:"state"`
+	Reasons      []string `json:"reasons"`
+	Port         *int     `json:"port"`
+	HostKeys     []string `json:"host_keys"`
+	HostKeysSeen []string `json:"host_keys_seen"`
+	KeyConfirmed bool     `json:"key_confirmed"`
+}
+
+// The states of RepairStatus.
+const (
+	RepairReady   = "ready"
+	RepairOff     = "off"
+	RepairUnknown = "unknown"
+)
+
+// RepairStatuser is a transport that knows the readiness of a Target
+// (T-191). nil status: no agent (TargetStatus.repair is null).
+type RepairStatuser interface {
+	Status(ctx context.Context, target string) (*RepairStatus, error)
 }
 
 // RepairTokens makes and drops repair enrollment tokens (link.Link).
@@ -99,6 +130,11 @@ type RepairConfig struct {
 	AgentBinary []byte
 	CA          []byte
 	AgentURL    string
+	// Watch returns the repair key set for every watch command (D-383);
+	// nil or a nil result: none. OnReport receives the checked repair
+	// report of a bound Target (D-384).
+	Watch    func(ctx context.Context) *wire.RepairWatch
+	OnReport func(ctx context.Context, target string, r wire.RepairReport) error
 	// HelloWait and SessionTimeout override RepairHelloWait and
 	// RepairSessionTimeout (tests).
 	HelloWait, SessionTimeout time.Duration
@@ -151,6 +187,104 @@ func (e *Engine) repairNeeded(ctx context.Context, target string) error {
 	return nil
 }
 
+// RepairStatus is TargetStatus.repair: the transport's readiness, and
+// "firewall" when the Target's firewall keeps the controller from the SSH
+// port (D-384). nil: no transport that knows it, or no agent.
+func (e *Engine) RepairStatus(ctx context.Context, target string) (*RepairStatus, error) {
+	st, ok := e.cfg.Repair.Transport.(RepairStatuser)
+	if !ok {
+		return nil, nil
+	}
+	rs, err := st.Status(ctx, target)
+	if err != nil || rs == nil || rs.State == RepairUnknown {
+		return rs, err
+	}
+	r, err := e.headRender(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if r != nil && firewallBlocksRepair(r.Resources, e.repairFrom(ctx)) {
+		rs.Reasons = append(rs.Reasons, "firewall")
+		rs.State = RepairOff
+	}
+	return rs, nil
+}
+
+// repairFrom is the From list of the repair key set.
+func (e *Engine) repairFrom(ctx context.Context) []string {
+	if w := e.repairWatch(ctx); w != nil {
+		return w.From
+	}
+	return nil
+}
+
+// firewallBlocksRepair reports whether a present firewall resource keeps
+// every From address from the SSH port: allow_no_ssh, or ssh_sources
+// that hold none of them.
+func firewallBlocksRepair(rs []wire.Resource, from []string) bool {
+	for _, r := range rs {
+		if r.Type != firewallType || r.Attrs[wire.AttrState] == wire.StateAbsent {
+			continue
+		}
+		noSSH, _ := r.Attrs["allow_no_ssh"].(bool)
+		src, _ := r.Attrs["ssh_sources"].(string)
+		if noSSH || !SourcesHold(src, from) {
+			return true
+		}
+	}
+	return false
+}
+
+// SourcesHold reports whether a sources list ("a/n,b/m"; "" = from
+// everywhere) holds one of the addresses.
+func SourcesHold(sources string, addrs []string) bool {
+	if strings.TrimSpace(sources) == "" {
+		return true
+	}
+	for _, s := range strings.Split(sources, ",") {
+		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ip := net.ParseIP(a); ip != nil && n.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RepairFirewallWarning is the Plan warning of a change that turns the
+// SSH repair off by the firewall (D-384), or "".
+func (e *Engine) RepairFirewallWarning(ctx context.Context, tp TargetPlan) string {
+	from := e.repairFrom(ctx)
+	if len(from) == 0 {
+		return ""
+	}
+	for _, rc := range tp.Resources {
+		typ, _, _ := wire.SplitID(rc.Resource)
+		if typ != firewallType {
+			continue
+		}
+		for _, c := range rc.Changes {
+			off := false
+			switch c.Attr {
+			case "allow_no_ssh":
+				off = c.To == true
+			case "ssh_sources":
+				s, ok := c.To.(string)
+				off = ok && !SourcesHold(s, from)
+			}
+			if off {
+				return fmt.Sprintf("%s: the firewall does not let the controller (%s) reach SSH, so the repair fallback is off.",
+					tp.Target, strings.Join(from, ", "))
+			}
+		}
+	}
+	return ""
+}
+
 // repairReady asks the transport.
 func (e *Engine) repairReady(ctx context.Context, target string) error {
 	rc := e.repairConfig()
@@ -159,6 +293,15 @@ func (e *Engine) repairReady(ctx context.Context, target string) error {
 	}
 	if len(rc.AgentBinary) == 0 {
 		return fmt.Errorf("plan: this build has no agent binary: %w", ErrRepairNotReady)
+	}
+	if rs, err := e.RepairStatus(ctx, target); err != nil {
+		return err
+	} else if rs != nil && rs.State != RepairReady {
+		reasons := strings.Join(rs.Reasons, ", ")
+		if reasons == "" {
+			reasons = "no repair report yet"
+		}
+		return fmt.Errorf("plan: the repair of %s is off (%s): %w", target, reasons, ErrRepairNotReady)
 	}
 	if err := rc.Transport.Ready(ctx, target); err != nil {
 		if errors.Is(err, ErrRepairNotReady) {
@@ -345,7 +488,9 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 	}
 	sess, cancel := context.WithTimeout(ctx, session)
 	start := e.cfg.Now()
+	static, reported := e.repairAddrs(ctx, set, tp.Target)
 	exit, sent, err := rc.Transport.Send(sess, RepairSend{Target: tp.Target, AcceptHostKey: tp.acceptedHostKey(),
+		StaticIP: static, Reported: reported,
 		Bundle: func(w io.Writer) error { return agentinstall.WriteBundle(w, bundle) }, Output: out})
 	cancel()
 	tok.Token = "" // not needed past the session
@@ -391,6 +536,42 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 			return fail(ctx.Err().Error())
 		}
 	}
+}
+
+// repairAddrs returns the static address of the Target and the address
+// list that its agent reported last.
+func (e *Engine) repairAddrs(ctx context.Context, set *state.Set, target string) (string, []string) {
+	var static string
+	if r, err := renderOrNil(set, target); err == nil && r != nil {
+		if ip, _ := r.Guest.Attrs[driver.AttrIP].(string); ip != "" && ip != "dhcp" {
+			static, _, _ = strings.Cut(ip, "/")
+		}
+	}
+	rep, known, err := e.st.ReportedAddrs(ctx, target)
+	if err != nil || !known {
+		return static, nil
+	}
+	return static, rep.List
+}
+
+// repairWatch is the repair key set of a watch command, or nil.
+func (e *Engine) repairWatch(ctx context.Context) *wire.RepairWatch {
+	if e.cfg.Repair.Watch == nil {
+		return nil
+	}
+	return e.cfg.Repair.Watch(ctx)
+}
+
+// handleRepairReport hands the repair report of a bound Target to the
+// transport side (D-384). link checked its limits.
+func (e *Engine) handleRepairReport(ctx context.Context, d link.Delivery) error {
+	if bound, err := e.bound(ctx, d.Target); err != nil || !bound {
+		return err
+	}
+	if e.cfg.Repair.OnReport == nil || d.Report.Repair == nil {
+		return nil
+	}
+	return e.cfg.Repair.OnReport(ctx, d.Target, *d.Report.Repair)
 }
 
 // boundedBuffer keeps the first max bytes written to it and drops the

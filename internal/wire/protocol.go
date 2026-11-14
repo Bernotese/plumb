@@ -144,6 +144,11 @@ type Planned struct {
 // and reports drift against it.
 type WatchBody struct {
 	Resources []Resource `json:"resources"`
+	// Repair is the repair key set of the controller (D-383): the agent
+	// keeps one authorized_keys line per key and removes every other
+	// plumb-repair- line. nil: the controller has no repair key; the agent
+	// keeps what it has. An agent before T-191 ignores the field.
+	Repair *RepairWatch `json:"repair,omitempty"`
 }
 
 // SealBody starts seal. It holds no path, command or user name: what seal
@@ -342,6 +347,10 @@ const (
 	// agent and the resource is in it, else 409; it stores nothing. It is
 	// no progress: the Run step stays running.
 	ReportConfirm ReportType = "confirm"
+	// ReportRepair is the SSH repair readiness of the guest (D-384): the
+	// lines, sshd, the host key fingerprints. Sent after a hello, after a
+	// watch and when it changes. Body: Report.Repair.
+	ReportRepair ReportType = "repair"
 )
 
 // Report is every message from the agent after enrollment.
@@ -359,6 +368,8 @@ type Report struct {
 	// read its addresses any more, so the list it sent before is stale.
 	// The controller sets the list to unknown (D-212).
 	AddrsUnknown bool `json:"addrs_unknown,omitempty"`
+	// Repair is only for repair.
+	Repair *RepairReport `json:"repair,omitempty"`
 }
 
 // Hello describes the agent and its guest.

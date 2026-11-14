@@ -2887,7 +2887,6 @@ paths:
     post:
       tags: [settings]
       operationId: rotateRepairKey
-      x-plumb-planned: T-191
       summary: Make a new repair SSH key
       description: |
         Human admin session only (D-382). Without `revoke_old`: makes a new ed25519 repair key;

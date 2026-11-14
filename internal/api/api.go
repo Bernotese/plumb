@@ -44,6 +44,8 @@ type Config struct {
 	Version string
 	// Secrets is the encrypted secret store (required).
 	Secrets *secret.Store
+	// RepairKeys is the SSH repair key (T-191); nil: repair is off.
+	RepairKeys RepairKeys
 	// UI is the built web UI (index.html, assets/…). nil: no UI.
 	UI fs.FS
 	// Dev: plain HTTP. The session cookie has no Secure flag and the
@@ -247,6 +249,7 @@ func (s *Server) Handler() http.Handler {
 
 	route("GET /api/v1/settings", read, s.getSettings)
 	route("PATCH /api/v1/settings", admin, s.changeSettings)
+	route("POST /api/v1/settings/repair-key/rotate", admin, s.rotateRepairKey)
 
 	route("GET /api/v1/backups", read, s.listBackups)
 	route("POST /api/v1/backups", apply, s.createBackup)

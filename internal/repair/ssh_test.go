@@ -1,0 +1,490 @@
+package repair
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
+	"io"
+	"net"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/Bernotese/plumb/internal/event"
+	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/secret"
+	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
+)
+
+func TestKindTarget(t *testing.T) {
+	if kindTarget != state.KindTarget {
+		t.Fatal("kindTarget differs from state.KindTarget")
+	}
+}
+
+// fakeSSHD is a guest sshd: it accepts only keys that the test lists,
+// runs no command, reads stdin and answers with an exit code.
+type fakeSSHD struct {
+	t        *testing.T
+	ln       net.Listener
+	hostKey  ssh.Signer
+	mu       sync.Mutex
+	allowed  []ssh.PublicKey
+	stdin    [][]byte
+	requests []string // channel and request types the client asked for
+	exit     uint32
+	out      string
+}
+
+func newFakeSSHD(t *testing.T) *fakeSSHD {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hk, _ := ed25519.GenerateKey(nil)
+	signer, _ := ssh.NewSignerFromKey(hk)
+	f := &fakeSSHD{t: t, ln: ln, hostKey: signer}
+	t.Cleanup(func() { ln.Close() })
+	go f.serve()
+	return f
+}
+
+func (f *fakeSSHD) port() int { return f.ln.Addr().(*net.TCPAddr).Port }
+
+func (f *fakeSSHD) newHostKey() {
+	_, hk, _ := ed25519.GenerateKey(nil)
+	s, _ := ssh.NewSignerFromKey(hk)
+	f.mu.Lock()
+	f.hostKey = s
+	f.mu.Unlock()
+}
+
+func (f *fakeSSHD) fp() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return ssh.FingerprintSHA256(f.hostKey.PublicKey())
+}
+
+func (f *fakeSSHD) serve() {
+	for {
+		c, err := f.ln.Accept()
+		if err != nil {
+			return
+		}
+		go f.handle(c)
+	}
+}
+
+func (f *fakeSSHD) handle(c net.Conn) {
+	defer c.Close()
+	f.mu.Lock()
+	cfg := &ssh.ServerConfig{PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, k := range f.allowed {
+			if bytes.Equal(k.Marshal(), key.Marshal()) {
+				return nil, nil
+			}
+		}
+		return nil, errors.New("no")
+	}}
+	cfg.AddHostKey(f.hostKey)
+	f.mu.Unlock()
+	_, chans, reqs, err := ssh.NewServerConn(c, cfg)
+	if err != nil {
+		return
+	}
+	go func() {
+		for r := range reqs {
+			f.mu.Lock()
+			f.requests = append(f.requests, "global:"+r.Type)
+			f.mu.Unlock()
+			r.Reply(false, nil)
+		}
+	}()
+	for nc := range chans {
+		f.mu.Lock()
+		f.requests = append(f.requests, "channel:"+nc.ChannelType())
+		f.mu.Unlock()
+		if nc.ChannelType() != "session" {
+			nc.Reject(ssh.Prohibited, "no")
+			continue
+		}
+		ch, creqs, err := nc.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer ch.Close()
+			for r := range creqs {
+				f.mu.Lock()
+				f.requests = append(f.requests, "req:"+r.Type)
+				exit, out := f.exit, f.out
+				f.mu.Unlock()
+				if r.Type != "exec" {
+					r.Reply(false, nil)
+					continue
+				}
+				r.Reply(true, nil)
+				b, _ := io.ReadAll(ch)
+				f.mu.Lock()
+				f.stdin = append(f.stdin, b)
+				f.mu.Unlock()
+				io.WriteString(ch, out)
+				var st [4]byte
+				binary.BigEndian.PutUint32(st[:], exit)
+				ch.SendRequest("exit-status", false, st[:])
+				return
+			}
+		}()
+	}
+}
+
+type env struct {
+	t   *testing.T
+	ctx context.Context
+	st  *store.Store
+	sec *secret.Store
+	ev  *event.Log
+	s   *Service
+	now time.Time
+}
+
+func newEnv(t *testing.T, own ...string) *env {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	sec, err := secret.Open(ctx, st, secret.NewKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &env{t: t, ctx: ctx, st: st, sec: sec, ev: event.New(st), now: time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)}
+	var nets []*net.IPNet
+	for _, o := range own {
+		_, n, _ := net.ParseCIDR(o)
+		nets = append(nets, n)
+	}
+	e.s, err = New(Config{Store: st, Secrets: sec, Events: e.ev, From: []string{"127.0.0.1"}, OwnNets: nets,
+		Now: func() time.Time { return e.now }, ConnectTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.EnsureKey(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// bind makes Target name with guest id ref and an enrolled agent.
+func (e *env) bind(name, ref string) {
+	e.t.Helper()
+	if err := e.st.PutBinding(e.ctx, store.Binding{Kind: state.KindTarget, Name: name, Ref: ref}); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.st.PutEnrollToken(e.ctx, name, "h-"+ref, e.now.Add(time.Hour)); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.st.Enroll(e.ctx, "h-"+ref, e.now, store.Agent{ID: "a-" + ref, CredentialHash: "x"}); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) report(target string, lines []string, port int, keys ...string) {
+	e.t.Helper()
+	r := wire.RepairReport{Lines: lines, SSHD: wire.RepairSSHD{Status: wire.SSHDOk, Port: port}, HostKeys: keys}
+	if err := e.s.OnReport(e.ctx, target, r); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) currentID() string {
+	keys, _ := e.st.RepairKeys(e.ctx)
+	return keys[0].ID
+}
+
+// allow puts the current repair key into the fake sshd.
+func (e *env) allow(f *fakeSSHD) {
+	keys, _ := e.st.RepairKeys(e.ctx)
+	pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(keys[0].PublicKey))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.allowed = append(f.allowed, pk)
+	f.mu.Unlock()
+}
+
+func send(e *env, accept string) (int, bool, *bytes.Buffer, error) {
+	var out bytes.Buffer
+	exit, sent, err := e.s.Send(e.ctx, plan.RepairSend{Target: "web1", StaticIP: "127.0.0.1", AcceptHostKey: accept,
+		Bundle: func(w io.Writer) error { _, err := io.WriteString(w, "BUNDLE"); return err }, Output: &out})
+	return exit, sent, &out, err
+}
+
+// TestRepairSessionPinnedHostKey: with the pinned host key the bundle goes
+// on stdin and the exit code comes back. Only a session with one exec is
+// asked: no PTY, no env, no forwarding, no subsystem.
+func TestRepairSessionPinnedHostKey(t *testing.T) {
+	e := newEnv(t)
+	f := newFakeSSHD(t)
+	e.allow(f)
+	e.bind("web1", "vm/101")
+	e.report("web1", []string{e.currentID()}, f.port(), f.fp())
+	f.exit, f.out = 3, "hello from the guest"
+	exit, sent, out, err := send(e, "")
+	if err != nil || !sent || exit != 3 || out.String() != "hello from the guest" {
+		t.Fatalf("exit %d sent %v err %v out %q", exit, sent, err, out)
+	}
+	if len(f.stdin) != 1 || string(f.stdin[0]) != "BUNDLE" {
+		t.Fatalf("stdin %q", f.stdin)
+	}
+	if strings.Join(f.requests, " ") != "channel:session req:exec" {
+		t.Fatalf("requests %v", f.requests)
+	}
+}
+
+// TestRepairHostKeyChangedRefused (D-384, no TOFU): a changed host key
+// fails the Run before anything is sent; with accept_host_key of the
+// approved Plan it pins the key and sends.
+func TestRepairHostKeyChangedRefused(t *testing.T) {
+	e := newEnv(t)
+	f := newFakeSSHD(t)
+	e.allow(f)
+	e.bind("web1", "vm/101")
+	e.report("web1", []string{e.currentID()}, f.port(), f.fp())
+	f.newHostKey()
+	_, sent, _, err := send(e, "")
+	if !errors.Is(err, ErrHostKey) || sent || len(f.stdin) != 0 || len(f.requests) != 0 {
+		t.Fatalf("sent %v err %v stdin %d requests %v", sent, err, len(f.stdin), f.requests)
+	}
+	// Another fingerprint than the guest's: still refused.
+	if _, sent, _, err := send(e, "SHA256:"+strings.Repeat("A", 43)); !errors.Is(err, ErrHostKey) || sent {
+		t.Fatalf("a wrong accept passed: %v", err)
+	}
+	newFP := f.fp()
+	if _, sent, _, err := send(e, newFP); err != nil || !sent {
+		t.Fatalf("accepted key: sent %v err %v", sent, err)
+	}
+	pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101")
+	if len(pins) != 2 || (pins[0] != newFP && pins[1] != newFP) {
+		t.Fatalf("pins %v", pins)
+	}
+	// Now pinned: no accept needed.
+	if _, sent, _, err := send(e, ""); err != nil || !sent {
+		t.Fatalf("after the pin: %v", err)
+	}
+}
+
+// TestRepairPinsFromFirstReportOnly (D-384): the first report after a new
+// binding pins; a later report with other keys never changes the pins and
+// shows them once in target.hostkeys; a new binding clears the pins.
+func TestRepairPinsFromFirstReportOnly(t *testing.T) {
+	e := newEnv(t)
+	a, b := "SHA256:"+strings.Repeat("A", 43), "SHA256:"+strings.Repeat("B", 43)
+	e.bind("web1", "vm/101")
+	e.report("web1", nil, 22, a)
+	e.report("web1", nil, 22, b)
+	e.report("web1", nil, 22, b)
+	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101"); len(pins) != 1 || pins[0] != a {
+		t.Fatalf("pins %v", pins)
+	}
+	st, _ := e.s.Status(e.ctx, "web1")
+	if len(st.HostKeysSeen) != 1 || st.HostKeysSeen[0] != b {
+		t.Fatalf("seen %v", st.HostKeysSeen)
+	}
+	evs, _ := e.st.EventsAfter(e.ctx, 0, 100)
+	n := 0
+	for _, ev := range evs {
+		if ev.Type == "target.hostkeys" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d target.hostkeys events, want 1", n)
+	}
+	// A new guest of the Target: the first report pins again.
+	if err := e.st.PutBinding(e.ctx, store.Binding{Kind: state.KindTarget, Name: "web1", Ref: "vm/102"}); err != nil {
+		t.Fatal(err)
+	}
+	e.report("web1", nil, 22, b)
+	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/102"); len(pins) != 1 || pins[0] != b {
+		t.Fatalf("pins of the new guest %v", pins)
+	}
+	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101"); len(pins) != 0 {
+		t.Fatalf("old pins stay %v", pins)
+	}
+}
+
+// TestRepairNoRoutedDial (review R5 of #290): without a static address the
+// Run dials a reported address only inside a controller network.
+func TestRepairNoRoutedDial(t *testing.T) {
+	e := newEnv(t, "192.0.2.0/24", "2001:db8::/64")
+	got := e.s.dialAddrs("", []string{"198.51.100.7/24", "192.0.2.50/24", "127.0.0.1/8", "fe80::1/64", "2001:db8::9/64", "bad"})
+	if strings.Join(got, ",") != "192.0.2.50,2001:db8::9" {
+		t.Fatalf("dial %v", got)
+	}
+	if got := e.s.dialAddrs("10.9.9.9", []string{"192.0.2.50/24"}); len(got) != 1 || got[0] != "10.9.9.9" {
+		t.Fatalf("static %v", got)
+	}
+	many := []string{}
+	for i := 1; i < 20; i++ {
+		many = append(many, "192.0.2."+strconv.Itoa(i)+"/24")
+	}
+	if got := e.s.dialAddrs("", many); len(got) != maxDialAddrs {
+		t.Fatalf("%d addresses", len(got))
+	}
+	// A DHCP Target whose address is routed: nothing is dialled.
+	e.bind("web1", "vm/101")
+	e.report("web1", []string{e.currentID()}, 22, "SHA256:"+strings.Repeat("A", 43))
+	dialed := false
+	e.s.cfg.Dial = func(context.Context, string) (net.Conn, error) { dialed = true; return nil, errors.New("no") }
+	_, sent, err := e.s.Send(e.ctx, plan.RepairSend{Target: "web1", Reported: []string{"198.51.100.7/24"},
+		Bundle: func(io.Writer) error { return nil }})
+	if err == nil || sent || dialed {
+		t.Fatalf("routed: err %v sent %v dialed %v", err, sent, dialed)
+	}
+}
+
+// TestRepairFromIPOnly (review R4 of #290): serve resolves the agent URL
+// host to IP literals; New refuses a name.
+func TestRepairFromIPOnly(t *testing.T) {
+	if _, err := New(Config{Store: &store.Store{}, Secrets: &secret.Store{}, From: []string{"plumb.lan"}}); err == nil {
+		t.Fatal("a host name in From passed")
+	}
+	got, err := FromAddrs(context.Background(), "plumb.lan", func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("192.0.2.10"), net.ParseIP("2001:db8::1"), net.IPv4zero}, nil
+	})
+	if err != nil || strings.Join(got, ",") != "192.0.2.10,2001:db8::1" {
+		t.Fatalf("%v %v", got, err)
+	}
+	if got, _ := FromAddrs(context.Background(), "192.0.2.9", nil); len(got) != 1 || got[0] != "192.0.2.9" {
+		t.Fatalf("ip %v", got)
+	}
+	if _, err := FromAddrs(context.Background(), "x", func(context.Context, string) ([]net.IP, error) { return nil, nil }); err == nil {
+		t.Fatal("no address passed")
+	}
+}
+
+// TestRepairKeyRotation (review R2 of #290): the old key stays until
+// revoke_old, never by time; previous.targets lists the Targets without
+// the new line; 409 cases.
+func TestRepairKeyRotation(t *testing.T) {
+	e := newEnv(t)
+	old := e.currentID()
+	e.bind("web1", "vm/101")
+	e.bind("db1", "vm/102")
+	e.report("web1", []string{old}, 22)
+	e.report("db1", []string{old}, 22)
+	v, err := e.s.Rotate(e.ctx, false, "user:admin")
+	if err != nil || v.Previous == nil || strings.Join(v.Previous.Targets, ",") != "db1,web1" {
+		t.Fatalf("rotate: %+v %v", v, err)
+	}
+	if _, err := e.s.Rotate(e.ctx, false, "user:admin"); !errors.Is(err, store.ErrRotationRunning) {
+		t.Fatalf("second rotate: %v", err)
+	}
+	e.now = e.now.Add(30 * 24 * time.Hour)
+	w := e.s.Watch(e.ctx)
+	if len(w.Keys) != 2 || w.Keys[1].ID != old {
+		t.Fatalf("after 30 days the old key is gone: %+v", w.Keys)
+	}
+	e.report("web1", []string{e.currentID(), old}, 22)
+	v, _ = e.s.View(e.ctx)
+	if strings.Join(v.Previous.Targets, ",") != "db1" {
+		t.Fatalf("previous.targets %v", v.Previous.Targets)
+	}
+	if v, err = e.s.Rotate(e.ctx, true, "user:admin"); err != nil || v.Previous != nil {
+		t.Fatalf("revoke: %+v %v", v, err)
+	}
+	if w := e.s.Watch(e.ctx); len(w.Keys) != 1 || w.Keys[0].ID == old {
+		t.Fatalf("after revoke %+v", w.Keys)
+	}
+	if _, err := e.s.Rotate(e.ctx, true, "user:admin"); !errors.Is(err, store.ErrNothingToRevoke) {
+		t.Fatalf("revoke twice: %v", err)
+	}
+	// db1 still has only the old line: off with old-key.
+	st, _ := e.s.Status(e.ctx, "db1")
+	if st.State != plan.RepairOff || !contains(st.Reasons, "old-key") {
+		t.Fatalf("db1 %+v", st)
+	}
+}
+
+// TestRepairStatusReasons: ready only with a valid line, sshd ok and a pin.
+func TestRepairStatusReasons(t *testing.T) {
+	e := newEnv(t)
+	if st, _ := e.s.Status(e.ctx, "web1"); st != nil {
+		t.Fatalf("no guest: %+v", st)
+	}
+	e.bind("web1", "vm/101")
+	if st, _ := e.s.Status(e.ctx, "web1"); st.State != plan.RepairUnknown {
+		t.Fatalf("no hello: %+v", st)
+	}
+	fp := "SHA256:" + strings.Repeat("A", 43)
+	e.report("web1", []string{e.currentID()}, 22, fp)
+	if st, _ := e.s.Status(e.ctx, "web1"); st.State != plan.RepairReady || !st.KeyConfirmed || *st.Port != 22 {
+		t.Fatalf("ready: %+v", st)
+	}
+	for name, r := range map[string]wire.RepairReport{
+		"no-line":      {SSHD: wire.RepairSSHD{Status: wire.SSHDOk, Port: 22}, HostKeys: []string{fp}},
+		"no-sshd":      {Lines: []string{e.currentID()}, SSHD: wire.RepairSSHD{Status: wire.SSHDAbsent}, HostKeys: []string{fp}},
+		"root-refused": {Lines: []string{e.currentID()}, SSHD: wire.RepairSSHD{Status: wire.SSHDRootRefused, Port: 22}, HostKeys: []string{fp}},
+	} {
+		if err := e.s.OnReport(e.ctx, "web1", r); err != nil {
+			t.Fatal(err)
+		}
+		if st, _ := e.s.Status(e.ctx, "web1"); st.State != plan.RepairOff || !contains(st.Reasons, name) {
+			t.Fatalf("%s: %+v", name, st)
+		}
+	}
+	e.bind("db1", "vm/102")
+	e.report("db1", []string{e.currentID()}, 22) // no host keys: no pin
+	if st, _ := e.s.Status(e.ctx, "db1"); !contains(st.Reasons, "no-pin") {
+		t.Fatalf("no-pin: %+v", st)
+	}
+}
+
+// TestRepairKeyNeverLeaks: the private key (seed and its base64) is in no
+// view, watch, event or report; the store holds it sealed only.
+func TestRepairKeyNeverLeaks(t *testing.T) {
+	e := newEnv(t)
+	keys, _ := e.st.RepairKeys(e.ctx)
+	seed, err := e.sec.OpenBlob(secret.PurposeRepairKey, keyName(keys[0].ID), keys[0].Nonce, keys[0].Sealed)
+	if err != nil || len(seed) != ed25519.SeedSize {
+		t.Fatalf("open %v", err)
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+	needles := [][]byte{seed, []byte(base64.StdEncoding.EncodeToString(seed)), []byte(base64.RawStdEncoding.EncodeToString(seed)),
+		[]byte(priv), []byte(base64.StdEncoding.EncodeToString(priv))}
+	e.s.Rotate(e.ctx, false, "user:admin")
+	e.s.Rotate(e.ctx, true, "user:admin")
+	vj, _ := e.s.ViewJSON(e.ctx)
+	var hay [][]byte
+	hay = append(hay, vj, keys[0].Sealed)
+	w := e.s.Watch(e.ctx)
+	hay = append(hay, []byte(w.Keys[0].PublicKey))
+	evs, _ := e.st.EventsAfter(e.ctx, 0, 100)
+	for _, ev := range evs {
+		hay = append(hay, ev.Data)
+	}
+	for _, h := range hay {
+		for _, n := range needles {
+			if bytes.Contains(h, n) {
+				t.Fatal("the private key leaks")
+			}
+		}
+	}
+}
