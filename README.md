@@ -179,11 +179,56 @@ full list of rights.
    "Ignore". A Plan that accepts a value from the guest needs a person: an API token cannot approve
    it. The same holds for every Plan that takes a value that a guest reported into the desired
    state, also when you type it yourself: only a person can approve it.
+   - **Accept into a parameter:** when the changed value comes from one Block parameter, Accept
+     writes the guest value into that parameter of this Target ("Accept into parameter message of
+     motd"). The Block itself does not change. When no parameter fits, Accept keeps the value as a
+     raw resource of this Target, and the Issue says why.
+   - A Plan that removes the `firewall` of a Target always needs a person, because it opens every
+     port at once.
 
    ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
    <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
 
-In **Settings** you make API tokens, store secrets, and export or import the whole state.
+In **Settings** you make API tokens, store secrets, and export or import the whole state. Under
+**Settings → General** an admin changes the backup time and the number of backups to keep; a value
+set there wins over the value of the install, and "Use the install value again" goes back. The same
+tab shows the Proxmox connection (node, pool, storages, version, the token's user and its rights)
+and the repair key. It never shows a secret.
+
+![Settings, General tab: the backup schedule with the source of each value, and the read-only Proxmox view with the rights of the install](docs/screenshots/readme-settings-general.png)
+<br>*Settings → General: the backup schedule and the Proxmox connection.*
+
+### AI clients (MCP)
+
+`plumb mcp` lets an AI client (for example Claude) read Plumb and propose changes, through the
+Model Context Protocol over stdio. It uses the public API with an API token.
+
+1. In **Settings → API tokens**, make a token with the tier **plan**. Plumb shows it once. Save it
+   in a file that only you can read: `chmod 600 ~/.config/plumb/token`.
+2. Copy the CA of Plumb, on the Proxmox host:
+   `pct pull <plumb-vmid> /var/lib/plumb/link/ca.crt ~/.config/plumb/ca.crt`.
+3. Add Plumb to the client's MCP configuration:
+
+   ```json
+   {
+     "mcpServers": {
+       "plumb": {
+         "command": "plumb",
+         "args": ["mcp", "--url", "https://<plumb-address>:8443",
+                  "--token-file", "/home/<you>/.config/plumb/token",
+                  "--ca", "/home/<you>/.config/plumb/ca.crt"]
+       }
+     }
+   }
+   ```
+
+The client can list Targets, Issues, Plans, Runs, revisions, Blocks, Images and the catalogue; it
+can propose a change (a Plan), Revert or Accept an Issue (also a Plan), drop a Plan and comment on
+an Issue. **It can never approve a Plan, ignore drift, or touch secrets, tokens, users, settings,
+backups, restore, export or import.** You approve every Plan in the web UI; the Plan shows the
+client's reason below the changes, marked "written by API token". A Plan that takes a value a guest
+reported, or that removes a firewall, needs a person in any case. A token may make 30 Plans and 30
+comments per minute; above that Plumb answers "try again in N seconds".
 
 ### Users and roles
 
@@ -214,6 +259,49 @@ Agents in the guests update through a Plan: Plumb proposes it, you approve it.
 
 - An agent that does not reach Plumb within 5 minutes after the update goes back to its old
   version by itself.
+
+### Repair a dead agent
+
+When the agent of a running guest is offline for 10 minutes or more, the agent page offers
+**Propose repair**. Plumb then connects to the guest over SSH with its own repair key and installs
+the agent again; nothing else runs in the guest. Only a person can approve the repair Plan. A
+failed repair leaves the guest as it was.
+
+- The agent writes a key line for root that allows only this install, and only from Plumb's
+  address. The agent page says "ready" or why not. With the `ssh-hardening` Block, set
+  `permit_root_login` to `forced-commands-only`; `no` turns the repair off.
+- Plumb pins the SSH host keys that the agent reported. A changed host key shows in red; the repair
+  connects only to a pinned key, unless you accept the new key in the repair Plan.
+- **Settings → General** shows the repair key. "Make a new repair key" makes a new one; the old key
+  stays valid until you revoke it.
+- Without a repair over SSH (a container without SSH, a guest that never had the line), an admin
+  makes an **install command** on the agent page: one root command for the guest, valid once for 15
+  minutes. It holds a one-time token, so treat it as a secret; Plumb shows it only once.
+
+![Agent page of web3: repair over SSH is ready, the pinned host key, and the button Propose repair](docs/screenshots/readme-repair.png)
+<br>*A dead agent: Plumb can install it again over SSH, after a person approves the plan.*
+
+### Adopt a guest
+
+Plumb can take over a guest that you made yourself. Move the guest into the Proxmox pool `plumb`
+first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a guest**.
+
+- The list shows each free guest of the pool, and why a guest cannot be adopted (for example more
+  than one disk, a VLAN tag, a privileged container).
+- The new Target has the Proxmox name of the guest; rename the guest in Proxmox to change it.
+- Adopting is a Plan that only a person can approve. Plumb writes nothing to Proxmox for it.
+- The guest is **not sealed**: its SSH host keys, machine-id and root users stay as they are.
+  Plumb never reads its password, SSH keys, description or container environment.
+- Install the agent with the install command on the agent page.
+- **Delete:** deleting an adopted Target lets the guest go: Plumb removes its agent, and the guest
+  and its disks stay in Proxmox. Only when you first allow it with a separate plan ("Allow Plumb to
+  delete the guest", it sets `delete_guest`) does deleting the Target delete the Proxmox guest and its
+  disks. Both need a person.
+
+![Adopt a guest: the free guests of the pool, one adoptable and one with its reasons, and the wizard with the warnings in red](docs/screenshots/readme-adopt.png)
+<br>*Adopt a guest: the warnings come before the plan.*
+
+### Guests made before the agent self-update
 
 **Guests made before the agent self-update existed** need one root command per guest, once:
 
@@ -331,8 +419,9 @@ Keep the recovery key in any case.
 - A restored Plumb needs the same address as before.
 - A guest has one network card. The `network` Block adds addresses and routes on it; more cards
   come later.
-- A live change by hand with `ip` or `nft` in a guest is seen at the full check every 15 minutes,
-  not at once. A change of a file that Plumb writes, such as its netplan file, is seen at once.
+- A change by hand with `ip` or `nft` in a guest that uses the `network` or `firewall` Block is seen
+  within seconds. When the agent cannot watch it live, its agent page says so, and the change is
+  seen at the full check every 15 minutes.
 - The first signed refresh of an Image needs a person: an API token cannot approve it.
 - Debian does not sign its cloud image checksums. Every new checksum of a Debian Image needs a
   person.
