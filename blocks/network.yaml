@@ -1,0 +1,71 @@
+kind: Block
+name: network
+spec:
+  title: Extra network settings
+  description: >-
+    Extra addresses, routes, name servers and search domains on the main
+    network card of a VM. The main address, the gateway and DHCP stay as
+    they were made when the VM was created. Plumb writes one netplan file
+    with only these values. A change is applied safely: when the agent
+    cannot reach Plumb within 90 seconds after the change, it puts the old
+    settings back. The new settings can stop the network for about 2
+    seconds. Works on VM Targets only: Proxmox owns the network of a
+    container. An Image cannot hold this Block. To use it twice on one
+    Target, give each use another name.
+  params:
+    type: object
+    properties:
+      name:
+        type: string
+        title: Name
+        description: >-
+          Name of these settings; part of the file name. Two uses of this
+          Block on one Target need two names.
+        pattern: "^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$"
+        default: main
+      addresses:
+        type: string
+        title: Extra addresses
+        description: >-
+          Extra addresses with prefix, comma separated. Example:
+          192.0.2.10/24,2001:db8::10/64. Not the main address of the VM, not
+          an address of Plumb, of Proxmox or of another Target. Empty: none.
+        pattern: "^$|^[0-9a-fA-F:.]+/[0-9]{1,3}(,[0-9a-fA-F:.]+/[0-9]{1,3})*$"
+        maxLength: 4096
+        default: ""
+      routes:
+        type: string
+        title: Routes
+        description: >-
+          Routes, separated by ';', each '<network> via <address>' with an
+          optional ' metric <n>'. Example: 198.51.100.0/24 via 192.0.2.1
+          metric 100. The via address must be in a network of this card. No
+          default route: the gateway does not change. Empty: none.
+        pattern: "^$|^[0-9a-fA-F:.]+/[0-9]{1,3} via [0-9a-fA-F:.]+( metric [0-9]{1,9})?(;[0-9a-fA-F:.]+/[0-9]{1,3} via [0-9a-fA-F:.]+( metric [0-9]{1,9})?)*$"
+        maxLength: 4096
+        default: ""
+      nameservers:
+        type: string
+        title: Extra name servers
+        description: >-
+          Extra DNS servers, comma separated addresses. They come after the
+          servers that the VM already has. Example: 192.0.2.53. Empty: none.
+        pattern: "^$|^[0-9a-fA-F:.]+(,[0-9a-fA-F:.]+)*$"
+        maxLength: 1024
+        default: ""
+      search:
+        type: string
+        title: Extra search domains
+        description: >-
+          Extra DNS search domains, comma separated. Example: lab.example.
+          Empty: none.
+        pattern: "^$|^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?(,[a-zA-Z0-9]([a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?)*$"
+        maxLength: 1024
+        default: ""
+  resources:
+    - network:
+        name: "{{ .name }}"
+        addresses: "{{ .addresses }}"
+        routes: "{{ .routes }}"
+        nameservers: "{{ .nameservers }}"
+        search: "{{ .search }}"
