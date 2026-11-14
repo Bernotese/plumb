@@ -110,6 +110,15 @@ type Type struct {
 	// NotInImage: an Image build must not hold this type; the Image is
 	// refused at save and the build checks again at start (D-260).
 	NotInImage bool
+	// Opaque names the observed attributes whose reported value is a
+	// status text ("changed outside Plumb"), not the guest's value: a hand
+	// change behind it carries no value that the copy rule could hash
+	// (T-166, host finding F2 of T-158). A drift report with such an
+	// attribute marks the whole type as guest data (D-359): while it
+	// counts, every Plan that adds a value to a resource of this type on
+	// any Target is human-only. Every type must be classified (the test
+	// TestEveryTypeClassifiedForCopyRule).
+	Opaque []string
 }
 
 //go:embed schema/*.json
@@ -118,27 +127,34 @@ var schemas embed.FS
 // types is the table of all resource types. Add a type here, add its
 // schema file and its Go file. Nothing else registers types.
 var types = map[string]Type{
-	"file":           {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFile},
-	"directory":      {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newDirectory},
-	"package":        {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
-	"service":        {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
-	"group":          {Name: "group", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newGroup},
-	"user":           {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
-	"symlink":        {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
-	"apt_repository": {Name: "apt_repository", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newAptRepo},
+	"file":      {Name: "file", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFile},
+	"directory": {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newDirectory},
+	"package":   {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
+	"service":   {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
+	"group":     {Name: "group", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newGroup},
+	"user":      {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
+	"symlink":   {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
+	// The observed "sources" is the whole file text: a URI added by hand
+	// is inside it, not an element of uris (D-359).
+	"apt_repository": {Name: "apt_repository", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newAptRepo, Opaque: []string{"sources"}},
 	"unit":           {Name: "unit", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUnit},
 	// An LXC shares the host kernel (ARCHITECTURE §6).
-	"sysctl": {Name: "sysctl", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newSysctl},
+	// The observed "file" is the whole sysctl.d text (D-359).
+	"sysctl": {Name: "sysctl", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newSysctl, Opaque: []string{"file"}},
 	// Safe apply (wire.SafeApplyTypes, D-293); nftables in an unprivileged
 	// LXC is proven by the guest tests (T-116).
 	"firewall": {Name: "firewall", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newFirewall,
 		// A firewall belongs to one Target: its boot file is an agent path
 		// that seal removes, and a build guest has no safe apply partner.
-		NotInImage: true},
+		NotInImage: true,
+		// A rule added by hand shows only as "table changed" (D-306).
+		Opaque: []string{fwAttrTable}},
 	// Proxmox owns the network of a container (D-332).
 	// Safe apply (wire.SafeApplyTypes, D-333, D-349). A network belongs
 	// to one Target, like a firewall.
-	"network": {Name: "network", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newNetwork, NotInImage: true},
+	"network": {Name: "network", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newNetwork, NotInImage: true,
+		// A hand edit of the netplan file shows only as "file changed".
+		Opaque: []string{networkAttrFile}},
 	"command": {Name: "command", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newCommand,
 		NoDrift: true, Destructive: true, NotInImage: true},
 }

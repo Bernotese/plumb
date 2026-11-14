@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -258,6 +259,29 @@ func TestGuestFirewall(t *testing.T) {
 	}
 	if obs, err := rs.Observe(ctx); err != nil || len(rs.Diff(obs)) != 0 {
 		t.Fatalf("after the apply: %v %+v", err, rs.Diff(obs))
+	}
+
+	// T-166 (host F2 of T-158): a rule added by hand shows only as the
+	// opaque attribute of the type, which the controller treats as guest
+	// data for the whole type (D-359). Then the agent's own table again.
+	fwSh(t, "nft", "add", "rule", "inet", "plumb", "input", "tcp", "dport", "9090", "accept")
+	handObs, err := rs.Observe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwType, _ := resource.Lookup("firewall")
+	var handAttrs []string
+	for _, c := range rs.Diff(handObs) {
+		handAttrs = append(handAttrs, c.Attr)
+	}
+	if len(fwType.Opaque) == 0 || !slices.Contains(handAttrs, fwType.Opaque[0]) {
+		t.Fatalf("hand rule: changes %v, want the opaque attribute %v", handAttrs, fwType.Opaque)
+	}
+	if it := apply(map[string]any{"tcp_ports": "8080"}); it.Status != wire.StatusApplied {
+		t.Fatalf("revert of the hand rule: %+v", it)
+	}
+	if got := liveTable(t); got != confirmed {
+		t.Fatalf("after the revert:\n%s\nwant\n%s", got, confirmed)
 	}
 
 	// 2. A forced rollback: the controller refuses the round trip.

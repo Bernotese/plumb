@@ -19,6 +19,7 @@
       "description": "Absolute path of the file."
     },
     "content": {
+      "x-plumb-lines": true,
       "type": "string",
       "default": "",
       "description": "Full content of the file."
