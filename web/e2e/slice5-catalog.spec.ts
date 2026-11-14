@@ -34,9 +34,12 @@ test("catalogue: add a starter Block by a plan, update offers the difference", a
   await expect(motd).toContainText("added, differs");
   await motd.getByRole("button", { name: "Show difference" }).click();
   await expect(page.getByRole("region", { name: "Changed Block motd" })).toBeVisible();
-  // The catalogue motd names its parameter "message"; the demo Targets use
-  // "text", so the server refuses the update and the row shows why.
+  // The demo motd uses the parameter "message" like the catalogue (T-161),
+  // so the update is a normal plan; it is dropped, not applied.
   await motd.getByRole("button", { name: "Update from the catalogue: motd" }).click();
-  await expect(motd.getByRole("alert")).toContainText('has no parameter "text"');
-  await expect(page).toHaveURL(/#\/blocks$/);
+  await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
+  await expect(page.getByText("Update the Block motd from the catalogue.")).toBeVisible();
+  await page.getByRole("button", { name: "Drop plan" }).click();
+  await page.locator("#drop-confirm").click();
+  await expect(page.getByText("This plan is stale.")).toBeVisible();
 });
