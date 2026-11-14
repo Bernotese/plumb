@@ -82,6 +82,8 @@ type fakePVE struct {
 	storageStatus int
 	noPool        bool
 	perms         map[string]map[string]int
+	// hotplugFails: a netN write (N ≥ 1) on a running VM stays pending.
+	hotplugFails bool
 	// storageConfigs: the answer of GET /storage (nil: 500).
 	storageConfigs []map[string]any
 	authFails      int    // requests refused with 401
@@ -721,6 +723,12 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 				continue
 			}
 			switch {
+			case vm.running && f.hotplugFails && nicUpdateKeys[k]:
+				// a failed hot-plug: Proxmox keeps the NIC pending (D-402)
+				if vm.pending == nil {
+					vm.pending = map[string]string{}
+				}
+				vm.pending[k] = v[0]
 			case vm.running && coldKeys[k] && vm.cfg[k] != v[0]:
 				if vm.pending == nil {
 					vm.pending = map[string]string{}

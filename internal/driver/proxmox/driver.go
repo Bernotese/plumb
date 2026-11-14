@@ -60,8 +60,9 @@ type Config struct {
 
 // Driver is the Proxmox VE driver.
 type Driver struct {
-	cfg Config
-	c   *Client
+	cfg  Config
+	c    *Client
+	nets []ExtraNet // the extra nets of the install (SetExtraNets, D-401)
 
 	// imageLocks serialize FetchImage per template name (review S2): two
 	// Targets with the same Image run in parallel, and one must not take
@@ -610,6 +611,9 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 	if err := d.checkBridge(spec.Bridge); err != nil {
 		return "", err
 	}
+	if err := d.checkNICs(spec.NICs, false); err != nil { // T-219
+		return "", err
+	}
 	tpl, m, err := d.ownVM(ctx, string(spec.Image))
 	if err != nil {
 		return "", fmt.Errorf("proxmox: image %s: %w", spec.Image, err)
@@ -808,6 +812,7 @@ func (d *Driver) configureWith(ctx context.Context, id int, spec driver.GuestSpe
 		"nameserver":   {strings.Join(d.cfg.Nameservers, " ")},
 		"searchdomain": {d.cfg.SearchDomain},
 	}
+	addNICParams(params, spec.NICs, false) // T-219
 	if len(spec.SSHKeys) > 0 {
 		params.Set("sshkeys", sshKeysParam(spec.SSHKeys))
 	}
@@ -974,6 +979,7 @@ func specOf(name string, cfg map[string]string) driver.GuestSpec {
 	s.Bridge = net["bridge"]
 	ip := parseProps(cfg["ipconfig0"])
 	s.IP, s.Gateway = ip["ip"], ip["gw"]
+	s.NICs = nicsOf(cfg, false) // T-219
 	s.User = cfg["ciuser"]
 	// PathUnescape: a raw "+" stays "+" (review T-012 #11).
 	if keys, err := url.PathUnescape(cfg["sshkeys"]); err == nil && keys != "" {
@@ -1086,6 +1092,9 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 			}
 		}
 	}
+	if err := d.precheckNICChanges(changes); err != nil { // T-219, D-401
+		return err
+	}
 	id, m, err := d.own(ctx, string(gid))
 	if err != nil {
 		return err
@@ -1099,7 +1108,14 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 	}
 	params := url.Values{"digest": {cfg["digest"]}} // refuse when the config changed meanwhile
 	grow := 0
+	var nicDels []string
 	for _, c := range changes {
+		if driver.NICIndex(c.Attr) > 0 { // T-219
+			if err := d.nicChange(params, &nicDels, c, false); err != nil {
+				return err
+			}
+			continue
+		}
 		if driver.IsCreateOnly(c.Attr) {
 			return &driver.CreateOnlyError{Attr: c.Attr}
 		}
@@ -1141,6 +1157,7 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 			return fmt.Errorf("proxmox: unknown attribute %q", c.Attr)
 		}
 	}
+	mergeDeletes(params, nicDels)
 	if len(params) > 1 {
 		if err := checkUpdateParams(cfg, params); err != nil {
 			return err
@@ -1151,6 +1168,9 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 		}
 		if err := scrub(d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params), token); err != nil {
 			return tagRefusal(err, params)
+		}
+		if err := checkNICsApplied(ctx, params, func(ctx context.Context) (map[string]string, error) { return d.config(ctx, id) }); err != nil {
+			return err
 		}
 	}
 	if grow > 0 {
@@ -1261,7 +1281,8 @@ func setTags(params url.Values, v any) error {
 // new cloud-init instance at the next cold start: first boot again, and new
 // SSH host keys without ssh_deletekeys (test host, T-012 item 19).
 // tags (D-299) is no cloud-init input; "delete" may only name it.
-var updateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "smbios1": true, "tags": true, "delete": true}
+var updateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "smbios1": true, "tags": true, "delete": true,
+	"net1": true, "net2": true, "net3": true} // more NICs: checkUpdateNICs
 
 // checkUpdateParams is the last guard before Update writes: only
 // updateKeys; a new net0 keeps the MAC and every other property except
@@ -1272,8 +1293,8 @@ func checkUpdateParams(cfg map[string]string, params url.Values) error {
 			return fmt.Errorf("proxmox: Update must not write %q (cloud-init inputs are create-only, D-185)", k)
 		}
 	}
-	if del, ok := params["delete"]; ok && (len(del) != 1 || del[0] != "tags") {
-		return fmt.Errorf("proxmox: Update may delete only the tags, not %q", del)
+	if err := checkUpdateNICs(params); err != nil { // the tags and more NICs only (T-219)
+		return err
 	}
 	if net0, ok := params["net0"]; ok {
 		mac := macOf(cfg["net0"])

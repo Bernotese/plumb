@@ -88,6 +88,7 @@ func specOfCT(cfg map[string]string) driver.GuestSpec {
 	net := parseProps(cfg["net0"])
 	s.Bridge = net["bridge"]
 	s.IP, s.Gateway = net["ip"], net["gw"]
+	s.NICs = nicsOf(cfg, true) // T-219
 	s.DiskGB = sizeGB(parseProps(cfg["rootfs"])["size"])
 	s.Tags = parseTags(cfg["tags"])
 	s.Features = sortedProps(cfg["features"])
@@ -225,6 +226,9 @@ func (d *Driver) createFromFile(ctx context.Context, spec driver.GuestSpec, boot
 	if err := d.checkBridge(spec.Bridge); err != nil {
 		return "", err
 	}
+	if err := d.checkNICs(spec.NICs, true); err != nil { // T-219
+		return "", err
+	}
 	if err := d.checkTemplateRef(spec.Image); err != nil {
 		return "", err
 	}
@@ -255,6 +259,7 @@ func (d *Driver) createFromFile(ctx context.Context, spec driver.GuestSpec, boot
 		// The form encoding sends "=" as %3D, as Proxmox needs (host C2).
 		"env": {tokenPrefix + boot.Token},
 	}
+	addNICParams(params, spec.NICs, true) // T-219
 	if len(spec.SSHKeys) > 0 {
 		params.Set("ssh-public-keys", strings.Join(spec.SSHKeys, "\n"))
 	}
@@ -389,7 +394,7 @@ func equalCTSpec(a, b driver.GuestSpec) bool {
 		a.IP == b.IP && a.Gateway == b.Gateway && a.DiskGB == b.DiskGB && a.ImageName == b.ImageName &&
 		a.ImageVersion == b.ImageVersion && slices.Equal(a.SSHKeys, b.SSHKeys) && a.Features == b.Features &&
 		slices.Equal(a.Mounts, b.Mounts) && slices.Equal(a.Devices, b.Devices) && slices.Equal(a.RawLXC, b.RawLXC) &&
-		slices.Equal(a.Tags, b.Tags)
+		slices.Equal(a.Tags, b.Tags) && slices.Equal(a.NICs, b.NICs)
 }
 
 // ctAddresses reads the IPv4 addresses of eth0 that Proxmox sees from the
@@ -422,7 +427,8 @@ func (d *Driver) ctAddresses(ctx context.Context, id int) []string {
 
 // ctUpdateKeys are the only keys that updateCT writes.
 var ctUpdateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, "net0": true, "env": true, "features": true,
-	"tags": true, "delete": true} // tags: D-299; delete only of the tags
+	"tags": true, "delete": true, // tags: D-299; delete only of the tags and more NICs
+	"net1": true, "net2": true, "net3": true} // T-219
 
 // updateCT changes cores, memory, the bridge (live, host C5) and the
 // tags, and for a re-enrollment sets the new token in env; the caller
@@ -435,9 +441,16 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 	}
 	params := url.Values{"digest": {cfg["digest"]}}
 	grow := 0
+	var nicDels []string
 	for _, c := range changes {
 		if driver.IsCreateOnly(c.Attr) {
 			return &driver.CreateOnlyError{Attr: c.Attr}
+		}
+		if driver.NICIndex(c.Attr) > 0 { // T-219
+			if err := d.nicChange(params, &nicDels, c, true); err != nil {
+				return err
+			}
+			continue
 		}
 		switch c.Attr {
 		case driver.AttrTags:
@@ -487,14 +500,15 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 			return fmt.Errorf("proxmox: unknown attribute %q", c.Attr)
 		}
 	}
+	mergeDeletes(params, nicDels)
 	if len(params) > 1 {
 		for k := range params {
 			if !ctUpdateKeys[k] {
 				return fmt.Errorf("proxmox: Update must not write %q to a container", k)
 			}
 		}
-		if del, ok := params["delete"]; ok && (len(del) != 1 || del[0] != "tags") {
-			return fmt.Errorf("proxmox: Update may delete only the tags, not %q", del)
+		if err := checkUpdateNICs(params); err != nil { // the tags and more NICs only (T-219)
+			return err
 		}
 		if net0, ok := params["net0"]; ok && (len(net0) != 1 || !sameExcept(cfg["net0"], net0[0], "bridge")) {
 			return errors.New("proxmox: a net0 change must keep every property but the bridge")
@@ -505,6 +519,9 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 		}
 		if err := scrub(d.c.MaybeTask(ctx, d.cfg.Node, "PUT", ctPath(d, id)+"/config", params), token); err != nil {
 			return tagRefusal(err, params)
+		}
+		if err := checkNICsApplied(ctx, params, func(ctx context.Context) (map[string]string, error) { return d.ctConfig(ctx, id, true) }); err != nil {
+			return err
 		}
 	}
 	if grow > 0 {
