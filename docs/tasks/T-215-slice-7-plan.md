@@ -101,11 +101,11 @@ Reviewer per D-394: the critical parts (token rights/ACLs, installer, secrets in
   ```
   auto vmbr9
   iface vmbr9 inet manual
-  	bridge-ports none
-  	bridge-stp off
-  	bridge-fd 0
-  	bridge-vlan-aware yes
-  	bridge-vids 2-4094
+      bridge-ports none
+      bridge-stp off
+      bridge-fd 0
+      bridge-vlan-aware yes
+      bridge-vids 2-4094
   ```
 - Run `ifreload -a`. Check `ip -d link show vmbr9` (`vlan_filtering 1`, no port).
 - Undo: remove the stanza, `ifreload -a`, and check that `vmbr9` is gone.
