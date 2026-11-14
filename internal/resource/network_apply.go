@@ -360,16 +360,20 @@ func mainKey(view map[string]npView, dev, mac string, main netip.Addr) (string, 
 }
 
 // firstBootState reports the D-192 state of a stock Ubuntu VM (T-208,
-// host finding F4): an entry names the live NIC (by key, set-name,
-// match.name or MAC) and holds static addresses, but the live main address
-// is in none of them, because the first boot kept the initramfs DHCP
-// setup. A reboot applies the entry.
+// host finding F4): an entry with static addresses matches the live NIC
+// only by its MAC and renames it (set-name) to another name than the live
+// one, because the first boot kept the kernel name and the initramfs DHCP
+// setup. A reboot applies the entry. An entry that names the NIC by its
+// key, set-name or match.name is not this case.
 func firstBootState(view map[string]npView, dev, mac string) bool {
+	if mac == "" {
+		return false
+	}
 	for k, v := range view {
 		name, _ := v.Match["name"].(string)
 		vmac, _ := v.Match["macaddress"].(string)
-		nic := k == dev || v.SetName == dev || name == dev || (mac != "" && strings.EqualFold(vmac, mac))
-		if nic && !v.DHCP4 && !v.DHCP6 && len(v.addrs()) > 0 {
+		byName := k == dev || v.SetName == dev || name == dev
+		if !byName && strings.EqualFold(vmac, mac) && v.SetName != "" && !v.DHCP4 && !v.DHCP6 && len(v.addrs()) > 0 {
 			return true
 		}
 	}

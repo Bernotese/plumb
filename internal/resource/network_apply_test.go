@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/netip"
 	"os"
@@ -562,6 +563,36 @@ func TestMainKey(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})
+	}
+	// T-208 (host finding F4, D-192): the first-boot text only when a
+	// static entry matches the NIC by MAC alone and renames it; a static
+	// entry that names the NIC (the generic "no entry" case) keeps the
+	// old text. Runs without netplan.
+	static := func(key, setName, matchMAC, addr string) map[string]npView {
+		v := npView{SetName: setName, Addresses: []any{addr}, Match: map[string]any{}}
+		if matchMAC != "" {
+			v.Match["macaddress"] = matchMAC
+		}
+		return map[string]npView{key: v}
+	}
+	for _, c := range []struct {
+		name string
+		view map[string]npView
+		want string
+	}{
+		{"D-192 first boot", static("eth0", "eth0", "BC:24:11:00:00:01", "198.51.100.7/24"), "Restart the VM once"},
+		{"static entry by key", static("ens18", "", "", "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+		{"static entry, set-name is the live name", static("lan", "ens18", mac, "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+		{"static entry, other MAC", static("eth0", "eth0", "bc:24:11:00:00:09", "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+		{"MAC match without set-name", static("eth0", "", mac, "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+	} {
+		_, err := mainKey(c.view, "ens18", mac, main)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+		if c.want != "Restart the VM once" && strings.Contains(fmt.Sprint(err), "Restart") {
+			t.Errorf("%s: first-boot text for another cause: %v", c.name, err)
+		}
 	}
 	// An empty MAC (never expected: Prepare reads it) matches no entry.
 	if _, err := mainKey(dhcp("eth0", "eth0", "", ""), "ens18", "", main); err == nil {
