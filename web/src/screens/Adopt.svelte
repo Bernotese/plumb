@@ -81,7 +81,7 @@
   const size = (g: UnmanagedGuest) => {
     const x = g.guest as { cores?: number; memory?: number; disk?: number };
     return [
-      x.cores !== undefined ? `${x.cores} cores` : "",
+      x.cores !== undefined ? `${x.cores} ${x.cores === 1 ? "core" : "cores"}` : "",
       x.memory !== undefined ? `${x.memory} MiB` : "",
       x.disk !== undefined ? `${x.disk} GiB` : "",
     ]
@@ -211,8 +211,12 @@
     </dl>
     <p class="muted" id="adopt-present">
       {#if present(chosen).length}The Proxmox config holds {present(chosen).join(", ")}. Plumb never
-        reads their values and does not take them into the Target.{:else}Plumb never takes
-        passwords, SSH keys, the description or an environment of the guest into the Target.{/if}
+        reads {present(chosen).length === 1 ? "its value" : "their values"} and does not take {present(
+          chosen,
+        ).length === 1
+          ? "it"
+          : "them"} into the Target.{:else}Plumb never takes passwords, SSH keys, the description or
+        an environment of the guest into the Target.{/if}
       The Target gets no Image. Deleting it later keeps the guest unless you choose otherwise.
     </p>
     <div class="field">
