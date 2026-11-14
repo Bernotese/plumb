@@ -177,8 +177,9 @@ type handlerFunc func(w http.ResponseWriter, r *http.Request, p *principal)
 // Handler returns the API and the UI.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	rates := newTokenRates(s.now) // per-token rate limit (D-365, tokenrate.go)
 	route := func(pattern string, a access, h handlerFunc) {
-		mux.Handle(pattern, s.guard(a, h))
+		mux.Handle(pattern, s.guard(a, rates.wrap(s, pattern, h)))
 	}
 	read, planTier, apply := access{tier: TierRead}, access{tier: TierPlan}, access{tier: TierApply}
 	// A session may call an operation when its role is at least the tier
