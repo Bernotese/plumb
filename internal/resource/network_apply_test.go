@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/wire"
 	"go.yaml.in/yaml/v3"
@@ -27,6 +28,9 @@ type fakeNet struct {
 	calls   [][]string
 	applies int
 	failGet bool
+	// noRoute: the next ip route get calls fail like a NIC without its
+	// DHCP address (-1: all of them).
+	noRoute int
 }
 
 func (f *fakeNet) live() (addrs []string, routes []liveRoute, dns, search []string) {
@@ -59,6 +63,15 @@ func (f *fakeNet) Run(ctx context.Context, name string, args ...string) ([]byte,
 	addrs, routes, dns, search := f.live()
 	switch {
 	case name == "ip" && slices.Equal(args[:3], []string{"-j", "route", "get"}):
+		f.mu.Lock()
+		down := f.noRoute != 0
+		if f.noRoute > 0 {
+			f.noRoute--
+		}
+		f.mu.Unlock()
+		if down {
+			return nil, &ExitError{Name: "ip", Code: 2, Stderr: "RTNETLINK answers: Network is unreachable"}
+		}
 		return json.Marshal([]map[string]string{{"dev": "eth0", "prefsrc": f.main}})
 	case name == "ip" && slices.Equal(args[:2], []string{"-j", "addr"}):
 		var info []map[string]string
@@ -379,3 +392,33 @@ func TestNetworkDrift(t *testing.T) {
 }
 
 func yamlUnmarshal(b []byte, v any) error { return yaml.Unmarshal(b, v) }
+
+// VM job of #249: right after a netplan apply a DHCP NIC can have no
+// route for a moment. The step waits for it (bounded) instead of failing.
+func TestNetworkWaitsForRoute(t *testing.T) {
+	ctx := context.Background()
+	oldWait, oldRetry := routeWait, routeRetry
+	routeWait, routeRetry = 2*time.Second, 10*time.Millisecond
+	t.Cleanup(func() { routeWait, routeRetry = oldWait, oldRetry })
+	env, f, _ := newNetEnv(t)
+	f.noRoute = 3
+	n := netRes(t, env, cloneAttrs(extra))
+	if err := n.Prepare(ctx); err != nil {
+		t.Fatalf("Prepare after a short route gap: %v", err)
+	}
+	if got := f.count("ip", "-j", "route", "get"); got < 4 {
+		t.Errorf("route get %d times, want the 3 failures and a success", got)
+	}
+	// The route never comes: the step fails after the bound, nothing changed.
+	env2, f2, _ := newNetEnv(t)
+	f2.noRoute = -1
+	routeWait = 100 * time.Millisecond
+	start := time.Now()
+	err := netRes(t, env2, cloneAttrs(extra)).Prepare(ctx)
+	if err == nil || !strings.Contains(err.Error(), "Network is unreachable") || time.Since(start) > time.Second {
+		t.Fatalf("no route: %v after %v", err, time.Since(start))
+	}
+	if f2.count("systemd-run") != 0 {
+		t.Error("something was armed without a route")
+	}
+}

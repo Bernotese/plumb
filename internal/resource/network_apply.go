@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/wire"
 	"go.yaml.in/yaml/v3"
@@ -217,7 +218,7 @@ func (n *network) mainLink(ctx context.Context) (dev string, addr netip.Addr, er
 		}
 		ip = ips[0].Unmap()
 	}
-	out, err := n.run(ctx, "ip", "-j", "route", "get", ip.String())
+	out, err := n.routeGet(ctx, ip)
 	if err != nil {
 		return "", addr, fmt.Errorf("route to the controller: %w", err)
 	}
@@ -232,6 +233,35 @@ func (n *network) mainLink(ctx context.Context) (dev string, addr netip.Addr, er
 		return "", addr, errors.New("route to the controller: no source address")
 	}
 	return routes[0].Dev, addr, nil
+}
+
+// Wait for the route to the controller (T-150, VM job of #249): right
+// after a netplan apply (also the rollback timer's) a DHCP NIC can lose its
+// address and routes for a moment, and "ip route get" then fails with
+// "Network is unreachable". The step waits for the route, bounded, instead
+// of failing at once.
+var (
+	routeWait  = 30 * time.Second
+	routeRetry = 500 * time.Millisecond
+)
+
+// routeGet runs ip route get to ip, again every routeRetry until it
+// answers or routeWait (or ctx) ends.
+func (n *network) routeGet(ctx context.Context, ip netip.Addr) ([]byte, error) {
+	end := time.Now().Add(routeWait)
+	for {
+		out, err := n.run(ctx, "ip", "-j", "route", "get", ip.String())
+		if err == nil || time.Now().Add(routeRetry).After(end) {
+			return out, err
+		}
+		t := time.NewTimer(routeRetry)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil, err
+		case <-t.C:
+		}
+	}
 }
 
 // npView is an ethernets entry of netplan get, as far as the checks read it.

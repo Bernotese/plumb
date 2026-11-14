@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -207,7 +208,7 @@ func TestGuestNetwork(t *testing.T) {
 	if _, err := exec.LookPath("netplan"); err != nil {
 		t.Fatal("requires netplan")
 	}
-	dev, gw, _ := guestDefault(t)
+	dev, gw, main := guestDefault(t)
 	file := resource.NetworkFile("ci")
 	t.Cleanup(func() {
 		_ = exec.Command("systemctl", "stop", resource.RollbackUnit("network")+".timer").Run()
@@ -307,6 +308,7 @@ func TestGuestNetwork(t *testing.T) {
 		"nameservers": "192.0.2.53", "search": "plumb.invalid"}
 
 	// 1. Apply, confirm, commit.
+	meter := meterNetwork(dev, gw, main)
 	if it := apply(want); it.Status != wire.StatusApplied {
 		t.Fatalf("apply: %+v", it)
 	}
@@ -329,7 +331,7 @@ func TestGuestNetwork(t *testing.T) {
 	if ch := observeDiff(want); len(ch) != 0 {
 		t.Fatalf("after the apply: %+v", ch)
 	}
-	t.Logf("step 1 ok: applied on %s after %d confirm(s), values live, no diff", dev, confirms.Load())
+	t.Logf("step 1 ok: applied on %s after %d confirm(s), values live, no diff; %s", dev, confirms.Load(), meter.end(gw))
 
 	// 2. Drift: the address removed by hand.
 	fwSh(t, "ip", "addr", "del", "192.0.2.10/24", "dev", dev)
@@ -373,6 +375,7 @@ func TestGuestNetwork(t *testing.T) {
 	if !liveHas(t, dev, "192.0.2.11/24") {
 		t.Fatal("not live in the window")
 	}
+	meter = meterNetwork(dev, gw, main) // the timer's netplan apply, without the agent
 	deadline := time.Now().Add(30 * time.Second)
 	for liveHas(t, dev, "192.0.2.11/24") {
 		if time.Now().After(deadline) {
@@ -394,7 +397,9 @@ func TestGuestNetwork(t *testing.T) {
 	if got, _ := os.ReadFile(file); string(got) != string(confirmed) {
 		t.Fatal("the probe changed the file")
 	}
-	t.Logf("step 5 ok: duplicate-address probe refused: %q", it.Output)
+	// Step 5 started right after the timer's netplan apply: on a DHCP NIC
+	// the route can still be missing, and the resource waits for it.
+	t.Logf("step 5 ok: duplicate-address probe refused: %q; around steps 4-5: %s", it.Output, meter.end(gw))
 
 	// 6. state absent.
 	if it := apply(map[string]any{"state": "absent"}); it.Status != wire.StatusApplied {
@@ -404,4 +409,60 @@ func TestGuestNetwork(t *testing.T) {
 		t.Fatal("absent left the file or the address")
 	}
 	t.Log("step 6 ok: state absent removed the file and the address")
+}
+
+// gapMeter samples every 20 ms whether the route to the gateway and the
+// main address exist (VM job of #249: a DHCP NIC loses them for a moment
+// after netplan apply). It reports the total and the longest gap.
+type gapMeter struct {
+	stop chan struct{}
+	done chan string
+}
+
+func meterNetwork(dev string, gw, main netip.Addr) *gapMeter {
+	m := &gapMeter{stop: make(chan struct{}), done: make(chan string, 1)}
+	go func() {
+		var routeTotal, routeLong, addrTotal, addrLong, routeRun, addrRun time.Duration
+		last := time.Now()
+		for {
+			select {
+			case <-m.stop:
+				m.done <- fmt.Sprintf("route to the gateway missing %v (longest %v), main address missing %v (longest %v)",
+					routeTotal.Round(time.Millisecond), routeLong.Round(time.Millisecond),
+					addrTotal.Round(time.Millisecond), addrLong.Round(time.Millisecond))
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+			now := time.Now()
+			d := now.Sub(last)
+			last = now
+			if exec.Command("ip", "route", "get", gw.String()).Run() != nil {
+				routeTotal, routeRun = routeTotal+d, routeRun+d
+				routeLong = max(routeLong, routeRun)
+			} else {
+				routeRun = 0
+			}
+			out, _ := exec.Command("ip", "-o", "-4", "addr", "show", "dev", dev).Output()
+			if !strings.Contains(string(out), " "+main.String()+"/") {
+				addrTotal, addrRun = addrTotal+d, addrRun+d
+				addrLong = max(addrLong, addrRun)
+			} else {
+				addrRun = 0
+			}
+		}
+	}()
+	return m
+}
+
+// end waits until the route is back (at most 30 s), 3 s more for a late
+// drop, and returns the report.
+func (m *gapMeter) end(gw netip.Addr) string {
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if exec.Command("ip", "route", "get", gw.String()).Run() == nil {
+			break
+		}
+	}
+	time.Sleep(3 * time.Second)
+	close(m.stop)
+	return <-m.done
 }
