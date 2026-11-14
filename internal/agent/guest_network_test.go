@@ -145,6 +145,23 @@ func TestGuestNetplanMerge(t *testing.T) {
 	if len(before.Addresses) != 1 || len(before.Routes) != 1 {
 		t.Fatalf("base file not read as written: %+v", before)
 	}
+
+	// D-358 (review of #261): when netplan generate fails on a file it
+	// cannot parse, the files of the earlier run stay, so a failing boot
+	// unit does not leave the network without configuration.
+	if out, err := exec.Command("netplan", "generate", "--root-dir", root).CombinedOutput(); err != nil {
+		t.Fatalf("netplan generate: %v\n%s", err, out)
+	}
+	generated, _ := filepath.Glob(filepath.Join(root, "run/systemd/network/*.network"))
+	write("70-broken.yaml", "network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: [broken\n")
+	if err := exec.Command("netplan", "generate", "--root-dir", root).Run(); err == nil {
+		t.Fatal("netplan generate took a broken file")
+	}
+	after2, _ := filepath.Glob(filepath.Join(root, "run/systemd/network/*.network"))
+	if len(generated) == 0 || !slices.Equal(generated, after2) {
+		t.Fatalf("a failed netplan generate changed the generated files: %v → %v", generated, after2)
+	}
+	t.Logf("a failed netplan generate keeps the generated files: %v", after2)
 }
 
 // guestDefault returns the NIC, gateway and main address of the default
