@@ -102,9 +102,17 @@ func (f *busyFixture) next(typ wire.ReportType, wait time.Duration) (wire.Report
 
 func reportText(rep wire.Report) string { b, _ := json.Marshal(rep); return string(b) }
 
+// edit replaces the file atomically (temp file and rename). A plain
+// os.WriteFile truncates first: a writer slowed down (race detector) lets
+// the debounced check observe the empty file and report it (T-216).
 func (f *busyFixture) edit(content string) {
 	f.t.Helper()
-	if err := os.WriteFile(filepath.Join(f.ta.root, "/srv/busy"), []byte(content), 0o644); err != nil {
+	path := filepath.Join(f.ta.root, "/srv/busy")
+	tmp := filepath.Join(filepath.Dir(path), ".busy.tmp")
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
 		f.t.Fatal(err)
 	}
 }
