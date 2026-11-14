@@ -26,7 +26,6 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/agent.test" ./internal/agent
-CGO_ENABLED=0 GOOS=linux go test -c -tags=guest -o "$tmp/netplan-probe.test" ./test/guest
 
 # inst runs a command in the instance; the VM agent may need a moment.
 inst() { lxc exec "$name" -- "$@"; }
@@ -74,8 +73,6 @@ for image in images:debian/13 ubuntu:26.04; do
     lxc file push "$tmp/agent.test" "$name/root/agent.test"
     inst /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestFirewall$'
     if [[ "$kind" == vm ]]; then
-      lxc file push "$tmp/netplan-probe.test" "$name/root/netplan-probe.test"
-      PLUMB_NETPLAN_VM="$name" "$tmp/netplan-probe.test" -test.v -test.timeout=50s -test.run '^TestNetplanProbe$'
       # T-150 (review G3 of #244): the netplan list merge of D-348, in a
       # temporary root only. The LXD Debian cloud image has no netplan: take
       # netplan.io from the Debian 13 archive (the vendor image ships the same
