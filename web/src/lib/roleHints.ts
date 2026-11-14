@@ -32,7 +32,7 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
     ops: ["approvePlan", "createBackup"],
   },
   admin: {
-    text: "Everything: destructive plans, users, API tokens, secrets, an export with secret values, import, and the confirm after a restore.",
+    text: "Everything: destructive plans, users, API tokens, secrets, settings, an export with secret values, import, and the confirm after a restore.",
     ops: [
       "listUsers",
       "createUser",
@@ -47,6 +47,7 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
       "exportStateWithSecrets",
       "importState",
       "confirmRestore",
+      "changeSettings",
     ],
   },
 };
