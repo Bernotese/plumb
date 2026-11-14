@@ -2,7 +2,7 @@
 // examples of api/openapi.yaml; it computes plans, runs and events the way
 // the server does (ARCHITECTURE §3, §4), in a much simpler form.
 import { ApiError } from "../api";
-import type { CatalogBlock, PinRefresh, PlumbApi, User, UserRole } from "../client";
+import type { CatalogBlock, PinRefresh, PlumbApi, Settings, User, UserRole } from "../client";
 import roles from "../roles.gen.json";
 import type {
   BlockDoc,
@@ -153,6 +153,52 @@ export function sourceOf(
     }
   }
   return null;
+}
+
+/**
+ * D-362 in the mock: Accept maps the drift back to Block parameters when
+ * every changed attribute's template is exactly `<prefix>{{ .p }}<suffix>`
+ * and the observed value (`from`) has that prefix and suffix. Else raw.
+ */
+export function acceptMapping(
+  spec: TargetDoc["spec"],
+  blocks: Map<string, BlockDoc>,
+  issue: Pick<Issue, "resource" | "changes" | "actions">,
+): Pick<Issue, "accept_mode" | "accept_reason" | "accept_params"> {
+  if (!issue.actions.includes("accept"))
+    return { accept_mode: "none", accept_reason: "", accept_params: [] };
+  const raw = (why: string) => ({
+    accept_mode: "raw" as const,
+    accept_reason: why,
+    accept_params: [],
+  });
+  const uses = spec.blocks ?? [];
+  for (const [index, u] of uses.entries()) {
+    let ids: string[];
+    try {
+      ids = render({ ...spec, blocks: [u], overrides: {} }, blocks).map((r) => r.id);
+    } catch {
+      continue;
+    }
+    const at = ids.indexOf(issue.resource);
+    const entry = blocks.get(u.use)?.spec.resources?.[at];
+    if (at < 0 || !entry) continue;
+    const attrs = Object.values(entry)[0] as Record<string, unknown>;
+    const out: { use: string; index: number; param: string }[] = [];
+    for (const c of issue.changes) {
+      if ("sensitive" in c) return raw("a secret value cannot go into a parameter");
+      const t = attrs[c.attr];
+      const m = typeof t === "string" ? /^([^{}]*)\{\{\s*\.(\w+)\s*\}\}([^{}]*)$/s.exec(t) : null;
+      if (!m) return raw(`the template of ${c.attr} is not one plain parameter`);
+      const [, pre = "", param = "", suf = ""] = m;
+      const seen = String(c.from ?? "");
+      if (!seen.startsWith(pre) || !seen.endsWith(suf))
+        return raw(`the guest value of ${c.attr} does not fit the template`);
+      if (!out.some((o) => o.param === param)) out.push({ use: u.use, index, param });
+    }
+    return { accept_mode: "param", accept_reason: "", accept_params: out };
+  }
+  return raw("no Block renders this resource");
 }
 
 /**
@@ -658,7 +704,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   const withSource = (i: Issue): Issue => {
     const t = targets.get(i.target);
     const source = t ? sourceOf(t.document.spec, blocks, i.resource) : null;
-    return { ...i, source, raw: source !== null && i.actions.includes("accept") };
+    const map = t
+      ? acceptMapping(t.document.spec, blocks, i)
+      : { accept_mode: "none" as const, accept_reason: "", accept_params: [] };
+    return {
+      ...i,
+      source,
+      raw: source !== null && map.accept_mode === "raw",
+      ...(source !== null ? map : {}),
+    };
   };
   const docKey = (d: { kind: string; name: string }) => `${d.kind}/${d.name}`;
   const headDocs: Snapshot = new Map();
@@ -749,6 +803,10 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
 
   // T-118: backups and the restore state (D-288 … D-290, D-302 … D-304).
   const backups: BackupList = structuredClone(example("listBackups", 200));
+  // D-361: the settings. The install values are the ones of the backup list.
+  const installBackup = { time: backups.schedule.time, keep: backups.schedule.keep };
+  const settings: Settings = structuredClone(example("getSettings", 200));
+  settings.backup = { ...installBackup, source: { time: "env", keep: "env" } };
   // The users of the mock (D-321): the restore locked all but admin.
   const MOCK_USERS = ["admin", "alice", "bob", "carol"];
   // T-154: the users of D-330. bob is read, carol plan, alice apply.
@@ -2354,7 +2412,9 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           warnings:
             action === "accept"
               ? [
-                  "Accept writes the guest value into the Target as an override. The guest does not change.",
+                  withSource(issue).accept_mode === "param"
+                    ? "Accept writes the guest value into a Block parameter of the Target. The guest does not change."
+                    : "Accept writes the guest value into the Target as an override. The guest does not change.",
                 ]
               : [],
         });
@@ -2610,6 +2670,44 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         emit("token.enabled", `token:${id}`, {});
       }
       return structuredClone(t);
+    },
+    async getSettings() {
+      const s = need("getSettings");
+      // The Proxmox view is for a person only (review n2 of #276).
+      return structuredClone({ ...settings, proxmox: isPerson(s) ? settings.proxmox : null });
+    },
+    async changeSettings(change) {
+      adminPerson();
+      writable();
+      const b = change.backup ?? {};
+      const errors: { pointer: string; message: string }[] = [];
+      if (
+        b.time !== undefined &&
+        b.time !== null &&
+        !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(b.time)
+      )
+        errors.push({ pointer: "/backup/time", message: "Give a time as HH:MM (UTC)." });
+      if (
+        b.keep !== undefined &&
+        b.keep !== null &&
+        !(Number.isInteger(b.keep) && b.keep >= 1 && b.keep <= 100)
+      )
+        errors.push({ pointer: "/backup/keep", message: "Keep 1 to 100 backups." });
+      if (errors.length)
+        throw problem("validation", "Validation failed", 422, undefined, { errors });
+      const old = structuredClone(settings.backup);
+      if (b.time !== undefined) {
+        settings.backup.time = b.time ?? installBackup.time;
+        settings.backup.source.time = b.time === null ? "env" : "setting";
+      }
+      if (b.keep !== undefined) {
+        settings.backup.keep = b.keep ?? installBackup.keep;
+        settings.backup.source.keep = b.keep === null ? "env" : "setting";
+      }
+      // BackupList.schedule.keep is at most 90 in the contract (reported to pl-lead).
+      backups.schedule = { time: settings.backup.time, keep: Math.min(settings.backup.keep, 90) };
+      emit("settings.changed", "settings:backup", { old, new: settings.backup });
+      return structuredClone(settings);
     },
     async listBackups() {
       auth();

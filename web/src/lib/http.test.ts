@@ -231,6 +231,47 @@ describe("http api", () => {
     expect(lost).not.toHaveBeenCalled();
   });
 
+  it("calls the general settings operations (T-176)", async () => {
+    const f = fakeFetch(() => Response.json({ backup: { time: "03:00" } }));
+    const api = createHttpApi({ fetch: f.fn });
+    await api.getSettings();
+    await api.changeSettings({ backup: { time: "02:30", keep: null } });
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["GET", "/api/v1/settings", undefined],
+      ["PATCH", "/api/v1/settings", { backup: { time: "02:30", keep: null } }],
+    ]);
+  });
+
+  it.each([
+    [
+      "Too many requests of one kind.",
+      "30",
+      "Too many requests of one kind. Try again in 30 seconds.",
+    ],
+    ["", "1", "Try again in 1 second."],
+    ["Slow down.", "300", "Slow down. Try again in 5 minutes."],
+    ["Try again in 30 seconds.", "30", "Try again in 30 seconds."],
+    ["Too many.", null, "Too many."],
+  ])("a 429 says when to try again (%s, Retry-After %s)", async (detail, retry, want) => {
+    const headers: Record<string, string> = { "content-type": "application/problem+json" };
+    if (retry !== null) headers["retry-after"] = retry;
+    const f = fakeFetch(() =>
+      Response.json(
+        {
+          type: "urn:plumb:problem:rate-limited",
+          status: 429,
+          title: "Too many attempts",
+          ...(detail ? { detail } : {}),
+        },
+        { status: 429, headers },
+      ),
+    );
+    const err = (await createHttpApi({ fetch: f.fn })
+      .createPlan({ reason: "x" })
+      .catch((e: unknown) => e)) as ApiError;
+    expect(err.problem.detail ?? "").toBe(want);
+  });
+
   it("keeps the problem title and detail of an API error", async () => {
     const f = fakeFetch(() =>
       Response.json(

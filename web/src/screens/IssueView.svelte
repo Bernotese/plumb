@@ -74,6 +74,18 @@
   // D-296: Accept on a Block resource makes it a raw resource of the Target.
   // `raw` and `source` come from the server (D-301); an older one sends neither.
   const raw = $derived(issue ? (issue.raw ?? offersRaw(issue.resource)) : false);
+  // D-362: Accept into a Block parameter when the drift maps back to one.
+  const params = $derived(issue?.accept_mode === "param" ? (issue.accept_params ?? []) : []);
+  const paramUses = $derived([...new Set(params.map((p) => p.use))]);
+  const acceptLabel = $derived(
+    params.length
+      ? `Accept into ${params.length === 1 ? "parameter" : "parameters"} ${params
+          .map((p) => p.param)
+          .join(", ")} of ${paramUses.join(", ")}`
+      : raw
+        ? "Accept as raw for this Target"
+        : "Accept: keep the guest value",
+  );
 
   const changedAttrs = $derived([...new Set(issue?.changes.map((c) => c.attr) ?? [])]);
   const canIgnore = $derived(
@@ -229,10 +241,22 @@
           {/if}
           {#if issue.actions.includes("accept") && !hidden}
             <button class="btn" type="button" disabled={busy} onclick={() => resolve("accept")}>
-              {raw ? "Accept as raw for this Target" : "Accept: keep the guest value"}
+              {acceptLabel}
             </button>
           {/if}
         </div>
+        {#if params.length && issue.actions.includes("accept") && !hidden}<p
+            class="muted"
+            id="param-help"
+          >
+            Accept writes the guest value into the {params.length === 1
+              ? "parameter"
+              : "parameters"}
+            {#each params as p, i (i)}{i ? ", " : ""}<span class="mono">{p.param}</span>{/each} of this
+            Target's use of the Block {#each paramUses as u, i (u)}{i ? ", " : ""}<span class="mono"
+                >{u}</span
+              >{/each}. The Block itself does not change, and the resource keeps following it.
+          </p>{/if}
         {#if raw && issue.actions.includes("accept") && !hidden}<p class="muted" id="raw-help">
             Accept as raw keeps the guest value for this Target only.
             {#if issue.source}The Block <span class="mono">{issue.source.block}</span>
@@ -240,6 +264,9 @@
                 <span class="mono">{issue.source.use}</span>){/if} does not set these attributes on it
               any more.{:else}The Block does not set these attributes on it any more.{/if} The Target
             page lists it under "Raw resources", where you can edit it or go back to the Block.
+            {#if issue.accept_reason}<br /><span id="raw-reason"
+                >No Block parameter fits: {issue.accept_reason}</span
+              >{/if}
           </p>{/if}
         <p class="muted">
           {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a

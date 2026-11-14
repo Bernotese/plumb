@@ -40,7 +40,8 @@
           e.type === "backup.finished" ||
           e.type === "restore.confirmed" ||
           e.type === "token.enabled" ||
-          e.type === "user.password_reset"
+          e.type === "user.password_reset" ||
+          e.type === "settings.changed"
         )
           l.reloadSoon();
       },
@@ -204,6 +205,9 @@
     <p>
       Plumb backs up its whole state every day at {list.schedule.time} UTC and keeps {list.schedule
         .keep} backups. A backup is encrypted. Only the recovery key opens it.
+      <a href={href({ name: "settings", tab: "general" })} id="backup-schedule-link"
+        >Change the schedule</a
+      >
     </p>
     <dl class="facts">
       <dt>Last run</dt>
