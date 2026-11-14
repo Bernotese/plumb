@@ -31,6 +31,7 @@ type fakeNet struct {
 	// noRoute: the next ip route get calls fail like a NIC without its
 	// DHCP address (-1: all of them).
 	noRoute int
+	failArm bool // systemd-run fails
 }
 
 func (f *fakeNet) live() (addrs []string, routes []liveRoute, dns, search []string) {
@@ -104,6 +105,8 @@ func (f *fakeNet) Run(ctx context.Context, name string, args ...string) ([]byte,
 			return nil, &ExitError{Name: name, Code: 1, Stderr: "bad"}
 		}
 		return exec.CommandContext(ctx, "netplan", args...).Output()
+	case name == "systemd-run" && f.failArm:
+		return nil, &ExitError{Name: name, Code: 1, Stderr: "Failed to start transient timer unit"}
 	case name == "systemctl" || name == "systemd-run":
 		return nil, nil
 	}
@@ -145,8 +148,10 @@ func newNetEnv(t *testing.T) (Env, *fakeNet, *[]netip.Addr) {
 		t.Skip("netplan is not installed")
 	}
 	root := guestRoot(t)
-	if err := os.MkdirAll(filepath.Join(root, "etc/netplan"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{"etc/netplan", "etc/systemd/system"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "etc/netplan/50-cloud-init.yaml"), []byte(cloudInit), 0o600); err != nil {
 		t.Fatal(err)
@@ -420,5 +425,70 @@ func TestNetworkWaitsForRoute(t *testing.T) {
 	}
 	if f2.count("systemd-run") != 0 {
 		t.Error("something was armed without a route")
+	}
+}
+
+// n4 of #249: when the rollback timer cannot be armed, the confirmed copy
+// is removed again: nothing half-armed stays for a later restore.
+func TestNetworkArmFailureLeavesNoCopy(t *testing.T) {
+	env, f, _ := newNetEnv(t)
+	f.failArm = true
+	err := netRes(t, env, cloneAttrs(extra)).Prepare(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "arm the rollback timer") {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if _, err := os.Stat(networkConfirmed(env, "extra")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("the confirmed copy stays after a failed arm")
+	}
+	if f.applies != 0 {
+		t.Error("netplan apply ran")
+	}
+}
+
+// n1 of #249: Prepare installs and enables the boot unit that puts back
+// an unconfirmed change before systemd-networkd starts.
+func TestNetworkBootUnit(t *testing.T) {
+	env, f, _ := newNetEnv(t)
+	if err := netRes(t, env, cloneAttrs(extra)).Prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(env.Root, unitDir+NetworkBootUnit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(b)
+	dir := filepath.Join(env.StateDir, networkConfirmedDir)
+	for _, want := range []string{
+		"Before=systemd-networkd.service",
+		"ConditionPathExistsGlob=" + dir + "/network-*.confirmed",
+		`install -m 600 "$$c" "$$f"`,
+		"; netplan generate'",
+		"WantedBy=sysinit.target",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("unit lacks %q:\n%s", want, unit)
+		}
+	}
+	if f.count("systemctl", "enable", NetworkBootUnit) != 1 {
+		t.Errorf("not enabled: %v", f.calls)
+	}
+	// A second Prepare leaves the same unit alone.
+	if err := netRes(t, env, cloneAttrs(extra)).Prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.count("systemctl", "enable", NetworkBootUnit) != 1 {
+		t.Error("the unit was written again")
+	}
+	// A state dir that a unit cannot hold is refused before anything.
+	env.StateDir = "/var/lib/plumb agent"
+	if _, err := networkBootUnitContent(env); err == nil {
+		t.Error("a state dir with a space was taken")
+	}
+	// The script of the unit, run by sh with "$$" as systemd passes it:
+	// it puts back the copy (or removes the file) for each name.
+	script := unit[strings.Index(unit, "ExecStart=/bin/sh -c '")+len("ExecStart=/bin/sh -c '"):]
+	script = strings.ReplaceAll(script[:strings.Index(script, "'")], "$$", "$")
+	if !strings.Contains(script, "for c in "+dir+"/network-*.confirmed") {
+		t.Fatalf("script: %s", script)
 	}
 }
