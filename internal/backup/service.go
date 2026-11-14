@@ -748,7 +748,12 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 			continue
 		}
 		it := Item{Name: f.name, CreatedAt: st.ModTime().UTC(), Size: st.Size(), State: ItemOK}
-		if it.SHA256 = s.sum(f.name); it.SHA256 == "" {
+		switch it.SHA256 = s.sum(f.name); {
+		case !canOpen(p):
+			// Also with a readable sum file: the backup itself counts
+			// (review L1 of #311).
+			it.SHA256, it.State = "", ItemUnreadable
+		case it.SHA256 == "":
 			if it.SHA256, err = hashFile(p); err != nil {
 				it.SHA256, it.State = "", ItemUnreadable
 			}
@@ -772,6 +777,16 @@ func (s *Service) sum(name string) string {
 		return ""
 	}
 	return hexSum
+}
+
+// canOpen reports whether serve can open p for reading; it reads nothing.
+func canOpen(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
 }
 
 func hashFile(p string) (string, error) {

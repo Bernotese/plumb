@@ -42,3 +42,26 @@ func TestItemsListUnreadable(t *testing.T) {
 		t.Fatalf("unreadable: %+v (listed %v)", it, ok)
 	}
 }
+
+// Review L1 of #311: a readable sum file does not hide an unreadable
+// backup file.
+func TestItemsUnreadableWithReadableSum(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0000 file")
+	}
+	f := newFixture(t, nil)
+	f.clock.set(time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC))
+	name := f.backup("system").Name
+	p := filepath.Join(f.data, DirName, name)
+	if err := os.Chmod(p, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(p, 0o600) })
+	if _, err := os.Stat(p + SumSuffix); err != nil {
+		t.Fatal(err)
+	}
+	items, err := f.svc.Items(f.ctx)
+	if err != nil || len(items) != 1 || items[0].State != ItemUnreadable || items[0].SHA256 != "" {
+		t.Fatalf("items %+v err %v", items, err)
+	}
+}

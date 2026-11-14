@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/backup"
@@ -40,5 +41,9 @@ func TestBackupsUnreadableListed(t *testing.T) {
 	}
 	if code != 200 || json.Unmarshal(body, &v) != nil || len(v.Items) != 1 || v.Items[0].State != backup.ItemUnreadable || v.Items[0].SHA256 != nil {
 		t.Fatalf("list: %d %s", code, body)
+	}
+	// No path of the data dir in the answer (review n1 of #311).
+	if strings.Contains(string(body), e.dir) || strings.Contains(string(body), filepath.Dir(matches[0])) {
+		t.Fatalf("a directory path is in the answer: %s", body)
 	}
 }
