@@ -76,7 +76,7 @@ func TestCommandOnlyHumanApproves(t *testing.T) {
 
 // Exercise proposal validation against the saved head, including Block-only edits.
 func TestCommandImageProposalRefusals(t *testing.T) {
-	e := newEnv(t, false, withBuilds)
+	e := newEnv(t, false, withBuildsNoAgents)
 	adm := e.admin()
 	docs := builtImageDoc("web", "hi")
 	command := doc(state.KindBlock, "banner", `{"resources":[{"command":{"name":"init","argv":["/bin/true"],"creates":"/done"}}]}`)
