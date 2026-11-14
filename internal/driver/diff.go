@@ -159,6 +159,9 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 		}
 	}
 	for _, attr := range CreateOnly {
+		if desired.Adopted && attr != AttrKind {
+			continue // D-391: not set by Plumb, never changeable
+		}
 		add(attr, createOnlyValue(have, attr), createOnlyValue(next, attr), createOnlyValue(desired, attr), wire.RiskDestructive, true)
 	}
 	add(AttrCores, have.Cores, next.Cores, desired.Cores, guestRisk[AttrCores], false)
@@ -179,7 +182,9 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 	// the host, so the risk is destructive (T-038 §3, review S6).
 	// keepRisk for features too: a feature that only waits for the next
 	// start gives the container that power then (QA #170).
-	add(AttrFeatures, have.Features, next.Features, desired.Features, wire.RiskDestructive, true)
+	if !desired.Adopted { // D-391: an adopted container keeps its features
+		add(AttrFeatures, have.Features, next.Features, desired.Features, wire.RiskDestructive, true)
+	}
 	add(AttrMounts, list(have.Mounts), list(next.Mounts), list(desired.Mounts), wire.RiskDestructive, true)
 	add(AttrDevices, list(have.Devices), list(next.Devices), list(desired.Devices), wire.RiskDestructive, true)
 	add(AttrRawLXC, list(have.RawLXC), list(next.RawLXC), list(desired.RawLXC), wire.RiskDestructive, true)

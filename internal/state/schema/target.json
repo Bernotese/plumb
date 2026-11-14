@@ -23,8 +23,19 @@
       "type": "object",
       "required": [
         "type",
-        "image",
         "guest"
+      ],
+      "oneOf": [
+        {
+          "required": ["image"],
+          "not": { "required": ["adopted"] },
+          "additionalProperties": true
+        },
+        {
+          "required": ["adopted"],
+          "not": { "required": ["image"] },
+          "additionalProperties": true
+        }
       ],
       "additionalProperties": false,
       "properties": {
@@ -161,6 +172,28 @@
             }
           },
           "description": "Blocks of the target. The same Block can be used more than once, with different ids and parameters."
+        },
+        "adopted": {
+          "type": "object",
+          "required": ["node", "vmid"],
+          "additionalProperties": false,
+          "description": "The Target holds a guest that a person made and put into the pool (D-373, D-386). It has no image. Its create-only settings and container features are not compared (D-391). Delete of the Target only unbinds the guest unless delete_guest is true (D-388).",
+          "properties": {
+            "node": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,62})$"
+            },
+            "vmid": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 999999999
+            },
+            "delete_guest": {
+              "type": "boolean",
+              "default": false,
+              "description": "true: deleting this Target deletes the Proxmox guest and its disks. Setting it is human-only and destructive (adopted-guest-delete, D-388)."
+            }
+          }
         },
         "overrides": {
           "type": "object",

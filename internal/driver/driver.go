@@ -68,6 +68,11 @@ type GuestSpec struct {
 	// a missing tags attribute is not managed); Observe always sets it.
 	Tags    []string
 	TagsSet bool
+	// Adopted: the guest was made by a person and adopted (D-386, D-391).
+	// Its create-only attributes and container features are not compared:
+	// Plumb never set them and can never change them.
+	Adopted bool
+
 	// ImageVersion is the version of a built Image that Create cloned, 0
 	// for a stock Image (D-200). Create writes it into the guest
 	// description as "plumb-image-version: <N>", and Observe reads it. It

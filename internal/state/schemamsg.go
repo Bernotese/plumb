@@ -34,6 +34,8 @@ var ruleMessages = map[string]string{
 	"resource/apt_repository.json#/properties/uris/items pattern":                                                  "must be an http or https URL without spaces",
 	"resource/apt_repository.json#/properties/key pattern":                                                         "must be exactly one ASCII-armored public key block",
 	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway required":                          "gateway needs a static ip: set ip too",
+	"doc/target.json#/properties/spec/oneOf/0 not":                                                                 "an adopted Target has no image: remove image or adopted (D-386)",
+	"doc/target.json#/properties/spec/oneOf/1 not":                                                                 "an adopted Target has no image: remove image or adopted (D-386)",
 	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway/properties/ip not":                 "gateway needs a static ip, not dhcp",
 	"doc/image.json#/properties/spec/properties/build/properties/guest/dependentSchemas/gateway required":          "gateway needs a static ip: set ip too",
 	"doc/image.json#/properties/spec/properties/build/properties/guest/dependentSchemas/gateway/properties/ip not": "gateway needs a static ip, not dhcp",
