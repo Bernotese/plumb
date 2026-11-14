@@ -81,6 +81,10 @@ type Guests struct {
 	cfg  GuestConfig
 	mu   sync.Mutex
 	last map[string]time.Time // the last scheduled slot that ran, per Target
+	// base ends the background jobs at Close; wg waits for them.
+	base   context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // NewGuests returns the job runner.
@@ -94,7 +98,29 @@ func NewGuests(cfg GuestConfig) *Guests {
 	if cfg.Restored == nil {
 		cfg.Restored = func() bool { return false }
 	}
-	return &Guests{cfg: cfg, last: map[string]time.Time{}}
+	base, cancel := context.WithCancel(context.Background())
+	return &Guests{cfg: cfg, last: map[string]time.Time{}, base: base, cancel: cancel}
+}
+
+// Background runs a started job without the caller's request context; a
+// job that runs at Close is stopped (its Proxmox task too) and fails.
+func (g *Guests) Background(target string, run func(context.Context) error) {
+	g.wg.Add(1)
+	go func() {
+		defer g.wg.Done()
+		if err := run(g.base); err != nil && g.base.Err() == nil {
+			g.cfg.Logger.Warn("guest backup", "target", target, "err", err)
+		}
+	}()
+}
+
+// Wait waits for the background jobs (tests).
+func (g *Guests) Wait() { g.wg.Wait() }
+
+// Close stops and waits for the background jobs.
+func (g *Guests) Close() {
+	g.cancel()
+	g.wg.Wait()
 }
 
 // Errors of a job request.
@@ -135,20 +161,32 @@ func (g *Guests) storageState(ctx context.Context) (string, int, error) {
 // BackUp runs one job for target now and waits for it. trigger is
 // TriggerScheduled or TriggerManual; actor is who asked.
 func (g *Guests) BackUp(ctx context.Context, target, trigger, actor string) error {
-	t, err := g.cfg.Target(ctx, target)
+	run, err := g.Start(ctx, target, trigger, actor)
 	if err != nil {
 		return err
+	}
+	return run(ctx)
+}
+
+// Start checks a job and records it as running (all refusals and the
+// one-job-per-Target rule are decided here, at once); run does the
+// vzdump, the read-back and retention. "Back up now" answers after Start
+// and calls run in the background.
+func (g *Guests) Start(ctx context.Context, target, trigger, actor string) (run func(context.Context) error, err error) {
+	t, err := g.cfg.Target(ctx, target)
+	if err != nil {
+		return nil, err
 	}
 	lineage, err := g.cfg.Store.BackupLineage(ctx, t.Name, t.Gen)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	refuse := func(msg string) error {
+	refuse := func(msg string) (func(context.Context) error, error) {
 		if err := g.cfg.Store.RefusedGuestBackupRun(ctx, t.Name, lineage, trigger, msg); err != nil {
-			return err
+			return nil, err
 		}
 		g.emit(ctx, "guest_backup.failed", t.Name, actor, map[string]any{"result": "refused", "trigger": trigger})
-		return fmt.Errorf("%w: %s", ErrGuestBackupRefused, msg)
+		return nil, fmt.Errorf("%w: %s", ErrGuestBackupRefused, msg)
 	}
 	if g.cfg.Restored() {
 		return refuse("restored mode: guest backups wait for the restore confirm (D-303)")
@@ -172,12 +210,16 @@ func (g *Guests) BackUp(ctx context.Context, target, trigger, actor string) erro
 	}
 	id, err := g.cfg.Store.StartGuestBackupRun(ctx, t.Name, lineage, trigger)
 	if errors.Is(err, store.ErrGuestBackupRunning) {
-		return ErrGuestBackupBusy
+		return nil, ErrGuestBackupBusy
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	g.emit(ctx, "guest_backup.started", t.Name, actor, map[string]any{"trigger": trigger})
+	return func(ctx context.Context) error { return g.run(ctx, id, t, lineage, marker, trigger, actor) }, nil
+}
+
+func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, marker, trigger, actor string) error {
 	var exclude []string
 	if t.LXC {
 		exclude = excludeLXC
