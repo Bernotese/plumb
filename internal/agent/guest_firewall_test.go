@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -61,10 +62,66 @@ func liveTable(t *testing.T) string {
 
 // reachable reports whether the peer can open a TCP connection to the
 // guest port.
-func reachable(port string) bool {
-	err := exec.Command("nsenter", "--net=/run/netns/"+fwNetns, "timeout", "3", "bash", "-c",
-		"exec 3<>/dev/tcp/"+fwHost+"/"+port).Run()
-	return err == nil
+func reachable(port string) bool { return reach(port) == nil }
+
+// reach opens a TCP connection from the peer to the guest port; the error
+// holds the output of the probe.
+func reach(port string) error {
+	out, err := exec.Command("nsenter", "--net=/run/netns/"+fwNetns, "timeout", "3", "bash", "-c",
+		"exec 3<>/dev/tcp/"+fwHost+"/"+port).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
+// reachDiag is the state of the guest when a reach check fails (T-200):
+// the whole ruleset, addresses, routes, listeners, connection tracking
+// (when the tool is there) and the neighbour port, so a rare failure in CI
+// gives its cause. It only reads.
+func reachDiag(port string, listenAt, applyAt time.Time) string {
+	var b strings.Builder
+	run := func(name string, args ...string) {
+		out, err := exec.Command(name, args...).CombinedOutput()
+		fmt.Fprintf(&b, "--- %s %s", name, strings.Join(args, " "))
+		if err != nil {
+			fmt.Fprintf(&b, " (%v)", err)
+		}
+		fmt.Fprintf(&b, "\n%s\n", bytes.TrimSpace(out))
+	}
+	now := time.Now()
+	fmt.Fprintf(&b, "--- times: listener started %s ago", now.Sub(listenAt).Round(time.Millisecond))
+	if applyAt.IsZero() {
+		b.WriteString(", no apply returned yet\n")
+	} else {
+		fmt.Fprintf(&b, ", last apply returned %s ago\n", now.Sub(applyAt).Round(time.Millisecond))
+	}
+	if err := reach(port); err != nil {
+		fmt.Fprintf(&b, "--- port %s now: not reachable: %v\n", port, err)
+	} else {
+		fmt.Fprintf(&b, "--- port %s now: reachable\n", port)
+	}
+	other := "8081"
+	if port == "8081" {
+		other = "8080"
+	}
+	if err := reach(other); err != nil {
+		fmt.Fprintf(&b, "--- neighbour port %s: not reachable: %v\n", other, err)
+	} else {
+		fmt.Fprintf(&b, "--- neighbour port %s: reachable\n", other)
+	}
+	run("nft", "list", "ruleset")
+	run("ip", "-br", "addr")
+	run("ip", "route")
+	run("nsenter", "--net=/run/netns/"+fwNetns, "ip", "-br", "addr")
+	run("nsenter", "--net=/run/netns/"+fwNetns, "ip", "neigh")
+	run("ss", "-ltn")
+	if _, err := exec.LookPath("conntrack"); err == nil {
+		run("conntrack", "-L")
+	} else {
+		b.WriteString("--- conntrack: not installed\n")
+	}
+	return b.String()
 }
 
 // TestGuestFirewall proves the resource firewall and its safe apply with
@@ -110,6 +167,8 @@ func TestGuestFirewall(t *testing.T) {
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "addr", "add", fwPeer+"/24", "dev", "plumbfw1")
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "plumbfw1", "up")
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "lo", "up")
+	listenAt := time.Now()
+	var applyAt time.Time // when the last apply returned (T-200 diagnostics)
 	for _, port := range []string{"8080", "8081"} {
 		ln, err := net.Listen("tcp", fwHost+":"+port)
 		if err != nil {
@@ -134,7 +193,7 @@ func TestGuestFirewall(t *testing.T) {
 				return
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("port %s reachable = %v, want %v\n%s", port, !want, want, liveTable(t))
+				t.Fatalf("port %s reachable = %v, want %v\n%s\n%s", port, !want, want, liveTable(t), reachDiag(port, listenAt, applyAt))
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
@@ -219,6 +278,7 @@ func TestGuestFirewall(t *testing.T) {
 			t.Fatal(err)
 		}
 		rep := result(id)
+		applyAt = time.Now()
 		if rep.Error != "" || len(rep.Items) != 1 {
 			t.Fatalf("apply: %+v", rep)
 		}

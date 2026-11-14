@@ -56,6 +56,8 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/events?since=-1", nil, TierRead, false},                                     // allowed → 400, so the stream never opens
 	{"GET", "/api/v1/tokens", nil, TierAdmin, true},
 	{"POST", "/api/v1/tokens", map[string]string{}, TierAdmin, true}, // allowed → 422, so no token is made
+	{"GET", "/api/v1/settings", nil, TierRead, false},
+	{"PATCH", "/api/v1/settings", map[string]any{}, TierAdmin, true}, // allowed → 400 (no field), nothing changes
 	{"GET", "/api/v1/backups", nil, TierRead, false},
 	{"POST", "/api/v1/backups", nil, TierApply, false}, // allowed → 202 or 409 backup-running
 	{"GET", "/api/v1/restore", nil, TierRead, false},

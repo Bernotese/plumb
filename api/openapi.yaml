@@ -2806,7 +2806,6 @@ paths:
       tags: [settings]
       operationId: getSettings
       x-plumb-rate: read
-      x-plumb-planned: T-174
       summary: Controller settings and the Proxmox connection
       description: |
         The backup schedule with the source of each value, and a read-only view of the Proxmox
@@ -2845,7 +2844,6 @@ paths:
     patch:
       tags: [settings]
       operationId: changeSettings
-      x-plumb-planned: T-174
       summary: Change controller settings
       description: |
         Human admin session only (D-329). Changes the backup schedule; the scheduler takes it
@@ -4693,10 +4691,12 @@ components:
           type: object
           additionalProperties: false
           required: [time, keep]
-          description: Set by the installer (`--backup-time`, `--backup-keep`); no API changes it.
+          description: |
+            The effective schedule: a value stored by `PATCH /settings` wins over the installer's
+            `--backup-time`/`--backup-keep` (D-361). `GET /settings` says where each value comes from.
           properties:
             time: { type: string, pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$", description: "Daily, UTC." }
-            keep: { type: integer, minimum: 1, maximum: 90, description: "Backups kept, scheduled and manual together." }
+            keep: { type: integer, minimum: 1, maximum: 100, description: "Backups kept, scheduled and manual together." }
         running: { type: boolean }
         last_run:
           oneOf:
