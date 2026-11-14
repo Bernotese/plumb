@@ -125,13 +125,13 @@ Options:
   --snippet-dir DIR      directory of the plumb-snippets storage (default /var/lib/plumb-snippets)
   --image-dir DIR        directory of the plumb-images storage (default /var/lib/plumb-images)
   --backup-time HH:MM    daily backup of serve, UTC (default 03:00)
-  --backup-keep N        backups that serve keeps (default 7)
+  --backup-keep N        backups that serve keeps, 1 … 100 (default 7)
   --backup-storage ID|none
                          copy the newest encrypted backup daily to this storage (dir, nfs, cifs,
                          cephfs); "none" removes the copy timer, the copies stay (D-289). The path of a
                          dir storage is read at install time: after a change of it, run a repair run
   --backup-copy-time HH:MM   time of the copy, UTC (default: backup time + 30 min)
-  --backup-copy-keep N   copies kept on the storage (default 14)
+  --backup-copy-keep N   copies kept on the storage, 1 … 999 (default 14)
   --backup-max-size SIZE the largest backup that is copied, e.g. 512M or 2G (default 1G)
   --keep-guests          with --remove: take a fresh backup, copy it off, check it with the
                          recovery key, then remove only the controller; the pool, its guests
@@ -307,7 +307,11 @@ parse_args() {
 		local m=$((10#${BACKUP_TIME%:*} * 60 + 10#${BACKUP_TIME#*:} + 30))
 		printf -v BACKUP_COPY_TIME '%02d:%02d' $((m / 60 % 24)) $((m % 60))
 	fi
-	[[ $BACKUP_KEEP =~ ^[1-9][0-9]{0,2}$ && $BACKUP_COPY_KEEP =~ ^[1-9][0-9]{0,2}$ ]] || die "bad --backup-keep or --backup-copy-keep (1 … 999)"
+	# --backup-keep has the range of the controller (backup.MaxKeep, D-361):
+	# a larger value would stop plumb serve at its start (T-198).
+	[[ $BACKUP_KEEP =~ ^[1-9][0-9]{0,2}$ ]] && ((BACKUP_KEEP <= 100)) || die "bad --backup-keep $BACKUP_KEEP (1 … 100). Nothing was changed."
+	# --backup-copy-keep is only read by the copy script on this host.
+	[[ $BACKUP_COPY_KEEP =~ ^[1-9][0-9]{0,2}$ ]] || die "bad --backup-copy-keep $BACKUP_COPY_KEEP (1 … 999). Nothing was changed."
 	[[ $BACKUP_MAX_SIZE =~ ^([1-9][0-9]{0,5})([MG])$ ]] || die "bad --backup-max-size (for example 512M or 2G)"
 	BACKUP_MAX_BYTES=$((BASH_REMATCH[1] << 20))
 	[[ ${BASH_REMATCH[2]} == G ]] && BACKUP_MAX_BYTES=$((BACKUP_MAX_BYTES << 10))
