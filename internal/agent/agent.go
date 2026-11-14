@@ -95,11 +95,12 @@ type Agent struct {
 	dirty    map[string]bool      // drift items not yet sent
 	resolved map[string]wire.Item // drift that went away, not yet sent
 
-	watcher     *watcher      // set by Run (tests read it)
-	net         *netWatch     // live ip/nft watch (D-367); its subscriptions belong to the drift loop
-	listChanged chan struct{} // the desired list changed
-	applyDone   chan []string // an apply ended; ids of its resources
-	sendMu      sync.Mutex    // one drift report at a time
+	watcher     *watcher           // set by Run (tests read it)
+	net         *netWatch          // live ip/nft watch (D-367); its subscriptions belong to the drift loop
+	listChanged chan struct{}      // the desired list changed
+	applyDone   chan []string      // an apply ended; ids of its resources
+	driftBusy   chan time.Duration // a drift send got 429/503: its Retry-After (T-202)
+	sendMu      sync.Mutex         // one drift report at a time
 
 	// Address report state; only the Run goroutine uses it.
 	addrLast  addrList  // the list the controller took last
@@ -196,6 +197,7 @@ func New(opt Options) (*Agent, error) {
 		resolved:    map[string]wire.Item{},
 		listChanged: make(chan struct{}, 1),
 		applyDone:   make(chan []string, 64),
+		driftBusy:   make(chan time.Duration, 1),
 		caps:        Capabilities(),
 	}
 	a.net = newNetWatch(opt.Log, opt.Debounce, a.isApplying)

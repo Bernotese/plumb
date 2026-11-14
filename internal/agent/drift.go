@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/rand/v2"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -125,6 +127,12 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 		left := a.maxDebounceWait() - time.Since(firstPending)
 		debounce.Reset(max(min(a.opt.Debounce, left), 0))
 	}
+	// resend flushes the drift that a busy controller (429, 503) refused,
+	// after its Retry-After (T-202, D-366). It lives in this goroutine, so
+	// a resend never runs beside a check; it ends with the loop.
+	resend := time.NewTimer(time.Hour)
+	resend.Stop()
+	defer resend.Stop()
 	defer a.net.close()
 	paths := a.rewatch(ctx, w)
 	events := w.events
@@ -193,8 +201,25 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 			if !a.isApplying() {
 				a.check(ctx, nil)
 			}
+		case d := <-a.driftBusy:
+			// A second 429 arms the timer again (one resend per wait).
+			resend.Reset(resendWait(d))
+		case <-resend.C:
+			// Only the kept items; a new 429 sends on driftBusy again.
+			a.flushAfterCheck(ctx)
 		}
 	}
+}
+
+// maxResendWait caps the wait before the kept drift is sent again.
+const maxResendWait = 2 * time.Minute
+
+// resendWait is Retry-After (at least 1 s, at most maxResendWait) plus up
+// to 10 % jitter, so agents that a restart made busy together do not
+// come back together.
+func resendWait(retryAfter time.Duration) time.Duration {
+	d := min(max(retryAfter, time.Second), maxResendWait)
+	return d + rand.N(d/10+time.Millisecond)
 }
 
 // rewatch watches the parent directories of all Watch() paths and returns
@@ -314,6 +339,15 @@ func (a *Agent) flushDrift(ctx context.Context, all bool) error {
 	sort.Slice(items, func(i, j int) bool { return items[i].Resource < items[j].Resource })
 	handled, err := a.sendDrift(ctx, items)
 	a.markSent(handled) // taken, or refused for good one by one
+	var busy *busyError
+	if errors.As(err, &busy) {
+		// The drift loop sends the kept items again after the wait. A
+		// signal that is still waiting stands for this one too.
+		select {
+		case a.driftBusy <- busy.RetryAfter:
+		default:
+		}
+	}
 	return err
 }
 
