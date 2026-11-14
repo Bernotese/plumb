@@ -85,6 +85,7 @@ type Store struct {
 	st    *store.Store
 	aead  cipher.AEAD
 	usage UsageFunc
+	guest []byte // HMAC key of the copy rule (guestvalue.go)
 }
 
 // Open checks the master key against the database and returns the store.
@@ -123,7 +124,7 @@ func Open(ctx context.Context, st *store.Store, k Key) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{st: st, aead: aead}, nil
+	return &Store{st: st, aead: aead, guest: k.derive(PurposeGuestValue)}, nil
 }
 
 // SetUsage sets the usage hook (T-029). Call it before the store is used.

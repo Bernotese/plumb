@@ -28,9 +28,10 @@ const (
 
 // IgnoreOnly reports whether an Issue of resource offers only the ignore
 // actions: guest:address (D-215), and guest:missing and agent:silent of a
-// restore (D-303).
+// restore (D-303), and agent:values of the copy rule (D-331).
 func IgnoreOnly(resource string) bool {
-	return resource == wire.GuestAddressID || resource == plan.GuestMissingID || resource == plan.AgentSilentID
+	return resource == wire.GuestAddressID || resource == plan.GuestMissingID || resource == plan.AgentSilentID ||
+		resource == GuestValuesID
 }
 
 // ErrAcceptSensitive is returned for accept on a sensitive change: the
@@ -112,6 +113,9 @@ func (s *Service) emit(ctx context.Context, typ string, id int64, actor string, 
 // differing item opens one Issue per target and resource, or updates the
 // open one. An unchanged item resolves an open Issue as "gone".
 func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) error {
+	if err := s.recordGuestValues(ctx, target, rep); err != nil { // the copy rule (D-331)
+		return err
+	}
 	actor := "agent:" + target
 	var rules []state.Rule
 	for _, it := range rep.Items {
