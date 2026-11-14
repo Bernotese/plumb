@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -29,7 +31,13 @@ func TestQASecretValuesAndErrors(t *testing.T) {
 			var logs bytes.Buffer
 			envLog = slog.New(slog.NewTextHandler(&logs, nil))
 			defer func() { envLog = quiet }()
-			e := newEnv(t, true)
+			// Only the timeout case waits for the apply timeout; 1 s keeps it
+			// short (T-211) and the other modes keep the default.
+			e := newEnv(t, true, func(c *plan.Config) {
+				if mode == "timeout" {
+					c.ApplyTimeout = time.Second
+				}
+			})
 			adm := e.admin()
 			value := "qa-error-secret-82c3"
 			short := strings.HasPrefix(mode, "short-")

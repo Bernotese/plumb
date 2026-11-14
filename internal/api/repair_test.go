@@ -184,7 +184,18 @@ type repairEnv struct {
 	old    *linktest.Agent
 }
 
-func newRepairEnv(t *testing.T) *repairEnv {
+// silentHello is the hello wait of a repair that waits for a hello that
+// never comes ("silent"): the test expects the failure, so a long wait
+// only costs time (T-211). A repair that must succeed keeps the default,
+// so a slow runner (race) cannot fail it.
+const silentHello = 300 * time.Millisecond
+
+// newRepairEnv makes the repair env; helloWait 0 is the default 3 s.
+func newRepairEnv(t *testing.T, helloWait ...time.Duration) *repairEnv {
+	wait := 3 * time.Second
+	if len(helloWait) > 0 && helloWait[0] > 0 {
+		wait = helloWait[0]
+	}
 	r := &repairEnv{tr: &fakeTransport{mode: "ok"}, logs: &lockedBuf{}}
 	envLog = slog.New(slog.NewTextHandler(r.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	defer func() { envLog = quiet }()
@@ -196,7 +207,7 @@ func newRepairEnv(t *testing.T) *repairEnv {
 		c.Now = func() time.Time { return time.Now().Add(time.Duration(r.offset.Load())) }
 		c.Repair = plan.RepairConfig{Transport: r.tr, Tokens: tokens, AgentBinary: []byte("agent-binary"),
 			CA: []byte("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"), AgentURL: "https://192.0.2.10:8444",
-			HelloWait: 3 * time.Second, SessionTimeout: 300 * time.Millisecond}
+			HelloWait: wait, SessionTimeout: 300 * time.Millisecond}
 	})
 	r.tr.e = r.env
 	r.adm = r.admin()
@@ -393,7 +404,7 @@ func TestRepairSuccessSwapsCredential(t *testing.T) {
 func TestRepairFailedKeepsCredential(t *testing.T) {
 	for _, mode := range []string{"refuse", "exit1", "hang", "silent"} {
 		t.Run(mode, func(t *testing.T) {
-			r := newRepairEnv(t)
+			r := newRepairEnv(t, silentHello) // every mode fails
 			r.tr.mode = mode
 			r.cutOff()
 			p, _ := r.propose(r.adm, nil, 201)
@@ -516,7 +527,7 @@ func TestRepairAcceptHostKey(t *testing.T) {
 // body can propose again. (A fuzz needs an env per input; T-195 can add
 // one once store.Open accepts a '#' in the data dir path.)
 func TestRepairRequestNeverReachesBundle(t *testing.T) {
-	r := newRepairEnv(t)
+	r := newRepairEnv(t, silentHello) // silent: only the bundle counts
 	r.tr.mode = "silent"
 	r.cutOff()
 	bodies := []string{
@@ -581,7 +592,11 @@ func TestRepairDropsTokenOnEveryEnd(t *testing.T) {
 		{"ok", "succeeded"}, {"other", "succeeded"}, {"exit1", "failed"}, {"hang", "failed"}, {"silent", "failed"}, {"refuse", "failed"},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
-			r := newRepairEnv(t)
+			wait := time.Duration(0) // a success needs the full hello wait
+			if tc.status == "failed" {
+				wait = silentHello
+			}
+			r := newRepairEnv(t, wait)
 			r.tr.mode = tc.mode
 			r.cutOff()
 			p, _ := r.propose(r.adm, nil, 201)
