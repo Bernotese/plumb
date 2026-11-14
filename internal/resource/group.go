@@ -58,7 +58,14 @@ func (g *groupResource) Diff(obs State) []wire.Change {
 		return nil
 	}
 	if obs[wire.AttrState] != wire.StatePresent {
-		return g.finish([]wire.Change{change(wire.AttrState, wire.StateAbsent, wire.StatePresent, wire.RiskReversible)})
+		out := []wire.Change{change(wire.AttrState, wire.StateAbsent, wire.StatePresent, wire.RiskReversible)}
+		if g.a.GID != 0 {
+			out = append(out, change("gid", nil, g.a.GID, wire.RiskReversible))
+		}
+		if _, set := g.res.Attrs["system"]; set {
+			out = append(out, change("system", nil, g.a.System, wire.RiskReversible))
+		}
+		return g.finish(out)
 	}
 	if g.a.GID != 0 && obs["gid"] != g.a.GID {
 		risk := wire.RiskDisruptive
