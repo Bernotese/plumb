@@ -2704,8 +2704,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         settings.backup.keep = b.keep ?? installBackup.keep;
         settings.backup.source.keep = b.keep === null ? "env" : "setting";
       }
-      // BackupList.schedule.keep is at most 90 in the contract (reported to pl-lead).
-      backups.schedule = { time: settings.backup.time, keep: Math.min(settings.backup.keep, 90) };
+      backups.schedule = { time: settings.backup.time, keep: settings.backup.keep };
       emit("settings.changed", "settings:backup", { old, new: settings.backup });
       return structuredClone(settings);
     },
