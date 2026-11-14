@@ -29,7 +29,7 @@ import (
 const (
 	DefaultTime = "03:00"
 	DefaultKeep = 7
-	MaxKeep     = 90
+	MaxKeep     = 100 // D-361
 )
 
 // SystemActor starts the scheduled backups.
@@ -46,9 +46,13 @@ type Config struct {
 	// DataDir is the data directory of serve: plumb.db, link/ and the
 	// backup directory DirName are in it.
 	DataDir string
-	// Time is the daily time (UTC, "HH:MM"), Keep the number of backups.
+	// Time is the daily time (UTC, "HH:MM"), Keep the number of backups:
+	// the flag, env or built-in value. A stored setting wins (D-361).
 	Time string
 	Keep int
+	// TimeSource and KeepSource say where Time and Keep come from:
+	// SourceDefault (also when empty) or SourceEnv.
+	TimeSource, KeepSource string
 	// Header fields of the install (D-304). Empty in a dev install.
 	PlumbVersion, InstallID, Node, Pool, AgentURL string
 	// CopyStatus is the status file of the host copy timer; default
@@ -97,20 +101,42 @@ func LoadInstall(dataDir string) (Install, error) {
 	return in, nil
 }
 
+// Sources of a schedule value (SettingSource of the API).
+const (
+	SourceDefault = "default"
+	SourceEnv     = "env"
+	SourceSetting = "setting"
+)
+
+// Schedule is the effective schedule and where each value comes from.
+type Schedule struct {
+	Time       string `json:"time"`
+	Keep       int    `json:"keep"`
+	TimeSource string `json:"-"`
+	KeepSource string `json:"-"`
+}
+
 // Service writes, lists and schedules backups.
 type Service struct {
-	cfg  Config
-	dir  string
-	hour int
-	min  int
-	mu   sync.Mutex // one backup at a time, also against the store row
-	wg   sync.WaitGroup
+	cfg Config
+	dir string
+	mu  sync.Mutex // one backup at a time, also against the store row
+	wg  sync.WaitGroup
+
+	// sched is the effective schedule; schedMu guards it and since.
+	// changeMu serializes ChangeSchedule (store write + memory).
+	schedMu  sync.RWMutex
+	sched    Schedule
+	hour     int
+	min      int
+	since    time.Time // last change of the time: no slot before it is due
+	changeMu sync.Mutex
 }
 
 // ParseTime checks a schedule time "HH:MM" (UTC).
 func ParseTime(s string) (hour, minute int, err error) {
 	h, m, ok := strings.Cut(s, ":")
-	if ok && len(h) == 2 && len(m) == 2 {
+	if ok && len(h) == 2 && len(m) == 2 && digits(h) && digits(m) {
 		hour, err1 := strconv.Atoi(h)
 		minute, err2 := strconv.Atoi(m)
 		if err1 == nil && err2 == nil && hour >= 0 && hour < 24 && minute >= 0 && minute < 60 {
@@ -118,6 +144,15 @@ func ParseTime(s string) (hour, minute int, err error) {
 		}
 	}
 	return 0, 0, fmt.Errorf("backup time %q: want HH:MM (UTC, 00:00 … 23:59)", s)
+}
+
+func digits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // New checks the config, makes the backup directory (0700), removes temp
@@ -139,6 +174,11 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, src := range []*string{&cfg.TimeSource, &cfg.KeepSource} {
+		if *src == "" {
+			*src = SourceDefault
+		}
+	}
 	if cfg.CopyStatus == "" {
 		cfg.CopyStatus = CopyStatusPath
 	}
@@ -148,7 +188,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	s := &Service{cfg: cfg, dir: filepath.Join(cfg.DataDir, DirName), hour: h, min: m}
+	s := &Service{cfg: cfg, dir: filepath.Join(cfg.DataDir, DirName), hour: h, min: m,
+		sched: Schedule{Time: cfg.Time, Keep: cfg.Keep, TimeSource: cfg.TimeSource, KeepSource: cfg.KeepSource}}
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -162,14 +203,131 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if err := cfg.Store.FailRunningBackups(ctx, "interrupted: the controller stopped during the backup"); err != nil {
 		return nil, err
 	}
-	in, err := json.Marshal(Install{InstallID: cfg.InstallID, Node: cfg.Node, Pool: cfg.Pool, AgentURL: cfg.AgentURL, Keep: cfg.Keep})
+	// A stored setting wins over the flag and env value (D-361).
+	stored, err := cfg.Store.Settings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.writeSmall(InstallFile, append(in, '\n')); err != nil {
+	if err := s.applyStored(stored); err != nil {
+		return nil, err
+	}
+	if err := s.writeInstall(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// writeInstall writes InstallFile with the effective keep, so "plumb
+// backup now" runs the same retention.
+func (s *Service) writeInstall() error {
+	_, keep := s.Schedule()
+	in, err := json.Marshal(Install{InstallID: s.cfg.InstallID, Node: s.cfg.Node, Pool: s.cfg.Pool, AgentURL: s.cfg.AgentURL, Keep: keep})
+	if err != nil {
+		return err
+	}
+	return s.writeSmall(InstallFile, append(in, '\n'))
+}
+
+// applyStored sets the effective schedule from the flag/env values and the
+// stored settings. A stored value that is not valid stops the start: only
+// ChangeSchedule writes it, so it means a broken database.
+func (s *Service) applyStored(stored map[string]store.Setting) error {
+	next := Schedule{Time: s.cfg.Time, Keep: s.cfg.Keep, TimeSource: s.cfg.TimeSource, KeepSource: s.cfg.KeepSource}
+	var since time.Time
+	if st, ok := stored[store.SettingBackupTime]; ok {
+		since = st.ChangedAt
+		if st.Set() {
+			var v string
+			if err := json.Unmarshal(st.Value, &v); err != nil {
+				return fmt.Errorf("stored setting %s: %w", st.Key, err)
+			}
+			if _, _, err := ParseTime(v); err != nil {
+				return fmt.Errorf("stored setting %s: %w", st.Key, err)
+			}
+			next.Time, next.TimeSource = v, SourceSetting
+		}
+	}
+	if st, ok := stored[store.SettingBackupKeep]; ok && st.Set() {
+		var v int
+		if err := json.Unmarshal(st.Value, &v); err != nil || v < 1 || v > MaxKeep {
+			return fmt.Errorf("stored setting %s: want 1 … %d", st.Key, MaxKeep)
+		}
+		next.Keep, next.KeepSource = v, SourceSetting
+	}
+	h, m, err := ParseTime(next.Time)
+	if err != nil {
+		return err
+	}
+	s.schedMu.Lock()
+	s.sched, s.hour, s.min, s.since = next, h, m, since
+	s.schedMu.Unlock()
+	return nil
+}
+
+// ScheduleChange is a change of the stored schedule. A Set flag says the
+// field is in the change; a nil value removes the stored value.
+type ScheduleChange struct {
+	SetTime bool
+	Time    *string
+	SetKeep bool
+	Keep    *int
+}
+
+// ErrBadSchedule: a value of ScheduleChange is out of range.
+var ErrBadSchedule = errors.New("backup: bad schedule value")
+
+// ChangeSchedule stores the change and makes it effective at once: the
+// next check of RunSchedule uses the new time, the next retention the new
+// keep. It returns the schedule before and after. A slot of the new time
+// that lies before the change is not due (no backup at once because the
+// time moved back).
+func (s *Service) ChangeSchedule(ctx context.Context, by string, c ScheduleChange) (old, next Schedule, err error) {
+	if c.SetTime && c.Time != nil {
+		if _, _, err := ParseTime(*c.Time); err != nil {
+			return old, next, fmt.Errorf("%w: %v", ErrBadSchedule, err)
+		}
+	}
+	if c.SetKeep && c.Keep != nil && (*c.Keep < 1 || *c.Keep > MaxKeep) {
+		return old, next, fmt.Errorf("%w: keep want 1 … %d", ErrBadSchedule, MaxKeep)
+	}
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	old = s.ScheduleInfo()
+	values := map[string]json.RawMessage{}
+	if c.SetTime {
+		values[store.SettingBackupTime] = rawOrNull(c.Time)
+	}
+	if c.SetKeep {
+		values[store.SettingBackupKeep] = rawOrNull(c.Keep)
+	}
+	if len(values) == 0 {
+		return old, old, nil
+	}
+	if _, err := s.cfg.Store.PutSettings(ctx, by, values); err != nil {
+		return old, old, err
+	}
+	stored, err := s.cfg.Store.Settings(ctx)
+	if err != nil {
+		return old, old, err
+	}
+	if err := s.applyStored(stored); err != nil {
+		return old, old, err
+	}
+	next = s.ScheduleInfo()
+	if s.cfg.Serve && next.Keep != old.Keep {
+		if err := s.writeInstall(); err != nil {
+			s.cfg.Logger.Error("backup install file", "err", err)
+		}
+	}
+	return old, next, nil
+}
+
+func rawOrNull[T any](v *T) json.RawMessage {
+	if v == nil {
+		return json.RawMessage("null")
+	}
+	b, _ := json.Marshal(*v)
+	return b
 }
 
 // cleanTemps removes temp files of a cut run.
@@ -186,7 +344,17 @@ func (s *Service) cleanTemps() {
 }
 
 // Schedule returns the daily time and the number of backups kept.
-func (s *Service) Schedule() (string, int) { return s.cfg.Time, s.cfg.Keep }
+func (s *Service) Schedule() (string, int) {
+	sc := s.ScheduleInfo()
+	return sc.Time, sc.Keep
+}
+
+// ScheduleInfo returns the effective schedule with the source of each value.
+func (s *Service) ScheduleInfo() Schedule {
+	s.schedMu.RLock()
+	defer s.schedMu.RUnlock()
+	return s.sched
+}
 
 // Start starts one backup in the background and returns its run. by is
 // the principal. ErrRunning while one runs.
@@ -520,9 +688,10 @@ func (s *Service) retain(ctx context.Context) error {
 		return err
 	}
 	p, hasPtr := s.pointer()
+	_, keep := s.Schedule()
 	var errs []error
 	for i, f := range list {
-		if i < s.cfg.Keep || hasPtr && f.name == p.Name {
+		if i < keep || hasPtr && f.name == p.Name {
 			continue
 		}
 		for _, n := range []string{f.name, f.name + SumSuffix} {
@@ -668,9 +837,16 @@ func printable(s string) bool {
 // that was down at the time catches up at its next check.
 func (s *Service) Due(ctx context.Context) (bool, error) {
 	now := s.cfg.Now().UTC()
-	slot := time.Date(now.Year(), now.Month(), now.Day(), s.hour, s.min, 0, 0, time.UTC)
+	s.schedMu.RLock()
+	hour, min, since := s.hour, s.min, s.since
+	s.schedMu.RUnlock()
+	slot := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, time.UTC)
 	if now.Before(slot) {
 		slot = slot.AddDate(0, 0, -1)
+	}
+	// A change of the time makes no slot before the change due (D-361).
+	if slot.Before(since) {
+		return false, nil
 	}
 	last, err := s.cfg.Store.LastBackupRun(ctx, store.BackupSchedule)
 	if errors.Is(err, store.ErrNotFound) {
