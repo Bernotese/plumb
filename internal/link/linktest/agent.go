@@ -44,6 +44,7 @@ type Agent struct {
 	// beforeWatchReport runs between the observation of a watch and its
 	// drift report (tests of the order; see SetBeforeWatchReport).
 	beforeWatchReport func()
+	watchReports      int // drift reports of watches that were delivered
 	mu                sync.Mutex
 	cred              string
 	enrolls           int
@@ -301,6 +302,13 @@ func (a *Agent) SetBeforeWatchReport(f func()) {
 	a.beforeWatchReport = f
 }
 
+// WatchReports is the number of delivered drift reports of watches.
+func (a *Agent) WatchReports() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.watchReports
+}
+
 // Change changes a resource on the guest from outside Plumb (nil
 // removes it). When the resource is watched, the agent reports drift, or
 // "unchanged" when the guest matches again.
@@ -544,7 +552,11 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 			hook()
 		}
 		if len(drift) > 0 {
-			a.report(ctx, wire.Report{Type: wire.ReportDrift, Items: drift})
+			if a.report(ctx, wire.Report{Type: wire.ReportDrift, Items: drift}) == nil {
+				a.mu.Lock()
+				a.watchReports++
+				a.mu.Unlock()
+			}
 		}
 	case wire.CommandObserve:
 		a.mu.Lock()

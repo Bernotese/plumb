@@ -34,6 +34,7 @@ func TestDriftOrderWatchBeforeChangeQA(t *testing.T) {
 		})
 	})
 	defer ag.SetBeforeWatchReport(nil)
+	before := ag.WatchReports()
 	ag.SendHello(e.ctx) // the engine answers a hello with a watch
 	select {
 	case err := <-changed:
@@ -42,6 +43,13 @@ func TestDriftOrderWatchBeforeChangeQA(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("no watch with drift came, or the change never ended")
+	}
+	// Wait until the watch report is delivered too (with the drift
+	// order it already is: the change waited for it).
+	for deadline := time.Now().Add(5 * time.Second); ag.WatchReports() == before; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the watch report was never delivered")
+		}
 	}
 	// The change to the desired value came last: no Issue is open, and the
 	// drift never got a second Issue.
