@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -167,6 +168,15 @@ func (r *repairEnv) eventTypes() []string {
 	return out
 }
 
+// enrollCode posts an enrollment with tok to the agent listener.
+func (r *repairEnv) enrollCode(tok string) int {
+	b, _ := json.Marshal(wire.EnrollRequest{Token: tok, Hostname: "late", Version: "test"})
+	req := httptest.NewRequest("POST", wire.PathEnroll, bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	r.link.Handler().ServeHTTP(rec, req)
+	return rec.Code
+}
+
 func (r *repairEnv) stopGuest(target string) {
 	r.t.Helper()
 	if err := r.drv.StopOutside(r.guestID(target)); err != nil {
@@ -299,10 +309,8 @@ func TestRepairFailedKeepsCredential(t *testing.T) {
 			}
 			// The token in the bundle is dropped: a late enrollment fails.
 			tok := bundleToken(t, r.tr.bundles[0])
-			late := linktest.New(r.link.Handler(), func() (string, bool) { return tok, true })
-			code := late.Report(r.ctx, wire.Report{Type: wire.ReportHello, Hello: &wire.Hello{}})
-			if late.Credential() != "" || code == 204 {
-				t.Fatal("the token of a failed repair enrolled")
+			if code := r.enrollCode(tok); code != 401 {
+				t.Fatalf("the token of a failed repair: enroll %d, want 401", code)
 			}
 			if code := r.oldCode(); code != 204 {
 				t.Fatalf("old credential at the end: %d", code)
