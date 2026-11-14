@@ -14,7 +14,7 @@ export interface RoleHint {
 export const ROLE_HINTS: Record<Role, RoleHint> = {
   read: { text: "Sees everything. Changes nothing.", ops: [] },
   plan: {
-    text: "Also proposes changes (plans, also image builds, checksum refreshes, rollbacks and agent updates), comments on and resolves issues, drops plans, proposes the SSH repair of a dead agent and the adoption of a guest.",
+    text: "Also proposes changes (plans, also image builds, checksum refreshes, rollbacks and agent updates), comments on and resolves issues, drops plans, proposes the SSH repair of a dead agent, the adoption of a guest and the restore of a guest from a backup.",
     ops: [
       "createPlan",
       "buildImage",
@@ -27,14 +27,15 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
       "discardPlan",
       "repairTarget",
       "adoptTarget",
+      "restoreGuest",
     ],
   },
   apply: {
-    text: "Also approves plans up to the risk disruptive, ignores drift once, and starts a backup now.",
-    ops: ["approvePlan", "createBackup"],
+    text: "Also approves plans up to the risk disruptive, ignores drift once, and starts a backup now (also of a guest).",
+    ops: ["approvePlan", "createBackup", "backUpGuestNow"],
   },
   admin: {
-    text: "Everything: destructive plans, users, API tokens, secrets, settings, the repair key, agent install commands, an export with secret values, import, and the confirm after a restore.",
+    text: "Everything: destructive plans, users, API tokens, secrets, settings, the repair key, agent install commands, the delete of one vzdump volume of a guest, an export with secret values, import, and the confirm after a restore.",
     ops: [
       "listUsers",
       "createUser",
@@ -53,6 +54,7 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
       "createInstallCommand",
       "rotateRepairKey",
       "forgetAgent",
+      "deleteGuestBackup",
     ],
   },
 };

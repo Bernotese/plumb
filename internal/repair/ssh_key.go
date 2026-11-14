@@ -198,6 +198,10 @@ type KeyView struct {
 	Fingerprint string       `json:"fingerprint"`
 	CreatedAt   time.Time    `json:"created_at"`
 	Previous    *PreviousKey `json:"previous"`
+	// LeftBehind: the parked and forgotten guests (D-396), also without
+	// a previous key (T-217, ROADMAP row 32). Previous.LeftBehind is the
+	// same list, kept for one release.
+	LeftBehind []string `json:"left_behind"`
 }
 
 // PreviousKey is RepairKeyView.previous.
@@ -216,13 +220,13 @@ func (s *Service) View(ctx context.Context) (*KeyView, error) {
 	if err != nil || len(keys) == 0 {
 		return nil, err
 	}
-	v := &KeyView{Fingerprint: keys[0].Fingerprint, CreatedAt: keys[0].CreatedAt}
+	left, err := s.leftBehind(ctx)
+	if err != nil {
+		return nil, err
+	}
+	v := &KeyView{Fingerprint: keys[0].Fingerprint, CreatedAt: keys[0].CreatedAt, LeftBehind: left}
 	if len(keys) > 1 {
 		targets, err := s.notConfirmed(ctx, keys[0].ID)
-		if err != nil {
-			return nil, err
-		}
-		left, err := s.leftBehind(ctx)
 		if err != nil {
 			return nil, err
 		}

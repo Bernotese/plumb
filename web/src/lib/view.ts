@@ -287,6 +287,12 @@ export function humanOnlyReasons(plan: Plan): string[] {
       );
       continue;
     }
+    if (reason === "guest-restore") {
+      out.push(
+        "It overwrites the guest with a backup (D-410): everything written after that backup is lost, and access that was removed since (SSH keys, passwords) comes back. The agent gets a new enrollment.",
+      );
+      continue;
+    }
     if (reason === "firewall-off") {
       out.push(
         "It turns off the firewall of a target (D-368): every port of that guest is open then.",

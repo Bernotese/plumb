@@ -123,6 +123,55 @@
                 "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$"
               },
               "description": "Public keys of the bootstrap user, without options. Create-only. lxc: the keys go to root (D-226)."
+            },
+            "nics": {
+              "type": "array",
+              "maxItems": 3,
+              "description": "More network cards after the first one (bridge, ip and gateway above), at most 3. Plumb chooses their MAC addresses. Each bridge, and each bridge with a VLAN tag, must be named when Plumb is installed. Adding, removing or moving a card is disruptive. Not for an adopted Target. At most one gateway in total. Planned: refused until slice 7 serves it (T-219).",
+              "items": {
+                "type": "object",
+                "required": [
+                  "bridge"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "bridge": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,14}$",
+                    "description": "Proxmox bridge, named at install."
+                  },
+                  "tag": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4094,
+                    "description": "VLAN tag. The bridge must be VLAN-aware; the install must name bridge:tag (--extra-vlan)."
+                  },
+                  "ip": {
+                    "type": "string",
+                    "pattern": "^(dhcp|(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([0-9]|[12][0-9]|3[0-2]))$",
+                    "description": "dhcp or an IPv4 address in CIDR form. Missing: the NIC is up without an address."
+                  },
+                  "gateway": {
+                    "type": "string",
+                    "pattern": "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$",
+                    "description": "IPv4 gateway for a static ip. At most one gateway over all NICs."
+                  }
+                },
+                "dependentSchemas": {
+                  "gateway": {
+                    "required": [
+                      "ip"
+                    ],
+                    "properties": {
+                      "ip": {
+                        "not": {
+                          "const": "dhcp"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             }
           },
           "dependentSchemas": {
@@ -144,6 +193,66 @@
           "type": "boolean",
           "default": false,
           "description": "Plumb may restart or stop this guest (D-194, D-291). false: no Run stops or restarts the guest while it runs; a change of cores or memory of a VM waits until you stop and start it, a re-enrollment of a running VM is refused, and power: stopped is refused. true: a Run may restart a VM (clean shutdown, hard power-off after 2 minutes, then start) and may stop a VM or an LXC for power: stopped; the Plan shows it before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. cores and memory change live on a container."
+        },
+        "backup": {
+          "type": "object",
+          "required": [
+            "schedule",
+            "time",
+            "keep"
+          ],
+          "additionalProperties": false,
+          "description": "Backups of the guest by Plumb, to the one backup storage named at install. A backup does not change the guest. Missing: no backups by Plumb. Planned: refused until slice 7 serves it (T-221).",
+          "properties": {
+            "schedule": {
+              "enum": [
+                "daily",
+                "weekly"
+              ]
+            },
+            "weekday": {
+              "enum": [
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat",
+                "sun"
+              ],
+              "description": "Only with weekly."
+            },
+            "time": {
+              "type": "string",
+              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+              "description": "HH:MM, UTC."
+            },
+            "keep": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "description": "How many scheduled backups Plumb keeps; the oldest above it go. Beside them Plumb keeps at most 2 backups made by 'Back up now'. Lowering keep deletes backups: that Plan is destructive and says how many go. Removing the backup field stops the backups and deletes none."
+            }
+          },
+          "if": {
+            "properties": {
+              "schedule": {
+                "const": "weekly"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "weekday"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "weekday"
+              ]
+            }
+          }
         },
         "blocks": {
           "type": "array",
