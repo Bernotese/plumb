@@ -2845,7 +2845,27 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         "",
       );
       return {
-        command: `umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n-----BEGIN CERTIFICATE-----\n(mock CA)\n-----END CERTIFICATE-----\nPLUMB_CA\ncat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n${token}\nPLUMB_TOKEN\ncurl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath /etc/plumb-agent --cacert /etc/plumb-agent/ca.pem 'https://plumb.lan:8444/agent/v1/install.sh' | PLUMB_URL='https://plumb.lan:8444' sh\n`,
+        // The shape of agentinstall.InstallCommand (T-206): download to a
+        // file with the CA pin, check the guard line, then the token.
+        command: [
+          "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'",
+          "-----BEGIN CERTIFICATE-----",
+          "(mock CA)",
+          "-----END CERTIFICATE-----",
+          "PLUMB_CA",
+          "(",
+          "command -v curl >/dev/null 2>&1 || { echo 'plumb-install: curl is missing in this guest. Install it first (apt-get install -y curl), then run this command again. Nothing was installed.' >&2; exit 1; }",
+          "f=$(mktemp) || exit 1",
+          `trap 'rm -f "$f"' EXIT`,
+          `curl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath /etc/plumb-agent --cacert /etc/plumb-agent/ca.pem -o "$f" 'https://plumb.lan:8444/agent/v1/install.sh' || { echo 'plumb-install: the download of the install script failed (see the line above). Nothing was installed.' >&2; exit 1; }`,
+          `[ "$(tail -n 1 "$f")" = 'main "$@"' ] || { echo 'plumb-install: the install script is empty or incomplete. Nothing was installed.' >&2; exit 1; }`,
+          "cat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'",
+          token,
+          "PLUMB_TOKEN",
+          `PLUMB_URL='https://plumb.lan:8444' sh "$f"`,
+          ")",
+          "",
+        ].join("\n"),
         expires_at: new Date(Date.parse(now()) + 15 * 60_000).toISOString().replace(/\.\d+Z$/, "Z"),
       };
     },

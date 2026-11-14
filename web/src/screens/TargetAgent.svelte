@@ -243,6 +243,12 @@
           adopted guest, a container without SSH). It works once, within 15 minutes. The current
           agent credential ends only when the guest enrolls with it.
         </p>
+        <p class="muted" id="install-command-curl">
+          It needs <code>curl</code> in the guest; a stock Debian LXC has none. Install it first (<code
+            >apt-get install -y curl</code
+          >). Without it, the command stops with a
+          <code>plumb-install:</code> line and installs nothing.
+        </p>
         <ProblemBox error={commandError} />
         <button
           class="btn"
