@@ -186,6 +186,12 @@ func TestAdoptedDeleteUnbindNotConfirmed(t *testing.T) {
 func TestForgetAgent(t *testing.T) {
 	e := newEnv(t, true, withInstall)
 	adm := e.admin()
+	// A repair key, so the park records the key whose line may stay (only
+	// its id and fingerprint matter here).
+	if _, err := e.st.AddRepairKey(e.ctx, store.RepairKeyRow{ID: "k1", PublicKey: "ssh-ed25519 AAAA", Fingerprint: "SHA256:" + strings.Repeat("F", 43),
+		Nonce: []byte("n"), Sealed: []byte("s"), CreatedAt: time.Now()}, true); err != nil {
+		t.Fatal(err)
+	}
 	vmid, a := e.adoptWithAgent(adm, "wiki")
 	a.FailUnbind("read-only file system")
 	e.deleteTarget(adm, "wiki")
@@ -218,8 +224,17 @@ func TestForgetAgent(t *testing.T) {
 			forgot = string(ev.Data)
 		}
 	}
-	if !strings.Contains(forgot, `"repair_key_lines":[`) || !strings.Contains(forgot, "plumb-repair-") {
+	keys, err := e.st.RepairKeys(e.ctx)
+	if err != nil || len(keys) == 0 {
+		t.Fatalf("the env has no repair key: %v", err)
+	}
+	if !strings.Contains(forgot, `"repair_key_lines":["`+keys[0].Fingerprint+`"]`) || !strings.Contains(forgot, "plumb-repair-") {
 		t.Fatalf("agent.forgotten %s", forgot)
+	}
+	// The row stays as forgotten for the repair key view.
+	rows, _ := e.st.LeftBehind(e.ctx)
+	if len(rows) != 1 || !rows[0].Forgotten || len(rows[0].KeyIDs) != 1 || rows[0].KeyIDs[0] != keys[0].ID {
+		t.Fatalf("left behind after forget: %+v", rows)
 	}
 	if e.agentLeft(adm, vmid) {
 		t.Fatal("agent_left after forget")

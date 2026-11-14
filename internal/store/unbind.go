@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -115,18 +113,16 @@ func (s *Store) LeftBehind(ctx context.Context) ([]Parked, error) {
 
 // ParkedByRef returns the parked agent of a guest, or ErrNotFound.
 func (s *Store) ParkedByRef(ctx context.Context, ref string) (Parked, error) {
-	var p Parked
-	var since string
-	err := s.db.QueryRowContext(ctx, `SELECT target, agent_id, guest_ref, node, since FROM unbind_pending WHERE guest_ref = ? AND forgotten_at IS NULL LIMIT 1`, ref).
-		Scan(&p.Target, &p.AgentID, &p.GuestRef, &p.Node, &since)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Parked{}, ErrNotFound
-	}
+	parked, err := s.ParkedTargets(ctx)
 	if err != nil {
 		return Parked{}, err
 	}
-	p.Since, err = parseTime(since)
-	return p, err
+	for _, p := range parked {
+		if p.GuestRef == ref {
+			return p, nil
+		}
+	}
+	return Parked{}, ErrNotFound
 }
 
 // IsParkedTarget reports whether target has a parked agent (any id).
