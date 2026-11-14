@@ -34,14 +34,15 @@ type GuestValueMatch struct {
 // resource). A new row is stored only below GuestValueCap; overflow
 // reports that at least one value was not stored.
 //
-// Work per report (review L1 of #248): repeats are dropped in memory;
-// then one Issue lookup per resource and at most two statements per
-// value. A report with more distinct values than GuestValueCap writes
-// nothing and reports overflow at once (fail closed), so one report costs
-// at most about 2 × GuestValueCap statements. They run in transactions of
-// guestValueChunk values: one long write transaction would hold the
-// database past its busy timeout (5 s), and an agent poll that cannot
-// touch its agent row in that time gets 401 (race job of #248).
+// Cost (review L1 and the race job of #248): repeats are dropped in
+// memory, and a known row seen within guestValueRefresh is not written
+// again, so a guest that repeats its report causes reads only (WAL reads
+// do not block writers). The rest is written in transactions of
+// guestValueChunk values with a pause after each one as long as it took
+// (at most guestValuePause): back-to-back write transactions starve every
+// other writer, and an agent poll that cannot touch its row within the
+// busy timeout (5 s) fails. A report with more distinct values than
+// GuestValueCap writes nothing and reports overflow at once (fail closed).
 func (s *Store) RecordGuestValues(ctx context.Context, target string, vals []GuestValue) (overflow bool, err error) {
 	seen := make(map[GuestValue]bool, len(vals))
 	uniq := vals[:0:0]
@@ -58,22 +59,81 @@ func (s *Store) RecordGuestValues(ctx context.Context, target string, vals []Gue
 	if len(vals) > GuestValueCap {
 		return true, nil
 	}
+	fresh, err := s.freshGuestValues(ctx, target, vals, s.Now().Add(-guestValueRefresh))
+	if err != nil {
+		return false, err
+	}
+	var todo []GuestValue
+	for _, v := range vals {
+		if !fresh[v] {
+			todo = append(todo, v)
+		}
+	}
 	now := s.now()
-	for len(vals) > 0 {
-		part := vals[:min(guestValueChunk, len(vals))]
-		vals = vals[len(part):]
+	for len(todo) > 0 {
+		part := todo[:min(guestValueChunk, len(todo))]
+		todo = todo[len(part):]
+		start := time.Now()
 		more, err := s.recordGuestValueChunk(ctx, target, part, now)
 		if err != nil {
 			return overflow, err
 		}
 		overflow = overflow || more
+		if len(todo) > 0 {
+			t := time.NewTimer(min(time.Since(start), guestValuePause))
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return overflow, ctx.Err()
+			case <-t.C:
+			}
+		}
 	}
 	return overflow, nil
 }
 
-// guestValueChunk is the most values that one write transaction of
-// RecordGuestValues stores.
-const guestValueChunk = 500
+// Limits of RecordGuestValues.
+const (
+	// guestValueChunk is the most values that one write transaction stores.
+	guestValueChunk = 200
+	// guestValuePause bounds the pause after a write transaction.
+	guestValuePause = 250 * time.Millisecond
+	// guestValueRefresh: a known row seen within this time is not written
+	// again (the prune window is 30 days).
+	guestValueRefresh = time.Hour
+)
+
+// freshGuestValues returns the values of vals that target has as rows
+// seen after since. It only reads.
+func (s *Store) freshGuestValues(ctx context.Context, target string, vals []GuestValue, since time.Time) (map[GuestValue]bool, error) {
+	out := map[GuestValue]bool{}
+	for len(vals) > 0 {
+		part := vals[:min(500, len(vals))]
+		vals = vals[len(part):]
+		args := []any{target, formatTime(since)}
+		for _, v := range part {
+			args = append(args, v.Hash)
+		}
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT resource, attr, hash FROM guest_value WHERE target = ? AND last_seen >= ? AND hash IN (?`+
+				strings.Repeat(", ?", len(part)-1)+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var v GuestValue
+			if err := rows.Scan(&v.Resource, &v.Attr, &v.Hash); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[v] = true
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
 
 // recordGuestValueChunk stores one chunk in one transaction. The count
 // of the cap is read inside it, so the cap holds across chunks and

@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func junkValues(from, n int) []GuestValue {
@@ -51,5 +54,55 @@ func TestRecordGuestValuesChunks(t *testing.T) {
 	// Another Target has its own cap.
 	if over, err := s.RecordGuestValues(ctx, "web2", junkValues(0, guestValueChunk+1)); err != nil || over {
 		t.Fatalf("web2: %v %v", over, err)
+	}
+}
+
+// The race job of #248: a guest that reports large lists again and again
+// must not starve the other writers of the store. An agent poll writes its
+// agent row (TouchAgent) and fails after the busy timeout (5 s). Before
+// the fix a writer of back-to-back chunks made TouchAgent wait 2.5 s here
+// and over 5 s under -race.
+func TestRecordGuestValuesYields(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	bound := time.Second
+	if raceOn {
+		bound = 2 * time.Second
+	}
+	for _, newValues := range []bool{false, true} {
+		var stop atomic.Bool
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for i := 0; !stop.Load(); i += 1000 {
+				from := i % GuestValueCap // repeats after the first round
+				if newValues {
+					from = i
+				}
+				if _, err := s.RecordGuestValues(ctx, "web1", junkValues(from, 1000)); err != nil {
+					t.Errorf("writer: %v", err)
+					return
+				}
+			}
+		}()
+		var worst time.Duration
+		for end := time.Now().Add(3 * time.Second); time.Now().Before(end); {
+			start := time.Now()
+			if err := s.TouchAgent(ctx, "nope", time.Now()); err != nil && !errors.Is(err, ErrNotFound) {
+				t.Errorf("TouchAgent after %v: %v", time.Since(start), err)
+			}
+			worst = max(worst, time.Since(start))
+			time.Sleep(20 * time.Millisecond)
+		}
+		stop.Store(true)
+		<-done
+		t.Logf("new values %v: worst TouchAgent wait %v (bound %v)", newValues, worst, bound)
+		if worst > bound {
+			t.Errorf("new values %v: TouchAgent waited %v for the writer, want at most %v", newValues, worst, bound)
+		}
 	}
 }
