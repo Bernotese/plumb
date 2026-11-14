@@ -227,8 +227,8 @@
     <h2 id="docs-title">Document changes</h2>
     {#if plan.documents_unavailable}
       <p class="banner warn" id="docs-unavailable" role="note">
-        The document changes of this plan are not available: Plumb cannot compute them, for example
-        because the proposal is no longer valid.
+        <strong>Document changes not available.</strong> Plumb cannot compute them for this plan, for
+        example because its proposal is no longer valid. Make the change again to see them.
       </p>
     {:else if plan.status === "approved" && !plan.documents && plan.revision === null}
       <p class="muted" id="docs-none">This plan changed no document.</p>

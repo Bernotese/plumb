@@ -21,16 +21,7 @@ export type TargetDoc = S["target"];
 export type TargetSpec = TargetDoc["spec"];
 export type BlockDoc = S["block"];
 export type Proposal = S["Proposal"];
-/**
- * `documents`, `documents_truncated` and `documents_unavailable` come with
- * T-170 (Plan.documents); they are optional, as an older server leaves
- * them out.
- */
-export type Plan = S["Plan"] & {
-  documents?: S["DocumentChange"][];
-  documents_truncated?: boolean;
-  documents_unavailable?: boolean;
-};
+export type Plan = S["Plan"];
 export type ResourcePlan = S["ResourcePlan"];
 export type Run = S["Run"];
 export type RunStep = S["RunStep"];

@@ -129,7 +129,7 @@ describe("document changes of a Plan", () => {
     const api = await withPlan({ documents: undefined, documents_unavailable: true });
     show(PlanView, { api, id: 14 });
     await until(() => document.querySelector("#docs-unavailable"));
-    expect(text()).toContain("The document changes of this plan are not available");
+    expect(text()).toContain("Document changes not available.");
     expect(document.querySelector("#docs-missing, #docs-count, #docs-none")).toBeNull();
   });
 
