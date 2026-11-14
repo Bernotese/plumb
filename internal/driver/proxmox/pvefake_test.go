@@ -71,6 +71,9 @@ type fakePVE struct {
 	// lockReads: the config of a VM shows "lock: create" for this many
 	// more reads, and a DELETE fails meanwhile (a stopped create task).
 	lockReads map[int]int
+	// backup: the guest backup storage model (T-221, pvefake_backup_test.go);
+	// nil: not modelled.
+	backup *fakeBackup
 
 	// Start-up check (T-053): the version, statuses that /version answers
 	// first (503, 595 …), the storages of the node, a status for the node
@@ -389,6 +392,9 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	if f.backup != nil && f.serveBackup(w, r, path, key) {
+		return
 	}
 	switch {
 	case r.Method == "GET" && path == "/version":

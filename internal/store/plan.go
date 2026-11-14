@@ -551,6 +551,14 @@ func (s *Store) DeleteBinding(ctx context.Context, kind, name string) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM foreign_guest WHERE target = ?`, name); err != nil {
 			return err
 		}
+		// The guest backup lineage and job rows go with the binding (T-221,
+		// D-417): a new Target of the name starts a new lineage. The
+		// volumes in Proxmox stay (D-408).
+		for _, q := range []string{`DELETE FROM guest_backup_lineage WHERE target = ?`, `DELETE FROM guest_backup_run WHERE target = ?`} {
+			if _, err := tx.ExecContext(ctx, q, name); err != nil {
+				return err
+			}
+		}
 		return dropGuestRows(ctx, tx, name)
 	})
 }
