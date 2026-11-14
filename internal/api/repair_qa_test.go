@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,18 +32,29 @@ func TestRepairQAOldAgentHelloIsNoSuccess(t *testing.T) {
 	run := approve(t, r.adm, p.ID)
 	// The old agent says hello again and again during the hello wait.
 	stop := make(chan struct{})
+	done := make(chan struct{})
+	var landed atomic.Int32 // hellos the controller took (204) during the Run
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case <-stop:
 				return
 			case <-time.After(100 * time.Millisecond):
-				r.oldCode()
+				if r.oldCode() == 204 {
+					landed.Add(1)
+				}
 			}
 		}
 	}()
 	status, s := r.step(run)
 	close(stop)
+	<-done
+	// Review L1 of #316: the test proves something only when an old hello
+	// came inside the Run's hello wait (1 s, one every 100 ms).
+	if landed.Load() == 0 {
+		t.Fatal("no hello of the old agent landed during the Run; the test proves nothing")
+	}
 	if status != "failed" || s.Status != string(wire.StatusFailed) || !strings.Contains(s.Output, "no hello of the repaired agent") {
 		t.Fatalf("a hello of the old agent passed the repair: run %s, step %+v", status, s)
 	}
