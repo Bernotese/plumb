@@ -177,7 +177,7 @@
           "type": "object",
           "required": ["node", "vmid"],
           "additionalProperties": false,
-          "description": "The Target holds a guest that a person made and put into the pool (D-373, D-386). It has no image. Its create-only settings and container features are not compared (D-391). Delete of the Target only unbinds the guest unless delete_guest is true (D-388).",
+          "description": "The Target holds a guest that a person made and put into the pool (D-373, D-386). It has no image. node and vmid are create-only: they name the bound guest; another guest needs a new adoption. Its create-only settings and container features are not compared (D-391). Delete of the Target only unbinds the guest unless delete_guest is true (D-388).",
           "properties": {
             "node": {
               "type": "string",

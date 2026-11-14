@@ -513,7 +513,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	switch {
 	case r == nil: // the Target is deleted
 		if exists && before != nil && before.Adopted != nil {
-			a := *before.Adopted
+			a := boundAdopted(*before.Adopted, bind.Ref)
 			tp.Adopted = &a
 			if !a.DeleteGuest {
 				// D-388: the guest stays; the agent leaves it (unbind).
@@ -577,7 +577,15 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		return tp, nil
 	}
 
-	// An existing guest: the driver level first.
+	// An existing guest: the driver level first. spec.adopted names the
+	// bound guest and cannot change (A1 of #299).
+	if err := checkAdoptedChange(target, before, r, bind.Ref); err != nil {
+		return tp, err
+	}
+	if r.Adopted != nil {
+		a := boundAdopted(*r.Adopted, bind.Ref)
+		tp.Adopted = &a
+	}
 	if reenroll && r.Adopted != nil {
 		return tp, &ProposalError{Target: target, Err: ErrAdoptedTarget, Msg: "an adopted Target is not re-enrolled: it would write the Proxmox config of a guest that a person made; use the install command (D-392)"}
 	}

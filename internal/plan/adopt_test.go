@@ -164,6 +164,21 @@ func TestAdoptBind(t *testing.T) {
 
 	b, bu := a.person("wiki")
 	req = AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, b), Digest: bu.Digest}
+	// M6 of #299: a bind that fails after the driver learned the ref drops
+	// the ref again; nothing is bound.
+	a.drv.Fail(fake.OpObserve, errors.New("observe failed"))
+	d0, _ := a.e.AdoptDoc(a.ctx, req)
+	set0, _ := state.Validate([]state.Doc{d0})
+	rows0, _ := state.Rows(set0)
+	if _, err := a.st.CommitRevision(a.ctx, store.NewRevision{Author: "user:qa", Docs: rows0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.e.adoptBind(a.ctx, req); err == nil {
+		t.Fatal("the bind did not fail")
+	}
+	if got := a.drv.Adopted(); len(got) != 0 {
+		t.Fatalf("a failed bind left adopted refs: %v", got)
+	}
 	d, _ = a.e.AdoptDoc(a.ctx, req)
 	set, _ = state.Validate([]state.Doc{d})
 	rows, _ = state.Rows(set)
@@ -214,6 +229,30 @@ func TestAdoptFlow(t *testing.T) {
 		t.Fatalf("the adoption wrote to the hypervisor: %d", n-writes)
 	}
 
+	// A1 of #299: adopted.vmid and adopted.node of a bound Target cannot
+	// change, and adopted cannot go (a token could else point the delete
+	// text at another guest).
+	_, set, _ := a.e.base(a.ctx)
+	var bound state.Doc
+	for _, d := range set.Docs() {
+		if d.Kind == state.KindTarget && d.Name == "wiki" {
+			bound = d
+		}
+	}
+	other0, _ := a.person("spare")
+	for _, spec := range []string{
+		strings.Replace(string(bound.Spec), `"vmid":`+string(id), `"vmid":`+string(other0), 1),
+		strings.Replace(string(bound.Spec), `"node":"pve"`, `"node":"pve2"`, 1),
+	} {
+		if spec == string(bound.Spec) {
+			t.Fatalf("probe did not change the doc: %s", spec)
+		}
+		changed := state.Doc{Kind: bound.Kind, Name: bound.Name, Spec: []byte(spec)}
+		if _, err := a.e.Propose(a.ctx, Input{Author: "token:tok_qa", Reason: "move", Proposal: Proposal{Put: []state.Doc{changed}}}); !errors.Is(err, ErrAdoptedChange) {
+			t.Fatalf("adopted change %s: %v", spec, err)
+		}
+	}
+
 	// A plain proposal of an adopted Target (no adopt request) is refused.
 	other, ou := a.person("other")
 	doc, _ := a.e.AdoptDoc(a.ctx, AdoptRequest{Target: "other", Node: "pve", VMID: vmidOf(t, other), Digest: ou.Digest})
@@ -255,7 +294,7 @@ func TestAdoptFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.e.Wait()
-	_, set, _ := a.e.base(a.ctx)
+	_, set, _ = a.e.base(a.ctx)
 	var withDel state.Doc
 	for _, d := range set.Docs() {
 		if d.Kind == state.KindTarget && d.Name == "wiki2" {
@@ -274,11 +313,30 @@ func TestAdoptFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.e.Wait()
+	// A revision whose vmid differs from the binding (an old revision):
+	// the delete Plan still names the bound guest (A1 of #299).
+	_, set, _ = a.e.base(a.ctx)
+	var docs []state.Doc
+	for _, d := range set.Docs() {
+		if d.Kind == state.KindTarget && d.Name == "wiki2" {
+			d.Spec = []byte(strings.Replace(string(d.Spec), `"vmid":`+string(id2), `"vmid":4242`, 1))
+		}
+		docs = append(docs, d)
+	}
+	skew, err := state.Validate(docs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := state.Rows(skew)
+	if _, err := a.st.CommitRevision(a.ctx, store.NewRevision{Author: "user:qa", Docs: rows}); err != nil {
+		t.Fatal(err)
+	}
 	p, err = a.e.Propose(a.ctx, Input{Author: "user:admin", Reason: "delete", Proposal: Proposal{Delete: []DocKey{{Kind: state.KindTarget, Name: "wiki2"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(p.HumanOnly, HumanOnlyAdoptedGuestDelete) || !strings.Contains(strings.Join(adoptNotes(t, p), " "), "deletes the Proxmox guest") {
+	if notes := strings.Join(adoptNotes(t, p), " "); !slices.Contains(p.HumanOnly, HumanOnlyAdoptedGuestDelete) ||
+		!strings.Contains(notes, "deletes the Proxmox guest "+string(id2)+" ") || strings.Contains(notes, "4242") {
 		t.Fatalf("delete plan: %v %v", p.HumanOnly, adoptNotes(t, p))
 	}
 	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {

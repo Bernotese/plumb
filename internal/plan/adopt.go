@@ -250,6 +250,43 @@ func adoptedText(a state.Adopted) string {
 	return fmt.Sprintf("VMID %d on %s", a.VMID, a.Node)
 }
 
+// boundAdopted is spec.adopted of a bound Target with the VMID of its
+// binding: every text of a Plan names the guest that the Run touches
+// (review A1 of #299), never only what the document says.
+func boundAdopted(a state.Adopted, ref string) state.Adopted {
+	if n, err := strconv.Atoi(ref); err == nil {
+		a.VMID = n
+	}
+	return a
+}
+
+// ErrAdoptedChange: spec.adopted of a bound Target changed (A1 of #299).
+var ErrAdoptedChange = errors.New("plan: adopted.node and adopted.vmid are create-only")
+
+// checkAdoptedChange refuses, for a bound Target, a change of
+// adopted.node or adopted.vmid, and adopted appearing or going: the
+// binding names the guest, and only a new adoption changes it.
+func checkAdoptedChange(target string, before, r *state.Rendered, ref string) error {
+	var b, n *state.Adopted
+	if before != nil {
+		b = before.Adopted
+	}
+	if r != nil {
+		n = r.Adopted
+	}
+	switch {
+	case b == nil && n == nil:
+		return nil
+	case b == nil || n == nil:
+		return &ProposalError{Target: target, Err: ErrAdoptedChange,
+			Msg: "adopted cannot be added to or removed from a Target that has a guest; delete the Target and create or adopt it again"}
+	case b.Node != n.Node || b.VMID != n.VMID || strconv.Itoa(n.VMID) != ref:
+		return &ProposalError{Target: target, Err: ErrAdoptedChange,
+			Msg: fmt.Sprintf("adopted.node and adopted.vmid name the bound guest (VMID %s) and cannot change; delete the Target (unbind) and adopt the other guest", ref)}
+	}
+	return nil
+}
+
 // deleteGuestChange is the change of spec.adopted.delete_guest (D-388):
 // destructive when it becomes true.
 func deleteGuestChange(before, r *state.Rendered) *wire.Change {
@@ -312,7 +349,7 @@ func adoptPlans(reqs []AdoptRequest, plans []TargetPlan) ([]string, error) {
 		for _, rc := range tp.Resources {
 			for _, c := range rc.Changes {
 				if c.Attr == "delete_guest" && c.To == true {
-					notes = append(notes, fmt.Sprintf("Target %s: deleting this Target will delete the Proxmox guest and its disks (delete_guest, D-388).", tp.Target))
+					notes = append(notes, fmt.Sprintf("Target %s: deleting this Target will delete the Proxmox guest %d and its disks (delete_guest, D-388).", tp.Target, tp.Adopted.VMID))
 				}
 			}
 		}
@@ -407,5 +444,8 @@ func installCommand(ca, agentURL, token string) string {
 	ca = strings.TrimRight(ca, "\n") + "\n"
 	return "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n" + ca + "PLUMB_CA\n" +
 		"cat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n" + token + "\nPLUMB_TOKEN\n" +
-		"curl -fsS --cacert /etc/plumb-agent/ca.pem '" + agentURL + wire.PathInstallScript + "' | PLUMB_URL='" + agentURL + "' sh\n"
+		// Only the Plumb CA: --capath to a dir without hashed names replaces
+		// the system CA store (review S1 of T-076, A2 of #299).
+		"curl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath /etc/plumb-agent --cacert /etc/plumb-agent/ca.pem '" +
+		agentURL + wire.PathInstallScript + "' | PLUMB_URL='" + agentURL + "' sh\n"
 }
