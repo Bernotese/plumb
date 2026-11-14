@@ -223,13 +223,20 @@ Model Context Protocol over stdio. It uses the public API with an API token.
    }
    ```
 
-The client can list Targets, Issues, Plans, Runs, revisions, Blocks, Images and the catalogue; it
-can propose a change (a Plan), Revert or Accept an Issue (also a Plan), drop a Plan and comment on
-an Issue. **It can never approve a Plan, ignore drift, or touch secrets, tokens, users, settings,
-backups, restore, export or import.** You approve every Plan in the web UI; the Plan shows the
-client's reason below the changes, marked "written by API token". A Plan that takes a value a guest
-reported, or that removes a firewall, needs a person in any case. A token may make 30 Plans and 30
-comments per minute; above that Plumb answers "try again in N seconds".
+What the client **can** do (and nothing else):
+
+- read Targets, Issues (with the difference and the comments), Plans (with their changes and
+  documents), Runs and revisions (with their difference), and the events since a given point;
+- propose a change of Targets, Blocks or Images (a Plan);
+- Revert or Accept an Issue (a Plan), re-enroll a Target (a Plan), and drop a Plan;
+- comment on an Issue.
+
+What it can **never** do: approve a Plan, ignore drift (once or by rule), or touch secrets,
+tokens, users, settings, backups, restore, export or import; nor update an agent or build or refresh
+an Image. You approve every Plan in the web UI; the Plan shows the client's reason below the
+changes, marked "written by API token". A Plan that takes a value a guest reported, or that removes
+a firewall, needs a person in any case. A token may make 30 Plans and 30 comments per minute; above
+that Plumb refuses the call and says how long to wait.
 
 ### Users and roles
 
@@ -274,7 +281,7 @@ leaves the guest as it was.
   `permit_root_login` values `prohibit-password` (the default) and `forced-commands-only` both allow
   the repair; `no` turns it off.
 - Plumb pins the SSH host keys that the agent reported, and the repair connects only to a pinned
-  key. A new host key shows in red. When no pinned key is left (the guest got new host keys), the
+  key. A new host key shows as a warning. When no pinned key is left (the guest got new host keys), the
   repair is off until you accept one of the new keys in the repair Plan; check it on the guest
   first, for example with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
 - **Settings → General** shows the repair key. "Make a new repair key" makes a new one; the old key
@@ -300,7 +307,7 @@ first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a 
 - The new Target has the Proxmox name of the guest; rename the guest in Proxmox to change it.
 - Adopting is a Plan that only a person can approve. Plumb writes nothing to Proxmox for it.
 - The guest is **not sealed**: its SSH host keys, machine-id and root users stay as they are.
-  Plumb never reads its password, SSH keys, description or container environment.
+  Plumb never keeps or shows its password, SSH keys, description or container environment.
 - Install the agent with the install command on the agent page (it needs `curl` in the guest; see
   "Repair a dead agent").
 - **Delete:** deleting an adopted Target lets the guest go: Plumb removes its agent, and the guest
