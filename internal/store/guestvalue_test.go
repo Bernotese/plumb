@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,20 +77,27 @@ func TestRecordGuestValuesYields(t *testing.T) {
 	}
 	for _, newValues := range []bool{false, true} {
 		var stop atomic.Bool
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			for i := 0; !stop.Load(); i += 5000 {
-				from := i % GuestValueCap // repeats after the first round
-				if newValues {
-					from = i
+		var writers sync.WaitGroup
+		for reporter := 0; reporter < 3; reporter++ {
+			writers.Add(1)
+			go func(reporter int) {
+				defer writers.Done()
+				for i := 0; !stop.Load(); i += 5000 {
+					from := i % GuestValueCap // repeats after the first round
+					if newValues {
+						from = i
+					}
+					target := fmt.Sprintf("web%d", reporter)
+					if newValues {
+						target = fmt.Sprintf("web%d-%d", reporter, i)
+					}
+					if _, err := s.RecordGuestValues(ctx, target, junkValues(from, 5000)); err != nil {
+						t.Errorf("writer: %v", err)
+						return
+					}
 				}
-				if _, err := s.RecordGuestValues(ctx, "web1", junkValues(from, 5000)); err != nil {
-					t.Errorf("writer: %v", err)
-					return
-				}
-			}
-		}()
+			}(reporter)
+		}
 		var worst time.Duration
 		for end := time.Now().Add(3 * time.Second); time.Now().Before(end); {
 			start := time.Now()
@@ -100,10 +108,39 @@ func TestRecordGuestValuesYields(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		stop.Store(true)
-		<-done
+		writers.Wait()
 		t.Logf("new values %v: worst TouchAgent wait %v (bound %v)", newValues, worst, bound)
 		if worst > bound {
 			t.Errorf("new values %v: TouchAgent waited %v for the writer, want at most %v", newValues, worst, bound)
 		}
+	}
+}
+
+// A capped report must finish even while another connection holds the
+// SQLite write lock: BEGIN IMMEDIATE would block until that lock is freed.
+func TestRecordGuestValuesCapReadOnly(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if over, err := s.RecordGuestValues(ctx, "full", junkValues(0, GuestValueCap)); err != nil || over {
+		t.Fatalf("fill: %v %v", over, err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	start := time.Now()
+	over, err := s.RecordGuestValues(ctx, "full", junkValues(GuestValueCap, GuestValueCap))
+	if err != nil || !over {
+		t.Fatalf("capped report: overflow %v, error %v", over, err)
+	}
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Fatalf("capped report waited for write lock: %v", elapsed)
 	}
 }

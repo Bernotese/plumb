@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // database/sql driver "sqlite"
@@ -34,7 +35,8 @@ var ErrNotFound = errors.New("store: not found")
 
 // Store is an open Plumb database.
 type Store struct {
-	db *sql.DB
+	db           *sql.DB
+	guestValueMu sync.Mutex // Serializes copy-rule chunks together with their pauses.
 	// Now returns the current time. Tests replace it.
 	Now func() time.Time
 }

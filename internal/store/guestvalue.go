@@ -32,14 +32,16 @@ type GuestValueMatch struct {
 // RecordGuestValues stores the values of one drift report of target. A
 // known row only moves last_seen (and takes the open Issue of its
 // resource). A new row is stored only below GuestValueCap; overflow
-// reports that at least one value was not stored.
+// reports that at least one value was not stored. At the cap, a report
+// needing writes returns overflow using reads only (fail closed).
 //
 // Cost (review L1 and the race job of #248): repeats are dropped in
 // memory, and a known row seen within guestValueRefresh is not written
 // again, so a guest that repeats its report causes reads only (WAL reads
 // do not block writers). The rest is written in transactions of
 // guestValueChunk values with a pause after each one as long as it took
-// (at most guestValuePause): back-to-back write transactions starve every
+// (at most guestValuePause), serialized across Targets with the pause:
+// back-to-back write transactions starve every
 // other writer, and an agent poll that cannot touch its row within the
 // busy timeout (5 s) fails. A report with more distinct values than
 // GuestValueCap writes nothing and reports overflow at once (fail closed).
@@ -69,27 +71,50 @@ func (s *Store) RecordGuestValues(ctx context.Context, target string, vals []Gue
 			todo = append(todo, v)
 		}
 	}
+	if len(todo) == 0 {
+		return false, nil
+	}
+	count, err := s.GuestValueCount(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	if count >= GuestValueCap {
+		return true, nil
+	}
 	now := s.now()
 	for len(todo) > 0 {
 		part := todo[:min(guestValueChunk, len(todo))]
 		todo = todo[len(part):]
-		start := time.Now()
-		more, err := s.recordGuestValueChunk(ctx, target, part, now)
+		more, err := s.writeGuestValueChunk(ctx, target, part, now)
 		if err != nil {
 			return overflow, err
 		}
 		overflow = overflow || more
-		if len(todo) > 0 {
-			t := time.NewTimer(min(time.Since(start), guestValuePause))
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				return overflow, ctx.Err()
-			case <-t.C:
-			}
-		}
 	}
 	return overflow, nil
+}
+
+// Hold the mutex through the pause, including the final chunk, so other
+// Targets cannot fill the gaps reserved for unrelated database writers.
+func (s *Store) writeGuestValueChunk(ctx context.Context, target string, vals []GuestValue, now string) (bool, error) {
+	s.guestValueMu.Lock()
+	defer s.guestValueMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	start := time.Now()
+	over, err := s.recordGuestValueChunk(ctx, target, vals, now)
+	if err != nil {
+		return over, err
+	}
+	t := time.NewTimer(min(time.Since(start), guestValuePause))
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return over, ctx.Err()
+	case <-t.C:
+		return over, nil
+	}
 }
 
 // Limits of RecordGuestValues.
