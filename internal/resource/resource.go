@@ -64,6 +64,12 @@ type Env struct {
 	// AccountLock serializes useradd, usermod and userdel of one guest:
 	// Blocks apply in parallel, and the shadow tools lock /etc/passwd.
 	AccountLock *sync.Mutex
+	// StateDir is the agent state directory; network keeps its confirmed
+	// file there during a safe apply (D-349). "" outside the agent.
+	StateDir string
+	// Controller is the host of the agent URL (name or IP): network finds
+	// the main NIC and address by the route to it (D-348).
+	Controller string
 }
 
 // MaxOutput is the longest Item.Output in bytes.
@@ -128,6 +134,10 @@ var types = map[string]Type{
 		// A firewall belongs to one Target: its boot file is an agent path
 		// that seal removes, and a build guest has no safe apply partner.
 		NotInImage: true},
+	// Proxmox owns the network of a container (D-332).
+	// Safe apply (wire.SafeApplyTypes, D-333, D-349). A network belongs
+	// to one Target, like a firewall.
+	"network": {Name: "network", Key: "name", Kinds: []wire.Kind{wire.KindVM}, New: newNetwork, NotInImage: true},
 	"command": {Name: "command", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newCommand,
 		NoDrift: true, Destructive: true, NotInImage: true},
 }

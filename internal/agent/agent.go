@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,7 +188,7 @@ func New(opt Options) (*Agent, error) {
 	a := &Agent{
 		opt: opt, cfg: cfg, client: c,
 		state:       stateDir{dir: cfg.StateDir},
-		env:         resource.NewEnv(opt.Root, opt.Runner),
+		env:         agentEnv(opt, cfg),
 		log:         opt.Log,
 		open:        map[string]wire.Item{},
 		dirty:       map[string]bool{},
@@ -546,4 +547,15 @@ func (b *backoff) sleep(ctx context.Context, atLeast time.Duration) {
 	case <-ctx.Done():
 	case <-t.C:
 	}
+}
+
+// agentEnv is the resource Env of the agent: the guest root, and for
+// network the state dir and the controller host (D-348, D-349).
+func agentEnv(opt Options, cfg Config) resource.Env {
+	env := resource.NewEnv(opt.Root, opt.Runner)
+	env.StateDir = cfg.StateDir
+	if u, err := url.Parse(cfg.URL); err == nil {
+		env.Controller = u.Hostname()
+	}
+	return env
 }

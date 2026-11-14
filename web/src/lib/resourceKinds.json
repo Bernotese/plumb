@@ -4,6 +4,7 @@
   "directory": ["vm", "lxc"],
   "file": ["vm", "lxc"],
   "firewall": ["vm", "lxc"],
+  "network": ["vm"],
   "package": ["vm", "lxc"],
   "service": ["vm", "lxc"],
   "symlink": ["vm", "lxc"],

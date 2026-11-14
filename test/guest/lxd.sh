@@ -76,6 +76,40 @@ for image in images:debian/13 ubuntu:26.04; do
     if [[ "$kind" == vm ]]; then
       lxc file push "$tmp/netplan-probe.test" "$name/root/netplan-probe.test"
       PLUMB_NETPLAN_VM="$name" "$tmp/netplan-probe.test" -test.v -test.timeout=50s -test.run '^TestNetplanProbe$'
+      # T-150 (review G3 of #244): the netplan list merge of D-348, in a
+      # temporary root only. The LXD Debian cloud image has no netplan: take
+      # netplan.io from the Debian 13 archive (the vendor image ships the same
+      # 1.1.2), after the probe so its facts stay those of the image.
+      if [[ "$image" == images:debian/13 ]]; then
+        inst env DEBIAN_FRONTEND=noninteractive sh -c \
+          'apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=5 install -y -q --no-install-recommends netplan.io' >/dev/null
+      fi
+      want=""
+      if [[ "$image" == images:debian/13 ]]; then want=1.1.2; fi
+      inst env PLUMB_NETPLAN_MERGE=1 PLUMB_NETPLAN_WANT="$want" /root/agent.test -test.v -test.timeout=2m -test.run '^TestGuestNetplanMerge$'
+      # T-150: the network resource with real netplan apply. The LXD Debian
+      # image renders its network without netplan; give it the shape of
+      # the Debian vendor image on a Plumb VM (T-160): a netplan entry with
+      # a MAC match and set-name, and no other networkd file for the NIC.
+      if [[ "$image" == images:debian/13 ]]; then
+        # shellcheck disable=SC2016 # the script expands in the guest
+        inst sh -eu -c '
+          dev=$(ip -4 route show default | awk "{print \$5; exit}")
+          mac=$(cat "/sys/class/net/$dev/address")
+          if ! ls /etc/netplan/*.yaml >/dev/null 2>&1; then
+            mkdir -p /root/networkd.lxd
+            for f in /etc/systemd/network/*.network /run/systemd/network/*.network; do
+              if [ -e "$f" ]; then mv "$f" /root/networkd.lxd/; fi
+            done
+            printf "network:\n  version: 2\n  ethernets:\n    %s:\n      match:\n        macaddress: \"%s\"\n      set-name: \"%s\"\n      dhcp4: true\n" \
+              "$dev" "$mac" "$dev" >/etc/netplan/50-cloud-init.yaml
+            chmod 600 /etc/netplan/50-cloud-init.yaml
+            netplan apply
+          fi
+          for i in $(seq 60); do ip -4 route show default | grep -q . && exit 0; sleep 1; done
+          echo "no default route after netplan apply" >&2; exit 1'
+      fi
+      inst env PLUMB_NETWORK_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestNetwork$'
     fi
     lxc delete -f "$name"
   done

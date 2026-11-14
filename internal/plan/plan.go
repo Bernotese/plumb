@@ -203,6 +203,9 @@ type Config struct {
 	// Pins resolves the newest pin of a base image (D-335); nil: the real
 	// vendor lists (trust.Client).
 	Pins PinSource
+	// ReservedAddrs are the controller and node addresses that no network
+	// resource may take (D-348; HostAddrs). nil: none (tests).
+	ReservedAddrs ReservedFunc
 	// Restore is restored mode (D-303); nil: never restored.
 	Restore *RestoreMode
 }
