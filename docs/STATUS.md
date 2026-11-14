@@ -76,7 +76,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-151 slice 5 C7: resource `group` (+ inferred order: group before the user that names it) | pl-codex-fix | merged (PR #258) |
 | T-156 slice 5 C11: starter Block `network` | pl-frontend | merged (PR #259) |
 | T-158 slice 5 C13: acceptance on the real host | pl-backend | in work: controller on the latest main; steps 1–3 pass; step 4 **finding F2**: the copy rule does not see a hand-opened firewall port (→ T-166); F1 minor UI (Block-only Plan shows no document diff) |
-| T-166 copy rule: `firewall` reports no observed values, so a token can copy a hand-opened port (host finding F2) | pl-architect (implementer) | in work; blocks the end of slice 5 |
+| T-166 copy rule: opaque guest reports (`firewall.table`, `network.file`, `apt_repository.sources`, `sysctl.file`) and file/unit lines (host finding F2) | pl-architect (implementer) | merged (PR #264), D-359; step 4 is repeated on the host |
 | T-159 slice 5 C14: README | pl-frontend | waits for T-158 |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
