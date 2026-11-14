@@ -121,6 +121,7 @@ func (s *Service) Status(ctx context.Context, target string) (*plan.RepairStatus
 		return nil, err
 	}
 	st.HostKeysSeen = minus(rep.HostKeys, st.HostKeys)
+	st.HostKeyTypes = rep.HostKeyTypes
 	valid, stale := false, false
 	for i, k := range keys {
 		if contains(rep.Lines, k.ID) {
@@ -174,6 +175,18 @@ func (s *Service) Status(ctx context.Context, target string) (*plan.RepairStatus
 	if len(st.Reasons) > 0 {
 		st.State = plan.RepairOff
 	}
+	switch {
+	case len(st.HostKeysSeen) > 0 && len(st.HostKeysSeen) == len(rep.HostKeys):
+		// No reported host key is pinned any more (T-207): a repair runs
+		// only when a person accepts one of the new keys in the Plan.
+		st.KeysChangedOnly = st.State == plan.RepairReady
+		st.Reasons = append(st.Reasons, plan.ReasonHostKeyChanged)
+		st.State = plan.RepairOff
+	case len(st.HostKeysSeen) > 0:
+		// A warning: a pinned key is still there and the repair checks
+		// only that one; the others can be accepted.
+		st.Reasons = append(st.Reasons, plan.ReasonHostKeyNew)
+	}
 	if stale && valid {
 		// A warning, not off: the valid line still repairs, and a dead
 		// agent can drop the old line only after its repair.
@@ -188,7 +201,9 @@ func (s *Service) Ready(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
-	if st == nil || st.State != plan.RepairReady {
+	// Off only for new host keys: plan lets it run only with an accepted
+	// key (T-207).
+	if st == nil || (st.State != plan.RepairReady && !st.KeysChangedOnly) {
 		return fmt.Errorf("no repair report of a ready guest: %w", plan.ErrRepairNotReady)
 	}
 	return nil

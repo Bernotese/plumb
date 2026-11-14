@@ -55,6 +55,26 @@ type RepairReport struct {
 	Lines    []string   `json:"lines"`     // key ids whose line the agent wrote
 	SSHD     RepairSSHD `json:"sshd"`      // sshd -T
 	HostKeys []string   `json:"host_keys"` // SHA256:… of /etc/ssh/ssh_host_*_key.pub
+	// HostKeyTypes maps a fingerprint of HostKeys to its key type (one of
+	// HostKeyTypeList), from the key blob itself (T-207). An agent before
+	// T-207 sends none: the type of such a key is unknown.
+	HostKeyTypes map[string]string `json:"host_key_types,omitempty"`
+}
+
+// HostKeyTypeList are the host key types that a repair report may name,
+// in the order the repair client tries them (T-207).
+var HostKeyTypeList = []string{
+	"ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa",
+}
+
+// ValidHostKeyType reports whether t is in HostKeyTypeList.
+func ValidHostKeyType(t string) bool {
+	for _, x := range HostKeyTypeList {
+		if x == t {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -114,6 +134,18 @@ func CheckRepairReport(r *RepairReport) error {
 	for _, h := range r.HostKeys {
 		if !hostKeyFP.MatchString(h) {
 			return errors.New("repair report: bad host key fingerprint")
+		}
+	}
+	if len(r.HostKeyTypes) > len(r.HostKeys) {
+		return errors.New("repair report: too many host key types")
+	}
+	for fp, typ := range r.HostKeyTypes {
+		listed := false
+		for _, h := range r.HostKeys {
+			listed = listed || h == fp
+		}
+		if !listed || !ValidHostKeyType(typ) {
+			return errors.New("repair report: bad host key type")
 		}
 	}
 	switch r.SSHD.Status {

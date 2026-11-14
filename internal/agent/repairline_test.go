@@ -2,6 +2,7 @@ package agent
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,4 +164,28 @@ func FuzzPubKeyFingerprint(f *testing.F) {
 			t.Fatalf("%q → %q", line, fp)
 		}
 	})
+}
+
+// TestHostKeyTypes (T-207): the type comes from the key blob, not from
+// the text in front; a type outside wire.HostKeyTypeList is left out; the
+// report with the types passes wire.CheckRepairReport.
+func TestHostKeyTypes(t *testing.T) {
+	root := t.TempDir()
+	pub, _, _ := ed25519.GenerateKey(nil)
+	sp, _ := ssh.NewPublicKey(pub)
+	b64 := strings.Fields(string(ssh.MarshalAuthorizedKey(sp)))[1]
+	// The text says rsa, the blob is ed25519.
+	write(t, filepath.Join(root, "etc/ssh/ssh_host_rsa_key.pub"), "ssh-rsa "+b64+" root@x\n")
+	// A blob whose own type is not a host key type of the list.
+	odd := base64.StdEncoding.EncodeToString(append([]byte{0, 0, 0, 3}, []byte("odd")...))
+	write(t, filepath.Join(root, "etc/ssh/ssh_host_odd_key.pub"), "odd "+odd+"\n")
+	fps, types := hostKeys(root)
+	fp := ssh.FingerprintSHA256(sp)
+	if len(fps) != 2 || len(types) != 1 || types[fp] != "ssh-ed25519" {
+		t.Fatalf("fps %v types %v", fps, types)
+	}
+	r := wire.RepairReport{Lines: []string{}, SSHD: wire.RepairSSHD{Status: wire.SSHDAbsent}, HostKeys: fps, HostKeyTypes: types}
+	if err := wire.CheckRepairReport(&r); err != nil {
+		t.Fatal(err)
+	}
 }

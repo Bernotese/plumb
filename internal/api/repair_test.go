@@ -44,6 +44,30 @@ type fakeTransport struct {
 	sends    []plan.RepairSend
 	bundles  [][]byte
 	newAgent *linktest.Agent
+	// status and seen (T-207): nil keeps the transport without a status
+	// and without an accept check, as before.
+	status *plan.RepairStatus
+	seen   []string
+}
+
+func (f *fakeTransport) Status(context.Context, string) (*plan.RepairStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.status == nil {
+		return nil, nil
+	}
+	c := *f.status
+	c.Reasons = append([]string{}, f.status.Reasons...)
+	return &c, nil
+}
+
+func (f *fakeTransport) CheckAcceptHostKey(_ context.Context, target, fp string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.seen != nil && !slices.Contains(f.seen, fp) {
+		return fmt.Errorf("the agent of %s never reported the host key %s as new", target, fp)
+	}
+	return nil
 }
 
 func (f *fakeTransport) Ready(context.Context, string) error {
@@ -575,4 +599,67 @@ func TestRepairDropsTokenOnEveryEnd(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRepairAcceptUnknownHostKey (T-207, host finding F9): a fingerprint
+// that the agent never reported as new gets no Plan.
+func TestRepairAcceptUnknownHostKey(t *testing.T) {
+	r := newRepairEnv(t)
+	r.cutOff()
+	known := "SHA256:" + strings.Repeat("B", 43)
+	r.tr.seen = []string{known}
+	before := planCount(t, r.adm)
+	if _, b := r.propose(r.adm, map[string]any{"accept_host_key": "SHA256:" + strings.Repeat("A", 43)}, 409); !strings.Contains(b, "repair-not-ready") || !strings.Contains(b, "never reported") {
+		t.Fatalf("unknown key: %s", b)
+	}
+	if n := planCount(t, r.adm); n != before {
+		t.Fatalf("a Plan was made: %d → %d", before, n)
+	}
+	r.propose(r.adm, map[string]any{"accept_host_key": known}, 201)
+}
+
+// TestRepairHostKeyChangedNeedsAccept (T-207): while no reported key is
+// pinned, a plain repair is refused and says what to do; a repair that
+// accepts a new key is allowed, its Plan shows type and fingerprint old
+// → new, and the transport gets the bare fingerprint.
+func TestRepairHostKeyChangedNeedsAccept(t *testing.T) {
+	r := newRepairEnv(t)
+	r.cutOff()
+	old, nw := "SHA256:"+strings.Repeat("C", 43), "SHA256:"+strings.Repeat("D", 43)
+	port := 22
+	r.tr.status = &plan.RepairStatus{State: plan.RepairOff, Reasons: []string{plan.ReasonHostKeyChanged}, Port: &port,
+		HostKeys: []string{old}, HostKeysSeen: []string{nw}, KeyConfirmed: true,
+		HostKeyTypes: map[string]string{old: "ssh-rsa", nw: "ssh-ed25519"}, KeysChangedOnly: true}
+	r.tr.seen = []string{nw}
+	if _, b := r.propose(r.adm, nil, 409); !strings.Contains(b, "repair-not-ready") || !strings.Contains(b, "accept_host_key") {
+		t.Fatalf("plain repair: %s", b)
+	}
+	p, raw := r.propose(r.adm, map[string]any{"accept_host_key": nw}, 201)
+	if !strings.Contains(raw, "ssh-ed25519 "+nw) || !strings.Contains(raw, "ssh-rsa "+old) {
+		t.Fatalf("the Plan does not show type and fingerprint old → new: %s", raw)
+	}
+	approve(t, r.adm, p.ID)
+	r.eng.Wait()
+	if len(r.tr.sends) != 1 || r.tr.sends[0].AcceptHostKey != nw {
+		t.Fatalf("sends %+v", r.tr.sends)
+	}
+	// Another reason as well (here: no line): the accept does not help.
+	r.tr.status.Reasons = []string{"no-line", plan.ReasonHostKeyChanged}
+	r.tr.status.KeysChangedOnly = false
+	if _, b := r.propose(r.adm, map[string]any{"accept_host_key": nw}, 409); !strings.Contains(b, "no-line") {
+		t.Fatalf("off for another reason: %s", b)
+	}
+}
+
+func planCount(t *testing.T, c *client) int {
+	t.Helper()
+	code, b := c.do("GET", "/api/v1/plans?limit=200", nil)
+	if code != 200 {
+		t.Fatalf("plans: %d %s", code, b)
+	}
+	var page struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	json.Unmarshal(b, &page)
+	return len(page.Items)
 }

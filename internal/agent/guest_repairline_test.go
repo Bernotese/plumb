@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -236,6 +237,63 @@ func TestGuestRepair(t *testing.T) {
 	if !errors.Is(err, repair.ErrHostKey) || sent || called {
 		t.Fatalf("new host keys: sent %v called %v err %v", sent, called, err)
 	}
+
+	// T-207 (host finding F9): the agent reports the three new keys with
+	// their types; the state is off until a person accepts one. The ssh
+	// client prefers ECDSA, so accept the ed25519 key: only that key may
+	// be checked.
+	rep = a.repairReport(ctx, w)
+	if len(rep.HostKeyTypes) != 3 {
+		t.Fatalf("report types %v", rep.HostKeyTypes)
+	}
+	if err := svc.OnReport(ctx, "web1", rep); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := svc.Status(ctx, "web1")
+	if s == nil || s.State != planpkg.RepairOff || !s.KeysChangedOnly || len(s.HostKeysSeen) != 3 {
+		t.Fatalf("status after new keys: %+v", s)
+	}
+	edFP := ""
+	for fp, typ := range rep.HostKeyTypes {
+		if typ == "ssh-ed25519" {
+			edFP = fp
+		}
+	}
+	if err := svc.CheckAcceptHostKey(ctx, "web1", edFP); err != nil {
+		t.Fatalf("accept ed25519: %v", err)
+	}
+	repairWith := func(accept string) {
+		t.Helper()
+		var out bytes.Buffer
+		exit, sent, err := svc.Send(ctx, planpkg.RepairSend{Target: "web1", StaticIP: "127.0.0.1", AcceptHostKey: accept,
+			Bundle: func(w io.Writer) error { return agentinstall.WriteBundle(w, bundle) }, Output: &out})
+		if err != nil || !sent || exit != 0 {
+			t.Fatalf("repair (accept %q): exit %d sent %v err %v\n%s", accept, exit, sent, err, out.String())
+		}
+	}
+	repairWith(edFP)
+	if s, _ := svc.Status(ctx, "web1"); s == nil || s.State != planpkg.RepairReady || !slices.Contains(s.HostKeys, edFP) {
+		t.Fatalf("status after the accept: %+v", s)
+	}
+
+	// A guest with only an ed25519 host key: the pinned key is the one
+	// the client asks for.
+	for _, f := range []string{"rsa", "ecdsa"} {
+		os.Remove("/etc/ssh/ssh_host_" + f + "_key")
+		os.Remove("/etc/ssh/ssh_host_" + f + "_key.pub")
+	}
+	if out, err := run("systemctl", "restart", "ssh.service"); err != nil {
+		t.Fatalf("restart sshd: %v %s", err, out)
+	}
+	time.Sleep(time.Second)
+	rep = a.repairReport(ctx, w)
+	if len(rep.HostKeys) != 1 || rep.HostKeyTypes[rep.HostKeys[0]] != "ssh-ed25519" {
+		t.Fatalf("ed25519 only: %+v", rep)
+	}
+	if err := svc.OnReport(ctx, "web1", rep); err != nil {
+		t.Fatal(err)
+	}
+	repairWith("")
 }
 
 // writeRepairKeyFile writes the current repair private key as an OpenSSH
