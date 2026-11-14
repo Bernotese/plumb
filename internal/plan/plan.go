@@ -182,6 +182,10 @@ type Config struct {
 	// OnTargetDeleted ends the Issues and marks of a Target whose binding
 	// a delete dropped (T-209); reason is TargetDeletedReason.
 	OnTargetDeleted func(ctx context.Context, target, reason string) error
+	// AfterRestoreConfirm runs once after a restore confirm, for the
+	// system work that waits in restored mode (T-212: the sweep of the
+	// Issues of deleted Targets, D-303). An error is logged.
+	AfterRestoreConfirm func(ctx context.Context) error
 	// OnPlanDone is called when the Run of a Plan ended (ok = succeeded)
 	// or a pending Plan went stale (ok = false).
 	OnPlanDone func(ctx context.Context, planID int64, ok bool)

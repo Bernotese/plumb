@@ -91,6 +91,11 @@ func (e *Engine) ConfirmRestore(ctx context.Context, by, reason string) (store.R
 		e.cfg.Restore.active.Store(false)
 	}
 	e.emit(ctx, "restore.confirmed", "restore:1", by, map[string]any{"reason": reason})
+	if e.cfg.AfterRestoreConfirm != nil {
+		if err := e.cfg.AfterRestoreConfirm(ctx); err != nil {
+			e.log.Error("system work after the restore confirm", "err", err)
+		}
+	}
 	binds, err := e.st.Bindings(ctx, state.KindTarget)
 	if err != nil {
 		return r, err
