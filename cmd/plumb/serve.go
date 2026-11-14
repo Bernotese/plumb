@@ -396,17 +396,37 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	// The read-only Proxmox view of GET /settings (D-361): the raw
 	// driver, it sends only reads.
 	var pveView func(context.Context) *api.ProxmoxView
+	// Guest backups (T-221, D-405 … D-409, D-417): only with Proxmox; the
+	// raw driver (a job writes no guest config; restored mode refuses
+	// every job itself).
+	var guests *backup.Guests
 	if pd, ok := rawDrv.(*proxmox.Driver); ok {
 		viewer := proxmox.NewViewer(pd, proxmox.TokenUser(os.Getenv("PLUMB_PVE_TOKEN_ID")), extras)
 		pveView = func(ctx context.Context) *api.ProxmoxView { return proxmoxView(viewer.View(ctx)) }
+		one, all := guestTargets(eng)
+		guests = backup.NewGuests(backup.GuestConfig{Store: st, Events: events, Driver: guestDriver{pd},
+			InstallID: os.Getenv("PLUMB_INSTALL_ID"), Storage: extras.GuestBackupStorage, Clear: extras.GuestBackupClear,
+			Restored: restore.Active, Target: one, Targets: all, Logger: log})
+		// Rows that a stopped controller left running end first (M2 of #331).
+		if err := guests.Recover(ctx); err != nil {
+			return fmt.Errorf("guest backups: %w", err)
+		}
+		defer guests.Close() // ends and waits for the jobs before the engine and the store close
 	}
-	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Proxmox: pveView, Secrets: secrets, RepairKeys: repairKeys(rep), Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
+	cfg := api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Proxmox: pveView, Secrets: secrets, RepairKeys: repairKeys(rep), Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log}
+	if guests != nil {
+		cfg.GuestBackups = guests
+	}
+	srv := api.New(cfg)
 
 	errc := make(chan error, 2) // one send each: agent listener, API listener
 	goBG(func() { errc <- lk.Serve(ctx, f.agentListen) })
 	goBG(func() { eng.PollGuests(ctx, time.Minute) })
 	goBG(func() { eng.RunSchedules(ctx, time.Minute) })                    // scheduled image builds (T-063)
 	goBG(func() { backups.RunSchedule(ctx, time.Minute, restore.Active) }) // daily backup (T-112); waits in restored mode
+	if guests != nil {
+		guests.StartSchedule(time.Minute) // guest backups (T-221); Close ends it
+	}
 	goBG(func() {
 		iss.RunGuestValuePrune(ctx, 24*time.Hour, func(err error) { log.Error("copy rule prune", "err", err) })
 	}) // D-331
