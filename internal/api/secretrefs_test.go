@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -618,8 +619,10 @@ func TestSecretNewBindingRestartOfUnchangedService(t *testing.T) {
 
 // textValuesHold reports the first table and column whose TEXT value
 // holds one of needles, through a read-only connection to the env's
-// database ("" when none does). BLOB values (sealed data, nonces) are
-// skipped: their random bytes are what the raw scan cannot tell apart.
+// database ("" when none does). INTEGER and REAL values are scanned in
+// their decimal text (#320 n2: a short numeric secret). BLOB values
+// (sealed data, nonces) are skipped: their random bytes are what the raw
+// scan cannot tell apart.
 func (e *env) textValuesHold(needles []string) string {
 	e.t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(e.dir, "plumb.db")+"?mode=ro&_pragma=busy_timeout(5000)")
@@ -661,8 +664,15 @@ func (e *env) textValuesHold(needles []string) string {
 				e.t.Fatal(err)
 			}
 			for i, v := range vals {
-				text, ok := v.(string)
-				if !ok {
+				var text string
+				switch v := v.(type) {
+				case string:
+					text = v
+				case int64:
+					text = strconv.FormatInt(v, 10)
+				case float64:
+					text = strconv.FormatFloat(v, 'g', -1, 64)
+				default:
 					continue
 				}
 				for _, n := range needles {
