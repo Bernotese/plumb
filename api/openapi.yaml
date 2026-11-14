@@ -1193,7 +1193,6 @@ paths:
     post:
       tags: [targets]
       operationId: createInstallCommand
-      x-plumb-planned: T-193
       summary: A one-time command that installs the agent by hand
       description: |
         Human admin session only (D-387). For a Target whose guest exists and whose agent is
@@ -1230,7 +1229,6 @@ paths:
     post:
       tags: [targets]
       operationId: adoptTarget
-      x-plumb-planned: T-193
       x-plumb-rate: proposal
       summary: Propose to adopt a guest of the pool as a new Target
       description: |
@@ -1291,7 +1289,6 @@ paths:
     get:
       tags: [targets]
       operationId: listUnmanagedGuests
-      x-plumb-planned: T-193
       x-plumb-rate: read
       summary: Guests of the pool that no Target or Image holds
       description: |

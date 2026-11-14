@@ -101,12 +101,12 @@ type TargetPlan struct {
 	// "reenroll", "adopt" (bind a guest a person made, D-386), "unbind"
 	// (the delete of an adopted Target that keeps the guest, D-388) or ""
 	// (no guest change).
-	Guest     string           `json:"guest,omitempty"`
+	Guest string `json:"guest,omitempty"`
 	// Adopt is the guest of an "adopt" (with its digest); Adopted is
 	// spec.adopted of the base for "unbind" and "delete" of an adopted
 	// Target, so the Run knows the VMID and delete_guest.
-	Adopt   *AdoptRequest   `json:"adopt,omitempty"`
-	Adopted *state.Adopted `json:"adopted,omitempty"`
+	Adopt     *AdoptRequest    `json:"adopt,omitempty"`
+	Adopted   *state.Adopted   `json:"adopted,omitempty"`
 	Resources []ResourceChange `json:"resources"`
 	// Secrets are the secrets of the desired state of this target, with
 	// the versions that the Plan was made with (D-089).

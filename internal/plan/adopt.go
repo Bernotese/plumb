@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -363,4 +364,48 @@ func clipText(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// ErrNoGuest: the Target has no guest yet, so there is nothing to install
+// an agent in.
+var ErrNoGuest = errors.New("no-guest")
+
+// ErrInstallUnavailable: the controller has no agent URL, CA or token
+// source (a controller without a Proxmox driver).
+var ErrInstallUnavailable = errors.New("plan: the install command needs the agent URL and the CA of this controller")
+
+// InstallCommand makes a one-time enrollment token for target and the
+// root shell command that installs the agent with it (D-387, ARCHITECTURE
+// §19). The token keeps the current credential working until the guest
+// enrolls with it (review R1 of #290, D-390), and it reaches the guest
+// only through a here document into a 0600 file (review R6 of #290).
+func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (string, time.Time, error) {
+	rc := e.repairConfig()
+	if strings.ContainsAny(rc.AgentURL, "' \n") {
+		return "", time.Time{}, ErrInstallUnavailable // never quote around a strange URL
+	}
+	if _, err := e.st.GetBinding(ctx, state.KindTarget, target); errors.Is(err, store.ErrNotFound) {
+		return "", time.Time{}, fmt.Errorf("%w: Target %s has no guest", ErrNoGuest, target)
+	} else if err != nil {
+		return "", time.Time{}, err
+	}
+	if rc.Tokens == nil || rc.AgentURL == "" || len(rc.CA) == 0 {
+		return "", time.Time{}, ErrInstallUnavailable
+	}
+	tok, err := rc.Tokens.NewRepairToken(ctx, target)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	e.emit(ctx, "target.install_command", "target:"+target, actor, map[string]any{"expires_at": tok.Expires.UTC()})
+	return installCommand(string(rc.CA), rc.AgentURL, tok.Token), tok.Expires, nil
+}
+
+// installCommand is the command text of D-387: the CA and the token by
+// here documents with quoted delimiters (no expansion), umask 077 for
+// 0600 files, then the install script from the agent listener with the CA.
+func installCommand(ca, agentURL, token string) string {
+	ca = strings.TrimRight(ca, "\n") + "\n"
+	return "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n" + ca + "PLUMB_CA\n" +
+		"cat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n" + token + "\nPLUMB_TOKEN\n" +
+		"curl -fsS --cacert /etc/plumb-agent/ca.pem '" + agentURL + wire.PathInstallScript + "' | PLUMB_URL='" + agentURL + "' sh\n"
 }
