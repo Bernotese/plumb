@@ -102,6 +102,17 @@ func (e *Engine) GuestValues(it wire.Item) (vals []store.GuestValue, over bool) 
 		if c.Sensitive || c.From == nil {
 			continue
 		}
+		if state.Opaque(typ, c.Attr) {
+			// No value to hash: the whole type counts as guest data
+			// (D-359). An old agent reports the same status text, so it
+			// fails closed too.
+			v := store.GuestValue{Resource: it.Resource, Attr: c.Attr, Hash: e.guestHash(state.OpaqueValue(typ))}
+			if !seen[v] {
+				seen[v] = true
+				vals = append(vals, v)
+			}
+			continue
+		}
 		want, _ := state.GuestValueElems(typ, c.Attr, c.To)
 		got, more := state.GuestValueElems(typ, c.Attr, c.From)
 		over = over || more
@@ -158,12 +169,18 @@ func (e *Engine) newElems(base, next *state.Set, target string, out map[string][
 			}
 			now, more := state.GuestValueElems(r.Type, attr, v)
 			over = over || more
+			key, wide := state.TypeWide(r.Type)
 			for _, el := range now {
 				if _, found := slices.BinarySearch(was, el); found {
 					continue
 				}
 				h := e.guestHash(el)
 				out[h] = append(out[h], planElem{target, r.ID, attr, el})
+				if wide && attr != key {
+					// A new value of a type with an opaque change (D-359).
+					h0 := e.guestHash(state.OpaqueValue(r.Type))
+					out[h0] = append(out[h0], planElem{target, r.ID, attr, el})
+				}
 			}
 		}
 	}

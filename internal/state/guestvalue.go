@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -115,3 +116,27 @@ func GuestValueElems(typ, attr string, v any) (elems []string, over bool) {
 	sort.Strings(out)
 	return out, over
 }
+
+// Opaque reports whether attr of type typ is an observed status text, not
+// a value (resource.Type.Opaque, D-359).
+func Opaque(typ, attr string) bool {
+	t, ok := resource.Lookup(typ)
+	return ok && slices.Contains(t.Opaque, attr)
+}
+
+// TypeWide reports whether the copy rule treats every new value of type
+// typ (except its key) as guest data while an opaque change of the type
+// counts (D-359), and returns the key attribute.
+func TypeWide(typ string) (key string, ok bool) {
+	t, found := resource.Lookup(typ)
+	if !found || len(t.Opaque) == 0 {
+		return "", false
+	}
+	return t.Key, true
+}
+
+// OpaqueValue is the text whose keyed hash stands for "the guest changed
+// something of type typ that has no value" (D-359). The NUL bytes keep it
+// apart from normal values; a guest that reports this exact text only
+// makes more Plans human-only (fail closed).
+func OpaqueValue(typ string) string { return "\x00plumb-opaque\x00" + typ }
