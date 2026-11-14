@@ -1,6 +1,4 @@
--- 0025_issue_target_deleted (T-227, ROADMAP row 31; #314 known low).
--- (Planned in T-215 without a number; #322 also takes 0025: pl-lead
--- renumbers the second one at the merge, D-337.)
+-- 0026_issue_target_deleted (T-227, ROADMAP row 31; #314 known low).
 --
 -- * issue.target_deleted: 1 when the delete of its Target resolved the
 --   Issue (D-397 sweep). ReopenGoneIssue (D-215) never opens such an Issue

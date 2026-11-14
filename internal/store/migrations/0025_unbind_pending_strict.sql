@@ -1,6 +1,5 @@
 -- 0025_unbind_pending_strict (T-227, ROADMAP row 29; review n1 of #320).
--- (Planned as 0026 in T-215; the store needs numbers without gaps, and 0025
--- of the guest backups is not merged yet: pl-lead renumbers at the merge.)
+-- (Planned as 0026 in T-215; it merged first, so it took 0025.)
 --
 -- * unbind_pending was the only table that is not STRICT (0023). SQLite
 --   cannot make a table STRICT in place, so it is rebuilt with the same
