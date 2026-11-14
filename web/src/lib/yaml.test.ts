@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scalar, toYaml } from "./yaml";
+import { parseYaml, scalar, toYaml } from "./yaml";
 
 describe("scalar", () => {
   it("keeps safe strings plain", () => {
@@ -139,4 +139,13 @@ describe("YAML QA escaping", () => {
       "items:\n  - content: |+\n      a\n        b\n\n",
     );
   });
+
+  it.each(["__proto__", "constructor", "prototype"])(
+    "parseYaml refuses the key %s at its line (review of #278)",
+    (k) => {
+      const r = parseYaml(`kind: Target\nspec:\n  ${k}:\n    x: 1\n`);
+      expect(r.value).toBeUndefined();
+      expect(r.errors).toEqual([{ line: 3, message: `The key "${k}" is not allowed.` }]);
+    },
+  );
 });
