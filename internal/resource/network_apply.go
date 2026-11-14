@@ -337,7 +337,8 @@ func (n *network) netplanView(ctx context.Context, root string) (map[string]npVi
 // names the NIC by its key, set-name, match.name or match.macaddress: on a
 // stock Ubuntu VM the first boot can keep the kernel name (ens18) while
 // cloud-init's entry is eth0 with a MAC match and set-name (D-192, T-158
-// F3). mac is the live MAC of dev; it is only compared, never written.
+// F3). mac is the permanent MAC of dev when available, else its current
+// MAC; it is only compared, never written.
 func mainKey(view map[string]npView, dev, mac string, main netip.Addr) (string, error) {
 	var keys []string
 	for k, v := range view {
@@ -355,19 +356,29 @@ func mainKey(view map[string]npView, dev, mac string, main netip.Addr) (string, 
 	return keys[0], nil
 }
 
-// liveMAC returns the MAC of dev (ip -j link show), lower case.
+// liveMAC returns the permanent MAC of dev when present, else its current
+// MAC (ip -j link show), validated and lower case.
 func (n *network) liveMAC(ctx context.Context, dev string) (string, error) {
 	out, err := n.run(ctx, "ip", "-j", "link", "show", "dev", dev)
 	if err != nil {
 		return "", fmt.Errorf("ip link: %w", err)
 	}
 	var links []struct {
-		Address string `json:"address"`
+		Address  string  `json:"address"`
+		Permaddr *string `json:"permaddr"`
 	}
 	if err := json.Unmarshal(out, &links); err != nil || len(links) != 1 {
 		return "", fmt.Errorf("ip link: no single link %s", dev)
 	}
-	return strings.ToLower(links[0].Address), nil
+	address := links[0].Address
+	if links[0].Permaddr != nil {
+		address = *links[0].Permaddr
+	}
+	mac, err := net.ParseMAC(address)
+	if err != nil || len(mac) != 6 || bytes.Equal(mac, make([]byte, 6)) || bytes.Equal(mac, bytes.Repeat([]byte{0xff}, 6)) {
+		return "", fmt.Errorf("ip link: invalid Ethernet MAC for %s", dev)
+	}
+	return mac.String(), nil
 }
 
 // --- Observe and Diff ---
