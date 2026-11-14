@@ -91,6 +91,8 @@ jobs:
           go-version-file: go.mod
       - name: Race detector
         run: make test-race
+      - name: Signed pin schedule proof (test key only)
+        run: CGO_ENABLED=1 go test -race -tags=plumbtest ./internal/plan -run TestF5SignedPinSchedule -count=1
   check:
     name: lint, test, build
     runs-on: ubuntu-latest
