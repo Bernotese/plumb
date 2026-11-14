@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -565,5 +566,87 @@ func TestAdoptStaleSameNameAndDelete(t *testing.T) {
 	}
 	if _, err := a.drv.InspectGuest(a.ctx, id2); err != nil {
 		t.Fatalf("the guest is gone: %v", err)
+	}
+}
+
+// T1 of #306: a stale Target "wiki" of guest X, and another guest Z whose
+// Proxmox name is "wiki" too: adopting Z under "wiki" is refused
+// (document-exists); the stale claim never moves to Z silently.
+func TestAdoptStaleNameOfOtherGuest(t *testing.T) {
+	a := newAdoptEnv(t)
+	x, ux := a.person("wiki")
+	p, _ := a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, x), Digest: ux.Digest}, "user:admin", "")
+	a.drv.RenameGuest(x, "wiki-x")
+	a.e.Approve(a.ctx, p.ID, "user:admin", nil)
+	a.e.Wait()
+	z, uz := a.person("wiki")
+	if _, err := a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, z), Digest: uz.Digest}, "user:admin", ""); !errors.Is(err, ErrDocumentExists) {
+		t.Fatalf("adopt of another guest under the stale name: %v", err)
+	}
+	_, set, _ := a.e.base(a.ctx)
+	if ad, ok := set.AdoptedOf("wiki"); !ok || ad.VMID != vmidOf(t, x) {
+		t.Fatalf("the stale claim moved: %+v %v", ad, ok)
+	}
+}
+
+// T2 of #306: a pair that claims one guest in the base (made before D-395,
+// as on the host) is tolerated: unrelated Plans stay possible and do
+// nothing for either Target; only the adopt route binds one of them, and
+// that Plan removes the other.
+func TestAdoptPairInBaseTolerated(t *testing.T) {
+	a := newAdoptEnv(t)
+	id, u := a.person("wiki-new")
+	vmid := vmidOf(t, id)
+	pair := func(name string) state.Doc {
+		return state.Doc{Kind: state.KindTarget, Name: name, Spec: []byte(fmt.Sprintf(
+			`{"adopted":{"delete_guest":false,"node":"pve","vmid":%d},"guest":{"bridge":"vmbr0","cores":2,"disk":10,"memory":1024},"type":"vm"}`, vmid))}
+	}
+	set, err := state.Validate([]state.Doc{pair("wiki"), pair("wiki-new")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := state.Rows(set)
+	if _, err := a.st.CommitRevision(a.ctx, store.NewRevision{Author: "user:qa", Docs: rows}); err != nil {
+		t.Fatal(err)
+	}
+	// Unrelated Plans: allowed, nothing for either, nothing bound.
+	p, err := a.e.Propose(a.ctx, Input{Author: "token:tok_qa", Reason: "touch", Proposal: Proposal{Targets: []string{"wiki", "wiki-new"}}})
+	if err != nil {
+		t.Fatalf("a Plan on a head with an old pair: %v", err)
+	}
+	var tps []TargetPlan
+	json.Unmarshal(p.Changes, &tps)
+	if len(tps) != 2 || !tps[0].NotAdopted || !tps[1].NotAdopted {
+		t.Fatalf("plans %s", p.Changes)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	for _, n := range []string{"wiki", "wiki-new"} {
+		if _, err := a.st.GetBinding(a.ctx, state.KindTarget, n); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("%s bound by an unrelated Plan", n)
+		}
+	}
+	// A plain proposal cannot add a third claim.
+	if _, err := a.e.Propose(a.ctx, Input{Author: "user:admin", Reason: "third", Origin: OriginAdopt,
+		Proposal: Proposal{Put: []state.Doc{pair("wiki-3")}, Adopt: []AdoptRequest{{Target: "wiki-3", Node: "pve", VMID: vmid, Digest: u.Digest}}}}); !errors.Is(err, ErrAdoptClaimed) {
+		t.Fatalf("a third claim: %v", err)
+	}
+	// The adopt route binds the guest's name and removes the other one.
+	p, err = a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki-new", Node: "pve", VMID: vmid, Digest: u.Digest}, "user:admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if b, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki-new"); err != nil || b.Ref != string(id) {
+		t.Fatalf("binding %+v %v", b, err)
+	}
+	_, set2, _ := a.e.base(a.ctx)
+	if slices.Contains(set2.Targets(), "wiki") {
+		t.Fatal("the other claim stays")
 	}
 }
