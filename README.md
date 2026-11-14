@@ -10,6 +10,7 @@ your own network.
   more. You add Blocks to a Target. An agent in the guest applies them.
 - **Plans:** every change is a Plan first. The Plan shows each change and its risk. Nothing
   changes until you approve it.
+- **Users:** each person has their own login and a role: read, plan, apply or admin.
 - **Issues:** when a guest no longer matches its Target, Plumb opens an Issue. You revert the
   change, accept it, or ignore it.
 - **History:** every approved change is a revision. You can see who changed what, and why.
@@ -112,10 +113,34 @@ full list of rights.
    ![Image page of ubuntu-26.04: title, type virtual machine, kind stock, base image address and checksum](docs/screenshots/readme-images.png)
    <br>*An Image: where the base image comes from, and its checksum.*
 
-5. **Blocks:** look at the starter Blocks (for example `deploy-user`, `ssh-hardening`, `nginx`,
-   `docker-engine`, `firewall`). Change them or write your own. The `firewall` Block drops incoming
-   traffic except the ports you list. SSH always stays open. When a firewall change cuts the guest
-   off from Plumb, the agent puts the old rules back after 90 seconds.
+   An Image keeps a fixed checksum (the pin). To move it to a newer file, choose a **signed
+   checksum source** on the Image:
+   - Ubuntu cloud images: Plumb checks `SHA256SUMS` with the Ubuntu key that is built into Plumb.
+   - Proxmox container templates: Plumb checks the appliance index with the Proxmox key that is
+     built into Plumb.
+   - Debian cloud images: Plumb reads `SHA512SUMS` over HTTPS. Debian does not sign this list.
+
+   Then click **Refresh base** on the Image. When the file changed, Plumb proposes a Plan that
+   changes only the checksum. Existing Targets do not change; new Targets and new builds use the
+   new file.
+
+   ![Image page of ubuntu-26.04 with the checksum source "Ubuntu cloud images, signed SHA256SUMS" and the card Refresh base](docs/screenshots/readme-image-verify.png)
+   <br>*An Image with a signed checksum source, and the "Refresh base" button.*
+
+5. **Blocks:** the **starter catalogue** on the Blocks page lists the Blocks that ship with Plumb
+   (for example `deploy-user`, `ssh-hardening`, `nginx`, `docker-engine`, `firewall`, `network`).
+   "Add" copies one into your Blocks. When your copy differs from the catalogue, "Show difference"
+   shows how, and "Update from the catalogue" replaces your copy. Both make a normal Plan. Plumb
+   never adds or changes a Block by itself. Change the Blocks or write your own.
+   - The `firewall` Block drops incoming traffic except the ports you list. SSH always stays open.
+   - The `network` Block adds addresses, routes, name servers and search domains to the network
+     card of a VM. The main address, the gateway and DHCP do not change.
+   - When a `firewall` or `network` change cuts the guest off from Plumb, the agent puts the old
+     settings back after 90 seconds.
+   - A Block can also hold a local `group` (`groupadd`). Users join it through their `groups`.
+
+   ![Starter catalogue: motd and nginx are added but differ, with Show difference and Update from the catalogue; network is not added, with Add](docs/screenshots/readme-catalogue.png)
+   <br>*The starter catalogue: "Add" and "Update" make a Plan. Plumb never changes a Block by itself.*
 
    ![Block page of nginx: the Targets that use it, its parameter server_name, and the start of its YAML document](docs/screenshots/readme-blocks.png)
    <br>*A Block: the Targets that use it, its parameters and its document.*
@@ -135,13 +160,20 @@ full list of rights.
    <br>*One Target: its address, its Image and its guest settings.*
 
 7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
-   each step.
+   each step. The Plan shows two things:
+   - **Document changes:** what changes in your Images, Blocks, Targets and rules, as a diff. Secret
+     values are never shown, only the names of the secrets.
+   - **Targets:** each change on each guest, with its old value, new value and risk. A change to a
+     Block that no Target uses has document changes only.
 
    ![Plan 2 for web1: reason, risk disruptive, three resource changes and one restart with old and new values, and the Approve form](docs/screenshots/readme-plan.png)
    <br>*A Plan: every change with its old value, new value and risk. Nothing changes before you approve it.*
 
    ![Run 2 succeeded: the four steps on web1, each applied](docs/screenshots/readme-run.png)
    <br>*The Run of that Plan: each step on each Target.*
+
+   ![Plan 4, an update of the Block motd from the catalogue: no resource changes, and the diff of the Block document](docs/screenshots/readme-plan-documents.png)
+   <br>*A Plan that changes only a Block: its document changes, line by line.*
 
 8. **Issues:** when somebody changes a guest by hand, an Issue opens. Choose "Revert", "Accept" or
    "Ignore". A Plan that accepts a value from the guest needs a person: an API token cannot approve
@@ -151,6 +183,26 @@ full list of rights.
    <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
 
 In **Settings** you make API tokens, store secrets, and export or import the whole state.
+
+### Users and roles
+
+An admin adds people in **Settings → Users**. Each user has one role:
+
+| Role | May |
+|---|---|
+| read | See everything. Change nothing. |
+| plan | Also propose changes (Plans), comment on Issues, and drop Plans. |
+| apply | Also approve Plans up to the risk "disruptive", and ignore drift once. |
+| admin | Everything: destructive Plans, users, API tokens, secrets, backups, import. |
+
+- Plumb makes a one-time password for a new user and shows it once. The user must change it at the
+  first login.
+- Plumb never deletes a user. Disable it instead. A name is never given twice.
+- A role change ends every session of that user.
+- The web UI hides the buttons that your role may not use. Plumb also checks every call itself.
+
+![Settings, Users tab: admin, dev, ops with role apply and viewer with role read, each with the actions Role, Disable and One-time password, and the form for a new user](docs/screenshots/readme-users.png)
+<br>*Settings → Users: each person with their role and state.*
 
 ## Updates and repair
 
@@ -276,8 +328,13 @@ Keep the recovery key in any case.
   this VM" on the Target if Plumb may restart it.
 - One Proxmox host only. No clusters.
 - A restored Plumb needs the same address as before.
-- There is one user, `admin`. More users come later.
-- A guest has one network card. More cards and other network settings come later.
+- A guest has one network card. The `network` Block adds addresses and routes on it; more cards
+  come later.
+- A change by hand to the network settings or the firewall in a guest is seen at the full check
+  every 15 minutes, not at once.
+- The first signed refresh of an Image needs a person: an API token cannot approve it.
+- Debian does not sign its cloud image checksums. Every new checksum of a Debian Image needs a
+  person.
 
 ## More
 
