@@ -33,6 +33,31 @@ const accept = () =>
   button("Accept as raw for this Target") ?? button("Accept: keep the guest value");
 
 describe("Issue actions from the server", () => {
+  it("guest:config with a NIC change: revert, no accept, the reason (D-418)", async () => {
+    await serverIssue("guest:config", {
+      changes: [
+        { attr: "nic1", from: "vmbr2 tag 30", to: "vmbr2 tag 20", risk: "disruptive" },
+        { attr: "cores", from: "4", to: "2", risk: "disruptive" },
+      ],
+      actions: ["revert", "ignore_once", "ignore_rule"],
+      raw: false,
+    });
+    expect(accept()).toBeUndefined();
+    expect(button("Revert: apply the desired state")).toBeDefined();
+    expect(text(el("#accept-nic"))).toContain(
+      "Accept is not possible for a network card (nic1). Revert it, or change guest.nics in the Target web1.",
+    );
+  });
+
+  it("guest:config without a NIC change says nothing of NICs", async () => {
+    await serverIssue("guest:config", {
+      changes: [{ attr: "cores", from: "4", to: "2", risk: "disruptive" }],
+      actions: ["accept", "revert", "ignore_once", "ignore_rule"],
+      raw: false,
+    });
+    expect(document.querySelector("#accept-nic")).toBeNull();
+  });
+
   it("firewall:main: revert, no accept and no raw offer", async () => {
     await serverIssue("firewall:main", {
       changes: [{ attr: "tcp_ports", from: "22,8080", to: "22", risk: "disruptive" }],
