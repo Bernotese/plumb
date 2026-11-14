@@ -262,14 +262,16 @@ Agents in the guests update through a Plan: Plumb proposes it, you approve it.
 
 ### Repair a dead agent
 
-When the agent of a running guest is offline for 10 minutes or more, the agent page offers
-**Propose repair**. Plumb then connects to the guest over SSH with its own repair key and installs
-the agent again; nothing else runs in the guest. Only a person can approve the repair Plan. A
-failed repair leaves the guest as it was.
+When the agent of a running guest is offline, the agent page offers **Propose repair**. Plumb
+refuses it during the first 10 minutes, because an agent may only be cut off for a short time. Only
+a person can approve the repair Plan. After the approval, Plumb connects to the guest over SSH with
+its own repair key and installs the agent again; nothing else runs in the guest. A failed repair
+leaves the guest as it was.
 
 - The agent writes a key line for root that allows only this install, and only from Plumb's
-  address. The agent page says "ready" or why not. With the `ssh-hardening` Block, set
-  `permit_root_login` to `forced-commands-only`; `no` turns the repair off.
+  address. The agent page says "ready" or why not. In the `ssh-hardening` Block, the
+  `permit_root_login` values `prohibit-password` (the default) and `forced-commands-only` both allow
+  the repair; `no` turns it off.
 - Plumb pins the SSH host keys that the agent reported. A changed host key shows in red; the repair
   connects only to a pinned key, unless you accept the new key in the repair Plan.
 - **Settings → General** shows the repair key. "Make a new repair key" makes a new one; the old key
