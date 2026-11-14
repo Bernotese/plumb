@@ -18,6 +18,8 @@ import (
 // and checks it also while the controller is away:
 //   - fast path: inotify on the parent directory of every Watch() path,
 //     then, after the debounce, a check of the affected resources;
+//   - netlink path (D-367, netwatch.go): an ip or nft change triggers,
+//     after the debounce, a check of every network or firewall resource;
 //   - slow path: a full check every Config.FullCheck.
 // A check reports only differences from what was reported before: a
 // resource that drifts (status differs), whose drift changed, or whose
@@ -123,7 +125,8 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 		left := a.maxDebounceWait() - time.Since(firstPending)
 		debounce.Reset(max(min(a.opt.Debounce, left), 0))
 	}
-	paths := a.rewatch(w)
+	defer a.net.close()
+	paths := a.rewatch(ctx, w)
 	events := w.events
 
 	a.check(ctx, nil) // a full check at start
@@ -148,12 +151,12 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 			clear(pending)
 			firstPending = time.Time{}
 			a.check(ctx, nil)
-			paths = a.rewatch(w)
+			paths = a.rewatch(ctx, w)
 		case ids := <-a.applyDone:
 			for _, id := range ids {
 				pending[id] = true
 			}
-			paths = a.rewatch(w)
+			paths = a.rewatch(ctx, w)
 			arm()
 		case <-debounce.C:
 			if a.isApplying() {
@@ -166,14 +169,27 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 			clear(pending)
 			firstPending = time.Time{}
 			a.check(ctx, ids)
-			paths = a.rewatch(w)
+			paths = a.rewatch(ctx, w)
 		case <-full.C:
 			if !a.isApplying() {
 				a.check(ctx, nil)
-				paths = a.rewatch(w)
+				paths = a.rewatch(ctx, w)
+			}
+		case k := <-a.net.fire:
+			// A netlink trigger (D-367): the normal check of every
+			// resource of the type, as after an inotify event.
+			if a.isApplying() {
+				continue
+			}
+			a.mu.Lock()
+			ids := netIDs(a.desired, k)
+			a.mu.Unlock()
+			if len(ids) > 0 {
+				a.check(ctx, ids)
+				paths = a.rewatch(ctx, w)
 			}
 		case <-a.listChanged:
-			paths = a.rewatch(w)
+			paths = a.rewatch(ctx, w)
 			if !a.isApplying() {
 				a.check(ctx, nil)
 			}
@@ -184,10 +200,13 @@ func (a *Agent) driftLoop(ctx context.Context, w *watcher) {
 // rewatch watches the parent directories of all Watch() paths and returns
 // the map watch path → resource ids. A missing parent is replaced by its
 // nearest existing ancestor, so the creation of the parent is seen too.
-func (a *Agent) rewatch(w *watcher) map[string][]string {
+// It also subscribes netlink for the network and firewall resources of
+// the list (D-367).
+func (a *Agent) rewatch(ctx context.Context, w *watcher) map[string][]string {
 	a.mu.Lock()
 	list := append([]wire.Resource(nil), a.desired...)
 	a.mu.Unlock()
+	a.net.sync(ctx, netWant(list))
 	paths := map[string][]string{}
 	dirs := map[string]bool{}
 	for _, r := range list {

@@ -110,6 +110,8 @@ for image in images:debian/13 ubuntu:26.04; do
           echo "no default route after netplan apply" >&2; exit 1'
       fi
       inst env PLUMB_NETWORK_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestNetwork$'
+      # T-181: live drift of ip/nft hand changes (D-367), as root (TestNetReadOnlyKernel needs it).
+      inst env PLUMB_NETWATCH_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^(TestGuestNetwatch|TestNetReadOnlyKernel)$'
     fi
     lxc delete -f "$name"
   done
