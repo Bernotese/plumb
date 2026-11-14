@@ -19,8 +19,9 @@ import (
 const MaxGuestElems = 4096
 
 type attrRule struct {
-	skip bool   // enum or const: a fixed value, never compared
-	sep  string // x-plumb-list separator; "" = not list-like
+	skip  bool   // enum or const: a fixed value, never compared
+	sep   string // x-plumb-list separator; "" = not list-like
+	lines bool   // x-plumb-lines: a text whose new lines count too (D-359)
 }
 
 var (
@@ -37,6 +38,7 @@ func loadAttrRules() {
 				Enum  json.RawMessage `json:"enum"`
 				Const json.RawMessage `json:"const"`
 				List  string          `json:"x-plumb-list"`
+				Lines bool            `json:"x-plumb-lines"`
 			} `json:"properties"`
 		}
 		if err := json.Unmarshal(typ.Schema(), &head); err != nil {
@@ -44,7 +46,7 @@ func loadAttrRules() {
 		}
 		m := map[string]attrRule{}
 		for attr, p := range head.Properties {
-			m[attr] = attrRule{skip: p.Enum != nil || p.Const != nil, sep: p.List}
+			m[attr] = attrRule{skip: p.Enum != nil || p.Const != nil, sep: p.List, lines: p.Lines}
 		}
 		attrRules[name] = m
 	}
@@ -140,3 +142,64 @@ func TypeWide(typ string) (key string, ok bool) {
 // apart from normal values; a guest that reports this exact text only
 // makes more Plans human-only (fail closed).
 func OpaqueValue(typ string) string { return "\x00plumb-opaque\x00" + typ }
+
+// MinLineChars is the shortest line (non-space characters) that the copy
+// rule hashes in a text attribute (x-plumb-lines): shorter lines ("}",
+// "fi", "[Unit]") are in every file and would only make noise.
+const MinLineChars = 8
+
+// GuestValueLines returns the lines of text v that text other does not
+// have, for an attribute marked x-plumb-lines (file.content, unit.content;
+// D-359, review O2 of #264): trimmed, at least MinLineChars non-space
+// characters, sorted, without duplicates. The bound MaxGuestElems counts
+// only these new lines, so a big unchanged file never overflows; over
+// reports more, and the caller fails closed. Every other attribute, and a
+// value that is not a string, gives nothing.
+func GuestValueLines(typ, attr string, v, other any) (lines []string, over bool) {
+	attrRulesOnce.Do(loadAttrRules)
+	if !attrRules[typ][attr].lines {
+		return nil, false
+	}
+	text, ok := v.(string)
+	if !ok {
+		return nil, false
+	}
+	have := map[string]bool{}
+	if o, ok := other.(string); ok {
+		for l := range strings.SplitSeq(o, "\n") {
+			have[strings.TrimSpace(l)] = true
+		}
+	}
+	set := map[string]bool{}
+	for l := range strings.SplitSeq(text, "\n") {
+		l = strings.TrimSpace(l)
+		if have[l] || set[l] || len(strings.Join(strings.Fields(l), "")) < MinLineChars {
+			continue
+		}
+		if len(set) >= MaxGuestElems {
+			over = true
+			break
+		}
+		set[l] = true
+	}
+	for l := range set {
+		lines = append(lines, l)
+	}
+	sort.Strings(lines)
+	return lines, over
+}
+
+// Scalar reports whether the copy rule compares value v of attr as a whole
+// in a type-wide check (D-359, review O1 of #264): enum and const values,
+// booleans and numbers, which GuestValueElems skips.
+func Scalar(typ, attr string, v any) bool {
+	attrRulesOnce.Do(loadAttrRules)
+	if attrRules[typ][attr].skip {
+		return true
+	}
+	switch v.(type) {
+	case bool, float64, float32, int, int64, json.Number:
+		return true
+	}
+	return false
+}

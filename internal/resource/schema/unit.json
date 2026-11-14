@@ -19,6 +19,7 @@
       "description": "Unit file name with its suffix. Names that start with plumb-agent are refused: the agent's units belong to Plumb (D-274)."
     },
     "content": {
+      "x-plumb-lines": true,
       "type": "string",
       "maxLength": 65536,
       "description": "Full content of the unit file. Required when state is present."

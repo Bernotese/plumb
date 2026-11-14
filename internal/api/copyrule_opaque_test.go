@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/plan"
@@ -116,4 +118,102 @@ func TestCopyRuleOpaqueRemovalIsFree(t *testing.T) {
 	if p := e.proposeDocs(e.token(TierPlan, ""), fwTarget("web3", `"tcp_ports":"80"`)...); len(p.HumanOnly) != 0 {
 		t.Fatalf("a removal is human-only: %+v", p)
 	}
+}
+
+// Review O1 of #264: after a hand change, every changed non-key value of
+// the type counts, also enums, booleans and numbers.
+func TestCopyRuleOpaqueScalars(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	id := e.opaqueDrift("web1", "firewall:main", "table")
+	for _, c := range []struct{ attrs, attr, el string }{
+		{`"policy":"accept"`, "policy", "accept"},
+		{`"ping":true`, "ping", "true"},
+		{`"ssh_port":2222`, "ssh_port", "2222"},
+		{`"allow_no_ssh":true,"policy":"accept"`, "allow_no_ssh", "true"},
+		{`"tcp_ports":"8080"`, "tcp_ports", "8080"},
+	} {
+		p := e.proposeDocs(e.token(TierPlan, ""), fwTarget("web3", c.attrs)...)
+		if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) || !hasMatch(p, id, "web3", c.attr, c.el) {
+			t.Fatalf("%s: %+v", c.attrs, p)
+		}
+		e.tokenRefused(p.ID)
+		if code, body := adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil); code >= 300 {
+			t.Fatalf("drop: %d %s", code, body)
+		}
+	}
+}
+
+// Review n1 of #264: the opaque path of apt_repository and sysctl through
+// the API; sysctl with an integer value (review O1).
+func TestCopyRuleOpaqueAptSysctl(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	target := func(name, block string) state.Doc {
+		return doc(state.KindTarget, name, `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"`+block+`"}]}`)
+	}
+	for _, c := range []struct {
+		typ, resource, attr, block, matchRes, matchAttr, el string
+	}{
+		{"apt_repository", "apt_repository:extra", "sources",
+			`{"resources":[{"apt_repository":{"name":"other","uris":["https://deb.example.org/debian"],"suites":["stable"],"components":["main"],"key":` + jsonString(testPGPKey) + `}}]}`,
+			"apt_repository:other", "uris", "https://deb.example.org/debian"},
+		{"sysctl", "sysctl:net.ipv4.ip_forward", "file",
+			`{"resources":[{"sysctl":{"name":"net.ipv4.conf.all.forwarding","value":1}}]}`,
+			"sysctl:net.ipv4.conf.all.forwarding", "value", "1"},
+	} {
+		id := e.opaqueDrift("web1", c.resource, c.attr)
+		name := strings.ReplaceAll(c.typ, "_", "-")
+		p := e.proposeDocs(e.token(TierPlan, ""), doc(state.KindBlock, "b-"+name, c.block), target("web-"+name, "b-"+name))
+		want := plan.GuestDataMatch{IssueID: id, Target: "web-" + name, Resource: c.matchRes, Attr: c.matchAttr, Element: c.el}
+		if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) || !slices.Contains(p.Matches, want) {
+			t.Fatalf("%s: %+v, want %+v", c.typ, p, want)
+		}
+		e.tokenRefused(p.ID)
+	}
+}
+
+// Review O2 of #264: a line that the guest added to a file counts on its
+// own: copied into another file (or a unit) it makes the Plan human-only.
+// Short lines and lines of the desired text do not count.
+func TestCopyRuleFileLines(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: "file:/etc/motd", Status: wire.StatusDiffers,
+		Changes: []wire.Change{{Attr: "content", From: "hello\nPermitRootLogin yes\n}\n", To: "hello\n", Risk: wire.RiskReversible}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	iss, err := e.st.OpenIssue(e.ctx, "web1", "file:/etc/motd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := func(content string) []state.Doc {
+		return []state.Doc{doc(state.KindBlock, "sshd", `{"resources":[{"file":{"path":"/etc/ssh/sshd_config.d/50-x.conf","content":`+jsonString(content)+`}}]}`),
+			doc(state.KindTarget, "web5", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"sshd"}]}`)}
+	}
+	p := e.proposeDocs(e.token(TierPlan, ""), other("# managed\nPermitRootLogin yes\n")...)
+	want := plan.GuestDataMatch{IssueID: iss.ID, Target: "web5", Resource: "file:/etc/ssh/sshd_config.d/50-x.conf", Attr: "content", Element: "PermitRootLogin yes"}
+	if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) || !slices.Contains(p.Matches, want) {
+		t.Fatalf("copied line: %+v", p)
+	}
+	e.tokenRefused(p.ID)
+	if code, body := adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil); code >= 300 {
+		t.Fatalf("drop: %d %s", code, body)
+	}
+	// "}" is too short and "hello" is too short as well: no match.
+	if q := e.proposeDocs(e.token(TierPlan, ""), other("hello\n}\nPermitRootLogin no\n")...); len(q.HumanOnly) != 0 {
+		t.Fatalf("short or own lines: %+v", q)
+	}
+}
+
+// testPGPKey has the shape that the apt_repository check accepts (as
+// internal/resource/slice3_test.go).
+const testPGPKey = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nComment: test\n\nxgEE\n=abcd\n-----END PGP PUBLIC KEY BLOCK-----\n"
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

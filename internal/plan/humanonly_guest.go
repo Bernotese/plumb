@@ -116,10 +116,17 @@ func (e *Engine) GuestValues(it wire.Item) (vals []store.GuestValue, over bool) 
 		want, _ := state.GuestValueElems(typ, c.Attr, c.To)
 		got, more := state.GuestValueElems(typ, c.Attr, c.From)
 		over = over || more
+		var fresh []string
 		for _, el := range got {
 			if _, found := slices.BinarySearch(want, el); found {
 				continue // the desired state has it: not guest data
 			}
+			fresh = append(fresh, el)
+		}
+		// The new lines of a text (D-359, review O2 of #264).
+		lines, more := state.GuestValueLines(typ, c.Attr, c.From, c.To)
+		over = over || more
+		for _, el := range append(fresh, lines...) {
 			v := store.GuestValue{Resource: it.Resource, Attr: c.Attr, Hash: e.guestHash(el)}
 			if !seen[v] {
 				seen[v] = true
@@ -169,7 +176,23 @@ func (e *Engine) newElems(base, next *state.Set, target string, out map[string][
 			}
 			now, more := state.GuestValueElems(r.Type, attr, v)
 			over = over || more
+			var prevVal any
+			if had && !slices.Contains(prev.Sensitive, attr) {
+				prevVal = prev.Attrs[attr]
+			}
+			lines, more := state.GuestValueLines(r.Type, attr, v, prevVal)
+			over = over || more
+			for _, el := range lines { // the new lines of a text (D-359, O2)
+				h := e.guestHash(el)
+				out[h] = append(out[h], planElem{target, r.ID, attr, el})
+			}
 			key, wide := state.TypeWide(r.Type)
+			if wide && attr != key && state.Scalar(r.Type, attr, v) && scalarAdds(attr, v, prevVal, had) {
+				// A type with an opaque change: an enum, boolean or
+				// number counts as a whole (review O1 of #264).
+				h0 := e.guestHash(state.OpaqueValue(r.Type))
+				out[h0] = append(out[h0], planElem{target, r.ID, attr, scalarText(v)})
+			}
 			for _, el := range now {
 				if _, found := slices.BinarySearch(was, el); found {
 					continue
@@ -384,4 +407,28 @@ func (e *Engine) planGuestData(ctx context.Context, id int64) ([]int64, []GuestD
 		return nil, nil, err
 	}
 	return issues, matches, nil
+}
+
+// scalarAdds reports whether a scalar value of a type-wide resource is a
+// change that is not a removal (D-359, review O1 of #264): a new or
+// changed value counts; state absent (the resource goes) stays free.
+func scalarAdds(attr string, v, prev any, had bool) bool {
+	if attr == wire.AttrState && v == wire.StateAbsent {
+		return false
+	}
+	if !had {
+		return true
+	}
+	a, _ := json.Marshal(v)
+	b, _ := json.Marshal(prev)
+	return string(a) != string(b)
+}
+
+// scalarText is the element shown for a scalar value in a match.
+func scalarText(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }

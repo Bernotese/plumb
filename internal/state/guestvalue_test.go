@@ -2,7 +2,9 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +57,27 @@ func TestGuestValueElemsBounded(t *testing.T) {
 	}
 	if _, over := GuestValueElems("user", "ssh_keys", list[:MaxGuestElems]); over {
 		t.Fatal("exactly the limit is not over")
+	}
+}
+
+// D-359, review O2 of #264: new lines of a text count, bounded on the new
+// lines only.
+func TestGuestValueLines(t *testing.T) {
+	got, over := GuestValueLines("file", "content", "keep me as is\n  PermitRootLogin yes \n}\nfi\nPermitRootLogin yes\n", "keep me as is\n")
+	if over || len(got) != 1 || got[0] != "PermitRootLogin yes" {
+		t.Fatalf("lines %q over %v", got, over)
+	}
+	if got, _ := GuestValueLines("file", "path", "/etc/a-long-path\n", ""); got != nil {
+		t.Fatalf("not a lines attribute: %q", got)
+	}
+	big := strings.Repeat("an unchanged line here\n", 10)
+	for i := 0; i < MaxGuestElems+10; i++ {
+		big += fmt.Sprintf("old line number %06d\n", i)
+	}
+	if _, over := GuestValueLines("file", "content", big+"one new line here\n", big); over {
+		t.Fatal("a big unchanged file overflowed")
+	}
+	if _, over := GuestValueLines("unit", "content", big, ""); !over {
+		t.Fatal("too many new lines did not overflow")
 	}
 }
