@@ -34,15 +34,25 @@ type Agent struct {
 
 	bodies    [][]byte               // raw body of every command, in order
 	onCommand func(wire.CommandType) // see OnCommand
-	mu        sync.Mutex
-	cred      string
-	enrolls   int
-	guest     map[string]map[string]any // what is "on the guest"
-	watch     []wire.Resource
-	failing   map[string]string // resource id → apply error
-	commands  []wire.CommandType
-	addrs     []string   // the address list of the Hello; nil: none (an old agent)
-	hello2    wire.Hello // binary_sha256, capabilities and reverted of the Hello (T-092)
+	// driftMu orders the drift reports like the real agent, which
+	// observes and sends drift in one loop: it is held from an
+	// observation until its report is delivered, so a newer observation
+	// is never delivered before an older one (T-157 follow-up: a watch
+	// report that saw an old value landed after a newer Change and opened
+	// a second Issue).
+	driftMu sync.Mutex
+	// beforeWatchReport runs between the observation of a watch and its
+	// drift report (tests of the order; see SetBeforeWatchReport).
+	beforeWatchReport func()
+	mu                sync.Mutex
+	cred              string
+	enrolls           int
+	guest             map[string]map[string]any // what is "on the guest"
+	watch             []wire.Resource
+	failing           map[string]string // resource id → apply error
+	commands          []wire.CommandType
+	addrs             []string   // the address list of the Hello; nil: none (an old agent)
+	hello2            wire.Hello // binary_sha256, capabilities and reverted of the Hello (T-092)
 
 	// seal (D-205, D-207), simulated like the real agent (T-060).
 	build     bool                                           // the build mark of the enrollment
@@ -282,10 +292,21 @@ func (a *Agent) FailApply(id, msg string) {
 	}
 }
 
+// SetBeforeWatchReport sets a function that runs after a watch observed
+// drift and before its report is sent (nil clears). It runs while the
+// drift order is held: a Change it starts waits for the report.
+func (a *Agent) SetBeforeWatchReport(f func()) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.beforeWatchReport = f
+}
+
 // Change changes a resource on the guest from outside Plumb (nil
 // removes it). When the resource is watched, the agent reports drift, or
 // "unchanged" when the guest matches again.
 func (a *Agent) Change(ctx context.Context, id string, attrs map[string]any) error {
+	a.driftMu.Lock()
+	defer a.driftMu.Unlock()
 	a.mu.Lock()
 	if attrs == nil {
 		delete(a.guest, id)
@@ -504,7 +525,10 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: []wire.Item{fn(gb)}})
 	case wire.CommandWatch:
 		// Like the real agent: store the list and report what differs now
-		// (open drift is reported again after a watch, T-018).
+		// (open drift is reported again after a watch, T-018). driftMu:
+		// no Change can come between this observation and its report.
+		a.driftMu.Lock()
+		defer a.driftMu.Unlock()
 		a.mu.Lock()
 		a.watched = true
 		a.watch = body.Resources
@@ -514,7 +538,11 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 				drift = append(drift, it)
 			}
 		}
+		hook := a.beforeWatchReport
 		a.mu.Unlock()
+		if hook != nil && len(drift) > 0 {
+			hook()
+		}
 		if len(drift) > 0 {
 			a.report(ctx, wire.Report{Type: wire.ReportDrift, Items: drift})
 		}
