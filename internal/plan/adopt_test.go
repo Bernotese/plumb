@@ -1,0 +1,182 @@
+package plan
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/driver/fake"
+	"github.com/Bernotese/plumb/internal/link"
+	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
+)
+
+type adoptEnv struct {
+	ctx context.Context
+	st  *store.Store
+	drv *fake.Driver
+	e   *Engine
+}
+
+func newAdoptEnv(t *testing.T) *adoptEnv {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "adopt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	lk, err := link.New(link.Config{Store: st, Dir: filepath.Join(t.TempDir(), "link")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drv := fake.New()
+	e, err := New(Config{Store: st, Agents: lk, Driver: drv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Close)
+	return &adoptEnv{ctx: ctx, st: st, drv: drv, e: e}
+}
+
+func (a *adoptEnv) person(name string, reasons ...string) (driver.GuestID, driver.Unmanaged) {
+	u := driver.Unmanaged{Node: "pve", Name: name, Kind: wire.KindVM, Reasons: reasons,
+		Warnings: []string{driver.WarnNotSealed}, Guest: map[string]any{"cores": 2, "memory": 1024, "disk": 10, "bridge": "vmbr0"}}
+	id := a.drv.AddUnmanaged(u, driver.GuestSpec{Kind: wire.KindVM, Cores: 2, MemoryMB: 1024, DiskGB: 10, Bridge: "vmbr0"})
+	u, _ = a.drv.InspectGuest(a.ctx, id)
+	return id, u
+}
+
+func vmidOf(t *testing.T, id driver.GuestID) int {
+	t.Helper()
+	var n int
+	if err := json.Unmarshal([]byte(id), &n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestUnmanagedGuests(t *testing.T) {
+	a := newAdoptEnv(t)
+	wiki, _ := a.person("wiki")
+	odd, _ := a.person("odd", driver.AdoptPrivileged)
+	held, _ := a.person("held")
+	if err := a.st.PutBinding(a.ctx, store.Binding{Kind: state.KindTarget, Name: "held", Ref: string(held)}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := a.e.UnmanagedGuests(a.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[driver.GuestID]bool{}
+	for _, u := range list {
+		got[u.ID] = u.Adoptable()
+	}
+	if len(got) != 2 || !got[wiki] || got[odd] {
+		t.Fatalf("unmanaged %v (wiki %s, odd %s, held %s)", got, wiki, odd, held)
+	}
+}
+
+func TestAdoptDocChecks(t *testing.T) {
+	a := newAdoptEnv(t)
+	wiki, u := a.person("wiki")
+	req := AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, wiki), Digest: u.Digest}
+	d, err := a.e.AdoptDoc(a.ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec map[string]any
+	json.Unmarshal(d.Spec, &spec)
+	if _, ok := spec["image"]; ok || spec["adopted"] == nil || d.Name != "wiki" {
+		t.Fatalf("doc %s", d.Spec)
+	}
+	if strings.Contains(string(d.Spec), "ssh_keys") {
+		t.Fatalf("ssh_keys in an adopted Target: %s", d.Spec)
+	}
+	if _, err := state.Validate([]state.Doc{d}); err != nil {
+		t.Fatalf("the adopted doc does not validate: %v", err)
+	}
+
+	for _, c := range []struct {
+		name string
+		mod  func(r *AdoptRequest)
+		want error
+	}{
+		{"digest", func(r *AdoptRequest) { r.Digest = strings.Repeat("0", 40) }, ErrGuestChanged},
+		{"node", func(r *AdoptRequest) { r.Node = "pve2" }, ErrGuestChanged},
+		{"other name", func(r *AdoptRequest) { r.Target = "wiki2" }, ErrGuestChanged},
+		{"not in the pool", func(r *AdoptRequest) { r.VMID = 9999 }, ErrGuestChanged},
+	} {
+		r := req
+		c.mod(&r)
+		if _, err := a.e.AdoptDoc(a.ctx, r); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, err, c.want)
+		}
+	}
+	odd, ou := a.person("odd", driver.AdoptHostDevice)
+	if _, err := a.e.AdoptDoc(a.ctx, AdoptRequest{Target: "odd", Node: "pve", VMID: vmidOf(t, odd), Digest: ou.Digest}); !errors.Is(err, ErrNotAdoptable) {
+		t.Errorf("not adoptable: %v", err)
+	}
+	if err := a.st.PutBinding(a.ctx, store.Binding{Kind: state.KindTarget, Name: "x", Ref: string(wiki)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.e.AdoptDoc(a.ctx, req); !errors.Is(err, ErrGuestBound) {
+		t.Errorf("bound: %v", err)
+	}
+}
+
+// ARCH §19: a guest swapped or renamed between Plan and Run is refused,
+// and nothing is bound. A good Run binds and tells the driver the ref.
+func TestAdoptBind(t *testing.T) {
+	a := newAdoptEnv(t)
+	wiki, u := a.person("wiki")
+	req := AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, wiki), Digest: u.Digest}
+	d, err := a.e.AdoptDoc(a.ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := state.Validate([]state.Doc{d})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := state.Rows(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.st.CommitRevision(a.ctx, store.NewRevision{Author: "user:qa", Docs: rows}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.drv.RenameGuest(wiki, "wiki")
+	a.drv.RenameGuest(wiki, "other")
+	if err := a.e.adoptBind(a.ctx, req); !errors.Is(err, ErrGuestChanged) {
+		t.Fatalf("renamed between Plan and Run: %v", err)
+	}
+	if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a binding after a refused Run: %v", err)
+	}
+
+	b, bu := a.person("wiki")
+	req = AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, b), Digest: bu.Digest}
+	d, _ = a.e.AdoptDoc(a.ctx, req)
+	set, _ = state.Validate([]state.Doc{d})
+	rows, _ = state.Rows(set)
+	if _, err := a.st.CommitRevision(a.ctx, store.NewRevision{Author: "user:qa", Docs: rows}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.e.adoptBind(a.ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	bind, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki")
+	if err != nil || bind.Ref != string(b) {
+		t.Fatalf("binding %+v %v", bind, err)
+	}
+	if got := a.drv.Adopted(); got[b] != "wiki" || len(got) != 1 {
+		t.Fatalf("adopted refs %v", got)
+	}
+}
