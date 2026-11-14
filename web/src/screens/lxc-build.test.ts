@@ -150,7 +150,8 @@ describe("target from a built lxc Image (D-251)", () => {
     expect(doc.spec.guest).not.toHaveProperty("ssh_keys");
     expect(doc.spec.guest).not.toHaveProperty("user");
     expect(doc.spec.blocks).toEqual([
-      { use: "deploy-user", params: { name: "deploy", ssh_key: KEY } },
+      // name keeps the Block default "deploy": not written (D-376).
+      { use: "deploy-user", params: { ssh_key: KEY } },
     ]);
   });
 
