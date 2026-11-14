@@ -205,6 +205,9 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 				unverified++
 			}
 		}
+		if warn := s.cfg.Plans.RepairFirewallWarning(ctx, tp); warn != "" {
+			v.Warnings = append(v.Warnings, warn) // D-384
+		}
 		switch {
 		case unverified > 0 && tp.Guest == "create":
 			v.Warnings = append(v.Warnings, fmt.Sprintf("%s is a new target: %d resources are unverified until the first boot.", tp.Target, unverified))

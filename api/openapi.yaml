@@ -2887,7 +2887,6 @@ paths:
     post:
       tags: [settings]
       operationId: rotateRepairKey
-      x-plumb-planned: T-191
       summary: Make a new repair SSH key
       description: |
         Human admin session only (D-382). Without `revoke_old`: makes a new ed25519 repair key;
@@ -5051,7 +5050,7 @@ components:
             `{role}`) and `user.changed` (data `{role, disabled}`) are D-330; no event holds a
             password. `settings.changed` (subject `settings:backup`, data `{old, new}` with the
             changed fields) is D-361. `token.rate_limited` (subject `token:<id>`, data `{kind:
-            proposal|comment}`) and `agent.rate_limited` (subject `target:<name>`, data `{}`) come
+            proposal|comment|read}`) and `agent.rate_limited` (subject `target:<name>`, data `{}`) come
             at most once per 10 minutes per token or agent (D-365, D-366).
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }

@@ -126,6 +126,8 @@ type Agent struct {
 	sealedContainer bool
 
 	oneShot *oneShot // the one-shot enrollment token (D-390); Run goroutine only
+
+	repair repairState // the SSH repair line and report (D-383, D-384)
 }
 
 // New builds an agent. It reads the stored credential and desired list.
@@ -236,6 +238,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// (D-300).
 	restored := a.restoreAtStart(ctx)
 	a.oneShot = a.takeOneShot()
+	a.loadRepair()
 	w, err := newWatcher()
 	if err != nil {
 		return fmt.Errorf("inotify: %w", err)
@@ -293,6 +296,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			// The backoff is reset only after a successful poll or result:
 			// an error after a working hello must not loop at BackoffMin.
 			connected = true
+			a.markRepairDue() // a new hello: the controller gets the repair report again
 		}
 		if pending != nil {
 			if err := a.send(ctx, *pending); err != nil {
@@ -323,6 +327,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		}
 		if err := a.sendAddrs(ctx, time.Now()); err != nil {
+			connected = a.connError(ctx, err, &b, connected)
+			continue
+		}
+		if err := a.sendRepair(ctx, time.Now()); err != nil {
 			connected = a.connError(ctx, err, &b, connected)
 			continue
 		}

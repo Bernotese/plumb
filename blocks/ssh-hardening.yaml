@@ -19,10 +19,12 @@ spec:
         type: string
         title: Root login
         description: >-
-          prohibit-password allows root only with a key; no refuses root. Do not
-          choose no on a Target whose bootstrap user (guest.user) is root: that
-          locks it out.
-        enum: [prohibit-password, "no"]
+          prohibit-password allows root only with a key; forced-commands-only
+          allows root only with a key that has a fixed command (enough for the
+          Plumb SSH repair, D-384); no refuses root and turns the repair
+          fallback off. Do not choose no or forced-commands-only on a Target
+          whose bootstrap user (guest.user) is root: that locks it out.
+        enum: [prohibit-password, forced-commands-only, "no"]
         default: prohibit-password
       max_auth_tries:
         type: string

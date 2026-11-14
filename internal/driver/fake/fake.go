@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"slices"
 	"sort"
@@ -559,7 +560,7 @@ func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestSt
 		spec := g.spec
 		spec.SSHKeys = append([]string(nil), g.spec.SSHKeys...)
 		spec.Tags, spec.TagsSet = append([]string(nil), g.spec.Tags...), true
-		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != "", TokenInConfig: g.env}
+		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != "", TokenInConfig: g.env, MAC: fakeMAC(id)}
 		if !equalSpec(g.spec, g.next) {
 			next := g.next
 			next.SSHKeys = append([]string(nil), g.next.SSHKeys...)
@@ -1048,4 +1049,13 @@ func (d *Driver) RemoveBuild(ctx context.Context, id driver.GuestID, image strin
 		delete(d.guests, id)
 		return nil
 	})
+}
+
+// fakeMAC is a stable MAC per guest id: bc:24:11 and three bytes of the
+// id's FNV hash.
+func fakeMAC(id driver.GuestID) string {
+	h := fnv.New32a()
+	h.Write([]byte(id))
+	s := h.Sum32()
+	return fmt.Sprintf("bc:24:11:%02x:%02x:%02x", byte(s>>16), byte(s>>8), byte(s))
 }

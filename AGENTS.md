@@ -18,7 +18,7 @@ Rules for every agent in this repo. Keep this file short; details live in `docs/
 | `pl-architect` | Claude Fable 5.2 (high) | Architecture + planning | ADRs, API/data contracts, task breakdown, scaffolding, research |
 | `pl-frontend` | Claude Opus 5.5 | Frontend engineer | UI, state, styling, accessibility – large features |
 | `pl-backend` | Claude Opus 5.5 | Backend engineer | API, DB, auth, jobs, infra – large features |
-| `pl-reviewer` | Claude Opus 5.5 | Review + security | Diff review, threat model, OWASP, secrets, deps; fallback implementer |
+| `pl-reviewer` | Claude Opus 5.5 | Security review | Review of the security-critical parts (D-394), threat model, OWASP, secrets, deps; fallback implementer |
 | `pl-codex-qa` | Codex GPT-6.1-Sol (medium) | QA | Tests (unit/e2e), bug repro, CI, acceptance checks |
 | `pl-codex-fix` | Codex GPT-6-Luna (medium) | Fixer | Small targeted fixes, lint/type errors, refactors, `audit` scans, review findings |
 
@@ -49,7 +49,7 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 2. Large/unclear: `pl-architect` plans first (adds a "Plan" section to the card).
 3. Implement: Claude implementer (big) or Codex (small).
 4. Verify: `pl-codex-qa` adds/extends tests and checks acceptance criteria.
-5. Review: `pl-reviewer` reviews the diff incl. security; findings → `pl-codex-fix` (small) or author (big).
+5. Review (split, D-394, user rule): any free agent reviews, mainly `pl-architect` and `pl-backend`, but never its own code. `pl-lead` names the reviewer in the card or when the PR is up. **Only security-critical parts stay with `pl-reviewer`:** token rights and ACLs, secrets and crypto, the installer, the repair path, auth and sessions. A PR with such a part and other parts gets two reviewers; `pl-reviewer` reads only the critical part. If `pl-reviewer` wrote a critical part, `pl-architect` reviews it. Findings → `pl-codex-fix` (small) or author (big).
 6. Merge: only `pl-lead` merges into `main`, updates `docs/STATUS.md`, tells the user.
 - Run independent cards in parallel. Keep every agent busy; nobody waits for a plan they do not need.
 
