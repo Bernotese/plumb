@@ -120,6 +120,11 @@ func (s *Store) HostKeyPins(ctx context.Context, target, guestID string) ([]stri
 func (s *Store) PinFirstHostKeys(ctx context.Context, target, guestID string, fps []string, at time.Time) (bool, error) {
 	pinned := false
 	err := s.tx(ctx, func(tx *sql.Tx) error {
+		// Only for the current binding generation (T-209): a report that
+		// raced the delete or the rebind of its Target pins nothing.
+		if live, err := liveGuest(ctx, tx, target, guestID); err != nil || !live {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM guest_host_key WHERE target = ? AND guest_id <> ?`, target, guestID); err != nil {
 			return err
 		}
@@ -146,10 +151,25 @@ func (s *Store) PinFirstHostKeys(ctx context.Context, target, guestID string, fp
 // AddHostKeyPin pins one more fingerprint, accepted by a person in an
 // approved repair Plan (by is the approver).
 func (s *Store) AddHostKeyPin(ctx context.Context, target, guestID, fp, by string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO guest_host_key (target, guest_id, fingerprint, pinned_at, pinned_by) VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT DO NOTHING`, target, guestID, fp, formatTime(at), by)
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if live, err := liveGuest(ctx, tx, target, guestID); err != nil {
+			return err
+		} else if !live {
+			return ErrNotFound // the binding ended or has a new guest
+		}
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO guest_host_key (target, guest_id, fingerprint, pinned_at, pinned_by) VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT DO NOTHING`, target, guestID, fp, formatTime(at), by)
+		return err
+	})
+}
+
+// liveGuest reports whether guestID ("<ref>@<gen>") is the guest of the
+// current binding of target (T-209).
+func liveGuest(ctx context.Context, tx *sql.Tx, target, guestID string) (bool, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT ? AS target, ? AS guest_id) r WHERE `+liveGuestSQL, target, guestID).Scan(&n)
+	return n > 0, err
 }
 
 // RepairReportRow is the last repair report of a target.
@@ -161,10 +181,12 @@ type RepairReportRow struct {
 
 // SetRepairReport stores the last repair report of a target.
 func (s *Store) SetRepairReport(ctx context.Context, target string, r RepairReportRow) error {
+	// Only for the current binding generation (T-209).
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO repair_report (target, guest_id, report, reported_at) VALUES (?, ?, ?, ?)
+		`INSERT INTO repair_report (target, guest_id, report, reported_at)
+		 SELECT r.target, r.guest_id, ?, ? FROM (SELECT ? AS target, ? AS guest_id) r WHERE `+liveGuestSQL+`
 		 ON CONFLICT (target) DO UPDATE SET guest_id = excluded.guest_id, report = excluded.report, reported_at = excluded.reported_at`,
-		target, r.GuestID, string(r.Report), formatTime(r.ReportedAt))
+		string(r.Report), formatTime(r.ReportedAt), target, r.GuestID)
 	return err
 }
 
@@ -187,7 +209,7 @@ func (s *Store) RepairReport(ctx context.Context, target string) (RepairReportRo
 // RepairReportTargets lists the targets with a report and the key ids of
 // their lines, for previous.targets of the rotation view.
 func (s *Store) RepairReportTargets(ctx context.Context) (map[string]json.RawMessage, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT target, report FROM repair_report ORDER BY target`)
+	rows, err := s.db.QueryContext(ctx, `SELECT target, report FROM repair_report r WHERE `+liveGuestSQL+` ORDER BY target`)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +235,7 @@ func (s *Store) HostKeyOwners(ctx context.Context, fps []string, except string) 
 		}
 		var t string
 		err := s.db.QueryRowContext(ctx,
-			`SELECT target FROM guest_host_key WHERE fingerprint = ? AND target <> ? ORDER BY target LIMIT 1`, f, except).Scan(&t)
+			`SELECT target FROM guest_host_key r WHERE fingerprint = ? AND target <> ? AND `+liveGuestSQL+` ORDER BY target LIMIT 1`, f, except).Scan(&t)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

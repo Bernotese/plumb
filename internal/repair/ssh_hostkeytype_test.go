@@ -122,7 +122,7 @@ func TestRepairAcceptEachHostKeyType(t *testing.T) {
 			if err != nil || !sent || exit != 0 || len(f.stdin) != 1 {
 				t.Fatalf("repair with %s accepted: exit %d sent %v err %v", accept, exit, sent, err)
 			}
-			pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101")
+			pins := e.pinsOf("web1", "vm/101")
 			if !slices.Contains(pins, fp) {
 				t.Fatalf("the accepted key is not pinned: %v", pins)
 			}
@@ -158,7 +158,7 @@ func TestRepairOffersOnlyPinnedTypes(t *testing.T) {
 				keys := newHostKeySet(t)
 				keys.serve(f, allTypes...)
 				keys.report(e, f, withTypes, pinned) // only this key is reported, so pinned
-				if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101"); len(pins) != 1 {
+				if pins := e.pinsOf("web1", "vm/101"); len(pins) != 1 {
 					t.Fatalf("pins %v", pins)
 				}
 				exit, sent, _, err := send(e, "")
