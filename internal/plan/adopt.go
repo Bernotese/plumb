@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/link/agentinstall"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -484,7 +485,7 @@ func adoptPlans(reqs []AdoptRequest, plans []TargetPlan, inBase map[string]bool)
 	return notes, nil
 }
 
-// unbindTimeout bounds the unbind command of the agent.
+// unbindTimeout is the default of Config.UnbindTimeout.
 const unbindTimeout = 2 * time.Minute
 
 // unbindGuest is the Run step of the delete of an adopted Target that
@@ -516,7 +517,7 @@ func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.
 	why := ""
 	if !e.cfg.Agents.Online(target) {
 		why = "the agent is offline"
-	} else if rep, err := e.command(ctx, target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil); err != nil || rep.Error != "" {
+	} else if rep, err := e.command(ctx, target, wire.CommandUnbind, struct{}{}, e.cfg.UnbindTimeout, nil); err != nil || rep.Error != "" {
 		why = rep.Error
 		if err != nil {
 			why = err.Error()
@@ -577,18 +578,61 @@ func (e *Engine) RetryUnbinds(ctx context.Context) error {
 		if !e.cfg.Agents.Online(p.Target) {
 			continue
 		}
-		rep, err := e.command(ctx, p.Target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil)
+		// No second unbind while one waits in the queue (the first of the
+		// delete Run, or an earlier retry): the agent gets that one at its
+		// next poll, and its result ends the park through lateUnbind
+		// (T-210). A taken unbind without a result does not block a retry:
+		// the agent may have stopped in the middle; unbind is idempotent.
+		if e.cfg.Agents.Queued(p.Target, wire.CommandUnbind) {
+			continue
+		}
+		rep, err := e.command(ctx, p.Target, wire.CommandUnbind, struct{}{}, e.cfg.UnbindTimeout, nil)
 		if err != nil || rep.Error != "" {
 			continue // tried again at the next poll
 		}
-		if err := e.revokeParked(ctx, p); err != nil {
+		if err := e.endUnbindPark(ctx, p); err != nil {
 			return err
 		}
-		if err := e.st.Unpark(ctx, p.Target); err != nil {
-			return err
-		}
-		e.emit(ctx, "agent.unbound", "target:"+p.Target, "system", map[string]any{"guest": p.GuestRef})
 	}
+	return nil
+}
+
+// lateUnbind takes the result of an unbind command whose waiter is gone
+// (T-210). It ends the park only when every one of these holds: the
+// command was an unbind that link sent to this target's agent (link
+// delivers results only of its own outstanding command ids, with their
+// type), the reporting agent is the parked agent of the target (an agent
+// id check, so no agent can end the park of another), and the agent
+// reports success. Otherwise nothing changes; a failed unbind stays
+// parked for the retry.
+func (e *Engine) lateUnbind(ctx context.Context, d link.Delivery) error {
+	if d.Report.Error != "" {
+		e.log.Info("a late unbind failed; the agent stays parked", "target", d.Target)
+		return nil
+	}
+	parked, err := e.st.ParkedTargets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range parked {
+		if p.Target == d.Target && p.AgentID == d.AgentID {
+			return e.endUnbindPark(ctx, p)
+		}
+	}
+	return nil // not parked (the Run's own waiter took it, or another agent)
+}
+
+// endUnbindPark ends a park after a confirmed unbind: the credential is
+// revoked (which also empties the target's command queue), the row goes,
+// event agent.unbound.
+func (e *Engine) endUnbindPark(ctx context.Context, p store.Parked) error {
+	if err := e.revokeParked(ctx, p); err != nil {
+		return err
+	}
+	if err := e.st.Unpark(ctx, p.Target); err != nil {
+		return err
+	}
+	e.emit(ctx, "agent.unbound", "target:"+p.Target, "system", map[string]any{"guest": p.GuestRef})
 	return nil
 }
 

@@ -4903,7 +4903,9 @@ components:
             disk storage of the install), `nic-layout` (not exactly one NIC `net0`), `bridge` (a
             bridge without an ACL line of the install), `vlan` (a tag), `privileged` (a privileged
             LXC), `host-device` (`devN`, `usbN`, `hostpciN`), `template`, `name` (not a valid
-            document name; rename it in Proxmox).
+            document name; rename it in Proxmox), `agent-left` (the agent of a deleted adopted
+            Target is parked in this guest, `agent_left`; the adopt gives 409 `agent-left` until
+            its unbind is confirmed or an admin forgets it, D-396).
           items: { type: string }
         warnings:
           type: array
