@@ -1121,7 +1121,6 @@ paths:
     post:
       tags: [targets]
       operationId: repairTarget
-      x-plumb-planned: T-190
       x-plumb-rate: proposal
       summary: Propose a repair of a dead agent over SSH
       description: |

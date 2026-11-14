@@ -208,6 +208,8 @@ type Config struct {
 	ReservedAddrs ReservedFunc
 	// Restore is restored mode (D-303); nil: never restored.
 	Restore *RestoreMode
+	// Repair is what a repair Run needs (D-385); zero: no repair.
+	Repair RepairConfig
 }
 
 // Engine runs the change flow.

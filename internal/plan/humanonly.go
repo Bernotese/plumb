@@ -26,6 +26,10 @@ const (
 	// goes, the Target is deleted) or gets state absent. That opens every
 	// port at once, so a person must see it, whatever made the Plan.
 	HumanOnlyFirewallOff = "firewall-off"
+	// HumanOnlyRepair: every repair Plan (D-372, D-385). The Run puts a
+	// new binary and a new credential into the guest as root, so a person
+	// approves it, whatever the token tier.
+	HumanOnlyRepair = "repair"
 )
 
 // firewallType is the resource type of the guest firewall (D-295).

@@ -299,6 +299,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 		AddrStable: devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
+		// The transport comes with T-191; without it a repair is not ready.
+		Repair: plan.RepairConfig{Tokens: lk, AgentBinary: agentBinary(), CA: lk.CA().CertPEM, AgentURL: agentURL(f.hosts, f.agentListen)},
 	})
 	if err != nil {
 		return err
