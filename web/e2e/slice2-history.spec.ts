@@ -56,7 +56,7 @@ test("history: diff of two changes, rollback through a plan", async ({ page }) =
 
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText(`Rollback to revision ${one}`)).toBeVisible();
-  await expect(page.getByRole("row", { name: /text|content/ }).first()).toBeVisible();
+  await expect(page.getByRole("row", { name: /message|content/ }).first()).toBeVisible();
   await approveAndRun(page);
 
   // The new head has the documents of revision `one` again.
