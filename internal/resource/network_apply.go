@@ -206,9 +206,10 @@ func fileAddrs(content string) []netip.Prefix {
 // mainLink returns the NIC and the source address of the route to the
 // controller: the path that the agent link uses.
 //
-// wait: Prepare waits for the route (routeGet); Observe asks once, so the
-// drift loop never stalls for the route (review of T-164).
-func (n *network) mainLink(ctx context.Context, wait bool) (dev string, addr netip.Addr, err error) {
+// wait bounds the wait for the route: Prepare waits routeWait; Observe
+// only observeRouteWait, so the drift loop never stalls long, but a gap of
+// a DHCP NIC after a netplan apply (about 25 ms in CI) is no error (T-164).
+func (n *network) mainLink(ctx context.Context, wait time.Duration) (dev string, addr netip.Addr, err error) {
 	host := n.env.Controller
 	if host == "" {
 		return "", addr, errors.New("the agent does not know the controller address")
@@ -221,12 +222,7 @@ func (n *network) mainLink(ctx context.Context, wait bool) (dev string, addr net
 		}
 		ip = ips[0].Unmap()
 	}
-	var out []byte
-	if wait {
-		out, err = n.routeGet(ctx, ip)
-	} else {
-		out, err = n.run(ctx, "ip", "-j", "route", "get", ip.String())
-	}
+	out, err := n.routeGet(ctx, ip, wait)
 	if err != nil {
 		return "", addr, fmt.Errorf("route to the controller: %w", err)
 	}
@@ -249,14 +245,15 @@ func (n *network) mainLink(ctx context.Context, wait bool) (dev string, addr net
 // "Network is unreachable". The step waits for the route, bounded, instead
 // of failing at once.
 var (
-	routeWait  = 30 * time.Second
-	routeRetry = 500 * time.Millisecond
+	routeWait        = 30 * time.Second
+	observeRouteWait = 3 * time.Second
+	routeRetry       = 500 * time.Millisecond
 )
 
 // routeGet runs ip route get to ip, again every routeRetry until it
-// answers or routeWait (or ctx) ends.
-func (n *network) routeGet(ctx context.Context, ip netip.Addr) ([]byte, error) {
-	end := time.Now().Add(routeWait)
+// answers or wait (or ctx) ends.
+func (n *network) routeGet(ctx context.Context, ip netip.Addr, wait time.Duration) ([]byte, error) {
+	end := time.Now().Add(wait)
 	for {
 		out, err := n.run(ctx, "ip", "-j", "route", "get", ip.String())
 		if err == nil || time.Now().Add(routeRetry).After(end) {
@@ -435,7 +432,7 @@ func (n *network) Observe(ctx context.Context) (State, error) {
 	if n.a.State == wire.StateAbsent {
 		return st, nil
 	}
-	dev, _, err := n.mainLink(ctx, false)
+	dev, _, err := n.mainLink(ctx, observeRouteWait)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +637,7 @@ func (n *network) Prepare(ctx context.Context) error {
 	if n.env.StateDir == "" {
 		return errors.New("network needs the agent state dir")
 	}
-	dev, main, err := n.mainLink(ctx, true)
+	dev, main, err := n.mainLink(ctx, routeWait)
 	if err != nil {
 		return err
 	}

@@ -414,6 +414,9 @@ func TestNetworkWaitsForRoute(t *testing.T) {
 	if got := f.count("ip", "-j", "route", "get"); got < 4 {
 		t.Errorf("route get %d times, want the 3 failures and a success", got)
 	}
+	if err := n.Apply(ctx, diffOf(t, n)); err != nil { // the file exists: Observe asks the route
+		t.Fatal(err)
+	}
 	// The route never comes: the step fails after the bound, nothing changed.
 	env2, f2, _ := newNetEnv(t)
 	f2.noRoute = -1
@@ -425,6 +428,21 @@ func TestNetworkWaitsForRoute(t *testing.T) {
 	}
 	if f2.count("systemd-run") != 0 {
 		t.Error("something was armed without a route")
+	}
+	// Observe (the drift loop) waits only a short bound: a gap of a DHCP
+	// NIC is no error (old run of #261), a lost route fails fast.
+	oldObs := observeRouteWait
+	t.Cleanup(func() { observeRouteWait = oldObs })
+	observeRouteWait = 2 * time.Second
+	f.noRoute = 2
+	if _, err := netRes(t, env, cloneAttrs(extra)).Observe(ctx); err != nil {
+		t.Fatalf("Observe after a short route gap: %v", err)
+	}
+	observeRouteWait = 100 * time.Millisecond
+	f.noRoute = -1
+	start = time.Now()
+	if _, err := netRes(t, env, cloneAttrs(extra)).Observe(ctx); err == nil || time.Since(start) > time.Second {
+		t.Fatalf("Observe without a route: %v after %v", err, time.Since(start))
 	}
 }
 
