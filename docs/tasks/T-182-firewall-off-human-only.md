@@ -21,4 +21,8 @@ Slice 6 part A, child card **A8** of T-172. A Plan that removes a `firewall` res
 - Everything of other rows. Part B (waits for the user). Any release step.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+branch `pl-reviewer/T-182-firewall-off` (Codex limit: done by pl-reviewer; the empty pl-codex-fix/T-182 branch is untouched) · tests: `make lint test` → pass (web 614)
+- `firewall-off` (D-368): `firewallOff` compares each touched Target's base render with the next render; a firewall that is on in the base and is gone (resource or use removed, Block deleted with its use, Target deleted) or absent (Block state, or an override on a defaults firewall) adds the reason, for every origin. A firewall that was off already, a change of its values, or a new firewall add nothing.
+- Target delete: the reason is added too (it is destructive and human-only anyway; the Plan then also names why the guest's firewall goes).
+- Web (pl-lead OK): a `firewall-off` text; an unknown reason shows "Needs a person: <reason>." instead of the secret-binding sentence; a test makes every reason of the contract have its own text.
+- Mutants killed: no wiring in Propose; no web text.

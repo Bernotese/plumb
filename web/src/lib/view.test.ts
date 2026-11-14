@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import type { Issue, Plan, TargetView } from "./types";
 import {
   addressIssueText,
@@ -143,6 +145,33 @@ describe("humanOnlyReasons (D-099)", () => {
     expect(humanOnlyReasons({ ...base, human_only: ["image-recipe"], targets: [] })).toEqual([
       "It makes, changes or deletes the recipe of a built image, or makes a container image or changes its address or checksum.",
     ]);
+  });
+  it("names the removal of a firewall (D-368)", () => {
+    expect(humanOnlyReasons({ ...base, human_only: ["firewall-off"], targets: [] })).toEqual([
+      "It turns off the firewall of a target (D-368): every port of that guest is open then.",
+    ]);
+  });
+  it("shows an unknown reason neutrally, never as a secret binding (T-182)", () => {
+    const plan = { ...base, human_only: ["some-new-reason"], targets: [] } as unknown as Plan;
+    expect(humanOnlyReasons(plan)).toEqual(["Needs a person: some-new-reason."]);
+  });
+  it("has its own text for every reason of the contract (T-182)", () => {
+    const yaml = readFileSync(new URL("../../../api/openapi.yaml", import.meta.url), "utf8");
+    const doc = parse(yaml) as {
+      components: {
+        schemas: { Plan: { properties: { human_only: { items: { enum: string[] } } } } };
+      };
+    };
+    const reasons = doc.components.schemas.Plan.properties.human_only.items.enum;
+    expect(reasons.length).toBeGreaterThan(5);
+    const texts = new Set<string>();
+    for (const r of reasons) {
+      const plan = { ...base, human_only: [r], targets: [] } as unknown as Plan;
+      const [text] = humanOnlyReasons(plan);
+      expect([r, text?.startsWith("Needs a person:")]).toEqual([r, false]);
+      texts.add(text ?? "");
+    }
+    expect(texts.size).toBe(reasons.length);
   });
   it("names adopted guest data of an Accept (D-323)", () => {
     expect(humanOnlyReasons({ ...base, human_only: ["accept-guest-data"], targets: [] })).toEqual([
