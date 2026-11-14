@@ -35,6 +35,9 @@ export type UserRole = S["Role"];
 export type PinRefresh = S["PinRefresh"];
 /** The answer of `POST /images/{name}/refresh`: a Plan, or the pin is current. */
 export type RefreshResult = { plan: Plan } | { unchanged: PinRefresh };
+/** Controller settings (D-361): the backup schedule and the Proxmox view. */
+export type Settings = S["Settings"];
+export type ChangeSettings = S["ChangeSettingsRequest"];
 
 export interface PlumbApi {
   session(): Promise<Session>;
@@ -106,6 +109,10 @@ export interface PlumbApi {
   revokeToken(id: string): Promise<void>;
   /** Enables a token that a restore disabled (D-303, human session). */
   enableToken(id: string): Promise<Token>;
+  /** The backup schedule with its sources and the Proxmox view (D-361). */
+  getSettings(): Promise<Settings>;
+  /** Changes the backup schedule; `null` goes back to the install value (human admin). */
+  changeSettings(change: ChangeSettings): Promise<Settings>;
   /** Backups, schedule, last run and the off-host copy state (D-302). */
   listBackups(): Promise<BackupList>;
   /** Starts one backup now; 409 `backup-running` or `restored-mode`. */
