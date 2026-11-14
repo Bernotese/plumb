@@ -78,6 +78,19 @@ jobs:
       - run: make test-guest-lxd
         env:
           GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  race:
+    name: Go race detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Race detector
+        run: make test-race
   check:
     name: lint, test, build
     runs-on: ubuntu-latest
@@ -98,8 +111,6 @@ jobs:
       - name: Known vulnerabilities (govulncheck)
         run: make vuln
       - run: make test
-      - name: Race detector
-        run: make test-race
       - run: make build
       - name: Binaries print a version
         run: |
