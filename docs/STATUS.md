@@ -67,7 +67,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-163 copy rule: write load of hostile guests | pl-codex-fix | merged (PR #256). Open for slice 6: per-agent rate limit for drift reports |
 | T-150 slice 5 C6: generic safe apply + resource `network` | pl-backend | merged (PR #249), D-354 … D-357. CI guest test in both cloud VMs: 6 steps incl. forced rollback and timer restore without the agent |
 | T-164 `network`: review notes of #249 + boot unit `plumb-agent-network.service` | pl-backend | merged (PR #261), D-358 |
-| T-165 CI: race detector as its own job (the job "lint, test, build" hit its 15 min limit again) | pl-codex-qa | PR #263, review passed, waits for CI |
+| T-165 CI: race detector as its own job (the job "lint, test, build" hit its 15 min limit again) | pl-codex-qa | merged (PR #263): check ~7 min, race ~8 min, both with a 15 min limit |
 | T-152 slice 5 C8: signed checksums | pl-architect (implementer) | merged: part A (PR #247), part B (PR #255, migration 0019), follow-up (PR #262) |
 | T-154 slice 5 C9b: web (catalogue, users page, role-aware buttons, Image `verify`) | pl-frontend | merged (PR #252); "Refresh base" tested on the mock only until T-152 part B |
 | T-157 slice 5 C12: QA | pl-codex-qa | merged: part 1 (PR #251), part 2 (PR #257), part 3 (PR #260: network rollback 10/10, trust 9/9 reachable mutants killed) |
