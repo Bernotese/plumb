@@ -225,6 +225,14 @@ func TestHostKeySharedLiveClone(t *testing.T) {
 	if owners, _ := s.HostKeyOwners(ctx, []string{"SHA256:same"}, "b"); owners["SHA256:same"] != "a" {
 		t.Fatalf("clone not seen: %v", owners)
 	}
+	// A dead row (a guest key of no live binding, e.g. from an old
+	// database) never counts.
+	if _, err := s.db.Exec(`INSERT INTO guest_host_key VALUES ('gone', '9100@1', 'SHA256:dead', '2026-11-14T00:00:00Z', 'agent')`); err != nil {
+		t.Fatal(err)
+	}
+	if owners, _ := s.HostKeyOwners(ctx, []string{"SHA256:dead"}, "b"); len(owners) != 0 {
+		t.Fatalf("a dead pin counts: %v", owners)
+	}
 }
 
 // T-209 sweep: the marks of a deleted Target go; another Target's stay.
