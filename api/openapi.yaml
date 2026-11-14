@@ -4109,12 +4109,13 @@ components:
             the Target). Missing on an older controller. Equals `accept_mode == raw` (D-362).
         accept_mode:
           type: string
-          enum: [param, raw, none]
+          enum: [param, raw, guest, none]
           description: |
             What `accept` writes (D-362). `param`: the observed values map back to Block
-            parameters (`accept_params`); Accept sets `blocks[i].with.<param>` of this Target, the
-            Block does not change. `raw`: an override of this Target, as before (D-296);
-            `accept_reason` says why no parameter fits. `none`: `accept` is not in `actions`.
+            parameters (`accept_params`); Accept sets `blocks[i].params.<param>` of this Target,
+            the Block does not change. `raw`: an override of this Target, as before (D-296);
+            `accept_reason` says why no parameter fits. `guest`: a `guest:*` Issue; Accept writes
+            the guest settings of the Target (D-068). `none`: `accept` is not in `actions`.
             A change maps when its attribute's template in the Block is exactly
             `<literal>{{ .p }}<literal>` (one plain field of a top-level parameter, no pipeline,
             function or trim marker, `p` nowhere else in that attribute), the observed value has

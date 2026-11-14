@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -208,42 +207,37 @@ func TestNetWantIDs(t *testing.T) {
 	}
 }
 
-// TestNetReadOnlyKernel: a message from another process (port id not 0)
-// is no trigger. Needs
-// rtnetlink, which every Linux test host has; skips when it is missing.
-func TestNetReadOnlyKernel(t *testing.T) {
-	f, err := netSocket(netNetwork)
-	if err != nil {
-		t.Skip("no rtnetlink here:", err)
+// TestNetHit: the decision of read for one receive, without a socket, so
+// no event of another test or process can disturb it (T-199). Only the
+// kernel (port id 0) triggers; ENOBUFS (lost messages) triggers.
+func TestNetHit(t *testing.T) {
+	ev := nlHdr(20, unix.RTM_NEWADDR, 4)
+	kernel := &unix.SockaddrNetlink{Family: unix.AF_NETLINK, Pid: 0}
+	proc := &unix.SockaddrNetlink{Family: unix.AF_NETLINK, Pid: 4242}
+	big := make([]byte, 8)
+	cases := []struct {
+		name       string
+		buf        []byte
+		nr         int
+		from       unix.Sockaddr
+		err        error
+		hit, pause bool
+	}{
+		{"kernel event", ev, len(ev), kernel, nil, true, false},
+		{"event of another process", ev, len(ev), proc, nil, false, false},
+		{"no netlink address", ev, len(ev), &unix.SockaddrInet4{}, nil, false, false},
+		{"no address", ev, len(ev), nil, nil, false, false},
+		{"kernel control message", nlHdr(16, unix.NLMSG_DONE, 0), 16, kernel, nil, false, false},
+		{"kernel, truncated", big, 100, kernel, nil, true, false},
+		{"another process, truncated", big, 100, proc, nil, false, false},
+		{"lost messages (ENOBUFS)", nil, -1, nil, unix.ENOBUFS, true, false},
+		{"interrupted", nil, -1, nil, unix.EINTR, false, false},
+		{"other error", nil, -1, nil, unix.EBADF, false, true},
 	}
-	n := newNetWatch(quietLog(), time.Millisecond, func() bool { return false })
-	_, cancel := context.WithCancel(context.Background())
-	s := &netSub{f: f, hit: make(chan struct{}, 1), cancel: cancel}
-	s.done.Add(1)
-	go func() { defer s.done.Done(); n.read(netNetwork, s) }()
-	defer s.stop()
-
-	rc, _ := f.SyscallConn()
-	var port uint32
-	_ = rc.Control(func(fd uintptr) {
-		if sa, err := unix.Getsockname(int(fd)); err == nil {
-			port = sa.(*unix.SockaddrNetlink).Pid
+	for _, c := range cases {
+		hit, pause := netHit(c.buf, c.nr, c.from, c.err)
+		if hit != c.hit || pause != c.pause {
+			t.Errorf("%s: hit %v pause %v, want %v %v", c.name, hit, pause, c.hit, c.pause)
 		}
-	})
-	sender, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_CLOEXEC, unix.NETLINK_ROUTE)
-	if err != nil {
-		t.Skip(err)
-	}
-	defer unix.Close(sender)
-	if err := unix.Sendto(sender, nlHdr(20, unix.RTM_NEWADDR, 4), 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK, Pid: port}); err != nil {
-		if errors.Is(err, unix.EPERM) || errors.Is(err, unix.ECONNREFUSED) {
-			t.Skip("cannot send to the socket here:", err)
-		}
-		t.Fatal(err)
-	}
-	select {
-	case <-s.hit:
-		t.Fatal("a message of another process triggered")
-	case <-time.After(300 * time.Millisecond):
 	}
 }

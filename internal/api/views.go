@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -334,8 +336,18 @@ type issueView struct {
 	PlanID     *int64          `json:"plan_id"`
 	Resolution *resolutionView `json:"resolution"`
 	Comments   []commentView   `json:"comments"`
-	Raw        bool            `json:"raw"`    // D-301
+	Raw        bool            `json:"raw"`    // D-301; accept_mode == raw (D-362)
 	Source     *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
+	// What accept writes (D-362).
+	AcceptMode   string            `json:"accept_mode"`
+	AcceptReason string            `json:"accept_reason"`
+	AcceptParams []acceptParamView `json:"accept_params"`
+}
+
+type acceptParamView struct {
+	Use   string `json:"use"`
+	Index int    `json:"index"`
+	Param string `json:"param"`
 }
 
 func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error) {
@@ -368,6 +380,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	if err := s.issueSource(ctx, &v); err != nil {
 		return v, err
 	}
+	if err := s.issueAccept(ctx, &v, ch); err != nil {
+		return v, err
+	}
 	comments, err := s.st.Comments(ctx, i.ID)
 	if err != nil {
 		return v, err
@@ -376,6 +391,27 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		v.Comments = append(v.Comments, commentView{ID: c.ID, Author: c.Author, Body: c.Body, CreatedAt: c.CreatedAt.UTC()})
 	}
 	return v, nil
+}
+
+// issueAccept sets Issue.accept_mode, accept_reason and accept_params
+// from the head revision (D-362), and Issue.raw to accept_mode == raw.
+func (s *Server) issueAccept(ctx context.Context, v *issueView, ch []wire.Change) error {
+	allowed := slices.Contains(v.Actions, "accept")
+	m := issue.AcceptMode(nil, v.Target, v.Resource, ch, allowed)
+	if m.Mode == state.AcceptRaw {
+		err := s.headRaw(ctx, v.Target, func(set *state.Set, _ map[string]state.Source) {
+			m = issue.AcceptMode(set, v.Target, v.Resource, ch, allowed)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	v.AcceptMode, v.AcceptReason, v.AcceptParams = m.Mode, m.Reason, []acceptParamView{}
+	for _, p := range m.Params {
+		v.AcceptParams = append(v.AcceptParams, acceptParamView{Use: p.Use, Index: p.Index, Param: p.Param})
+	}
+	v.Raw = m.Mode == state.AcceptRaw
+	return nil
 }
 
 // --- events ---

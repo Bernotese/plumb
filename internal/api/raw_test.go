@@ -30,7 +30,13 @@ func TestRawMode(t *testing.T) {
 		t.Fatalf("raw before: %s", body)
 	}
 
-	e.motd("hand edit")
+	// The mode of the motd Block is fixed text, not a parameter: Accept
+	// cannot map the change to a parameter, so it offers raw (D-362).
+	e.waitWatch("web1")
+	if err := e.agents["web1"].Change(e.ctx, "file:/etc/motd",
+		map[string]any{"path": "/etc/motd", "content": "hand edit", "mode": "0600"}); err != nil {
+		t.Fatal(err)
+	}
 	id := e.openIssueID()
 	if id == 0 {
 		t.Fatal("no issue")

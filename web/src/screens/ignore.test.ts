@@ -43,7 +43,8 @@ describe("secret parameters", () => {
     const id = await planOpened();
     const put = createPlan.mock.calls[0]?.[0].put?.[0] as { spec: { blocks: unknown[] } };
     expect(put.spec.blocks).toEqual([
-      { use: "app", params: { db_host: "db1", db_password: { secret: "app-db" } } },
+      // db_host keeps the Block default: not written (D-376).
+      { use: "app", params: { db_password: { secret: "app-db" } } },
     ]);
     const plan = await api.getPlan(id);
     expect(plan.targets[0]?.secrets).toEqual([{ name: "app-db", version: 4 }]);

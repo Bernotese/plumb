@@ -230,20 +230,11 @@ func (n *netWatch) read(k netKind, s *netSub) {
 		if err != nil {
 			return // closed
 		}
-		hit := false
-		switch {
-		case errors.Is(rerr, unix.ENOBUFS):
-			hit = true
-		case errors.Is(rerr, unix.EINTR):
-		case rerr != nil:
+		hit, pause := netHit(buf, nr, from, rerr)
+		if pause {
 			// Not expected on a netlink socket; do not spin on it.
 			n.log.Debug("netlink receive", "type", k.resourceType(), "err", rerr)
 			time.Sleep(100 * time.Millisecond)
-		default:
-			// Only the kernel (port id 0) sends the events.
-			if sa, ok := from.(*unix.SockaddrNetlink); ok && sa.Pid == 0 && nr >= 0 {
-				hit = netTrigger(buf[:min(nr, len(buf))], nr > len(buf))
-			}
 		}
 		if !hit || n.skip() {
 			continue
@@ -253,6 +244,27 @@ func (n *netWatch) read(k netKind, s *netSub) {
 		default: // a hit is pending already
 		}
 	}
+}
+
+// netHit decides about one receive of read: hit is a trigger, pause asks
+// read to wait before the next receive (an unexpected error). A lost
+// message (ENOBUFS: the socket buffer ran over) is a hit. Only the kernel
+// (port id 0) sends events: a message of another process is never a hit.
+// buf holds the message; nr is its full length (MSG_TRUNC).
+func netHit(buf []byte, nr int, from unix.Sockaddr, rerr error) (hit, pause bool) {
+	switch {
+	case errors.Is(rerr, unix.ENOBUFS):
+		return true, false
+	case errors.Is(rerr, unix.EINTR):
+		return false, false
+	case rerr != nil:
+		return false, true
+	}
+	sa, ok := from.(*unix.SockaddrNetlink)
+	if !ok || sa.Pid != 0 || nr < 0 {
+		return false, false
+	}
+	return netTrigger(buf[:min(nr, len(buf))], nr > len(buf)), false
 }
 
 // pace turns hits into fires: the first hit waits the debounce, and two

@@ -488,3 +488,61 @@ export function secretName(v: unknown): string | undefined {
   const name = (v as { secret?: unknown }).secret;
   return keys.length === 1 && typeof name === "string" ? name : undefined;
 }
+
+/** Deep equality of two JSON values (key order does not matter). */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((x, i) => sameValue(x, b[i]));
+  }
+  if (!isObject(a) || !isObject(b)) return false;
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => k in b && sameValue(a[k], b[k]));
+}
+
+/**
+ * The top-level parameters that are stored with the Block default as their
+ * value and still kept (D-376): "fixed to the current default". `followed`
+ * lists the ones the person set back to follow the Block default.
+ */
+export function pinnedDefaults(
+  stored: Record<string, unknown>,
+  fields: Field[],
+  values: Values,
+  followed: readonly string[] = [],
+): string[] {
+  const now = toParams(fields, values, stored);
+  return fields
+    .filter(
+      (f) =>
+        f.default !== undefined &&
+        f.name in stored &&
+        !followed.includes(f.name) &&
+        sameValue(now[f.name], f.default),
+    )
+    .map((f) => f.name);
+}
+
+/**
+ * Block parameters for a save (D-376): like mergeParams, but a top-level
+ * parameter equal to its Block default is left out, so a later change of
+ * the default reaches this Target; the server fills defaults at render. A
+ * stored parameter is kept as it is (a save never rewrites what the person
+ * chose), unless the person chose "Follow the Block default" for it.
+ */
+export function blockParams(
+  stored: Record<string, unknown>,
+  fields: Field[],
+  values: Values,
+  followed: readonly string[] = [],
+): Record<string, unknown> {
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  return Object.fromEntries(
+    Object.entries(mergeParams(stored, fields, values)).filter(([k, v]) => {
+      const f = byName.get(k);
+      const kept = k in stored && !followed.includes(k);
+      return !(f?.default !== undefined && !kept && sameValue(v, f.default));
+    }),
+  );
+}
