@@ -41,7 +41,7 @@ describe("schema form", () => {
       ["tls", "boolean", false],
       ["log_level", "enum", false],
       ["extra", "textarea", false],
-      ["nested", "unsupported", false],
+      ["nested", "yaml", false],
     ]);
     expect(fields[0]?.label).toBe("User name");
     expect(fields[1]?.label).toBe("Server names");
