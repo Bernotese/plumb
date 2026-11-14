@@ -195,6 +195,12 @@ func TestResolveUbuntu(t *testing.T) {
 	if _, err := c.Resolve(context.Background(), Ubuntu, img); !errors.Is(err, ErrSignature) {
 		t.Fatalf("other key: %v", err)
 	}
+	// A signature one minute in the future: refused by the library (no
+	// clock skew is allowed).
+	v.files["/releases/26.04/release/SHA256SUMS.gpg"] = sign(t, key, list, testNow.Add(time.Minute))
+	if _, err := c.Resolve(context.Background(), Ubuntu, img); !errors.Is(err, ErrSignature) {
+		t.Fatalf("one minute in the future: %v", err)
+	}
 	// A signature from the future: refused.
 	v.files["/releases/26.04/release/SHA256SUMS.gpg"] = sign(t, key, list, testNow.Add(48*time.Hour))
 	if _, err := c.Resolve(context.Background(), Ubuntu, img); !errors.Is(err, ErrSignature) {

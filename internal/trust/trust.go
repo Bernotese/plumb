@@ -339,11 +339,10 @@ func Verify(keyring openpgp.EntityList, data, sig []byte, now time.Time) (Result
 	if err != nil || s == nil || signer == nil {
 		return Result{}, ErrSignature
 	}
-	// A signature from the future is not accepted (a clock skew of one
-	// day is).
-	if s.CreationTime.After(now.Add(24 * time.Hour)) {
-		return Result{}, ErrSignature
-	}
+	// A signature time after now is refused by the library itself
+	// (packet.Signature.SigExpired: any CreationTime > now; no clock skew
+	// is allowed). A controller clock behind the vendor's therefore refuses
+	// a just-published list until the next try (ARCHITECTURE §17).
 	return Result{Signed: true, Fingerprint: fingerprint(signer.PrimaryKey), SignedAt: s.CreationTime.UTC()}, nil
 }
 
