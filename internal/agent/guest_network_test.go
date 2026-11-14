@@ -461,6 +461,117 @@ func TestGuestNetwork(t *testing.T) {
 		t.Fatal("absent left the file or the address")
 	}
 	t.Log("step 6 ok: state absent removed the file and the address")
+
+	// 7. T-167 (host F3 of T-158): the entry of the main NIC has another key
+	// than the live name and names the NIC only by match.macaddress, like
+	// cloud-init's eth0 entry on an Ubuntu VM that kept ens18. network
+	// applies without a reboot and never copies the MAC.
+	key := macOnlyBase(t, dev, gw)
+	if it := apply(want); it.Status != wire.StatusApplied {
+		t.Fatalf("MAC-only entry: %+v", it)
+	}
+	if !liveHas(t, dev, "192.0.2.10/24") || !liveHas(t, dev, "198.51.100.0/24 via 192.0.2.1") {
+		t.Fatal("MAC-only entry: the values are not live")
+	}
+	b, _ := os.ReadFile(file)
+	mac, _ := os.ReadFile("/sys/class/net/" + dev + "/address")
+	if !strings.Contains(string(b), "    "+key+":\n") || strings.Contains(strings.ToLower(string(b)), strings.TrimSpace(string(mac))) {
+		t.Fatalf("MAC-only entry: file %s", b)
+	}
+	if ch := observeDiff(want); len(ch) != 0 {
+		t.Fatalf("MAC-only entry, after the apply: %+v", ch)
+	}
+	if it := apply(map[string]any{"state": "absent"}); it.Status != wire.StatusApplied {
+		t.Fatalf("MAC-only entry, absent: %+v", it)
+	}
+	t.Logf("step 7 ok: entry %q matched by MAC only, NIC %s: applied without a reboot, no MAC in the file", key, dev)
+}
+
+// macOnlyBase rewrites the base netplan of the guest (T-167): the entry of
+// dev moves to the key "plumb-mac0" with match.macaddress only (no
+// set-name, no match.name), the rest stays. Cleanup puts the old files
+// back and runs netplan apply. It returns the new key.
+func macOnlyBase(t *testing.T, dev string, gw netip.Addr) string {
+	t.Helper()
+	const key = "plumb-mac0"
+	b, err := os.ReadFile("/sys/class/net/" + dev + "/address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mac := strings.TrimSpace(string(b))
+	out, err := exec.Command("netplan", "get").Output()
+	if err != nil {
+		t.Fatalf("netplan get: %v", err)
+	}
+	var tree map[string]any
+	if err := yaml.Unmarshal(out, &tree); err != nil {
+		t.Fatal(err)
+	}
+	nw, _ := tree["network"].(map[string]any)
+	eth, _ := nw["ethernets"].(map[string]any)
+	var found []string
+	for k, v := range eth {
+		e, _ := v.(map[string]any)
+		m, _ := e["match"].(map[string]any)
+		name, _ := m["name"].(string)
+		vmac, _ := m["macaddress"].(string)
+		if k == dev || e["set-name"] == dev || name == dev || strings.EqualFold(vmac, mac) {
+			found = append(found, k)
+		}
+	}
+	if len(found) != 1 || found[0] == key {
+		t.Fatalf("entries of %s: %v", dev, found)
+	}
+	e := eth[found[0]].(map[string]any)
+	delete(e, "set-name")
+	e["match"] = map[string]any{"macaddress": mac}
+	delete(eth, found[0])
+	eth[key] = e
+
+	files, _ := filepath.Glob("/etc/netplan/*.yaml")
+	saved := map[string][]byte{}
+	for _, f := range files {
+		if c, err := os.ReadFile(f); err == nil {
+			saved[f] = c
+		}
+	}
+	waitRoute := func() {
+		for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+			if exec.Command("ip", "route", "get", gw.String()).Run() == nil {
+				return
+			}
+		}
+		t.Errorf("no route to %s after netplan apply", gw)
+	}
+	t.Cleanup(func() {
+		files, _ := filepath.Glob("/etc/netplan/*.yaml")
+		for _, f := range files {
+			os.Remove(f)
+		}
+		for f, c := range saved {
+			_ = os.WriteFile(f, c, 0o600)
+		}
+		_ = exec.Command("netplan", "apply").Run()
+		waitRoute()
+	})
+	nb, err := yaml.Marshal(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for f := range saved {
+		os.Remove(f)
+	}
+	write(t, "/etc/netplan/50-cloud-init.yaml", string(nb))
+	if err := os.Chmod("/etc/netplan/50-cloud-init.yaml", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fwSh(t, "netplan", "apply")
+	waitRoute()
+	if _, err := os.Stat("/sys/class/net/" + dev); err != nil {
+		t.Fatalf("the NIC %s is gone after the rewrite: %v", dev, err)
+	}
+	t.Logf("base netplan: entry %q of %s moved to %q with match.macaddress only", found[0], dev, key)
+	return key
 }
 
 // gapMeter samples every 20 ms whether the route to the gateway and the
