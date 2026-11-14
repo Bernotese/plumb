@@ -21,4 +21,8 @@ Slice 6 part A, child card **A6a** of T-172. A token cannot flood proposals, com
 - Everything of other rows. Part B (waits for the user). Any release step.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+branch `pl-reviewer/T-179-token-rate` (Codex limit: done by pl-reviewer) · tests: `make lint test` → pass
+- `internal/api/tokenrate.go`: one bucket per token and kind (proposal 30/min burst 30, comment 30/min burst 30, read 600/min burst 120); 429 `rate-limited` with whole-second `Retry-After`, the handler does not run, nothing of the request is echoed; event `token.rate_limited` (`{kind}`) at most once per token per 10 min; sessions and unmarked operations (events stream, approve, discard, admin) are not limited; memory bounded (idle full buckets pruned).
+- `api.go`: two lines in `Handler` (make the limiter, wrap every route). A GET route without a mark that is not on the exempt list stops `Handler` (panic), so a new read cannot skip the limit.
+- Tests: kinds = contract marks both ways (planned operations included); mark rules from the tier table (every token GET has read except `/events`, every token operation answering a Plan has proposal); bucket numbers, refill, event gap, prune with a fake clock; through the API: 429 after 30 proposals, no echo, one event, other kinds free, session never limited, read limit after 120. Mutants 5/6 killed (the survivor `p.human()` is equivalent: a session has no token).
+- Contract note: the event description (`api/openapi.yaml`, `token.rate_limited` data `{kind: proposal|comment}`) should also name `read`; D-365 gives one event for every limit.
