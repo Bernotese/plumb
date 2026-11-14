@@ -15,20 +15,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
 // The environment of this test binary (T-186): a foreign CA in the system
-// trust (SSL_CERT_FILE) and a proxy in HTTPS_PROXY. Go reads both once per
-// process, so they are set before any test runs. plumb mcp must trust only
-// its pinned CA and never use a proxy (D-364).
-var (
-	foreignCA   *testCA
-	proxyHits   atomic.Int32
-	proxyListen net.Listener
-)
+// trust (SSL_CERT_FILE; Go reads it at the first use of the system pool,
+// so init sets it). plumb mcp must trust only its pinned CA (D-364).
+var foreignCA *testCA
 
 type testCA struct {
 	cert *x509.Certificate
@@ -68,25 +62,6 @@ func init() {
 	}
 	os.Setenv("SSL_CERT_FILE", f)
 	os.Setenv("SSL_CERT_DIR", dir)
-	proxyListen, err = net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		panic(err)
-	}
-	go func() {
-		for {
-			c, err := proxyListen.Accept()
-			if err != nil {
-				return
-			}
-			proxyHits.Add(1)
-			c.Close()
-		}
-	}()
-	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
-		os.Setenv(k, "http://"+proxyListen.Addr().String())
-	}
-	os.Unsetenv("NO_PROXY")
-	os.Unsetenv("no_proxy")
 }
 
 func tlsServer(t *testing.T, ca *testCA) *httptest.Server {
@@ -120,19 +95,20 @@ func TestQAOnlyThePinnedCA(t *testing.T) {
 	}
 }
 
-// No proxy: HTTPS_PROXY is set for this binary, and the client never
-// connects to it (the token would pass through it).
+// No proxy (D-364): the token would pass through a proxy of the
+// environment. Go reads the proxy variables once per process, before this
+// package's init, so the test checks the transport itself.
 func TestQANoProxy(t *testing.T) {
 	ca := newCA("plumb")
-	c, err := NewClient(ClientConfig{URL: "https://plumb.invalid:8443", Token: testToken, CAPEM: ca.pem})
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := proxyHits.Load()
-	_, _ = c.Do(context.Background(), http.MethodGet, "/api/v1/targets", nil, nil)
-	time.Sleep(50 * time.Millisecond)
-	if proxyHits.Load() != before {
-		t.Fatal("plumb mcp used the proxy of the environment")
+	for _, u := range []string{"https://plumb.lan:8443", "http://127.0.0.1:8443"} {
+		c, err := NewClient(ClientConfig{URL: u, Token: testToken, CAPEM: ca.pem})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr, ok := c.http.Transport.(*http.Transport)
+		if !ok || tr.Proxy != nil {
+			t.Fatalf("%s: the client may use a proxy", u)
+		}
 	}
 }
 
