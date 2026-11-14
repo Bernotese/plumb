@@ -6,7 +6,8 @@ import { startPlumb } from "./server.mjs";
 // T-118 raw mode on the real API (T-125; D-296, D-301). Its own server:
 // slice.spec.ts reverts the seeded motd drift of web2 on the shared one.
 // Accept as raw makes an override; the Target page lists it with its
-// Block, edits its content, and goes back to the Block.
+// Block, edits its content, and goes back to the Block. The motd template
+// gets a function first, so no parameter fits (D-362).
 test("raw mode: accept as raw, edit the raw content, back to the Block", async ({ browser }) => {
   test.setTimeout(180_000);
   const server = await startPlumb(0);
@@ -14,6 +15,29 @@ test("raw mode: accept as raw, edit the raw content, back to the Block", async (
     const ctx = await browser.newContext({ baseURL: server.base });
     const page = await ctx.newPage();
     await login(page, server);
+
+    // Accept maps a plain {{ .message }} back to the parameter (D-362), so
+    // this spec first makes the template one that has no inverse (a
+    // function): then the seeded hand edit really is raw.
+    const origin = server.base;
+    const motd = (await (await page.request.get("/api/v1/blocks/motd")).json()) as {
+      document: {
+        kind: string;
+        name: string;
+        spec: { resources: { file: { content: string } }[] };
+      };
+    };
+    motd.document.spec.resources[0].file.content = "{{ .message | trim }}\n";
+    const put = await page.request.post("/api/v1/plans", {
+      headers: { origin },
+      data: { reason: "e2e: motd template with a function", put: [motd.document] },
+    });
+    expect(put.status()).toBe(201);
+    const ok = await page.request.post(`/api/v1/plans/${(await put.json()).id}/approve`, {
+      headers: { origin },
+      data: {},
+    });
+    expect(ok.status()).toBe(202);
 
     // The seeded drift: someone edited the motd of web2 by hand.
     await page.goto("/#/issues");
