@@ -191,7 +191,15 @@ func netResource(attrs map[string]any) wire.Resource {
 // duplicate-address probe and state absent. The controller runs in the
 // guest (loopback), so the agent link never depends on the change; the
 // main NIC is found by the route to the default gateway.
+//
+// It runs in the cloud VMs of lxd.sh, which set PLUMB_NETWORK_GUEST=1:
+// there a missing netplan or systemd fails the test. Elsewhere (the
+// Docker containers of run.sh have no netplan and no NIC of their own to
+// change) it skips with the reason.
 func TestGuestNetwork(t *testing.T) {
+	if os.Getenv("PLUMB_NETWORK_GUEST") != "1" {
+		t.Skip("network needs a cloud VM with netplan; only lxd.sh runs it (PLUMB_NETWORK_GUEST=1)")
+	}
 	comm, err := os.ReadFile("/proc/1/comm")
 	if os.Geteuid() != 0 || err != nil || strings.TrimSpace(string(comm)) != "systemd" {
 		t.Fatal("requires root in the systemd guest")
@@ -321,6 +329,7 @@ func TestGuestNetwork(t *testing.T) {
 	if ch := observeDiff(want); len(ch) != 0 {
 		t.Fatalf("after the apply: %+v", ch)
 	}
+	t.Logf("step 1 ok: applied on %s after %d confirm(s), values live, no diff", dev, confirms.Load())
 
 	// 2. Drift: the address removed by hand.
 	fwSh(t, "ip", "addr", "del", "192.0.2.10/24", "dev", dev)
@@ -331,6 +340,7 @@ func TestGuestNetwork(t *testing.T) {
 	if ch := observeDiff(want); len(ch) != 0 {
 		t.Fatalf("after netplan apply: %+v", ch)
 	}
+	t.Log("step 2 ok: a hand-removed address is drift on addresses")
 
 	// 3. A forced rollback: the controller refuses the round trip.
 	more := map[string]any{"addresses": "192.0.2.10/24,192.0.2.11/24"}
@@ -343,6 +353,7 @@ func TestGuestNetwork(t *testing.T) {
 	if got, _ := os.ReadFile(file); string(got) != string(confirmed) || liveHas(t, dev, "192.0.2.11/24") || !liveHas(t, dev, "192.0.2.10/24") {
 		t.Fatalf("after the rollback: %s", got)
 	}
+	t.Logf("step 3 ok: forced rollback: status %s, rolled_back %v, output %q; file and live addresses as confirmed", it.Status, it.RolledBack, it.Output)
 
 	// 4. The rollback timer restores when nobody else does.
 	old := resource.SetFirewallRollbackAfter(4) // the delay of every rollback timer
@@ -372,16 +383,18 @@ func TestGuestNetwork(t *testing.T) {
 	if got, _ := os.ReadFile(file); string(got) != string(confirmed) {
 		t.Fatalf("file after the timer: %s", got)
 	}
+	t.Log("step 4 ok: the rollback timer restored the confirmed file without the agent")
 	_ = os.Remove(filepath.Join(state, "safe-apply", "network-ci.confirmed")) // the timer does not drop it; the agent start would
 
 	// 5. The duplicate-address probe: the gateway answers for its address.
 	taken := map[string]any{"addresses": "192.0.2.10/24," + gw.String() + "/32"}
-	if it := apply(taken); it.Status != wire.StatusFailed || it.RolledBack || !strings.Contains(it.Output, "another host") {
+	if it = apply(taken); it.Status != wire.StatusFailed || it.RolledBack || !strings.Contains(it.Output, "another host") {
 		t.Fatalf("probe: %+v", it)
 	}
 	if got, _ := os.ReadFile(file); string(got) != string(confirmed) {
 		t.Fatal("the probe changed the file")
 	}
+	t.Logf("step 5 ok: duplicate-address probe refused: %q", it.Output)
 
 	// 6. state absent.
 	if it := apply(map[string]any{"state": "absent"}); it.Status != wire.StatusApplied {
@@ -390,4 +403,5 @@ func TestGuestNetwork(t *testing.T) {
 	if _, err := os.Stat(file); !os.IsNotExist(err) || liveHas(t, dev, "192.0.2.10/24") {
 		t.Fatal("absent left the file or the address")
 	}
+	t.Log("step 6 ok: state absent removed the file and the address")
 }

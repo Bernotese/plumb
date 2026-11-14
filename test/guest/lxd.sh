@@ -109,7 +109,7 @@ for image in images:debian/13 ubuntu:26.04; do
           for i in $(seq 60); do ip -4 route show default | grep -q . && exit 0; sleep 1; done
           echo "no default route after netplan apply" >&2; exit 1'
       fi
-      inst /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestNetwork$'
+      inst env PLUMB_NETWORK_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestNetwork$'
     fi
     lxc delete -f "$name"
   done
