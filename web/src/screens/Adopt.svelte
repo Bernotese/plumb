@@ -16,6 +16,8 @@
 
   let guests = $state<UnmanagedGuest[] | null>(null);
   let loadError = $state<unknown>(null);
+  // Review U2 of #309: forget asks first and says what stays in the guest.
+  let forgetVmid = $state<number | null>(null);
   let chosen = $state<UnmanagedGuest | null>(null);
   let reason = $state("");
   let submitError = $state<unknown>(null);
@@ -154,6 +156,53 @@
               {/if}
             </td>
             <td data-label="Action">
+              {#if g.agent_left}
+                <p class="warn" id="agent-left-{g.vmid}">
+                  The Plumb agent of a deleted Target is still in this guest, with the repair key
+                  line. Plumb removes it when the agent comes back; or remove it by hand and then
+                  forget it.
+                </p>
+                {#if can("forgetAgent") && forgetVmid !== g.vmid}
+                  <button
+                    class="btn"
+                    type="button"
+                    aria-label="Forget the agent left in {g.name} ({g.vmid})"
+                    onclick={() => (forgetVmid = g.vmid)}>Forget the agent…</button
+                  >
+                {:else if can("forgetAgent")}
+                  <div class="warn" role="group" aria-label="Confirm: forget the agent of {g.vmid}">
+                    <p id="forget-text-{g.vmid}">
+                      Plumb stops sending unbind and revokes the agent's credential. The guest may
+                      still hold the Plumb agent and a <code>plumb-repair-</code> line in
+                      <code>/root/.ssh/authorized_keys</code> that lets this controller's repair key
+                      in. Remove them by hand as root: delete the lines ending in
+                      <code>plumb-repair-&lt;id&gt;</code>;
+                      <code>systemctl disable --now plumb-agent.service</code>;
+                      <code
+                        >rm -rf /etc/plumb-agent /var/lib/plumb-agent /usr/local/bin/plumb-agent
+                        /etc/systemd/system/plumb-agent*</code
+                      >. The repair key view lists the guest until the key of that line is revoked.
+                    </p>
+                    <button
+                      class="btn danger"
+                      type="button"
+                      aria-describedby="forget-text-{g.vmid}"
+                      onclick={async () => {
+                        try {
+                          await api.forgetAgent(g.vmid);
+                          forgetVmid = null;
+                          void load();
+                        } catch (err) {
+                          loadError = err;
+                        }
+                      }}>Forget the agent</button
+                    >
+                    <button class="btn" type="button" onclick={() => (forgetVmid = null)}
+                      >Cancel</button
+                    >
+                  </div>
+                {/if}
+              {/if}
               {#if g.adoptable && can("adoptTarget")}
                 <button
                   class="btn"

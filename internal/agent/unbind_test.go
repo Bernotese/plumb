@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 type recRunner struct{ calls []string }
@@ -63,10 +65,41 @@ func TestUnbind(t *testing.T) {
 	if string(keys) != "ssh-ed25519 AAAAuser u\n" {
 		t.Fatalf("authorized_keys %q", keys)
 	}
-	if len(rr.calls) != 4 || !strings.HasPrefix(rr.calls[0], "systemctl disable plumb-agent-install.service") ||
+	if len(rr.calls) != 4 || rr.calls[0] != "systemctl disable plumb-agent-firewall.service" ||
 		rr.calls[1] != "systemctl disable plumb-agent.service" || rr.calls[2] != "systemctl daemon-reload" ||
 		rr.calls[3] != "systemctl --no-block stop plumb-agent.service" {
 		t.Fatalf("calls %v", rr.calls)
+	}
+}
+
+// T-205: only unit files that exist are disabled (systemctl disable fails
+// on a missing one), and a failed unbind keeps the agent: no finishUnbind
+// after its result, so the parked agent takes unbind again (D-396).
+func TestUnbindOnlyPresentUnitsAndFailureKeepsAgent(t *testing.T) {
+	root := t.TempDir()
+	rr := &recRunner{}
+	a := &Agent{opt: Options{Root: root, Runner: rr}, cfg: Config{StateDir: filepath.Join(root, "state")}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := a.unbind(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rr.calls) != 1 || rr.calls[0] != "systemctl daemon-reload" {
+		t.Fatalf("calls without unit files %v", rr.calls)
+	}
+	// A failing step: /etc/plumb-agent cannot be removed.
+	etc := filepath.Join(root, "etc/plumb-agent")
+	os.MkdirAll(filepath.Join(etc, "sub"), 0o755)
+	os.WriteFile(filepath.Join(etc, "sub/x"), []byte("x"), 0o600)
+	os.Chmod(etc, 0o500)
+	defer os.Chmod(etc, 0o755)
+	if os.Geteuid() == 0 {
+		t.Skip("root removes a read-only directory")
+	}
+	rep := a.handle(context.Background(), wire.Command{ID: "u1", Type: wire.CommandUnbind, Body: []byte("{}")})
+	if rep.Error == "" {
+		t.Fatal("the unbind did not fail")
+	}
+	if a.unboundBy("u1") {
+		t.Fatal("a failed unbind finishes the agent")
 	}
 }
 

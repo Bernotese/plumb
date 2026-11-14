@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/store"
 )
 
 // Adoption and the install command (D-373, D-386 … D-388, D-391, D-392,
@@ -31,6 +32,9 @@ type unmanagedView struct {
 	Warnings  []string       `json:"warnings"`
 	Guest     map[string]any `json:"guest"`
 	Present   presentView    `json:"present"`
+	// AgentLeft: the agent of a deleted adopted Target is still in the
+	// guest; its unbind was not confirmed (D-396).
+	AgentLeft bool `json:"agent_left"`
 }
 
 // presentView: only whether a secret config key exists (D-340).
@@ -56,6 +60,12 @@ func (s *Server) listUnmanagedGuests(w http.ResponseWriter, r *http.Request, _ *
 			Present: presentView{CIPassword: u.Present.CIPassword, SSHKeys: u.Present.SSHKeys, Description: u.Present.Description, Env: u.Present.Env}}
 		if v.Warnings == nil {
 			v.Warnings = []string{}
+		}
+		if _, err := s.st.ParkedByRef(r.Context(), string(u.ID)); err == nil {
+			v.AgentLeft = true
+		} else if !errors.Is(err, store.ErrNotFound) {
+			s.fail(w, err)
+			return
 		}
 		items = append(items, v)
 	}
@@ -131,6 +141,22 @@ func clipName(s string) string {
 	return s
 }
 
+// forgetAgent is POST /guests/unmanaged/{vmid}/forget-agent (admin
+// session): it ends the park of the agent left in the guest (D-396). The
+// credential is revoked; what is in the guest stays for a person.
+func (s *Server) forgetAgent(w http.ResponseWriter, r *http.Request, p *principal) {
+	vmid, err := strconv.Atoi(r.PathValue("vmid"))
+	if err != nil || vmid < 100 {
+		problem(w, http.StatusBadRequest, "bad-request", "Bad request", "vmid must be a VMID.")
+		return
+	}
+	if err := s.cfg.Plans.ForgetAgent(r.Context(), strconv.Itoa(vmid), p.name); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // adoptProblem answers the refusals of the adoption and the install
 // command (409, ARCHITECTURE §19); false when err is none of them.
 func adoptProblem(w http.ResponseWriter, err error) bool {
@@ -148,6 +174,8 @@ func adoptProblem(w http.ResponseWriter, err error) bool {
 		problem(w, http.StatusConflict, "adopt-claimed", "Guest is claimed", detail())
 	case errors.Is(err, plan.ErrAdoptedTarget):
 		problem(w, http.StatusConflict, "adopted-target", "Adopted Target", detail())
+	case errors.Is(err, plan.ErrAgentLeft):
+		problem(w, http.StatusConflict, "agent-left", "Agent left in the guest", detail())
 	case errors.Is(err, plan.ErrNoGuest):
 		problem(w, http.StatusConflict, "no-guest", "No guest", detail())
 	case errors.Is(err, plan.ErrNoAdopter), errors.Is(err, plan.ErrInstallUnavailable):

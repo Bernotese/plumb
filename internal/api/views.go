@@ -253,15 +253,18 @@ type runView struct {
 	FinishedAt *time.Time `json:"finished_at"`
 	// WaitsForRestart: changes of the Run that wait for a stop and start
 	// of the VM (D-195).
-	WaitsForRestart int             `json:"waits_for_restart"`
-	Targets         []targetRunView `json:"targets"`
+	WaitsForRestart int `json:"waits_for_restart"`
+	// Warnings: steps that ended `warning` (D-396): the Run succeeded but
+	// left something for a person.
+	Warnings int             `json:"warnings"`
+	Targets  []targetRunView `json:"targets"`
 	// Images are the build lanes (D-199); missing means none.
 	Images []imageRunView `json:"images,omitempty"`
 }
 
 func (s *Server) runView(ctx context.Context, run store.Run) (runView, error) {
 	v := runView{ID: run.ID, PlanID: run.PlanID, Revision: run.RevisionID, Status: run.Status,
-		StartedAt: run.StartedAt.UTC(), FinishedAt: utc(run.FinishedAt), WaitsForRestart: run.WaitsForRestart, Targets: []targetRunView{}}
+		StartedAt: run.StartedAt.UTC(), FinishedAt: utc(run.FinishedAt), WaitsForRestart: run.WaitsForRestart, Warnings: run.Warnings, Targets: []targetRunView{}}
 	steps, err := s.st.Steps(ctx, run.ID)
 	if err != nil {
 		return v, err

@@ -51,6 +51,9 @@ type Run struct {
 	// WaitsForRestart is the number of changes that the steps recorded
 	// with waits_for_restart (D-195). Set by FinishRun.
 	WaitsForRestart int
+	// Warnings is the number of steps that ended `warning` (D-396): the
+	// Run succeeded, but left something for a person. Set by FinishRun.
+	Warnings int
 }
 
 // Step is one resource of one target in a Run.
@@ -311,8 +314,8 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 	var started string
 	var finished sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, plan_id, revision_id, status, started_at, finished_at, waits_for_restart FROM run WHERE id = ?`, id).
-		Scan(&r.ID, &r.PlanID, &r.RevisionID, &r.Status, &started, &finished, &r.WaitsForRestart)
+		`SELECT id, plan_id, revision_id, status, started_at, finished_at, waits_for_restart, warnings FROM run WHERE id = ?`, id).
+		Scan(&r.ID, &r.PlanID, &r.RevisionID, &r.Status, &started, &finished, &r.WaitsForRestart, &r.Warnings)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, ErrNotFound
 	}
@@ -329,7 +332,9 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 // FinishRun sets the final status of a Run and the number of its
 // changes that wait for a restart (D-195).
 func (s *Store) FinishRun(ctx context.Context, id int64, status string, waits int) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE run SET status = ?, finished_at = ?, waits_for_restart = ? WHERE id = ? AND status = 'running'`,
+	_, err := s.db.ExecContext(ctx, `UPDATE run SET status = ?, finished_at = ?, waits_for_restart = ?,
+		warnings = (SELECT count(*) FROM run_step WHERE run_id = ?4 AND status = 'warning')
+		WHERE id = ?4 AND status = 'running'`,
 		status, s.now(), waits, id)
 	return err
 }

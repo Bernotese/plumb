@@ -590,3 +590,76 @@ func TestRepairKeyNeverLeaks(t *testing.T) {
 		}
 	}
 }
+
+// T-205 (review F7 of T-192, D-396): a deleted Target is not in
+// previous.targets; a guest whose agent was not unbound is in
+// previous.left_behind.
+func TestRepairKeyViewDeletedAndLeftBehind(t *testing.T) {
+	e := newEnv(t)
+	old := e.currentID()
+	e.bind("web1", "vm/101")
+	e.bind("wiki", "150")
+	e.report("web1", []string{old}, 22, "SHA256:"+strings.Repeat("A", 43))
+	e.report("wiki", []string{old}, 22, "SHA256:"+strings.Repeat("B", 43))
+	if err := e.st.DeleteBinding(e.ctx, state.KindTarget, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.Park(e.ctx, store.Parked{Target: "wiki", AgentID: "ag", GuestRef: "150", Node: "pve", Since: e.now}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := e.s.Rotate(e.ctx, false, "user:admin")
+	if err != nil || v.Previous == nil {
+		t.Fatalf("rotate: %+v %v", v, err)
+	}
+	if strings.Join(v.Previous.Targets, ",") != "web1" {
+		t.Fatalf("previous.targets %v: a deleted Target is listed", v.Previous.Targets)
+	}
+	if strings.Join(v.Previous.LeftBehind, ",") != "wiki (VMID 150)" {
+		t.Fatalf("previous.left_behind %v", v.Previous.LeftBehind)
+	}
+}
+
+// Review U2 of #309: a forgotten guest stays in previous.left_behind
+// until every key it may hold a line of is revoked.
+func TestRepairKeyViewForgottenUntilRevoke(t *testing.T) {
+	e := newEnv(t)
+	old := e.currentID()
+	if err := e.st.Park(e.ctx, store.Parked{Target: "wiki", AgentID: "ag", GuestRef: "150", Since: e.now, KeyIDs: []string{old}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.Forget(e.ctx, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := e.st.IsParkedTarget(e.ctx, "wiki"); ok {
+		t.Fatal("a forgotten agent is still parked")
+	}
+	v, err := e.s.Rotate(e.ctx, false, "user:admin")
+	if err != nil || strings.Join(v.Previous.LeftBehind, ",") != "wiki (VMID 150, agent forgotten)" {
+		t.Fatalf("rotate: %+v %v", v.Previous, err)
+	}
+	// The new key does not free it; the revoke of the old one does.
+	if _, err = e.s.Rotate(e.ctx, true, "user:admin"); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := e.st.LeftBehind(e.ctx)
+	if len(rows) != 0 {
+		t.Fatalf("forgotten row after the revoke of its key: %+v", rows)
+	}
+}
+
+// A forgotten row that still holds a valid key stays after a revoke.
+func TestRepairKeyForgottenWithValidKeyStays(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.s.Rotate(e.ctx, false, "user:admin"); err != nil {
+		t.Fatal(err)
+	}
+	cur := e.currentID()
+	e.st.Park(e.ctx, store.Parked{Target: "wiki", AgentID: "ag", GuestRef: "150", Since: e.now, KeyIDs: []string{cur}})
+	e.st.Forget(e.ctx, "wiki")
+	if _, err := e.s.Rotate(e.ctx, true, "user:admin"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := e.st.LeftBehind(e.ctx); len(rows) != 1 {
+		t.Fatalf("rows %+v", rows)
+	}
+}

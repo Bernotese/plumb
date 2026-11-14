@@ -71,10 +71,12 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) wire.Report {
 		rep.Items = []wire.Item{a.selfUpdate(ctx, cmd.ID, body)}
 	case wire.CommandUnbind:
 		// D-388: the credential goes after the result is sent (finishUnbind).
-		a.unbindID = cmd.ID
+		// A failed unbind keeps the agent running (T-205, D-396): the
+		// controller parks it and sends unbind again.
 		if err := a.unbind(ctx); err != nil {
 			return fail(err)
 		}
+		a.unbindID = cmd.ID
 	default:
 		return fail(fmt.Errorf("unknown command type %q", cmd.Type))
 	}

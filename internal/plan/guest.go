@@ -20,6 +20,12 @@ func (e *Engine) PollGuests(ctx context.Context, interval time.Duration) {
 		if err := e.CheckGuests(ctx); err != nil && ctx.Err() == nil {
 			e.log.Error("guest poll", "err", err)
 		}
+		// D-396: a parked agent that is back takes its unbind. Synchronous:
+		// an agent answers at once; a silent one costs one poll round at
+		// most (unbindTimeout), and no goroutine outlives the engine.
+		if err := e.RetryUnbinds(ctx); err != nil && ctx.Err() == nil {
+			e.log.Error("unbind retry", "err", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
