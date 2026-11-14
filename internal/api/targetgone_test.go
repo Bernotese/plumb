@@ -83,3 +83,44 @@ func TestTargetDeleteKeepsValueFlag(t *testing.T) {
 		t.Fatalf("plan for the new web1: %d %s", code, body)
 	}
 }
+
+// Review T1 of #314 (D-397): the delete keeps the stored value hashes. A
+// value that the guest of web1 reported stays guest data after web1 is
+// deleted: (a) web1 made again with it and (b) web2 with it are both
+// human-only, and a token cannot approve them.
+func TestTargetDeleteKeepsValueHashes(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	e.seed(adm, "web2")
+	e.motd("value-of-the-old-guest")
+	e.motdIssue()
+	code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "drop", "delete": []map[string]any{{"kind": "Target", "name": "web1"}}})
+	var del struct{ ID int64 }
+	json.Unmarshal(body, &del)
+	if code != 201 {
+		t.Fatalf("propose delete: %d %s", code, body)
+	}
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(del.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve delete: %d %s", code, body)
+	}
+	e.eng.Wait()
+	if _, err := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); err == nil {
+		t.Fatal("web1 is still bound")
+	}
+	for _, target := range []string{"web1", "web2"} {
+		p := e.proposeDocs(e.token(TierPlan, ""), targetDoc(target, "value-of-the-old-guest"))
+		if !slices.Contains(p.HumanOnly, "accept-guest-data") {
+			t.Fatalf("%s with the deleted guest's value: human_only %v", target, p.HumanOnly)
+		}
+		found := false
+		for _, m := range p.Matches {
+			found = found || (m.Target == target && m.Element == "value-of-the-old-guest")
+		}
+		if !found {
+			t.Errorf("%s: matches %+v", target, p.Matches)
+		}
+		e.tokenRefused(p.ID)
+		adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil)
+	}
+}
