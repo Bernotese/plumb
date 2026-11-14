@@ -309,7 +309,9 @@ parse_args() {
 	fi
 	# --backup-keep has the range of the controller (backup.MaxKeep, D-361):
 	# a larger value would stop plumb serve at its start (T-198).
-	[[ $BACKUP_KEEP =~ ^[1-9][0-9]{0,2}$ ]] && ((BACKUP_KEEP <= 100)) || die "bad --backup-keep $BACKUP_KEEP (1 … 100). Nothing was changed."
+	if ! [[ $BACKUP_KEEP =~ ^[1-9][0-9]{0,2}$ ]] || ((BACKUP_KEEP > 100)); then
+		die "bad --backup-keep $BACKUP_KEEP (1 … 100). Nothing was changed."
+	fi
 	# --backup-copy-keep is only read by the copy script on this host.
 	[[ $BACKUP_COPY_KEEP =~ ^[1-9][0-9]{0,2}$ ]] || die "bad --backup-copy-keep $BACKUP_COPY_KEEP (1 … 999). Nothing was changed."
 	[[ $BACKUP_MAX_SIZE =~ ^([1-9][0-9]{0,5})([MG])$ ]] || die "bad --backup-max-size (for example 512M or 2G)"
