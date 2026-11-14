@@ -296,7 +296,10 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	}
 	// Adoption (D-386, D-388): every adopt has its checked request, and
 	// the Plan says in clear words what happens to an adopted guest.
-	notes, err := adoptPlans(in.Proposal.Adopt, plans)
+	if err := adoptClaims(base, next); err != nil {
+		return store.Plan{}, err
+	}
+	notes, err := adoptPlans(in.Proposal.Adopt, plans, notAdoptedIn(base))
 	if err != nil {
 		return store.Plan{}, err
 	}

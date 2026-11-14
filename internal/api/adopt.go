@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/plan"
-	"github.com/Bernotese/plumb/internal/store"
 )
 
 // Adoption and the install command (D-373, D-386 … D-388, D-391, D-392,
@@ -103,13 +102,8 @@ func (s *Server) adoptTarget(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	name := r.PathValue("name")
-	if _, err := s.headTarget(r.Context(), name); err == nil {
-		problem(w, http.StatusConflict, "document-exists", "Target exists", "A Target of this name exists; adopt the guest under its own (Proxmox) name.")
-		return
-	} else if !errors.Is(err, store.ErrNotFound) {
-		s.fail(w, err)
-		return
-	}
+	// A Target of this name is refused unless it is a not-adopted Target
+	// of the same guest, which the new adopt Plan replaces (D-395).
 	pl, err := s.cfg.Plans.ProposeAdopt(r.Context(), plan.AdoptRequest{Target: name, Node: req.Node, VMID: req.VMID, Digest: req.Digest}, p.name, req.Reason)
 	if err != nil {
 		s.fail(w, err)
@@ -173,6 +167,10 @@ func adoptProblem(w http.ResponseWriter, err error) bool {
 		problem(w, http.StatusConflict, "guest-bound", "Guest is bound", detail())
 	case errors.Is(err, plan.ErrNotAdoptable):
 		problem(w, http.StatusConflict, "not-adoptable", "Guest cannot be adopted", detail())
+	case errors.Is(err, plan.ErrDocumentExists):
+		problem(w, http.StatusConflict, "document-exists", "Target exists", "A Target of this name exists; adopt the guest under its own (Proxmox) name.")
+	case errors.Is(err, plan.ErrAdoptClaimed):
+		problem(w, http.StatusConflict, "adopt-claimed", "Guest is claimed", detail())
 	case errors.Is(err, plan.ErrAdoptedTarget):
 		problem(w, http.StatusConflict, "adopted-target", "Adopted Target", detail())
 	case errors.Is(err, plan.ErrAgentLeft):

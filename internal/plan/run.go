@@ -330,6 +330,11 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		return e.runRepair(ctx, p, run, set, tp)
 	}
 	s := &stepper{e: e, run: run, target: tp.Target, seq: map[string]int64{}, final: map[string]bool{}, ok: true}
+	if tp.NotAdopted {
+		// D-395: a not-adopted Target: no Proxmox call, no agent step.
+		// Only a new adopt Plan binds it.
+		return true
+	}
 	r, err := renderOrNil(set, tp.Target)
 	if err != nil {
 		e.log.Error("render", "target", tp.Target, "err", err)
