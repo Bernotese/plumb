@@ -28,6 +28,13 @@ info:
     - A Plan with a non-empty `human_only` can be approved by a human session only (D-099).
     - An operation with `x-plumb-planned: <card>` is part of the contract, but this server does
       not serve it yet. The card adds the handler and removes the mark.
+    - Rate limit per API token (D-365): an operation with `x-plumb-rate: proposal` (every
+      operation that a token may call and that makes a Plan) or `x-plumb-rate: comment` counts
+      against one bucket per token and kind: 30 per minute, burst 30. `x-plumb-rate: read` (every
+      `GET` that a token may call, except the event stream) counts against a third bucket: 600 per
+      minute, burst 120. Over the limit: 429
+      `rate-limited` with `Retry-After`, and nothing is done. A human session is not limited this
+      way (the login limit stays). A test reads the marks, so every such operation has one.
 
     Authentication (`components.securitySchemes`):
     - `session`: cookie of a human user (`POST /session`). Every call that changes data must send
@@ -94,12 +101,15 @@ tags:
     description: Server-sent event stream.
   - name: backup
     description: Backups of the controller and the restore state (D-288 … D-290, D-302 … D-304).
+  - name: settings
+    description: Controller settings and the read-only view of the Proxmox connection (D-361).
 
 paths:
   /session:
     get:
       tags: [session]
       operationId: getSession
+      x-plumb-rate: read
       x-plumb-role: read
       summary: Read the current principal
       description: Works for a session and for a token. The UI uses it at start.
@@ -118,6 +128,7 @@ paths:
                 tier: admin
                 expires_at: "2026-11-11T08:00:00Z"
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       tags: [session]
       operationId: login
@@ -358,6 +369,7 @@ paths:
     get:
       tags: [blocks]
       operationId: listCatalogBlocks
+      x-plumb-rate: read
       summary: List the starter Blocks that ship with Plumb
       description: |
         The Blocks embedded in this binary (D-328), sorted by name, compared with the head
@@ -401,11 +413,13 @@ paths:
                               path: /etc/motd
                               content: "{{ .text }}"
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /images:
     get:
       tags: [images]
       operationId: listImages
+      x-plumb-rate: read
       summary: List images
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -522,12 +536,14 @@ paths:
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /images/{name}:
     parameters:
       - $ref: "#/components/parameters/DocName"
     get:
       tags: [images]
       operationId: getImage
+      x-plumb-rate: read
       summary: Read one image
       responses:
         "200":
@@ -548,12 +564,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /images/{name}/refresh:
     parameters:
       - $ref: "#/components/parameters/DocName"
     post:
       tags: [images]
       operationId: refreshImagePin
+      x-plumb-rate: proposal
       summary: Propose the newest checksum of the base image from its source
       description: |
         For an Image with `verify` (D-335): the server fetches the checksum list of the source,
@@ -642,6 +660,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "502": { $ref: "#/components/responses/BadGateway" }
   /images/{name}/build:
     parameters:
@@ -649,6 +668,7 @@ paths:
     post:
       tags: [images]
       operationId: buildImage
+      x-plumb-rate: proposal
       summary: Propose a build of an image
       description: |
         Creates a Plan of origin `build` (trigger `manual`) that builds a new version of a built
@@ -721,11 +741,13 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /blocks:
     get:
       tags: [blocks]
       operationId: listBlocks
+      x-plumb-rate: read
       summary: List blocks
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -804,12 +826,14 @@ paths:
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /blocks/{name}:
     parameters:
       - $ref: "#/components/parameters/DocName"
     get:
       tags: [blocks]
       operationId: getBlock
+      x-plumb-rate: read
       summary: Read one block
       responses:
         "200":
@@ -833,11 +857,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /targets:
     get:
       tags: [targets]
       operationId: listTargets
+      x-plumb-rate: read
       summary: List targets with status
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -982,12 +1008,14 @@ paths:
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /targets/{name}:
     parameters:
       - $ref: "#/components/parameters/DocName"
     get:
       tags: [targets]
       operationId: getTarget
+      x-plumb-rate: read
       summary: Read one target with status
       responses:
         "200":
@@ -1024,12 +1052,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /targets/{name}/reenroll:
     parameters:
       - $ref: "#/components/parameters/DocName"
     post:
       tags: [targets]
       operationId: reenrollTarget
+      x-plumb-rate: proposal
       summary: Propose a re-enrollment
       description: |
         Creates a Plan that restarts the guest with a new enrollment token (risk `disruptive`,
@@ -1083,6 +1113,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /targets/{name}/agent-update:
     parameters:
@@ -1090,6 +1121,7 @@ paths:
     post:
       tags: [targets]
       operationId: updateTargetAgent
+      x-plumb-rate: proposal
       summary: Propose an agent update
       description: |
         Creates a Plan of origin `agent_update` with one step `agent:binary` (risk `disruptive`, a
@@ -1151,11 +1183,13 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /plans:
     get:
       tags: [plans]
       operationId: listPlans
+      x-plumb-rate: read
       summary: List plans, newest first
       description: Items are full Plans, the same as `GET /plans/{id}`.
       parameters:
@@ -1205,9 +1239,11 @@ paths:
                 next: MTE
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       tags: [plans]
       operationId: createPlan
+      x-plumb-rate: proposal
       summary: Propose a change
       description: |
         Validates and renders the proposal, observes the affected targets and stores a Plan with
@@ -1274,12 +1310,14 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /plans/{id}:
     parameters:
       - $ref: "#/components/parameters/PlanId"
     get:
       tags: [plans]
       operationId: getPlan
+      x-plumb-rate: read
       summary: Read one plan
       responses:
         "200":
@@ -1313,6 +1351,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     delete:
       tags: [plans]
       operationId: discardPlan
@@ -1394,6 +1433,7 @@ paths:
     get:
       tags: [runs]
       operationId: listRuns
+      x-plumb-rate: read
       summary: List runs, newest first
       description: Items are full Runs, the same as `GET /runs/{id}`.
       parameters:
@@ -1436,12 +1476,14 @@ paths:
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /runs/{id}:
     parameters:
       - $ref: "#/components/parameters/RunId"
     get:
       tags: [runs]
       operationId: getRun
+      x-plumb-rate: read
       summary: Read one run with the result per target and resource
       responses:
         "200":
@@ -1479,11 +1521,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /issues:
     get:
       tags: [issues]
       operationId: listIssues
+      x-plumb-rate: read
       summary: List issues, newest first
       parameters:
         - name: status
@@ -1552,12 +1596,14 @@ paths:
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /issues/{id}:
     parameters:
       - $ref: "#/components/parameters/IssueId"
     get:
       tags: [issues]
       operationId: getIssue
+      x-plumb-rate: read
       summary: Read one issue
       responses:
         "200":
@@ -1590,12 +1636,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /issues/{id}/resolve:
     parameters:
       - $ref: "#/components/parameters/IssueId"
     post:
       tags: [issues]
       operationId: resolveIssue
+      x-plumb-rate: proposal
       summary: Resolve an issue
       description: |
         `accept` and `revert` create a Plan; the issue is `resolving` until its Run succeeds.
@@ -1677,12 +1725,14 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /issues/{id}/comments:
     parameters:
       - $ref: "#/components/parameters/IssueId"
     post:
       tags: [issues]
       operationId: commentIssue
+      x-plumb-rate: comment
       summary: Add a comment to an issue
       security:
         - session: []
@@ -1708,11 +1758,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /rules:
     get:
       tags: [rules]
       operationId: listRules
+      x-plumb-rate: read
       summary: List rules
       description: |
         Rules of the head revision (D-092). A rule makes the controller drop matching drift at
@@ -1749,12 +1801,14 @@ paths:
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /rules/{name}:
     parameters:
       - $ref: "#/components/parameters/DocName"
     get:
       tags: [rules]
       operationId: getRule
+      x-plumb-rate: read
       summary: Read one rule
       responses:
         "200":
@@ -1771,11 +1825,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
 
   /revisions:
     get:
       tags: [revisions]
       operationId: listRevisions
+      x-plumb-rate: read
       summary: List revisions, newest first
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -1809,12 +1865,14 @@ paths:
                 next: MTE
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /revisions/{n}/diff:
     parameters:
       - $ref: "#/components/parameters/RevisionN"
     get:
       tags: [revisions]
       operationId: diffRevision
+      x-plumb-rate: read
       summary: Compare a revision with another one
       description: |
         Lists the documents that differ between revision `from` and revision `n`, with both
@@ -1876,12 +1934,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /revisions/{n}/rollback:
     parameters:
       - $ref: "#/components/parameters/RevisionN"
     post:
       tags: [revisions]
       operationId: rollbackRevision
+      x-plumb-rate: proposal
       summary: Plan a rollback to a revision
       description: |
         Builds a proposal that puts and deletes documents until the document set equals revision
@@ -1933,6 +1993,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
         "409":
           description: |
             The document set of revision `n` equals the head (`nothing-to-do`), or the head moved
@@ -1951,6 +2012,7 @@ paths:
     get:
       tags: [secrets]
       operationId: listSecrets
+      x-plumb-rate: read
       summary: List secrets (names only)
       description: |
         Names and metadata of all secrets, sorted by name. No operation of this API returns a
@@ -1986,6 +2048,7 @@ paths:
                 next: null
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /secrets/{name}:
     parameters:
       - $ref: "#/components/parameters/SecretName"
@@ -2155,6 +2218,7 @@ paths:
     get:
       tags: [state]
       operationId: exportState
+      x-plumb-rate: read
       summary: Export the desired state without secret values
       description: |
         One YAML stream of the head revision (D-094): a header document `kind: Export`, then
@@ -2198,6 +2262,7 @@ paths:
                   overrides: {}
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       tags: [state]
       operationId: exportStateWithSecrets
@@ -2337,6 +2402,7 @@ paths:
     get:
       tags: [backup]
       operationId: listBackups
+      x-plumb-rate: read
       summary: List the backups of this controller and the state of the off-host copy
       description: |
         Backups in the data directory of the controller, newest first (D-288, D-302), the
@@ -2372,6 +2438,7 @@ paths:
                   message: ""
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
     post:
       tags: [backup]
       operationId: createBackup
@@ -2404,6 +2471,7 @@ paths:
     get:
       tags: [backup]
       operationId: getRestore
+      x-plumb-rate: read
       summary: Restore state of this controller
       description: |
         `restored: false` on a controller that was never restored. After `plumb restore`: the
@@ -2429,6 +2497,7 @@ paths:
                   - { guest_id: "112", name: web3, type: vm, template: false }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /restore/confirm:
     post:
       tags: [backup]
@@ -2505,6 +2574,89 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /settings:
+    get:
+      tags: [settings]
+      operationId: getSettings
+      x-plumb-rate: read
+      x-plumb-planned: T-174
+      summary: Controller settings and the Proxmox connection
+      description: |
+        The backup schedule with the source of each value, and a read-only view of the Proxmox
+        connection (D-361). No secret is in the answer: `token_user` is the user part of the
+        Proxmox token id (`<user>@<realm>`), never the token name or its secret.
+        `proxmox.acl` compares the effective permissions of the token
+        (`GET /access/permissions` of Proxmox; every user and token may read its own) with the
+        ACL lines of the install: `ok` all lines are there, `missing` one or more lines are not
+        there (`acl_lines` says which), `unknown` the read failed (`acl_error` says why).
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+              example:
+                backup: { time: "03:00", keep: 7, source: { time: env, keep: default } }
+                proxmox:
+                  node: pve
+                  pool: plumb
+                  storages: { images: plumb-images, snippets: plumb-snippets, backup: plumb-backup }
+                  api: { host: pve.home.arpa, port: 8006, tls_sha256: "5d:1f:…" }
+                  version: "9.2.26"
+                  token_user: plumb@pve
+                  last_ok_at: "2026-11-14T09:00:00Z"
+                  acl: ok
+                  acl_error: ""
+                  acl_lines:
+                    - { path: /pool/plumb, role: PlumbGuests, ok: true }
+                    - { path: /, role: PlumbAudit, ok: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    patch:
+      tags: [settings]
+      operationId: changeSettings
+      x-plumb-planned: T-174
+      summary: Change controller settings
+      description: |
+        Human admin session only (D-329). Changes the backup schedule; the scheduler takes it
+        without a restart. A stored value wins over the flag and env value (`PLUMB_BACKUP_TIME`,
+        `PLUMB_BACKUP_KEEP`), which stay the defaults, so a repair run of the installer keeps it.
+        `null` for a field removes the stored value (back to env or default). Settings are in the
+        backup, not in the export. Event `settings.changed` with the old and new values. 422 by
+        the rule of D-325: the error names the field, never the value.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangeSettingsRequest" }
+            example: { backup: { time: "02:30", keep: 10 } }
+      responses:
+        "200":
+          description: The settings after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+              example:
+                backup: { time: "02:30", keep: 10, source: { time: setting, keep: setting } }
+                proxmox:
+                  node: pve
+                  pool: plumb
+                  storages: { images: plumb-images, snippets: plumb-snippets, backup: plumb-backup }
+                  api: { host: pve.home.arpa, port: 8006, tls_sha256: "5d:1f:…" }
+                  version: "9.2.26"
+                  token_user: plumb@pve
+                  last_ok_at: "2026-11-14T09:00:00Z"
+                  acl: unknown
+                  acl_error: "Proxmox answered 403 for /access/permissions"
+                  acl_lines: []
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
   /events:
     get:
       tags: [events]
@@ -3216,6 +3368,18 @@ components:
           type: string
           enum: [none, online, offline]
           description: "`online` when the agent polled in the last 90 s."
+        agent_live_watch:
+          type: [object, "null"]
+          additionalProperties: false
+          description: |
+            Live drift of hand changes outside files (D-367), from the agent's last hello: `true`
+            when the agent sees `ip` (`network`) or `nft` (`firewall`) changes within seconds;
+            `false` when it holds such a resource but its netlink subscribe failed (then the full
+            check every 15 minutes finds them). A type the Target does not use is missing. `null`
+            before a hello of an agent that reports it. Missing on a controller before T-181.
+          properties:
+            network: { type: boolean }
+            firewall: { type: boolean }
         power: { type: string, enum: [running, stopped, unknown] }
         last_seen: { $ref: "#/components/schemas/NullableTime" }
         agent_version:
@@ -3534,13 +3698,15 @@ components:
             403 `human-required` for a token. `unverified-pin`: a
             `pin_refresh` Plan from a source without a signature, with a signature that is not
             strictly newer than the last accepted one, or to a pin that this Image used before
-            (D-335).
+            (D-335). `firewall-off`: the Plan removes a `firewall` resource from a Target
+            (`state: absent`, or the resource leaves the render, also by a Block, Target or
+            override change), always, whatever the origin (D-368).
             The server computes it from the content of the proposal, for every origin, and from
             the origin for `accept-guest-data` and `unverified-pin`; no client field sets or
             clears it.
           items:
             type: string
-            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin]
+            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off]
         guest_data_issues:
           type: array
           description: |
@@ -3938,7 +4104,45 @@ components:
             of this Target ("Accept as raw for this Target"); the Block and its parameters do not
             change, and the resource no longer follows them for these attributes until "Back to the
             Block" (`TargetView.raw`). `false` for `guest:*` (Accept writes the Proxmox settings of
-            the Target). Missing on an older controller.
+            the Target). Missing on an older controller. Equals `accept_mode == raw` (D-362).
+        accept_mode:
+          type: string
+          enum: [param, raw, none]
+          description: |
+            What `accept` writes (D-362). `param`: the observed values map back to Block
+            parameters (`accept_params`); Accept sets `blocks[i].with.<param>` of this Target, the
+            Block does not change. `raw`: an override of this Target, as before (D-296);
+            `accept_reason` says why no parameter fits. `none`: `accept` is not in `actions`.
+            A change maps when its attribute's template in the Block is exactly
+            `<literal>{{ .p }}<literal>` (one plain field of a top-level parameter, no pipeline,
+            function or trim marker, `p` nowhere else in that attribute), the observed value has
+            that prefix and suffix, the middle passes the parameter schema (`integer` and `boolean`
+            only without prefix and suffix), and a new render of the Target with it gives the
+            observed values and changes no other resource or attribute. All changes of the Issue
+            must map, else the whole Issue is `raw`. The server computes it again when the Accept
+            is made. Missing on a controller before T-175.
+        accept_reason:
+          type: string
+          maxLength: 256
+          description: |
+            Why `accept_mode` is `raw`, in plain words without guest values (for example "the
+            template of `content` uses a function"). Empty otherwise. Missing on a controller
+            before T-175.
+        accept_params:
+          type: array
+          description: |
+            The parameters that `accept` sets when `accept_mode` is `param`: the Block use
+            (`blocks[i].use` of the Target, index `i`) and the parameter name. The new values are
+            the observed values in `changes` without the literal prefix and suffix. Empty
+            otherwise. Missing on a controller before T-175.
+          items:
+            type: object
+            additionalProperties: false
+            required: [use, index, param]
+            properties:
+              use: { $ref: "#/components/schemas/Name" }
+              index: { type: integer, minimum: 0 }
+              param: { type: string }
         source:
           $ref: "#/components/schemas/ResourceSource"
     ResourceSource:
@@ -4313,6 +4517,87 @@ components:
           const: true
           description: The person states that the controller of the backup no longer runs.
         reason: { type: string, maxLength: 2000 }
+    SettingSource:
+      type: string
+      enum: [default, env, setting]
+      description: "`default`: built in; `env`: flag or env of `plumb serve`; `setting`: stored by `PATCH /settings`."
+    Settings:
+      type: object
+      additionalProperties: false
+      required: [backup, proxmox]
+      properties:
+        backup:
+          type: object
+          additionalProperties: false
+          required: [time, keep, source]
+          properties:
+            time: { type: string, pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$", description: "Daily backup time, UTC." }
+            keep: { type: integer, minimum: 1, maximum: 100, description: "Backups kept, scheduled and manual together." }
+            source:
+              type: object
+              additionalProperties: false
+              required: [time, keep]
+              properties:
+                time: { $ref: "#/components/schemas/SettingSource" }
+                keep: { $ref: "#/components/schemas/SettingSource" }
+        proxmox: { $ref: "#/components/schemas/ProxmoxView" }
+    ProxmoxView:
+      type: object
+      additionalProperties: false
+      description: Read-only. `null` values when the controller runs without Proxmox (`serve --dev`).
+      required: [node, pool, storages, api, version, token_user, last_ok_at, acl, acl_error, acl_lines]
+      properties:
+        node: { type: [string, "null"] }
+        pool: { type: [string, "null"] }
+        storages:
+          type: object
+          additionalProperties: false
+          required: [images, snippets, backup]
+          properties:
+            images: { type: [string, "null"] }
+            snippets: { type: [string, "null"] }
+            backup: { type: [string, "null"] }
+        api:
+          type: object
+          additionalProperties: false
+          required: [host, port, tls_sha256]
+          properties:
+            host: { type: [string, "null"] }
+            port: { type: [integer, "null"] }
+            tls_sha256: { type: [string, "null"], description: The pinned certificate fingerprint. }
+        version: { type: [string, "null"], maxLength: 64, description: The PVE version from the last good call. }
+        token_user: { type: [string, "null"], description: "`<user>@<realm>` of the token; never the token name or secret." }
+        last_ok_at: { $ref: "#/components/schemas/NullableTime" }
+        acl: { type: string, enum: [ok, missing, unknown] }
+        acl_error: { type: string, maxLength: 256, description: Why `acl` is `unknown`; empty otherwise. }
+        acl_lines:
+          type: array
+          description: The ACL lines of the install and whether the token has them. Empty when `acl` is `unknown`.
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, role, ok]
+            properties:
+              path: { type: string }
+              role: { type: string }
+              ok: { type: boolean }
+    ChangeSettingsRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        backup:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            time:
+              type: [string, "null"]
+              pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+            keep:
+              type: [integer, "null"]
+              minimum: 1
+              maximum: 100
     Event:
       type: object
       additionalProperties: false
@@ -4348,17 +4633,23 @@ components:
             - user.password_reset
             - user.created
             - user.changed
+            - settings.changed
+            - token.rate_limited
+            - agent.rate_limited
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string
-          pattern: "^(plan|run|issue|target|revision|token|secret|image|backup|restore|user):.+$"
+          pattern: "^(plan|run|issue|target|revision|token|secret|image|backup|restore|user|settings):.+$"
           description: |
             `<kind>:<id or name>`, for example `plan:12` or `target:web1`. `image.version` (subject
             `image:<name>`): a version of the Image changed its status. `backup.finished` (subject
             `backup:<file name>`, data `{result: ok|failed}`) and `restore.confirmed` (subject
             `restore:1`) are D-302, D-303. `user.password_reset` (subject `user:<name>`) is D-321. `user.created` (data
             `{role}`) and `user.changed` (data `{role, disabled}`) are D-330; no event holds a
-            password.
+            password. `settings.changed` (subject `settings:backup`, data `{old, new}` with the
+            changed fields) is D-361. `token.rate_limited` (subject `token:<id>`, data `{kind:
+            proposal|comment}`) and `agent.rate_limited` (subject `target:<name>`, data `{}`) come
+            at most once per 10 minutes per token or agent (D-365, D-366).
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }
         data:
