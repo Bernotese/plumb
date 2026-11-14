@@ -672,13 +672,24 @@ func (l *Link) Taken(target, id string) bool {
 // (sent, not yet taken by a poll). A queued unbind stays until the agent
 // polls it or the target is revoked (T-210).
 func (l *Link) Queued(target string, typ wire.CommandType) bool {
+	return l.QueuedCount(target, typ) > 0
+}
+
+// QueuedCount is the number of queued commands of typ for target.
+func (l *Link) QueuedCount(target string, typ wire.CommandType) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	ts, ok := l.targets[target]
 	if !ok {
-		return false
+		return 0
 	}
-	return slices.ContainsFunc(ts.queue, func(c wire.Command) bool { return c.Type == typ })
+	n := 0
+	for _, c := range ts.queue {
+		if c.Type == typ {
+			n++
+		}
+	}
+	return n
 }
 
 // Online reports whether the target polled in the last 90 seconds.

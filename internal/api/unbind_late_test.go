@@ -77,6 +77,9 @@ func TestParkEndsOnLateUnbindResult(t *testing.T) {
 	if err := e.eng.RetryUnbinds(e.ctx); err != nil {
 		t.Fatal(err)
 	}
+	if n := e.link.QueuedCount("wiki", wire.CommandUnbind); n != 1 {
+		t.Fatalf("%d unbind commands queued after the retry, want 1", n)
+	}
 
 	a.Pause(false)
 	for deadline := time.Now().Add(10 * time.Second); e.unmanaged(adm, vmid).AgentLeft; time.Sleep(20 * time.Millisecond) {
