@@ -3,6 +3,7 @@ package proxmox
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -156,6 +157,10 @@ type GuestBackupView struct {
 	// right whose content holds "backup" (M2 of #321): the token could
 	// write a vzdump there. It must be empty; install.sh refuses otherwise.
 	Others []string
+	// DiskContent are the content types "images" and "rootdir" of the
+	// guest backup storage: the token could put guest disks there (review
+	// M1 of #330). It must be empty; install.sh refuses otherwise.
+	DiskContent []string
 }
 
 // guestBackupView builds the view from the GET /storage index (every
@@ -166,7 +171,7 @@ func guestBackupView(x InstallExtras, storages []map[string]any, perms map[strin
 	if x.GuestBackupStorage == "" {
 		return nil
 	}
-	v := &GuestBackupView{Storage: x.GuestBackupStorage, State: GuestBackupClearRefused, Others: []string{}}
+	v := &GuestBackupView{Storage: x.GuestBackupStorage, State: GuestBackupClearRefused, Others: []string{}, DiskContent: []string{}}
 	if x.GuestBackupClear {
 		v.State = GuestBackupStatedClear
 	}
@@ -178,6 +183,12 @@ func guestBackupView(x InstallExtras, storages []map[string]any, perms map[strin
 		if id == x.GuestBackupStorage {
 			if typ, _ := s["type"].(string); typ == "pbs" && setValue(s["encryption-key"]) {
 				v.State = GuestBackupPBSKey
+			}
+			content, _ := s["content"].(string)
+			for _, c := range []string{"images", "rootdir"} {
+				if hasContent(content, c) {
+					v.DiskContent = append(v.DiskContent, c)
+				}
 			}
 			continue
 		}
@@ -210,4 +221,45 @@ func hasContent(list, c string) bool {
 		}
 	}
 	return false
+}
+
+// extraRoles name the Plumb role whose right a watched privilege is.
+var extraRoles = map[string]string{
+	"VM.Backup":               "PlumbGuestBackupVM",
+	"SDN.Use":                 "PlumbBridge",
+	"Datastore.AllocateSpace": "PlumbGuestBackup",
+}
+
+// aclExtra lists the watched rights (VM.Backup, SDN.Use,
+// Datastore.AllocateSpace) that the token holds on a path where no planned
+// line gives them: for example the old VM.Backup line of a repair run that
+// stopped half way (review M2 and L4 of #330). The /vms/<id> paths of the
+// pool members are left out: they come from the pool line. The list is
+// sorted by path, then role.
+func aclExtra(planned []installLine, perms map[string]map[string]int) []ACLLine {
+	want := map[string]bool{} // "path priv"
+	for _, l := range planned {
+		for _, p := range l.privs {
+			want[l.path+" "+p] = true
+		}
+	}
+	out := []ACLLine{}
+	for path, privs := range perms {
+		if strings.HasPrefix(path, "/vms/") {
+			continue
+		}
+		for priv := range privs {
+			role, watched := extraRoles[priv]
+			if watched && !want[path+" "+priv] {
+				out = append(out, ACLLine{Path: path, Role: role})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Role < out[j].Role
+	})
+	return out
 }

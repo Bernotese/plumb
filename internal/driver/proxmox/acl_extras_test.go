@@ -200,3 +200,67 @@ func TestViewGuestBackupReadFails(t *testing.T) {
 		t.Errorf("cache shared: %+v", again.GuestBackup)
 	}
 }
+
+// Review M1 of #330: images and rootdir on the backup storage are named.
+func TestGuestBackupDiskContent(t *testing.T) {
+	x := InstallExtras{GuestBackupStorage: "bk"}
+	for content, want := range map[string][]string{
+		"backup":                     {},
+		"backup,iso,vztmpl":          {},
+		"images,backup":              {"images"},
+		"rootdir, backup, images":    {"images", "rootdir"},
+		"backup,rootdir":             {"rootdir"},
+		"backup,images-old,rootdirx": {},
+	} {
+		g := guestBackupView(x, []map[string]any{{"storage": "bk", "type": "dir", "content": content}}, nil)
+		if !reflect.DeepEqual(g.DiskContent, want) {
+			t.Errorf("%q: %v, want %v", content, g.DiskContent, want)
+		}
+	}
+}
+
+// Review M2/L4 of #330: watched rights beyond the planned lines are named;
+// planned lines, unwatched rights and the /vms paths of the pool are not.
+func TestACLExtra(t *testing.T) {
+	cfg := Config{Pool: "plumb", DiskStorage: "local-lvm", ImageStorage: "plumb-images", SnippetStorage: "plumb-snippets", Bridge: "vmbr0", Node: "pve"}
+	x := InstallExtras{ExtraNets: []ExtraNet{{Bridge: "vmbr9", Tag: 20}}}
+	p := map[string]map[string]int{}
+	addLines(p, installLines(cfg, x))
+	if got := aclExtra(installLines(cfg, x), p); len(got) != 0 {
+		t.Fatalf("planned rights only: %v", got)
+	}
+	// The leftovers of a run that stopped half way, and a wider grant.
+	p["/pool/plumb"]["VM.Backup"] = 1
+	p["/vms/9001"] = map[string]int{"VM.Backup": 1, "VM.Audit": 1}
+	p["/sdn/zones/localnetwork/vmbr9"] = map[string]int{"SDN.Use": 0}
+	p["/storage/old-bk"] = map[string]int{"Datastore.AllocateSpace": 0, "Datastore.Audit": 0}
+	p["/storage"] = map[string]int{"Datastore.AllocateSpace": 1}
+	p["/"]["Sys.Modify"] = 0 // not watched here (the Sys.* rights are checked by the installer)
+	got := aclExtra(installLines(cfg, x), p)
+	want := []ACLLine{
+		{Path: "/pool/plumb", Role: "PlumbGuestBackupVM"},
+		{Path: "/sdn/zones/localnetwork/vmbr9", Role: "PlumbBridge"},
+		{Path: "/storage", Role: "PlumbGuestBackup"},
+		{Path: "/storage/old-bk", Role: "PlumbGuestBackup"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("extra:\n%v\nwant\n%v", got, want)
+	}
+	// With the guest backup storage named, its lines are planned.
+	x.GuestBackupStorage = "old-bk"
+	got = aclExtra(installLines(cfg, x), p)
+	if len(got) != 2 || got[0].Path != "/sdn/zones/localnetwork/vmbr9" || got[1].Path != "/storage" {
+		t.Errorf("with the storage named: %v", got)
+	}
+}
+
+// The viewer fills ACLExtra from the same read.
+func TestViewACLExtra(t *testing.T) {
+	f := newFakePVE(t)
+	f.perms = fullPerms()
+	f.perms["/pool/"+fakePool]["VM.Backup"] = 1
+	got := NewViewer(f.driver(t), "plumb@pve", InstallExtras{}).View(context.Background())
+	if got.ACL != ACLOK || len(got.ACLExtra) != 1 || got.ACLExtra[0] != (ACLLine{Path: "/pool/" + fakePool, Role: "PlumbGuestBackupVM"}) {
+		t.Errorf("view: %+v", got)
+	}
+}

@@ -631,7 +631,12 @@ func proxmoxView(v proxmox.View) *api.ProxmoxView {
 		out.ExtraNets = append(out.ExtraNets, e)
 	}
 	if g := v.GuestBackup; g != nil {
-		out.GuestBackup = &api.GuestBackupView{Storage: g.Storage, State: g.State, OtherBackupStorages: append([]string{}, g.Others...)}
+		out.GuestBackup = &api.GuestBackupView{Storage: g.Storage, State: g.State, OtherBackupStorages: append([]string{}, g.Others...),
+			DiskContent: append([]string{}, g.DiskContent...)}
+	}
+	out.ACLExtra = make([]api.ACLExtraView, 0, len(v.ACLExtra))
+	for _, l := range v.ACLExtra {
+		out.ACLExtra = append(out.ACLExtra, api.ACLExtraView{Path: l.Path, Role: l.Role})
 	}
 	return out
 }
