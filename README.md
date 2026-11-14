@@ -177,7 +177,8 @@ full list of rights.
 
 8. **Issues:** when somebody changes a guest by hand, an Issue opens. Choose "Revert", "Accept" or
    "Ignore". A Plan that accepts a value from the guest needs a person: an API token cannot approve
-   it.
+   it. The same holds for every Plan that takes a value that a guest reported into the desired
+   state, also when you type it yourself: only a person can approve it.
 
    ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
    <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
@@ -192,8 +193,8 @@ An admin adds people in **Settings → Users**. Each user has one role:
 |---|---|
 | read | See everything. Change nothing. |
 | plan | Also propose changes (Plans), comment on Issues, and drop Plans. |
-| apply | Also approve Plans up to the risk "disruptive", and ignore drift once. |
-| admin | Everything: destructive Plans, users, API tokens, secrets, backups, import. |
+| apply | Also approve Plans up to the risk "disruptive", ignore drift once, and start a backup now. |
+| admin | Everything: destructive Plans, users, API tokens, secrets, an export with secret values, import, and the confirm after a restore. |
 
 - Plumb makes a one-time password for a new user and shows it once. The user must change it at the
   first login.
@@ -330,8 +331,8 @@ Keep the recovery key in any case.
 - A restored Plumb needs the same address as before.
 - A guest has one network card. The `network` Block adds addresses and routes on it; more cards
   come later.
-- A change by hand to the network settings or the firewall in a guest is seen at the full check
-  every 15 minutes, not at once.
+- A live change by hand with `ip` or `nft` in a guest is seen at the full check every 15 minutes,
+  not at once. A change of a file that Plumb writes, such as its netplan file, is seen at once.
 - The first signed refresh of an Image needs a person: an API token cannot approve it.
 - Debian does not sign its cloud image checksums. Every new checksum of a Debian Image needs a
   person.
