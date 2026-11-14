@@ -313,7 +313,11 @@ func (l *Link) authenticate(w http.ResponseWriter, r *http.Request) (store.Agent
 		writeError(w, http.StatusTooManyRequests, "too many requests")
 		return store.Agent{}, false
 	}
-	agent, ok := l.checkCredential(r)
+	agent, ok, err := l.checkCredential(r)
+	if err != nil {
+		storeUnavailable(w)
+		return store.Agent{}, false
+	}
 	if !ok {
 		l.authFail.allow(r) // count the failure
 		writeError(w, http.StatusUnauthorized, "unauthorized")
@@ -321,26 +325,34 @@ func (l *Link) authenticate(w http.ResponseWriter, r *http.Request) (store.Agent
 	return agent, ok
 }
 
-func (l *Link) checkCredential(r *http.Request) (store.Agent, bool) {
+func (l *Link) checkCredential(r *http.Request) (store.Agent, bool, error) {
 	auth := r.Header.Get("Authorization")
 	cred, ok := strings.CutPrefix(auth, "Bearer ")
 	if !ok || len(cred) > 256 {
-		return store.Agent{}, false
+		return store.Agent{}, false, nil
 	}
 	id, sec, ok := splitCredential(cred)
 	want := dummyHash
 	var agent store.Agent
 	if ok {
 		a, err := l.cfg.Store.AgentByID(r.Context(), id)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return store.Agent{}, false, err
+		}
 		if err == nil {
 			agent, want = a, a.CredentialHash
 		}
 	}
 	got := hashSecret(sec)
 	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 || agent.ID == "" {
-		return store.Agent{}, false
+		return store.Agent{}, false, nil
 	}
-	return agent, true
+	return agent, true, nil
+}
+
+func storeUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	writeError(w, http.StatusServiceUnavailable, "try again")
 }
 
 // --- handlers ---
@@ -478,7 +490,11 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	now := l.now()
 	if err := l.cfg.Store.TouchAgent(r.Context(), agent.ID, now); err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized") // re-enrolled meanwhile
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusUnauthorized, "unauthorized") // re-enrolled meanwhile
+		} else {
+			storeUnavailable(w)
+		}
 		return
 	}
 	timer := time.NewTimer(time.Duration(wait) * time.Second)
