@@ -164,7 +164,7 @@ func TestF5SignedPinSchedule(t *testing.T) {
 		t.Fatalf("head pin: %s", info.Pin())
 	}
 	for _, replay := range []string{"old", "equal", "older"} {
-		list = replay
+		setList(replay)
 		tick()
 		p := pending()
 		if err := e.pinSystemCheck(ctx)(p); err == nil {

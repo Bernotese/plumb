@@ -485,7 +485,9 @@ func TestAdoptStaleHostSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rtps []TargetPlan
-	json.Unmarshal(p.Changes, &rtps)
+	if err := json.Unmarshal(p.Changes, &rtps); err != nil {
+		t.Fatal(err)
+	}
 	if len(rtps) != 1 || !rtps[0].NotAdopted || rtps[0].Guest != "" || len(rtps[0].Resources) != 0 {
 		t.Fatalf("rollback: %s", p.Changes)
 	}
