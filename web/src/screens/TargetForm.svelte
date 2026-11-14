@@ -154,6 +154,33 @@
     tags: "Proxmox tags, lower case. Plumb keeps exactly these. No entries on a new Target: Plumb does not touch the tags.",
   };
 
+  // D-386: a Target that holds a guest a person made (no Image).
+  const adopted = $derived(base.adopted ?? existing?.document.spec.adopted);
+
+  // T-194 (D-388): an adopted Target may delete its guest only when the
+  // person allowed it with `delete_guest`, by its own plan.
+  let allowBusy = $state(false);
+  let allowError = $state<unknown>(null);
+  let confirmAllow = $state(false);
+  async function allowGuestDelete() {
+    if (!existing || !existing.document.spec.adopted) return;
+    allowBusy = true;
+    allowError = null;
+    try {
+      const spec = $state.snapshot(existing.document.spec);
+      if (spec.adopted) spec.adopted.delete_guest = true;
+      const plan = await api.createPlan({
+        reason: `Allow Plumb to delete the guest ${spec.adopted?.vmid} with the Target ${existing.document.name}.`,
+        put: [{ kind: "Target", name: existing.document.name, spec }],
+      });
+      go({ name: "plan", id: plan.id });
+    } catch (err) {
+      allowError = err;
+    } finally {
+      allowBusy = false;
+    }
+  }
+
   // The type follows the Image (T-038 §8); a stored Target keeps its own.
   const kind = $derived<GuestKind>(
     existing?.document.spec.type ??
@@ -314,7 +341,7 @@
       e["name"] =
         "Use lower-case letters, digits, '-' and '.'; start and end with a letter or digit.";
     }
-    if (!image) e["image"] = "Choose an image.";
+    if (!image && !adopted) e["image"] = "Choose an image.";
     if (needReason && !reason.trim()) e["reason"] = "Say why you make this change.";
     guestErrors = validate(kindFields, guest);
     // D-202: the disk of a Target from a built image cannot be smaller than the template.
@@ -383,7 +410,8 @@
     return {
       ...extra,
       type: kind,
-      image,
+      // An adopted Target has no Image (D-386); `adopted` comes from `base`.
+      ...(adopted ? {} : { image }),
       guest: guestSpec as TargetSpec["guest"],
       blocks: uses.map((u) => {
         // D-376: only what the person set; the server fills the defaults.
@@ -614,24 +642,33 @@
             {#if errors["name"]}<span class="error" id="t-name-error">{errors["name"]}</span>{/if}
           </div>
           <div class="field">
-            <label for="t-image">Image</label>
-            <select
-              id="t-image"
-              bind:value={image}
-              disabled={editing}
-              aria-describedby={editing ? "t-image-hint" : undefined}
-            >
-              {#each images as i (i.document.name)}
-                <option value={i.document.name}>{i.document.spec.title ?? i.document.name}</option>
-              {/each}
-            </select>
-            {#if editing}<span class="hint" id="t-image-hint"
-                >{#if existing?.status.image_version}<span id="t-image-version" class="block"
-                    >Made from image {existing.document.spec.image} v{existing.status
-                      .image_version}.</span
+            {#if adopted}
+              <span class="label">Image</span>
+              <span id="t-adopted"
+                >None: adopted guest <span class="mono">{adopted.vmid}</span> on
+                <span class="mono">{adopted.node}</span>. Plumb did not make it.</span
+              >
+            {:else}
+              <label for="t-image">Image</label>
+              <select
+                id="t-image"
+                bind:value={image}
+                disabled={editing}
+                aria-describedby={editing ? "t-image-hint" : undefined}
+              >
+                {#each images as i (i.document.name)}
+                  <option value={i.document.name}>{i.document.spec.title ?? i.document.name}</option
                   >
-                {/if}The image is used only to create the guest.</span
-              >{/if}
+                {/each}
+              </select>
+              {#if editing}<span class="hint" id="t-image-hint"
+                  >{#if existing?.status.image_version}<span id="t-image-version" class="block"
+                      >Made from image {existing.document.spec.image} v{existing.status
+                        .image_version}.</span
+                    >
+                  {/if}The image is used only to create the guest.</span
+                >{/if}
+            {/if}
           </div>
           <div class="field">
             <span class="label">Type</span>
@@ -795,7 +832,14 @@
 {#if loaded && existing}
   <RawResources {api} target={existing} />
   <AgentCard {api} target={existing} />
-  {#if can("reenrollTarget")}<form
+  {#if adopted}
+    <p class="muted card" id="reenroll-adopted">
+      An adopted Target is not re-enrolled: Plumb does not write into a guest that a person made.
+      Use the install command on the <a
+        href={href({ name: "target-agent", target: existing.document.name })}>agent page</a
+      >.
+    </p>
+  {:else if can("reenrollTarget")}<form
       class="card"
       onsubmit={reenroll}
       aria-labelledby="reenroll-title"
@@ -839,16 +883,72 @@
       {#if restored.mode}<p class="muted" id="reenroll-restored">{RESTORED_WAIT}</p>{/if}
     </form>{/if}
   <DeleteDocument {api} kind="Target" name={existing.document.name}>
-    <p>
-      The plan deletes the {kind === "lxc" ? "container" : "VM"}
-      {#if existing.status.guest_id}<span class="mono">{existing.status.guest_id}</span>{/if}
-      and its disks in Proxmox, and the Target leaves the desired state. This cannot be undone. A guest
-      that Plumb did not make is never deleted: Plumb only lets it go.
-    </p>
+    {#if existing.document.spec.adopted?.delete_guest}
+      <p class="danger-text" id="delete-adopted-guest">
+        <strong
+          >The plan deletes the Proxmox guest
+          <span class="mono">{existing.document.spec.adopted.vmid}</span> and its disks.</strong
+        >
+        You allowed this with delete_guest. This cannot be undone.
+      </p>
+    {:else if existing.document.spec.adopted}
+      <p id="delete-adopted-keep">
+        The plan lets the guest <span class="mono">{existing.document.spec.adopted.vmid}</span> go:
+        Plumb removes its agent and repair key lines, and the Target leaves the desired state. The {kind ===
+        "lxc"
+          ? "container"
+          : "VM"} and its disks stay in Proxmox.
+      </p>
+    {:else}
+      <p id="delete-made">
+        The plan deletes the {kind === "lxc" ? "container" : "VM"}
+        {#if existing.status.guest_id}<span class="mono">{existing.status.guest_id}</span>{/if}
+        and its disks in Proxmox, and the Target leaves the desired state. This cannot be undone.
+      </p>
+    {/if}
   </DeleteDocument>
+  {#if existing.document.spec.adopted && !existing.document.spec.adopted.delete_guest && can("createPlan")}
+    <section
+      class="card danger-zone"
+      aria-labelledby="allow-guest-delete-title"
+      id="allow-guest-delete"
+    >
+      <h2 id="allow-guest-delete-title">Let Plumb delete the guest</h2>
+      <p>
+        By default, deleting this Target keeps the guest in Proxmox. This separate plan sets
+        delete_guest: after it, deleting the Target <strong
+          >deletes the Proxmox guest
+          <span class="mono">{existing.document.spec.adopted.vmid}</span> and its disks</strong
+        >. Only a person can approve it.
+      </p>
+      <ProblemBox error={allowError} />
+      {#if confirmAllow}
+        <div class="row">
+          <button
+            class="btn danger"
+            type="button"
+            id="allow-guest-delete-confirm"
+            disabled={allowBusy}
+            onclick={allowGuestDelete}>Make the plan</button
+          >
+          <button class="btn" type="button" onclick={() => (confirmAllow = false)}>Cancel</button>
+        </div>
+      {:else}
+        <button class="btn danger" type="button" onclick={() => (confirmAllow = true)}
+          >Allow Plumb to delete the guest…</button
+        >
+      {/if}
+    </section>
+  {/if}
 {/if}
 
 <style>
+  .danger-text {
+    color: var(--color-danger);
+  }
+  .danger-zone {
+    border-left: 4px solid var(--color-danger);
+  }
   .modes {
     display: flex;
     gap: var(--space-2);

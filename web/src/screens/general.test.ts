@@ -109,3 +109,27 @@ describe("Settings → General", () => {
     expect(text(el("#general-proxmox tbody"))).toMatch(/\/\s*PlumbAudit\s*missing/);
   });
 });
+
+describe("Settings → General: repair key (T-194, D-382)", () => {
+  it("lists the Targets on the previous key, revokes it after a confirm", async () => {
+    const api = adminApi();
+    const rotate = vi.spyOn(api, "rotateRepairKey");
+    show(General, { api });
+    await until(() => document.querySelector("#general-key"));
+    expect(el("#key-current").textContent).toMatch(/^SHA256:/);
+    expect(text(el("#key-old-targets"))).toContain("Still on the previous key (1): worker1.");
+    button("Revoke the previous key…")?.click();
+    flushSync();
+    expect(text(el("#revoke-q"))).toContain("worker1 then has no repair over SSH");
+    button("Revoke")?.click();
+    await until(() => document.querySelector("#key-rotate"));
+    expect(rotate).toHaveBeenLastCalledWith(true);
+    expect(document.querySelector("#key-previous")).toBeNull();
+
+    // A new key: the old one stays until a person revokes it.
+    button("Make a new repair key")?.click();
+    await until(() => document.querySelector("#key-previous"));
+    expect(rotate).toHaveBeenLastCalledWith(false);
+    expect(text(el("#general-key"))).not.toContain("BEGIN");
+  });
+});
