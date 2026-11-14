@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // Adoption (D-373, D-378, D-386, D-391, D-392, ARCHITECTURE §19). A guest
@@ -36,10 +39,10 @@ var (
 
 // AdoptRequest names the guest of an adoption and the Target name.
 type AdoptRequest struct {
-	Target string
-	Node   string
-	VMID   int
-	Digest string
+	Target string `json:"target"`
+	Node   string `json:"node"`
+	VMID   int    `json:"vmid"`
+	Digest string `json:"digest"`
 }
 
 func (e *Engine) adopter() (driver.Adopter, error) {
@@ -154,6 +157,21 @@ func (e *Engine) AdoptDoc(ctx context.Context, req AdoptRequest) (state.Doc, err
 	return state.Doc{Kind: state.KindTarget, Name: req.Target, Spec: raw}, nil
 }
 
+// ProposeAdopt makes the adopt Plan of a guest (D-386): it checks the
+// guest, builds the Target document and proposes it with origin adopt and
+// the checked request (the Run checks it again). Human-only by origin.
+func (e *Engine) ProposeAdopt(ctx context.Context, req AdoptRequest, author, reason string) (store.Plan, error) {
+	doc, err := e.AdoptDoc(ctx, req)
+	if err != nil {
+		return store.Plan{}, err
+	}
+	if reason == "" {
+		reason = fmt.Sprintf("adopt the guest %d on %s as Target %s", req.VMID, req.Node, req.Target)
+	}
+	return e.Propose(ctx, Input{Author: author, Reason: reason, Origin: OriginAdopt,
+		Proposal: Proposal{Put: []state.Doc{doc}, Adopt: []AdoptRequest{req}}})
+}
+
 // adoptBind is the Run step of an adopt Plan: it reads the guest again
 // (node, VMID, name, digest; D-386) and binds it to the Target. It writes
 // nothing to Proxmox. The driver learns the ref before the Observe, so
@@ -218,4 +236,131 @@ func (e *Engine) syncAdoptedLocked(ctx context.Context, extra map[driver.GuestID
 	}
 	a.SetAdopted(refs)
 	return nil
+}
+
+// ErrAdoptedTarget: a re-enrollment of an adopted Target (D-392).
+var ErrAdoptedTarget = errors.New("adopted-target")
+
+// attrAdopted is the change of guest:config that shows an adopt or an
+// unbind in the Plan.
+const attrAdopted = "adopted"
+
+func adoptedText(a state.Adopted) string {
+	return fmt.Sprintf("VMID %d on %s", a.VMID, a.Node)
+}
+
+// deleteGuestChange is the change of spec.adopted.delete_guest (D-388):
+// destructive when it becomes true.
+func deleteGuestChange(before, r *state.Rendered) *wire.Change {
+	if before == nil || before.Adopted == nil || r == nil || r.Adopted == nil || before.Adopted.DeleteGuest == r.Adopted.DeleteGuest {
+		return nil
+	}
+	risk := wire.RiskReversible
+	if r.Adopted.DeleteGuest {
+		risk = wire.RiskDestructive
+	}
+	return &wire.Change{Attr: "delete_guest", From: before.Adopted.DeleteGuest, To: r.Adopted.DeleteGuest, Risk: risk}
+}
+
+// adoptedGuestDelete: the Plan lets Plumb delete a guest that a person
+// made (D-388): delete_guest becomes true, or an adopted Target with it
+// is deleted.
+func adoptedGuestDelete(plans []TargetPlan) bool {
+	for _, tp := range plans {
+		if tp.Guest == "delete" && tp.Adopted != nil && tp.Adopted.DeleteGuest {
+			return true
+		}
+		for _, rc := range tp.Resources {
+			for _, c := range rc.Changes {
+				if c.Attr == "delete_guest" && c.To == true {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// adoptPlans attaches the adopt requests to the "adopt" Targets and
+// refuses an adopt without its request: a Target with spec.adopted is
+// bound only through the adopt route, which checked the guest (D-386).
+// It returns the notes in clear words for the Plan (D-388).
+func adoptPlans(reqs []AdoptRequest, plans []TargetPlan) ([]string, error) {
+	var notes []string
+	for i := range plans {
+		tp := &plans[i]
+		switch tp.Guest {
+		case "adopt":
+			for j := range reqs {
+				if reqs[j].Target == tp.Target {
+					r := reqs[j]
+					tp.Adopt = &r
+				}
+			}
+			if tp.Adopt == nil {
+				return nil, &ProposalError{Target: tp.Target, Err: ErrNotAdoptable,
+					Msg: "a Target with adopted and no guest is made only by POST /targets/{name}/adopt, which checks the guest (D-386)"}
+			}
+		case "unbind":
+			notes = append(notes, fmt.Sprintf("Target %s: the Proxmox guest %d stays; Plumb removes its agent and repair key lines and no longer manages it (D-388).", tp.Target, tp.Adopted.VMID))
+		case "delete":
+			if tp.Adopted != nil && tp.Adopted.DeleteGuest {
+				notes = append(notes, fmt.Sprintf("Deleting this Target deletes the Proxmox guest %d and its disks (Target %s, D-388).", tp.Adopted.VMID, tp.Target))
+			}
+		}
+		for _, rc := range tp.Resources {
+			for _, c := range rc.Changes {
+				if c.Attr == "delete_guest" && c.To == true {
+					notes = append(notes, fmt.Sprintf("Target %s: deleting this Target will delete the Proxmox guest and its disks (delete_guest, D-388).", tp.Target))
+				}
+			}
+		}
+	}
+	for _, r := range reqs {
+		if !slices.ContainsFunc(plans, func(tp TargetPlan) bool { return tp.Target == r.Target && tp.Guest == "adopt" }) {
+			return nil, &ProposalError{Target: r.Target, Err: ErrNotAdoptable, Msg: "the adopt request has no new adopted Target"}
+		}
+	}
+	return notes, nil
+}
+
+// unbindTimeout bounds the unbind command of the agent.
+const unbindTimeout = 2 * time.Minute
+
+// unbindGuest is the Run step of the delete of an adopted Target that
+// keeps its guest (D-388): the agent removes itself and the repair lines,
+// the credential is revoked, the binding goes. The guest is never touched
+// in Proxmox. An offline or old agent is named in the output with what a
+// person runs in the guest.
+func (e *Engine) unbindGuest(ctx context.Context, target string) (string, error) {
+	out := "the agent removed itself and the repair key lines; the guest stays in Proxmox"
+	if !e.cfg.Agents.Online(target) {
+		out = textUnbindByHand
+	} else if rep, err := e.command(ctx, target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil); err != nil || rep.Error != "" {
+		msg := rep.Error
+		if err != nil {
+			msg = err.Error()
+		}
+		out = "the agent could not remove itself (" + clipText(msg, 300) + "). " + textUnbindByHand
+	}
+	if err := e.cfg.Agents.Revoke(ctx, target); err != nil {
+		return out, err
+	}
+	if err := e.st.DeleteBinding(ctx, state.KindTarget, target); err != nil {
+		return out, err
+	}
+	e.targetDeleted(ctx, target)
+	return out, e.SyncAdopted(ctx)
+}
+
+// textUnbindByHand: what a person runs as root in the guest.
+const textUnbindByHand = "Remove the agent by hand as root in the guest: " +
+	"systemctl disable --now plumb-agent.service; rm -rf /etc/plumb-agent /var/lib/plumb-agent /usr/local/bin/plumb-agent /etc/systemd/system/plumb-agent*; " +
+	"and delete the lines ending in plumb-repair-<id> from /root/.ssh/authorized_keys. Its credential is revoked already."
+
+func clipText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

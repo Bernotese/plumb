@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -179,4 +180,130 @@ func TestAdoptBind(t *testing.T) {
 	if got := a.drv.Adopted(); got[b] != "wiki" || len(got) != 1 {
 		t.Fatalf("adopted refs %v", got)
 	}
+}
+
+// The whole flow (ARCH §19): the adopt Plan is human-only and binds the
+// guest without a Proxmox write; the delete of the adopted Target keeps
+// the guest (unbind); only delete_guest, human-only and destructive,
+// deletes it.
+func TestAdoptFlow(t *testing.T) {
+	a := newAdoptEnv(t)
+	id, u := a.person("wiki")
+	req := AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, id), Digest: u.Digest}
+	p, err := a.e.ProposeAdopt(a.ctx, req, "token:tok_qa", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Origin != OriginAdopt || !slices.Contains(p.HumanOnly, HumanOnlyAcceptGuestData) {
+		t.Fatalf("adopt plan: origin %s human_only %v", p.Origin, p.HumanOnly)
+	}
+	writes := a.drv.Calls(fake.OpUpdate) + a.drv.Calls(fake.OpCreate) + a.drv.Calls(fake.OpDelete)
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	run := a.lastRun(t)
+	if run.Status != "succeeded" {
+		steps, _ := a.st.Steps(a.ctx, run.ID)
+		t.Fatalf("adopt run %s: %+v", run.Status, steps)
+	}
+	if b, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); err != nil || b.Ref != string(id) {
+		t.Fatalf("binding %+v %v", b, err)
+	}
+	if n := a.drv.Calls(fake.OpUpdate) + a.drv.Calls(fake.OpCreate) + a.drv.Calls(fake.OpDelete); n != writes {
+		t.Fatalf("the adoption wrote to the hypervisor: %d", n-writes)
+	}
+
+	// A plain proposal of an adopted Target (no adopt request) is refused.
+	other, ou := a.person("other")
+	doc, _ := a.e.AdoptDoc(a.ctx, AdoptRequest{Target: "other", Node: "pve", VMID: vmidOf(t, other), Digest: ou.Digest})
+	if _, err := a.e.Propose(a.ctx, Input{Author: "token:tok_qa", Reason: "sneak", Proposal: Proposal{Put: []state.Doc{doc}}}); !errors.Is(err, ErrNotAdoptable) {
+		t.Fatalf("adopted Target without the adopt route: %v", err)
+	}
+
+	// Delete keeps the guest (the agent is offline: the Run says what a
+	// person does).
+	p, err = a.e.Propose(a.ctx, Input{Author: "user:admin", Reason: "drop", Proposal: Proposal{Delete: []DocKey{{Kind: state.KindTarget, Name: "wiki"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(p.HumanOnly, HumanOnlyAdoptedGuestDelete) || !strings.Contains(strings.Join(adoptNotes(t, p), " "), "stays") {
+		t.Fatalf("unbind plan: %v %v", p.HumanOnly, adoptNotes(t, p))
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if n := a.drv.Calls(fake.OpDelete); n != 0 {
+		t.Fatalf("the unbind deleted the guest (%d calls)", n)
+	}
+	if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("binding after unbind: %v", err)
+	}
+	if len(a.drv.Adopted()) != 0 {
+		t.Fatalf("adopted refs after unbind: %v", a.drv.Adopted())
+	}
+
+	// Adopt again, set delete_guest (human-only, destructive), delete.
+	_, u = a.person("wiki2")
+	id2 := u.ID
+	p, err = a.e.ProposeAdopt(a.ctx, AdoptRequest{Target: "wiki2", Node: "pve", VMID: vmidOf(t, id2), Digest: u.Digest}, "user:admin", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	_, set, _ := a.e.base(a.ctx)
+	var withDel state.Doc
+	for _, d := range set.Docs() {
+		if d.Kind == state.KindTarget && d.Name == "wiki2" {
+			withDel = d
+		}
+	}
+	withDel.Spec = []byte(strings.Replace(string(withDel.Spec), `"delete_guest":false`, `"delete_guest":true`, 1))
+	p, err = a.e.Propose(a.ctx, Input{Author: "user:admin", Reason: "may delete", Proposal: Proposal{Put: []state.Doc{withDel}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.HumanOnly, HumanOnlyAdoptedGuestDelete) || p.Risk != "destructive" {
+		t.Fatalf("delete_guest plan: %v %s", p.HumanOnly, p.Risk)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	p, err = a.e.Propose(a.ctx, Input{Author: "user:admin", Reason: "delete", Proposal: Proposal{Delete: []DocKey{{Kind: state.KindTarget, Name: "wiki2"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.HumanOnly, HumanOnlyAdoptedGuestDelete) || !strings.Contains(strings.Join(adoptNotes(t, p), " "), "deletes the Proxmox guest") {
+		t.Fatalf("delete plan: %v %v", p.HumanOnly, adoptNotes(t, p))
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if n := a.drv.Calls(fake.OpDelete); n != 1 {
+		t.Fatalf("delete_guest: %d delete calls, want 1", n)
+	}
+}
+
+func (a *adoptEnv) lastRun(t *testing.T) store.Run {
+	t.Helper()
+	runs, err := a.st.ListRuns(a.ctx, 0, 1)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("runs: %v", err)
+	}
+	return runs[0]
+}
+
+func adoptNotes(t *testing.T, p store.Plan) []string {
+	t.Helper()
+	var prop Proposal
+	if err := json.Unmarshal(p.Proposal, &prop); err != nil {
+		t.Fatal(err)
+	}
+	return prop.Notes
 }

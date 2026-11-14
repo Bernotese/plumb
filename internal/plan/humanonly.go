@@ -30,6 +30,10 @@ const (
 	// new binary and a new credential into the guest as root, so a person
 	// approves it, whatever the token tier.
 	HumanOnlyRepair = "repair"
+	// HumanOnlyAdoptedGuestDelete: the Plan lets Plumb delete a guest that
+	// a person made: it sets spec.adopted.delete_guest to true, or deletes
+	// an adopted Target that has it (D-388).
+	HumanOnlyAdoptedGuestDelete = "adopted-guest-delete"
 )
 
 // firewallType is the resource type of the guest firewall (D-295).
