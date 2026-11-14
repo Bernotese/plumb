@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { newestReady, TRIGGER_TEXT } from "../lib/images";
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
@@ -32,7 +33,8 @@
 
 <div class="spread">
   <h1 id="page-title" tabindex="-1">Images</h1>
-  <a class="btn primary" href={href({ name: "image-new" })}>New image</a>
+  {#if can("createPlan")}<a class="btn primary" href={href({ name: "image-new" })}>New image</a
+    >{/if}
 </div>
 <p class="muted">
   A stock image is the cloud image as it is. A built image is a template that Plumb makes from the

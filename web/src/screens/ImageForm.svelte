@@ -2,6 +2,7 @@
   // Only "properties": the "examples" of the schema hold demo data that must not ship (check-dist).
   import { properties as imageProps } from "../../../internal/state/schema/image.json";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { pointerErrors } from "../lib/formErrors";
   import {
     KNOWN_LXC_TEMPLATES,
@@ -34,10 +35,45 @@
   const namePattern = new RegExp(imageProps.name.pattern, "u");
   // A VM Image needs https://; an lxc Image may use http://, its pin is the trust (D-224).
   const urlPattern: Record<GuestKind, RegExp> = { vm: /^https:\/\//u, lxc: /^https?:\/\//u };
-  const shaPattern: Record<GuestKind, RegExp> = {
-    vm: new RegExp(specProps.sha256.pattern, "u"),
-    lxc: new RegExp(specProps.sha512.pattern, "u"),
+  const shaPattern: Record<"sha256" | "sha512", RegExp> = {
+    sha256: new RegExp(specProps.sha256.pattern, "u"),
+    sha512: new RegExp(specProps.sha512.pattern, "u"),
   };
+  // Signed checksums (D-335, D-344): each source fits one type, address and algorithm.
+  type Source = "ubuntu-cloud" | "proxmox-aplinfo" | "debian-https";
+  const SOURCES: {
+    source: Source;
+    kind: GuestKind;
+    algo: "sha256" | "sha512";
+    prefix: RegExp;
+    label: string;
+    hint: string;
+  }[] = [
+    {
+      source: "ubuntu-cloud",
+      kind: "vm",
+      algo: "sha256",
+      prefix: /^https:\/\/cloud-images\.ubuntu\.com\//u,
+      label: "Ubuntu cloud images (signed SHA256SUMS)",
+      hint: "Plumb checks SHA256SUMS with the Ubuntu cloud image key that is built into Plumb. A signed, newer pin needs no person.",
+    },
+    {
+      source: "debian-https",
+      kind: "vm",
+      algo: "sha512",
+      prefix: /^https:\/\/cloud\.debian\.org\/images\/cloud\//u,
+      label: "Debian cloud images (SHA512SUMS, not signed)",
+      hint: "Debian does not sign this list. Plumb reads it over HTTPS only, so every new pin needs a person.",
+    },
+    {
+      source: "proxmox-aplinfo",
+      kind: "lxc",
+      algo: "sha512",
+      prefix: /^https?:\/\/download\.proxmox\.com\/images\/system\//u,
+      label: "Proxmox appliance index (signed)",
+      hint: "Plumb checks the appliance index with the Proxmox release key that is built into Plumb. A signed, newer pin needs no person.",
+    },
+  ];
   const atPattern = new RegExp(specProps.schedule.properties.at.pattern, "u");
   // The root file system of a container needs at least 2 GiB (T-075, minLXCDisk).
   const MIN_LXC_DISK = 2;
@@ -65,6 +101,9 @@
   let title = $state("");
   let url = $state("");
   let sha = $state("");
+  /** The pin of a VM Image: SHA-256, or SHA-512 for a Debian list (D-345). */
+  let vmAlgo = $state<"sha256" | "sha512">("sha256");
+  let verify = $state<Source | "">("");
   let build = $state(false);
   let upgrade = $state(true);
   let guest = $state<Values>({});
@@ -164,7 +203,9 @@
           title = s.title ?? "";
           kind = s.type;
           url = s.url;
-          sha = (s.type === "lxc" ? s.sha512 : s.sha256) ?? "";
+          vmAlgo = s.type === "vm" && s.sha512 ? "sha512" : "sha256";
+          sha = (s.type === "lxc" || s.sha512 ? s.sha512 : s.sha256) ?? "";
+          verify = s.verify?.source ?? "";
           build = s.build !== undefined;
           upgrade = s.build?.upgrade ?? true;
           uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
@@ -207,11 +248,23 @@
         kind === "lxc"
           ? "Give the http:// or https:// address of the Proxmox template."
           : "Give an https:// address of the cloud image.";
-    if (!shaPattern[kind].test(sha.trim()))
+    if (!shaPattern[shaKey].test(sha.trim()))
       e[shaKey] =
-        kind === "lxc"
+        shaKey === "sha512"
           ? "Give the SHA-512 checksum: 128 characters 0-9 and a-f."
           : "Give the SHA-256 checksum: 64 characters 0-9 and a-f.";
+    const src = SOURCES.find((x) => x.source === verify);
+    if (src) {
+      if (src.kind !== kind) e["verify"] = "This source is for another image type.";
+      else if (!src.prefix.test(url.trim()))
+        e["verify"] = `This source needs an address that starts with ${src.prefix.source
+          .replace(/^\^/u, "")
+          .replace(/\\/gu, "")
+          .replace("https?:", "http(s):")}.`;
+      else if (src.algo !== shaKey)
+        e["verify"] =
+          `This source gives ${src.algo === "sha512" ? "SHA-512" : "SHA-256"} checksums.`;
+    }
     if (!reason.trim()) e["reason"] = "Say why you make this change.";
     guestErrors = build ? validate(kindGuestFields, guest) : {};
     if (build && kind === "lxc" && !guestErrors["disk"] && Number(guest["disk"]) < MIN_LXC_DISK)
@@ -262,7 +315,8 @@
       ...(title.trim() ? { title: title.trim() } : {}),
       type: kind,
       url: url.trim(),
-      ...(kind === "lxc" ? { sha512: sha.trim() } : { sha256: sha.trim() }),
+      ...(shaKey === "sha512" ? { sha512: sha.trim() } : { sha256: sha.trim() }),
+      ...(verify ? { verify: { source: verify } } : {}),
     };
     if (build) {
       spec.build = {
@@ -293,7 +347,9 @@
     }
   }
 
-  const shaKey = $derived(kind === "lxc" ? "sha512" : "sha256");
+  const shaKey = $derived<"sha256" | "sha512">(kind === "lxc" ? "sha512" : vmAlgo);
+  const kindSources = $derived(SOURCES.filter((x) => x.kind === kind));
+  const pickedSource = $derived(SOURCES.find((x) => x.source === verify));
   // The schema texts speak of VMs; a container build field gets its own help.
   const kindGuestFields = $derived(
     kind === "lxc"
@@ -420,9 +476,21 @@
             >{fieldError("url", "/url")}</span
           >{/if}
       </div>
+      {#if kind === "vm"}
+        <div class="field">
+          <label for="i-algo">Checksum type</label>
+          <select id="i-algo" bind:value={vmAlgo} aria-describedby="i-algo-hint">
+            <option value="sha256">SHA-256</option>
+            <option value="sha512">SHA-512</option>
+          </select>
+          <span class="hint" id="i-algo-hint"
+            >Debian publishes SHA-512 only; Ubuntu publishes SHA-256.</span
+          >
+        </div>
+      {/if}
       <div class="field">
         <label for="i-sha"
-          >{kind === "lxc" ? "SHA-512" : "SHA-256"} checksum<span aria-hidden="true">
+          >{shaKey === "sha512" ? "SHA-512" : "SHA-256"} checksum<span aria-hidden="true">
             *</span
           ></label
         >
@@ -444,6 +512,28 @@
         >
         {#if fieldError(shaKey, `/${shaKey}`)}<span class="error" id="i-sha-error"
             >{fieldError(shaKey, `/${shaKey}`)}</span
+          >{/if}
+      </div>
+      <div class="field">
+        <label for="i-verify">Signed checksum source</label>
+        <select
+          id="i-verify"
+          bind:value={verify}
+          aria-invalid={!!fieldError("verify", "/verify")}
+          aria-describedby={desc("i-verify", fieldError("verify", "/verify"))}
+        >
+          <option value="">None: I check new checksums by hand</option>
+          {#each kindSources as src (src.source)}
+            <option value={src.source}>{src.label}</option>
+          {/each}
+        </select>
+        <span class="hint" id="i-verify-hint"
+          >{pickedSource
+            ? `${pickedSource.hint} "Refresh base" on the image page proposes the new pin; a scheduled build does it first.`
+            : "With a source, Plumb can fetch the newest checksum for this address and propose it as a plan. The keys are built into Plumb."}</span
+        >
+        {#if fieldError("verify", "/verify")}<span class="error" id="i-verify-error"
+            >{fieldError("verify", "/verify")}</span
           >{/if}
       </div>
     </fieldset>
@@ -689,7 +779,9 @@
     </div>
     <ProblemBox error={submitError} />
     <div class="row">
-      <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
+      {#if can("createPlan")}<button class="btn primary" type="submit" disabled={busy}
+          >Show the plan</button
+        >{/if}
       <a
         class="btn"
         href={editing && name ? href({ name: "image", image: name }) : href({ name: "images" })}

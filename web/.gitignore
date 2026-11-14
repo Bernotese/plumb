@@ -3,5 +3,6 @@ dist/*
 !dist/.gitkeep
 src/lib/api.gen.ts
 src/lib/mock/examples.gen.json
+src/lib/roles.gen.json
 test-results/
 playwright-report/

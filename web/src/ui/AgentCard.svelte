@@ -5,6 +5,7 @@
   import { agentState, missingText, revertReason } from "../lib/agent";
   import { ApiError } from "../lib/api";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { go } from "../lib/router";
   import type { TargetView } from "../lib/types";
   import { formatTime } from "../lib/view";
@@ -85,7 +86,7 @@
       )}). The agent went back to <span class="mono">{r.from}</span> at {formatTime(r.at)}.
     </p>
   {/if}
-  {#if agent?.canUpdate}
+  {#if agent?.canUpdate && can("updateTargetAgent")}
     <form onsubmit={propose}>
       <div class="field">
         <label for="agent-reason">Reason (optional)</label>

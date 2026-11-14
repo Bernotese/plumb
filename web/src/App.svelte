@@ -5,6 +5,7 @@
   import { go, href, isRouteHash, parse, type Route } from "./lib/router";
   import { applyTheme, loadTheme, type Theme } from "./lib/theme";
   import { restored } from "./lib/restored.svelte";
+  import { me } from "./lib/session.svelte";
   import type { Session } from "./lib/types";
   import History from "./screens/History.svelte";
   import ChangePassword from "./screens/ChangePassword.svelte";
@@ -45,6 +46,8 @@
           signedIn: as === "admin" || as === "restored",
           firstLogin: as === "first-login",
           restored: as === "restored",
+          // "?as=read|plan|apply": a person with that role (T-154).
+          role: as === "read" || as === "plan" || as === "apply" ? as : undefined,
         }),
         hint: `Demo login: ${mock.MOCK_USER.username} / ${mock.MOCK_USER.password}`,
         banner: mock.MOCK_BANNER,
@@ -71,6 +74,10 @@
   let theme = $state<Theme>(loadTheme());
 
   $effect(() => applyTheme(theme));
+  // The role helper (lib/session.svelte.ts) follows the session.
+  $effect(() => {
+    me.session = session;
+  });
 
   $effect(() => {
     void loadApi().then((loaded) => {
@@ -216,7 +223,9 @@
       <option value="dark">Dark</option>
     </select>
     {#if session && screen === "app"}
-      <span class="mono user">{session.principal}</span>
+      <span class="mono user" title="Your role: {session.tier}"
+        >{session.principal} · {session.tier}</span
+      >
       <button class="btn" type="button" onclick={logout}>Log out</button>
     {/if}
   </div>

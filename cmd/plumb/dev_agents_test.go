@@ -120,6 +120,38 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		}
 		return false
 	})
+	// Every stored starter Block must support a catalogue update in the demo.
+	var catalogue struct {
+		Items []struct {
+			Name, Stored string
+			Document     json.RawMessage
+		}
+	}
+	if call("GET", "/api/v1/catalog/blocks", nil, &catalogue) != 200 {
+		t.Fatal("catalogue unavailable")
+	}
+	stored := 0
+	for _, block := range catalogue.Items {
+		if block.Stored == "none" {
+			continue
+		}
+		stored++
+		if call("POST", "/api/v1/plans", map[string]any{
+			"reason": "test catalogue update", "put": []json.RawMessage{block.Document},
+		}, nil) != 201 {
+			t.Errorf("catalogue update for %s refused", block.Name)
+		}
+	}
+	if stored == 0 {
+		t.Fatal("demo has no stored catalogue Blocks")
+	}
+	// A real parameter mismatch must still fail validation.
+	bad := json.RawMessage(`{"kind":"Block","name":"motd","spec":{"resources":[{"file":{"path":"/etc/motd","content":"{{ .missing }}"}}]}}`)
+	if call("POST", "/api/v1/plans", map[string]any{
+		"reason": "test mismatch", "put": []json.RawMessage{bad},
+	}, nil) != 422 {
+		t.Error("mismatched Block update must return 422")
+	}
 	// web1, web2, the demo Target db1 (T-070) and app1 (T-131).
 	eventually(t, "4 seed agents", 5*time.Second, func() bool { return devAgentRuns() == 4 })
 
@@ -206,7 +238,7 @@ func TestDevAgentForNewTarget(t *testing.T) {
 	apply("add web3", map[string]any{"put": []any{map[string]any{"kind": "Target", "name": "web3", "spec": map[string]any{
 		"type": "vm", "image": "ubuntu-26.04",
 		"guest":  map[string]any{"cores": 1, "memory": 1024, "disk": 10, "bridge": "vmbr0"},
-		"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "Hello from web3"}}},
+		"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"message": "Hello from web3"}}},
 	}}}})
 	eventually(t, "agent of web3", 5*time.Second, func() bool { return devAgentRuns() == 5 })
 	// T-126: the simulated agent says hello after a power start and
@@ -215,7 +247,7 @@ func TestDevAgentForNewTarget(t *testing.T) {
 		return map[string]any{"put": []any{map[string]any{"kind": "Target", "name": "web3", "spec": map[string]any{
 			"type": "vm", "image": "ubuntu-26.04", "allow_restart": true,
 			"guest":  map[string]any{"cores": 1, "memory": 1024, "disk": disk, "bridge": "vmbr0", "power": power},
-			"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "Hello from web3"}}},
+			"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"message": "Hello from web3"}}},
 		}}}}
 	}
 	apply("stop web3", web3("stopped", 10))
@@ -230,7 +262,7 @@ func TestDevAgentForNewTarget(t *testing.T) {
 	apply("build dev-built", map[string]any{"put": []any{map[string]any{"kind": "Image", "name": "dev-built", "spec": map[string]any{
 		"type": "vm", "url": "https://images.invalid/dev.img", "sha256": strings.Repeat("a", 64),
 		"build": map[string]any{
-			"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"text": "built in dev"}}},
+			"blocks": []any{map[string]any{"use": "motd", "params": map[string]any{"message": "built in dev"}}},
 			"guest":  map[string]any{"disk": 10, "bridge": "vmbr0"},
 		},
 	}}}})

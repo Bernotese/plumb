@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -17,7 +18,8 @@ import (
 
 func TestAgentWithRealLink(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "link.db"))
+	dbPath := filepath.Join(t.TempDir(), "link.db")
+	st, err := store.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +90,43 @@ func TestAgentWithRealLink(t *testing.T) {
 	}
 	if rep := receive(wire.ReportResult, id); rep.Error != "" || len(rep.Items) != 1 || rep.Items[0].Status != wire.StatusApplied {
 		t.Fatalf("apply result: %+v", rep)
+	}
+	// Fail the real TouchAgent write, then recover without re-enrollment.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER fail_touch BEFORE UPDATE OF last_seen_at ON agent BEGIN SELECT RAISE(FAIL, 'private store failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	cred := ta.a.credential()
+	var busy attempt
+	deadline := time.After(5 * time.Second)
+waitBusy:
+	for {
+		select {
+		case busy = <-attempts:
+			if busy.code == http.StatusServiceUnavailable {
+				break waitBusy
+			}
+		case <-deadline:
+			t.Fatal("no 503 from failed TouchAgent")
+		}
+	}
+	if busy.retry != "1" {
+		t.Fatalf("503 Retry-After: %q", busy.retry)
+	}
+	if _, err := db.Exec(`DROP TRIGGER fail_touch`); err != nil {
+		t.Fatal(err)
+	}
+	id, err = ctl.Send("web1", wire.CommandObserve, wire.ObserveBody{Resources: []wire.Resource{r}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receive(wire.ReportResult, id)
+	if ta.a.credential() != cred {
+		t.Fatal("store failure dropped credential")
 	}
 	old := ta.a.credential()
 	write(t, ta.cfg.TokenFile, token()) // Revokes the old credential and wakes its poll with 401.

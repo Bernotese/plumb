@@ -2,7 +2,8 @@
 // examples of api/openapi.yaml; it computes plans, runs and events the way
 // the server does (ARCHITECTURE §3, §4), in a much simpler form.
 import { ApiError } from "../api";
-import type { PlumbApi } from "../client";
+import type { CatalogBlock, PinRefresh, PlumbApi, User, UserRole } from "../client";
+import roles from "../roles.gen.json";
 import type {
   BlockDoc,
   BlockView,
@@ -65,6 +66,11 @@ export interface MockOptions {
   token?: boolean;
   /** Start as a restored controller in restored mode (D-290, D-303). */
   restored?: boolean;
+  /**
+   * Start signed in as a person with this role (D-329): admin → admin,
+   * apply → alice, plan → carol, read → bob (T-154).
+   */
+  role?: UserRole;
 }
 
 export interface MockApi extends PlumbApi {
@@ -437,9 +443,22 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   } else if (opts.firstLogin) {
     session = example("login", 200);
   }
+  if (opts.role) {
+    const name = { admin: "admin", apply: "alice", plan: "carol", read: "bob" }[opts.role];
+    session = {
+      principal: `user:${name}`,
+      must_change_password: false,
+      tier: opts.role,
+      expires_at: "2026-11-11T08:00:00Z",
+    };
+    mustChange = false;
+  }
 
   const images = exampleItems<ImageView>(example("listImages", 200));
   seedImages(images);
+  // T-154: the stock Ubuntu Image checks its pin against the signed list (D-335).
+  const ubuntu = images.find((i) => i.document.name === "ubuntu-26.04");
+  if (ubuntu) ubuntu.document.spec.verify = { source: "ubuntu-cloud" };
   const blockViews = exampleItems<BlockView>(example("listBlocks", 200));
   const blocks = new Map(blockViews.map((b) => [b.document.name, b.document]));
   const targets = new Map(
@@ -731,7 +750,30 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   // T-118: backups and the restore state (D-288 … D-290, D-302 … D-304).
   const backups: BackupList = structuredClone(example("listBackups", 200));
   // The users of the mock (D-321): the restore locked all but admin.
-  const MOCK_USERS = ["admin", "alice", "bob"];
+  const MOCK_USERS = ["admin", "alice", "bob", "carol"];
+  // T-154: the users of D-330. bob is read, carol plan, alice apply.
+  const users = new Map<string, User>(
+    (
+      [
+        ["admin", "admin", "system", "2026-11-13T07:58:12Z"],
+        ["alice", "apply", "user:admin", "2026-11-13T09:12:00Z"],
+        ["bob", "read", "user:admin", null],
+        ["carol", "plan", "user:admin", "2026-11-12T16:40:00Z"],
+      ] as const
+    ).map(([name, role, by, last]) => [
+      name,
+      {
+        name,
+        role,
+        disabled: false,
+        locked: false,
+        must_change_password: last === null,
+        created_at: "2026-11-10T08:00:00Z",
+        created_by: by,
+        last_login_at: last,
+      },
+    ]),
+  );
   const restore: RestoreState = opts.restored
     ? structuredClone(example("getRestore", 200))
     : { restored: false, restored_mode: false };
@@ -743,8 +785,57 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         n++;
       }
     restore.disabled_tokens = n;
-    restore.locked_users = MOCK_USERS.filter((u) => u !== "admin");
+    restore.locked_users = ["alice", "bob"];
   }
+  // T-154: the starter catalogue (D-328) and the signature times of pins (D-335).
+  const pinSignedAt = new Map<string, string | null>();
+  const catalogFrom = (doc: BlockDoc, description: string, kinds: ("vm" | "lxc")[]) => ({
+    name: doc.name,
+    title: doc.spec.title ?? doc.name,
+    description,
+    kinds,
+    sha256: mockHash(toYaml(doc)).padEnd(64, "0").slice(0, 64),
+    yaml: toYaml(doc),
+    document: doc,
+  });
+  const catalog: Omit<CatalogBlock, "stored">[] = [
+    ...exampleItems<CatalogBlock>(example("listCatalogBlocks", 200)).map((c) =>
+      catalogFrom(c.document as BlockDoc, c.description, c.kinds),
+    ),
+    ...["nginx"]
+      .map((n) => blocks.get(n))
+      .filter((b): b is BlockDoc => !!b)
+      .map((b) =>
+        catalogFrom(structuredClone(b), "Install Nginx with a default site.", ["vm", "lxc"]),
+      ),
+    catalogFrom(
+      {
+        kind: "Block",
+        name: "unattended-upgrades",
+        spec: {
+          title: "Unattended upgrades",
+          params: { type: "object", properties: {} },
+          resources: [{ package: { name: "unattended-upgrades" } }],
+        },
+      } as BlockDoc,
+      "Install security updates every day.",
+      ["vm", "lxc"],
+    ),
+    catalogFrom(
+      {
+        kind: "Block",
+        name: "sysctl-hardening",
+        spec: {
+          title: "Kernel hardening",
+          params: { type: "object", properties: {} },
+          resources: [{ sysctl: { name: "kernel.kptr_restrict", value: "2" } }],
+        },
+      } as BlockDoc,
+      "A few safe kernel settings.",
+      ["vm"],
+    ),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+
   /** 409 `restored-mode` for the writers that wait for the confirm (D-303). */
   function writable(): void {
     if (restore.restored_mode)
@@ -790,6 +881,28 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       );
     }
     return session;
+  }
+
+  /** A person who logged in, not a token. */
+  const isPerson = (s: Session) => s.principal.startsWith("user:");
+
+  /** The minimum role of an operation (D-342, from api/openapi.yaml): 403 below it. */
+  function need(op: keyof typeof roles): Session {
+    const s = auth();
+    const order = ["read", "plan", "apply", "admin"];
+    const want = roles[op];
+    if (want !== "none" && order.indexOf(s.tier) < order.indexOf(want)) {
+      throw problem("forbidden", "Forbidden", 403, `This needs the role ${want} or higher.`);
+    }
+    return s;
+  }
+
+  /** An admin session: a person with role admin (D-330). */
+  function adminPerson(): Session {
+    const s = need("listUsers");
+    if (!isPerson(s))
+      throw problem("human-required", "Human session required", 403, "Only a person can do this.");
+    return s;
   }
 
   /** Tokens, secrets and import need a human session (D-087, D-095). */
@@ -918,7 +1031,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
 
   function newPlan(
     fields: Pick<Plan, "origin" | "issue_id" | "reason" | "targets" | "warnings"> &
-      Partial<Pick<Plan, "human_only" | "rollback_to" | "images">>,
+      Partial<Pick<Plan, "human_only" | "rollback_to" | "images" | "pins">>,
   ): Plan {
     const s = auth();
     const all = fields.targets.flatMap((t) =>
@@ -926,6 +1039,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     );
     // A build or a template removal changes no guest: reversible (D-201).
     if (fields.images?.length) all.push("reversible");
+    // A pin-only change is reversible (contract example of refreshImagePin).
+    if (fields.pins?.length) all.push("reversible");
     const p: Plan = {
       id: nextPlan++,
       status: "pending",
@@ -1579,7 +1694,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       return out;
     },
     async buildImage(name, reason) {
-      auth();
+      need("buildImage");
       writable();
       const view = findImage(name);
       if (!view) throw new ApiError(example("getImage", 404));
@@ -1621,6 +1736,74 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       if (!b) throw problem("not-found", "Not found", 404, `Block "${name}" does not exist.`);
       return structuredClone(b);
     },
+    async listCatalogBlocks() {
+      auth();
+      return structuredClone(
+        catalog.map((c) => {
+          const stored = blocks.get(c.name);
+          return {
+            ...c,
+            stored: !stored ? "none" : toYaml(stored) === toYaml(c.document) ? "same" : "differs",
+          } satisfies CatalogBlock;
+        }),
+      );
+    },
+    async refreshImagePin(name) {
+      const s = need("refreshImagePin");
+      writable();
+      const view = findImage(name);
+      if (!view) throw new ApiError(example("getImage", 404));
+      const spec = view.document.spec;
+      const source = spec.verify?.source;
+      if (!source)
+        throw problem("unprocessable", "No verify", 422, `Image ${name} has no verify source.`);
+      const algorithm = spec.sha512 ? "sha512" : "sha256";
+      const old = (algorithm === "sha512" ? spec.sha512 : spec.sha256) ?? null;
+      const signed = source !== "debian-https";
+      // The "vendor list" of the mock: one newer pin per Image, then current.
+      const fresh = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        .map((i) => mockHash(`${name}:${spec.url}:next:${i}`))
+        .join("")
+        .replace(/[^0-9a-f]/g, "")
+        .padEnd(64, "0")
+        .slice(0, 64);
+      const next = algorithm === "sha512" ? fresh + fresh : fresh;
+      const last = pinSignedAt.get(name) ?? null;
+      const pin: PinRefresh = {
+        image: name,
+        source,
+        signed,
+        key_fingerprint: signed
+          ? source === "ubuntu-cloud"
+            ? "D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81"
+            : "24B30F06ECC1836A4E5EFECBA7BCD1420BFE778E"
+          : null,
+        file: spec.url.split("/").pop() ?? "",
+        algorithm,
+        old,
+        new: next,
+        used_before: false,
+        signed_at: signed ? "2026-11-12T04:11:09Z" : null,
+        last_signed_at: last,
+      };
+      if (old === next) return { unchanged: { ...pin, used_before: true } };
+      const doc = structuredClone(view.document);
+      if (algorithm === "sha512") doc.spec.sha512 = next;
+      else doc.spec.sha256 = next;
+      const p = newPlan({
+        origin: "pin_refresh",
+        issue_id: null,
+        reason: `Refresh the base pin of ${name} from ${source}.`,
+        targets: [],
+        warnings: [],
+        human_only: !signed || last === null ? ["unverified-pin"] : [],
+        pins: [pin],
+      });
+      void s;
+      pendingDocs.set(p.id, { reason: p.reason, put: [doc] });
+      if (signed) pinSignedAt.set(name, pin.signed_at);
+      return { plan: p };
+    },
     async listTargets() {
       auth();
       return structuredClone([...targets.values()].map(withRaw));
@@ -1632,7 +1815,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       return structuredClone(withRaw(t));
     },
     async createPlan(proposal: Proposal) {
-      auth();
+      need("createPlan");
       if (!proposal.reason.trim()) {
         throw problem("validation", "Validation failed", 422, undefined, {
           errors: [{ pointer: "/reason", message: "A reason is required." }],
@@ -1840,8 +2023,11 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       const s = auth();
       writable();
       const p = findPlan(id);
+      // D-329: a person with role apply approves up to disruptive; destructive needs admin.
+      if (p.status === "pending" && isPerson(s) && s.tier === "apply" && p.risk === "destructive")
+        throw problem("forbidden", "Forbidden", 403, "A destructive plan needs the role admin.");
       // Only a person approves a human-only Plan (D-099; QA T-036 F2).
-      if (p.status === "pending" && (p.human_only?.length ?? 0) > 0 && s.tier !== "admin") {
+      if (p.status === "pending" && (p.human_only?.length ?? 0) > 0 && !isPerson(s)) {
         throw problem(
           "human-required",
           "Human session required",
@@ -1849,6 +2035,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "Only a person can approve this plan.",
         );
       }
+      need("approvePlan");
       if (p.status === "pending" && p.origin === "build") return approveBuild(p, s);
       if (p.status === "stale" || (p.status === "pending" && p.base_revision !== head)) {
         if (p.status !== "stale") {
@@ -2000,7 +2187,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       );
     },
     async discardPlan(id) {
-      auth();
+      need("discardPlan");
       const p = findPlan(id);
       if (p.status !== "pending")
         throw problem("conflict", "Plan is not pending", 409, `Plan ${id} is ${p.status}.`);
@@ -2019,7 +2206,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       return page([...runs.values()], cursor, limit);
     },
     async commentIssue(id, body) {
-      const s = auth();
+      const s = need("commentIssue");
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
       if (!body.trim() || body.length > 10000)
@@ -2058,7 +2245,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       return structuredClone(withSource(i));
     },
     async resolveIssue(id, action, reason, rule) {
-      auth();
+      need("resolveIssue");
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
       if (issue.status !== "open" || !issue.actions.includes(action)) {
@@ -2134,11 +2321,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       return p;
     },
     async ignoreOnce(id) {
-      const s = auth();
+      const s = need("resolveIssue");
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
+      // A person with role apply up to disruptive (ARCHITECTURE §17).
+      if (isPerson(s) && s.tier !== "admin") {
+        if (s.tier !== "apply" || issue.risk === "destructive")
+          throw problem("forbidden", "Forbidden", 403, "This needs the role apply or admin.");
+      }
       // A person, or an apply token within its max risk and without sensitive changes (D-091).
-      if (s.tier !== "admin") {
+      if (!isPerson(s) && s.tier !== "admin") {
         const order: Risk[] = ["read", "reversible", "disruptive", "destructive"];
         const within =
           s.tier === "apply" &&
@@ -2276,7 +2468,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       });
     },
     async rollbackRevision(n, reason) {
-      auth();
+      need("rollbackRevision");
       if (!reason.trim()) {
         throw problem("validation", "Validation failed", 422, undefined, {
           errors: [{ pointer: "/reason", message: "A reason is required." }],
@@ -2423,6 +2615,67 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       restore.confirmed_by = s.principal;
       emit("restore.confirmed", "restore:1", {});
       return structuredClone(restore);
+    },
+    async listUsers() {
+      adminPerson();
+      return structuredClone([...users.values()].sort((a, b) => a.name.localeCompare(b.name)));
+    },
+    async createUser(name, role) {
+      const s = adminPerson();
+      if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(name))
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [
+            {
+              pointer: "/name",
+              message: "Use 1 to 32 characters: a-z, 0-9, _ and -; start with a letter or _.",
+            },
+          ],
+        });
+      if (users.has(name))
+        throw problem("user-exists", "User exists", 409, `The name ${name} is taken.`);
+      users.set(name, {
+        name,
+        role,
+        disabled: false,
+        locked: false,
+        must_change_password: true,
+        created_at: now(),
+        created_by: s.principal,
+        last_login_at: null,
+      });
+      MOCK_USERS.push(name);
+      emit("user.created", `user:${name}`, { role });
+      const rnd = crypto.getRandomValues(new Uint8Array(16));
+      return {
+        username: name,
+        password: btoa(String.fromCharCode(...rnd)).replace(/[^A-Za-z0-9]/g, ""),
+      };
+    },
+    async changeUser(name, change) {
+      const s = adminPerson();
+      const u = users.get(name);
+      if (!u) throw problem("not-found", "Not found", 404, `User ${name} does not exist.`);
+      if (`user:${name}` === s.principal)
+        throw problem(
+          "own-user",
+          "Own user",
+          409,
+          "You cannot change your own role or disable yourself.",
+        );
+      const after = { ...u, ...change };
+      const admins = [...users.values()].filter(
+        (x) => x.name !== name && x.role === "admin" && !x.disabled,
+      );
+      if (
+        u.role === "admin" &&
+        !u.disabled &&
+        (after.role !== "admin" || after.disabled) &&
+        !admins.length
+      )
+        throw problem("last-admin", "Last admin", 409, "This is the last enabled admin.");
+      Object.assign(u, change);
+      emit("user.changed", `user:${name}`, { role: u.role, disabled: u.disabled });
+      return structuredClone(u);
     },
     async resetUserPassword(name) {
       const s = human();

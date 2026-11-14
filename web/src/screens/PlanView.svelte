@@ -3,6 +3,7 @@
   import { ApiError } from "../lib/api";
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
+  import { can, canApprove, me, roleOf } from "../lib/session.svelte";
   import type { Plan } from "../lib/types";
   import { formatTime, humanOnlyReasons } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
@@ -90,7 +91,13 @@
     reenroll: "Re-enroll a target",
     build: "Image build (no document change)",
     agent_update: "Agent update (no document change)",
+    pin_refresh: "New base checksum of an image (only the pin changes)",
   };
+  const pinSource = {
+    "ubuntu-cloud": "Ubuntu cloud images (SHA256SUMS)",
+    "proxmox-aplinfo": "Proxmox appliance index",
+    "debian-https": "Debian SHA512SUMS over HTTPS",
+  } as const;
   const actionLabel = {
     create: "Create",
     update: "Change",
@@ -145,7 +152,9 @@
       <dd>
         {count} resource change{count === 1 ? "" : "s"}{restarts
           ? `, ${restarts} restart${restarts === 1 ? "" : "s"}`
-          : ""}{builds ? `, ${builds} image build${builds === 1 ? "" : "s"}` : ""}
+          : ""}{builds ? `, ${builds} image build${builds === 1 ? "" : "s"}` : ""}{plan.pins?.length
+          ? `, ${plan.pins.length} new image checksum${plan.pins.length === 1 ? "" : "s"}`
+          : ""}
       </dd>
       {#if plan.origin !== "proposal"}
         <dt>Origin</dt>
@@ -181,6 +190,49 @@
 
   {#each plan.warnings as w, i (i)}
     <p class="banner warn">{w}</p>
+  {/each}
+
+  {#each plan.pins ?? [] as pin, pi (pin.image)}
+    <section class="card pin" aria-labelledby="pin-{pi}">
+      <h2 id="pin-{pi}">Image <span class="mono">{pin.image}</span>: new base checksum</h2>
+      <dl class="facts">
+        <dt>Source</dt>
+        <dd>{pinSource[pin.source]}</dd>
+        <dt>Signature</dt>
+        <dd>
+          {#if pin.signed && pin.key_fingerprint}
+            Signed by the key <span class="mono wrap">{pin.key_fingerprint}</span>
+            (built into Plumb){#if pin.signed_at}, at {formatTime(pin.signed_at)}{/if}.
+          {:else}
+            <Badge tone="warn" label="not signed" /> The source has no signature. A person must check
+            the new checksum.
+          {/if}
+        </dd>
+        {#if pin.signed}
+          <dt>Last accepted</dt>
+          <dd>
+            {pin.last_signed_at
+              ? `A list signed at ${formatTime(pin.last_signed_at)}.`
+              : "None: this is the first refresh of this image."}
+          </dd>
+        {/if}
+        <dt>File</dt>
+        <dd class="mono wrap">{pin.file}</dd>
+        <dt>Old {pin.algorithm}</dt>
+        <dd class="mono wrap" id="pin-old-{pi}">{pin.old ?? "–"}</dd>
+        <dt>New {pin.algorithm}</dt>
+        <dd class="mono wrap" id="pin-new-{pi}">{pin.new}</dd>
+      </dl>
+      {#if pin.used_before}
+        <p class="warn" role="note">
+          This image used the new checksum before: this is a step back to an older file.
+        </p>
+      {/if}
+      <p class="muted">
+        Only the pin changes. New versions and new Targets use the new file; existing Targets do not
+        change.
+      </p>
+    </section>
   {/each}
 
   {#each plan.images ?? [] as part (part.image)}
@@ -276,21 +328,31 @@
   {#if plan.status === "pending"}
     <form class="card" onsubmit={approve}>
       <h2>Approve</h2>
-      <div class="field">
-        <label for="approve-comment">Approval comment (optional)</label>
-        <textarea id="approve-comment" bind:value={comment}></textarea>
-      </div>
+      {#if canApprove(plan)}
+        <div class="field">
+          <label for="approve-comment">Approval comment (optional)</label>
+          <textarea id="approve-comment" bind:value={comment}></textarea>
+        </div>
+      {:else}
+        <p class="muted" id="approve-role">
+          Your role is {roleOf(me.session)}. {plan.risk === "destructive"
+            ? "A destructive plan needs the role admin."
+            : "Approving needs the role apply or admin."} Ask a person with that role.
+        </p>
+      {/if}
       <ProblemBox error={approveError} />
       <div class="row">
-        <button
-          class="btn primary"
-          type="submit"
-          disabled={busy || restored.mode}
-          aria-describedby={restored.mode ? "approve-restored" : undefined}
-          >Approve and apply</button
-        >
+        {#if canApprove(plan)}
+          <button
+            class="btn primary"
+            type="submit"
+            disabled={busy || restored.mode}
+            aria-describedby={restored.mode ? "approve-restored" : undefined}
+            >Approve and apply</button
+          >
+        {/if}
         <a class="btn" href={href({ name: "plans" })}>Not now</a>
-        {#if !confirmDrop}
+        {#if !confirmDrop && can("discardPlan")}
           <button class="btn danger" type="button" disabled={busy} onclick={askDrop}
             >Drop plan</button
           >
@@ -325,6 +387,12 @@
 {/if}
 
 <style>
+  .pin h2 {
+    margin-top: 0;
+  }
+  .wrap {
+    overflow-wrap: anywhere;
+  }
   .drop {
     margin-top: var(--space-3);
     border-left: 4px solid var(--color-danger);

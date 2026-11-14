@@ -2,6 +2,7 @@
   import targetSchema from "../../../internal/state/schema/target.json";
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
+  import { can, roleNote } from "../lib/session.svelte";
   import DeleteDocument from "../ui/DeleteDocument.svelte";
   import {
     fieldsOf,
@@ -631,11 +632,15 @@
       {#if errors["reason"]}<span class="error" id="t-reason-error">{errors["reason"]}</span>{/if}
     </div>
     <ProblemBox error={submitError} />
-    <div class="row">
-      <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
-      <a class="btn" href={href({ name: "targets" })}>Cancel</a>
-    </div>
-    <p class="muted">Nothing changes until you approve the plan.</p>
+    {#if can("createPlan")}
+      <div class="row">
+        <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
+        <a class="btn" href={href({ name: "targets" })}>Cancel</a>
+      </div>
+      <p class="muted">Nothing changes until you approve the plan.</p>
+    {:else}
+      <p class="muted" id="t-role">{roleNote("plan")} You can look, not change.</p>
+    {/if}
   </form>
 {:else if !loadError}
   <p class="muted" aria-live="polite">Loading…</p>
@@ -643,45 +648,49 @@
 {#if loaded && existing}
   <RawResources {api} target={existing} />
   <AgentCard {api} target={existing} />
-  <form class="card" onsubmit={reenroll} aria-labelledby="reenroll-title">
-    <h2 id="reenroll-title">Re-enroll the agent</h2>
-    <p>
-      {forKind(
-        "A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it; nothing happens until you approve the plan.",
-        kind,
-      )}
-    </p>
-    {#if storedAllow}
+  {#if can("reenrollTarget")}<form
+      class="card"
+      onsubmit={reenroll}
+      aria-labelledby="reenroll-title"
+    >
+      <h2 id="reenroll-title">Re-enroll the agent</h2>
       <p>
         {forKind(
-          `The Run restarts the VM (or starts it when it is stopped). '${ALLOW_RESTART_LABEL}' stays on after it, until you switch it off.`,
+          "A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it; nothing happens until you approve the plan.",
           kind,
         )}
       </p>
-    {:else if existing.status.power === "running"}
-      <p class="warn" id="reenroll-refused">
-        {forKind(
-          `${REENROLL_REFUSED} (The VM ran when this page was loaded; the server checks again.)`,
-          kind,
-        )}
-      </p>
-    {:else}
-      <p>{forKind("The VM is stopped: the Run starts it with the new token.", kind)}</p>
-    {/if}
-    <div class="field">
-      <label for="reenroll-reason">Reason (optional)</label>
-      <textarea id="reenroll-reason" bind:value={reenrollReason} maxlength="2000"></textarea>
-    </div>
-    <ProblemBox error={reenrollError} />
-    <button
-      class="btn"
-      type="submit"
-      disabled={reenrollBusy || restored.mode}
-      aria-describedby={restored.mode ? "reenroll-restored" : undefined}
-      >Plan the re-enrollment</button
-    >
-    {#if restored.mode}<p class="muted" id="reenroll-restored">{RESTORED_WAIT}</p>{/if}
-  </form>
+      {#if storedAllow}
+        <p>
+          {forKind(
+            `The Run restarts the VM (or starts it when it is stopped). '${ALLOW_RESTART_LABEL}' stays on after it, until you switch it off.`,
+            kind,
+          )}
+        </p>
+      {:else if existing.status.power === "running"}
+        <p class="warn" id="reenroll-refused">
+          {forKind(
+            `${REENROLL_REFUSED} (The VM ran when this page was loaded; the server checks again.)`,
+            kind,
+          )}
+        </p>
+      {:else}
+        <p>{forKind("The VM is stopped: the Run starts it with the new token.", kind)}</p>
+      {/if}
+      <div class="field">
+        <label for="reenroll-reason">Reason (optional)</label>
+        <textarea id="reenroll-reason" bind:value={reenrollReason} maxlength="2000"></textarea>
+      </div>
+      <ProblemBox error={reenrollError} />
+      <button
+        class="btn"
+        type="submit"
+        disabled={reenrollBusy || restored.mode}
+        aria-describedby={restored.mode ? "reenroll-restored" : undefined}
+        >Plan the re-enrollment</button
+      >
+      {#if restored.mode}<p class="muted" id="reenroll-restored">{RESTORED_WAIT}</p>{/if}
+    </form>{/if}
   <DeleteDocument {api} kind="Target" name={existing.document.name}>
     <p>
       The plan deletes the {kind === "lxc" ? "container" : "VM"}

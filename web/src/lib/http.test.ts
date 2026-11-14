@@ -72,6 +72,30 @@ describe("http api", () => {
     ]);
   });
 
+  it("calls the catalogue, user and pin operations (T-154)", async () => {
+    const pin = { image: "u", source: "ubuntu-cloud" };
+    const f = fakeFetch((c) =>
+      c.url.endsWith("/refresh")
+        ? Response.json(c.url.includes("/same/") ? { status: "unchanged", pin } : { id: 31 })
+        : Response.json({ items: [{ name: "motd" }], next: null }),
+    );
+    const api = createHttpApi({ fetch: f.fn });
+    expect(await api.listCatalogBlocks()).toEqual([{ name: "motd" }]);
+    await api.listUsers();
+    await api.createUser("alice", "apply");
+    await api.changeUser("a b", { disabled: true });
+    expect(await api.refreshImagePin("new")).toEqual({ plan: { id: 31 } });
+    expect(await api.refreshImagePin("same")).toEqual({ unchanged: pin });
+    expect(f.calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["GET", "/api/v1/catalog/blocks", undefined],
+      ["GET", "/api/v1/users?limit=200", undefined],
+      ["POST", "/api/v1/users", { name: "alice", role: "apply" }],
+      ["PATCH", "/api/v1/users/a%20b", { disabled: true }],
+      ["POST", "/api/v1/images/new/refresh", undefined],
+      ["POST", "/api/v1/images/same/refresh", undefined],
+    ]);
+  });
+
   it("calls the revision operations (T-034)", async () => {
     const f = fakeFetch(() => Response.json({ items: [], next: null }));
     const api = createHttpApi({ fetch: f.fn });
