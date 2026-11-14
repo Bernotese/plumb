@@ -212,3 +212,28 @@ func TestLateUnbindBeforeParkWrite(t *testing.T) {
 		t.Fatalf("%d unbind commands, want 1", n)
 	}
 }
+
+// T-210 M1: a recorded late success counts only for the agent that the
+// Run would park. A success delivered for another agent id between the
+// wait and the park write does not stop the park.
+func TestLateUnbindOtherAgentBeforeParkWrite(t *testing.T) {
+	e := newEnv(t, true, withInstall, withShortUnbind)
+	adm := e.admin()
+	vmid, a := e.adoptWithAgent(adm, "wiki")
+	a.Pause(true)
+	e.eng.SetBeforeParkHook(func() {
+		d := link.Delivery{Target: "wiki", AgentID: "another-agent", CommandType: wire.CommandUnbind,
+			Report: wire.Report{Type: wire.ReportResult, CommandID: "x"}}
+		if err := e.eng.HandleReport(e.ctx, d); err != nil {
+			t.Error(err)
+		}
+	})
+	defer e.eng.SetBeforeParkHook(nil)
+	run := e.deleteTarget(adm, "wiki")
+	if run.Status != "succeeded" || run.Warnings != 1 {
+		t.Fatalf("run %+v, want the park warning", run)
+	}
+	if g := e.unmanaged(adm, vmid); !g.AgentLeft {
+		t.Fatalf("not parked: %+v", g)
+	}
+}
