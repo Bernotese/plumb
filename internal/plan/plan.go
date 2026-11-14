@@ -173,6 +173,12 @@ type Config struct {
 	Events *event.Log
 	Agents Agents
 	Driver driver.Driver
+	// InstallID names the install (PLUMB_INSTALL_ID); the MAC of a more
+	// NIC derives from it (D-400). NetAllowed reports whether the install
+	// named a bridge (tag 0) or bridge/tag (D-401); nil allows every
+	// network (serve --dev). T-219.
+	InstallID  string
+	NetAllowed func(bridge string, tag int) bool
 	// Secrets is the secret store. nil: no secret exists, and a target
 	// that refers to one cannot be planned.
 	Secrets *secret.Store

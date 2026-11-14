@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
-	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/wire"
 )
 

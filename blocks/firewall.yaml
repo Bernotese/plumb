@@ -11,7 +11,9 @@ spec:
     change, it puts the old rules back. Use this Block once per Target: a
     Target has one firewall. Ports that Docker publishes go around this
     firewall; with Docker, also list the ports of the guest's own services
-    that containers use. Works on VM and container Targets.
+    that containers use. The rules apply to incoming traffic on every
+    interface of the guest, also on more NICs (guest.nics) and their VLANs.
+    Works on VM and container Targets.
   params:
     type: object
     properties:

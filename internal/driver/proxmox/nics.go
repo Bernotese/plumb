@@ -26,10 +26,10 @@ func (d *Driver) SetExtraNets(x InstallExtras) {
 	d.nets = append([]ExtraNet(nil), x.ExtraNets...)
 }
 
-// netAllowed: the token has SDN.Use on the bridge (untagged) or on the
+// NetAllowed: the token has SDN.Use on the bridge (untagged) or on the
 // bridge/tag path. The main bridge of the install is allowed untagged;
 // a tag on it needs its own --extra-vlan line.
-func (d *Driver) netAllowed(bridge string, tag int) bool {
+func (d *Driver) NetAllowed(bridge string, tag int) bool {
 	if tag == 0 && bridge == d.cfg.Bridge {
 		return true
 	}
@@ -65,7 +65,7 @@ func (d *Driver) checkNICNet(idx int, n driver.NIC) error {
 	if n.Tag < 0 || n.Tag > 4094 {
 		return fmt.Errorf("proxmox: net%d: bad VLAN tag %d", idx, n.Tag)
 	}
-	if !d.netAllowed(n.Bridge, n.Tag) {
+	if !d.NetAllowed(n.Bridge, n.Tag) {
 		return &NetworkNotAllowedError{NIC: idx, Bridge: n.Bridge, Tag: n.Tag}
 	}
 	return nil
