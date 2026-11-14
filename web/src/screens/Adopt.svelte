@@ -34,6 +34,8 @@
     "host-device": "it uses a host device (devN, usbN or hostpciN)",
     template: "it is a template",
     name: "its name is not a valid document name; rename it in Proxmox",
+    "agent-left":
+      "the Plumb agent of a deleted Target is still in it; Plumb removes it when the agent comes back, or forget it after you removed it by hand",
   };
   const WARNING: Record<string, string> = {
     "not-sealed":
