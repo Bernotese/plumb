@@ -82,6 +82,7 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 - Real installer runs with `plumb key init` on this host: an agent may run them (D-180, user decision; only this host). Give the TTY with `ssh -tt` or `script(1)`; do not change the installer for it. Put the recovery key into `~/.config/plump/testhost-recovery.key` (0600) and never into the repo, a PR, a log or a report; write only "key stored in <path>". On every other host a person runs the installer.
 - Never change the network config, the SSH config, `authorized_keys`, the root password or the storages `local` and `local-lvm`. One exception (D-379, user): one isolated bridge `vmbr9` without a port, made only by the card that `pl-lead` writes for it. Never reboot or upgrade the host without `pl-lead`. Never touch other machines in that network.
 - Guests and objects that a test makes stay in the Plumb pool and are removed at the end. Secrets made on the host (API tokens) go to a 0600 file outside the repo.
+- Test secret files under `~/.config/plump/` (for example `t<NNN>-secrets.json`) are deleted after an acceptance without asking, as soon as their tokens are revoked and the test users are disabled (D-416, user rule). One line in the report is enough. `testhost.env`, `testhost-recovery.key` and `testhost-admin.pw` stay.
 
 ## Tools on this machine
 - `codex-usage [--route|--json]` – Codex limit status and routing.

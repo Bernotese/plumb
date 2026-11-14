@@ -1,6 +1,6 @@
 # Decisions (one line each: ID · date · decision · why)
 
-Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions at the end (next: D-416) and D-212 … D-217 (T-067) are accepted and live in `docs/decisions/` until their features are merged). In a PR, write new decisions to `docs/decisions/T-NNN.md`; `pl-lead` appends them here after the merge.
+Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions at the end (next: D-417) and D-212 … D-217 (T-067) are accepted and live in `docs/decisions/` until their features are merged). In a PR, write new decisions to `docs/decisions/T-NNN.md`; `pl-lead` appends them here after the merge.
 
 - D-001 · 2026-11-10 · Scope is a homelab with one Proxmox host; no other hypervisors or clouds · user brief §4.1
 - D-002 · 2026-11-10 · Guest OS is Debian stable and current Ubuntu LTS only · user brief §4.2
@@ -440,3 +440,4 @@ Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions 
 
   · a tag needs a VLAN-aware bridge (PVE builds `vmbr9v<T>` from physical ports and fails without one, T-214); without a port nothing leaves the host; bringing up only `vmbr9` keeps every other interface as it is
 - D-415 · 2026-11-15 · accepted (pl-architect, T-215; review sweep of #272 … #320). Taken into slice 7 as card C11, ROADMAP rows 28–32: test leftovers (#275 l1, l3, #313 n1, #320 n2, #306), `unbind_pending` `STRICT` (migration 0025), the migrated test template for `internal/issue` and `internal/store` (#316), no reopen of an Issue that a Target delete resolved (#314), and small UI texts (#282 n1, #283 n1 in C7, #307 n2, the left-behind view in C1, #317 wording). Dropped with a reason in row 33: #275 l2, #283 n2, #298 n2 / ARP re-check / SELinux label, #299 n1, #307 n3, #312 n1, #314 old pre-0024 pins, the #319 serve wiring, #300 n2 · every leftover has a card or a reason
+- D-416 · 2026-11-15 · user (working rule, binding). Test secret files under `~/.config/plump/` (e.g. `t<NNN>-secrets.json`) are deleted after an acceptance without asking, as soon as the tokens are revoked and the test users are disabled; one line in the report is enough. `testhost.env`, `testhost-recovery.key` and `testhost-admin.pw` stay · AGENTS.md "Test host" holds the rule; `t192-secrets.json` deleted 2026-11-15
