@@ -24,7 +24,8 @@ type backupView struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 	Size      int64     `json:"size"`
-	SHA256    string    `json:"sha256"`
+	SHA256    *string   `json:"sha256"` // null when unreadable
+	State     string    `json:"state"`
 }
 
 type backupCopyView struct {
@@ -94,7 +95,7 @@ func (s *Server) listBackups(w http.ResponseWriter, r *http.Request, _ *principa
 		return
 	}
 	for _, it := range items {
-		v.Items = append(v.Items, backupView{Name: it.Name, CreatedAt: it.CreatedAt, Size: it.Size, SHA256: it.SHA256})
+		v.Items = append(v.Items, backupView{Name: it.Name, CreatedAt: it.CreatedAt, Size: it.Size, SHA256: optString(it.SHA256), State: it.State})
 	}
 	c := b.CopyState()
 	v.Copy = backupCopyView{State: c.State, Message: c.Message, Name: optString(c.Name), Storage: optString(c.Storage)}

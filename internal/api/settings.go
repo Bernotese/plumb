@@ -83,6 +83,14 @@ func (s *Server) settingsOf(ctx context.Context, p *principal) settingsView {
 		if v.Proxmox.ACLLines == nil {
 			v.Proxmox.ACLLines = []ACLLineView{}
 		}
+		// The backup storage is known only from the status file of the
+		// host copy timer (T-208, host finding F1): null before its first
+		// run, or when the file is bad.
+		if s.cfg.Backups != nil {
+			if name := s.cfg.Backups.CopyState().Storage; name != "" {
+				v.Proxmox.Storages.Backup = &name
+			}
+		}
 	}
 	return v
 }

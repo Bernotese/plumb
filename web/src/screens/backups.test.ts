@@ -30,6 +30,28 @@ describe("Settings → Backups", () => {
     expect(document.querySelector("#restore-title")).toBeNull();
   });
 
+  it("shows a backup file that Plumb cannot read (T-208)", async () => {
+    const a = api();
+    const list = a.listBackups.bind(a);
+    a.listBackups = async () => {
+      const l = await list();
+      l.items.push({
+        name: "plumb-20261114T121639Z.pbk",
+        created_at: "2026-11-14T12:16:39Z",
+        size: 1578433,
+        sha256: null,
+        state: "unreadable",
+      });
+      return l;
+    };
+    show(Backups, { api: a });
+    await until(() => text().includes("plumb-20261114T121639Z.pbk"));
+    expect(text()).toContain(
+      "Plumb cannot read this file. Give it to the user plumb in the container.",
+    );
+    expect(text().match(/cannot read this file/g)?.length).toBe(1);
+  });
+
   it("backs up now; the list gets the new file", async () => {
     const a = api();
     const before = (await a.listBackups()).items.length;
