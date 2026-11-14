@@ -49,6 +49,11 @@ var guestRisk = map[string]wire.Risk{
 	AttrTags:   wire.RiskReversible,
 }
 
+// nicRisk: adding, removing or changing a more NIC changes the network of
+// the running guest (hot-plug of a VM, live change of a container), so it
+// is disruptive (D-402).
+const nicRisk = wire.RiskDisruptive
+
 // PowerRisk is the risk of a power change to want: a start is reversible,
 // a stop disruptive (D-291).
 func PowerRisk(want Power) wire.Risk {
@@ -171,6 +176,13 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 	// disk bigger than desired (grown in Proxmox) is drift too; DiffGuest
 	// refuses to plan it back.
 	add(AttrDisk, have.DiskGB, next.DiskGB, desired.DiskGB, guestRisk[AttrDisk], true)
+	// More NICs (D-399, D-402). An adopted guest stays single-NIC (D-404):
+	// its other NICs are not Plumb's.
+	if !desired.Adopted {
+		for n := 1; n <= MaxNICs; n++ {
+			add(AttrNIC(n), have.NICAt(n).Value(), next.NICAt(n).Value(), desired.NICAt(n).Value(), nicRisk, false)
+		}
+	}
 	if desired.TagsSet { // missing tags: not managed
 		add(AttrTags, list(NormTags(have.Tags)), list(NormTags(next.Tags)), list(NormTags(desired.Tags)), guestRisk[AttrTags], false)
 	}
