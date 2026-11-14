@@ -77,11 +77,14 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-156 slice 5 C11: starter Block `network` | pl-frontend | merged (PR #259) |
 | T-158 slice 5 C13: acceptance on the real host | pl-backend | **passed** (PR #265, log `docs/tasks/T-158.log.md`): steps 1–8, F2 fixed by T-166 and proven; migrations 0017–0019 on the live DB; agent link survives a `network` apply; reboot in the window restores (D-358); leak hunt 0 hits; host clean (only LXC 100, 7 ACL lines, `storage.cfg` unchanged); controller runs a190dba. Not provable on the host (F5): the `system` approval of a newer signed pin, CI proof only |
 | T-167 `network`: main NIC entry by MAC match (host finding F3) | pl-backend | merged (PR #268) |
-| T-168 Plan screen shows the document changes of a Plan without Targets (host finding F1) | pl-frontend | web part done locally, PR next |
+| T-168 Plan screen shows the document changes of a Plan (host finding F1) | pl-frontend | merged (PR #269) |
 | T-170 API: a pending Plan lists its document changes (`Plan.documents`) | pl-architect (implementer) | merged (PR #267) |
+| T-159 slice 5 C14: README | pl-frontend | PR #270, review passed, waits for CI |
+| T-171 users page: role hints from the contract | pl-frontend | PR #271, review passed, waits for CI |
+| T-172 plan of slice 6: part A (no user answer: settings, Accept to a parameter, nested forms, MCP server, rate limits, live drift of ip/nft, leftovers), part B (SSH repair, adoption; waits for U1/U2) | pl-architect, check: pl-reviewer | PR #272, in review. Cards T-173 … T-195 |
+| Slice 6 part A, started: T-173 A1 contract (pl-architect), T-177 A4b nested forms + YAML (pl-frontend), T-181 A7 live drift (pl-backend), T-183 A9 MAC checks + T-185 A11 leftovers (pl-codex-fix), T-184 A10 F5 proof (pl-codex-qa) | – | in work |
 | T-169 `group`: the Plan of a create shows the gid (host finding F4) | pl-codex-fix | merged (PR #266) |
 | T-166 copy rule: opaque guest reports (`firewall.table`, `network.file`, `apt_repository.sources`, `sysctl.file`) and file/unit lines (host finding F2) | pl-architect (implementer) | merged (PR #264), D-359; step 4 is repeated on the host |
-| T-159 slice 5 C14: README | pl-frontend | waits for T-158 |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-131 screenshots for the README: 7 pictures of the dev demo (light theme, 52–132 KB), each checked by pl-reviewer and pl-lead; demo data on the documentation range | pl-frontend | merged (PR #232) |
