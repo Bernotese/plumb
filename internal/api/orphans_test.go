@@ -185,3 +185,36 @@ func TestSweepEndsStuckResolving(t *testing.T) {
 		t.Fatalf("web1 Issue: %+v", got)
 	}
 }
+
+// N1: a resolving Issue whose Plan's Run is running stays; that Run
+// decides. The agent of web1 is paused, so the revert Run waits.
+func TestSweepKeepsResolvingWhileItsRunRuns(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	e.motd("hand edit")
+	id := e.motdIssue()
+	if code, body := adm.do("POST", "/api/v1/issues/"+itoa(id)+"/resolve", map[string]any{"action": "revert", "reason": "back"}); code >= 300 {
+		t.Fatalf("revert: %d %s", code, body)
+	}
+	iss, _ := e.st.GetIssue(e.ctx, id)
+	e.agents["web1"].Pause(true)
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(iss.PlanID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	defer func() { e.agents["web1"].Pause(false); e.eng.Wait() }()
+	run, err := e.st.RunOfPlan(e.ctx, iss.PlanID)
+	if err != nil || run.Status != "running" {
+		t.Fatalf("run %+v %v", run, err)
+	}
+	old, _, _ := e.st.UpsertIssue(e.ctx, "gone1", "file:/etc/b", json.RawMessage(`[]`))
+	if err := e.st.SetIssueResolving(e.ctx, old.ID, iss.PlanID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.iss.SweepDeletedTargets(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.st.GetIssue(e.ctx, old.ID); got.Status != "resolving" {
+		t.Fatalf("an Issue of a running Run was ended: %+v", got)
+	}
+}

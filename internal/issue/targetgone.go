@@ -12,7 +12,7 @@ import (
 // report without a binding is dropped, D-211), and a new Target of the
 // same name must not inherit them. Every open Issue is resolved "gone" by
 // system, with the reason as a comment and an issue.resolved event. An
-// Issue that a Plan is resolving stays for its Run.
+// Issue that a Plan is resolving stays while the Run of that Plan runs.
 //
 // The copy rule keeps what it needs (D-397, pl-lead's caution): the value
 // cap flag (D-353) and its agent:values Issue stay until the flag ends, so
@@ -21,16 +21,16 @@ import (
 // for their normal retention (D-331) and still match a copy into any
 // Target. The engine calls it after the delete step.
 func (s *Service) TargetDeleted(ctx context.Context, target, reason string) error {
-	_, err := s.endTarget(ctx, target, reason, false)
+	_, err := s.endTarget(ctx, target, reason)
 	return err
 }
 
 // endTarget does TargetDeleted and returns how many Issues and marks it
 // ended (T-212: the start sweep logs only real work).
-// With stuck, an Issue that is "resolving" is ended too when the Run of
-// its Plan is not running (T-212 N1: a deleted Target's Plan can no
-// longer end it).
-func (s *Service) endTarget(ctx context.Context, target, reason string, stuck bool) (int64, error) {
+// An Issue that is "resolving" is ended too when the Run of its Plan is
+// not running (T-212 N1: a Plan of a deleted Target can no longer end
+// it); a running Run decides itself.
+func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, error) {
 	var n int64
 	list, err := s.st.Issues(ctx, target)
 	if err != nil {
@@ -42,7 +42,7 @@ func (s *Service) endTarget(ctx context.Context, target, reason string, stuck bo
 	}
 	for _, iss := range list {
 		if iss.Status != store.IssueOpen {
-			if !stuck || iss.Status != store.IssueResolving {
+			if iss.Status != store.IssueResolving {
 				continue
 			}
 			if running, err := s.planRunning(ctx, iss.PlanID); err != nil {

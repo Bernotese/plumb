@@ -62,7 +62,7 @@ func (s *Service) SweepDeletedTargets(ctx context.Context) ([]string, error) {
 		if exists[t] || strings.HasPrefix(t, wire.BuildLinkPrefix) {
 			continue
 		}
-		n, err := s.endTarget(ctx, t, plan.TargetDeletedReason, true)
+		n, err := s.endTarget(ctx, t, plan.TargetDeletedReason)
 		if err != nil {
 			return swept, err
 		}
