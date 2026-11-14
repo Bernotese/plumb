@@ -38,6 +38,10 @@
       "The SSH server refuses root also with a forced command. Set permit_root_login of the Block ssh-hardening to forced-commands-only.",
     "no-pin": "No host key of the guest is pinned yet.",
     firewall: "The firewall of the Target does not let Plumb reach the SSH port.",
+    "host-key-changed":
+      "The SSH host keys of the guest changed: no pinned key is left. Check a new key on the guest (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) and accept it in the repair.",
+    "host-key-new":
+      "The guest has SSH host keys that are not pinned. The repair still checks the pinned key.",
   };
   const repair = $derived(target?.status.repair ?? null);
   const repairTone = { ready: "ok", off: "warn", unknown: "muted" } as const;

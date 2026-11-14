@@ -1141,8 +1141,12 @@ paths:
         `repair-not-ready`: the Target has no repair line, no host key pin, or its `sshd` refuses
         root with a forced command (`TargetStatus.repair` says which); use
         `POST /targets/{name}/install-command` instead. `accept_host_key` takes a fingerprint
-        that `TargetStatus.repair.host_keys_seen` shows as new; the Plan shows it, and the Run
-        pins it only after a person approved the Plan.
+        that `TargetStatus.repair.host_keys_seen` shows as new; any other fingerprint gets 409
+        `repair-not-ready` and no Plan. With the reason `host-key-changed` a repair without
+        `accept_host_key` gets 409 `repair-not-ready`. The Plan shows the key type and the
+        fingerprint, the pinned keys before and the accepted one after; the Run offers only the
+        host key algorithms of the pinned and the accepted keys, and pins the accepted key only
+        after a person approved the Plan (T-207).
       security:
         - session: []
         - token: [plan]
@@ -4810,7 +4814,7 @@ components:
         accept_host_key:
           type: string
           pattern: "^SHA256:[A-Za-z0-9+/]{43}$"
-          description: A new host key fingerprint that the person accepts (shown in the Plan).
+          description: A fingerprint of `TargetStatus.repair.host_keys_seen` that the person accepts (shown in the Plan with its key type).
     InstallCommand:
       type: object
       additionalProperties: false
@@ -4900,7 +4904,11 @@ components:
         that reports it. `state`: `ready` (line written, `sshd` allows root with a forced command,
         host keys pinned), `off` (`reasons` says why: `no-line`, `no-sshd`, `root-refused`,
         `no-pin`, `firewall` (the `firewall` resource does not let the controller reach the SSH
-        port)), `unknown` (no report yet). Missing on a controller before T-191.
+        port), `host-key-changed` (no host key that the guest reports is pinned: a repair needs
+        `accept_host_key` of one of `host_keys_seen`, T-207)), `unknown` (no report yet). A
+        `ready` state can carry the warning `host-key-new` (the guest has unpinned keys next to a
+        pinned one; the repair checks the pinned one) or `old-key`. Missing on a controller
+        before T-191.
       required: [state, reasons]
       properties:
         state: { type: string, enum: [ready, off, unknown] }

@@ -104,7 +104,22 @@ type RepairStatus struct {
 	HostKeys     []string `json:"host_keys"`
 	HostKeysSeen []string `json:"host_keys_seen"`
 	KeyConfirmed bool     `json:"key_confirmed"`
+	// HostKeyTypes maps a reported fingerprint to its key type (T-207);
+	// a key of an agent before T-207 has none. Not in the API answer.
+	HostKeyTypes map[string]string `json:"-"`
+	// KeysChangedOnly: the state is off only because the guest reported
+	// host keys that are not pinned (reason host-key-changed); a repair
+	// Plan that accepts one of them may still run (T-207).
+	KeysChangedOnly bool `json:"-"`
 }
+
+// ReasonHostKeyChanged is the RepairStatus reason (state off) while no
+// host key that the guest reports is pinned (T-207).
+const ReasonHostKeyChanged = "host-key-changed"
+
+// ReasonHostKeyNew is a warning reason of a ready RepairStatus: the guest
+// reports host keys that are not pinned next to a pinned one (T-207).
+const ReasonHostKeyNew = "host-key-new"
 
 // The states of RepairStatus.
 const (
@@ -216,6 +231,7 @@ func (e *Engine) RepairStatus(ctx context.Context, target string) (*RepairStatus
 	if r != nil && firewallBlocksRepair(r.Resources, e.repairFrom(ctx)) {
 		rs.Reasons = append(rs.Reasons, "firewall")
 		rs.State = RepairOff
+		rs.KeysChangedOnly = false
 	}
 	return rs, nil
 }
@@ -296,7 +312,7 @@ func (e *Engine) RepairFirewallWarning(ctx context.Context, tp TargetPlan) strin
 }
 
 // repairReady asks the transport.
-func (e *Engine) repairReady(ctx context.Context, target string) error {
+func (e *Engine) repairReady(ctx context.Context, target, acceptHostKey string) error {
 	rc := e.repairConfig()
 	if rc.Transport == nil || rc.Tokens == nil {
 		return fmt.Errorf("plan: this controller has no repair transport: %w", ErrRepairNotReady)
@@ -306,7 +322,10 @@ func (e *Engine) repairReady(ctx context.Context, target string) error {
 	}
 	if rs, err := e.RepairStatus(ctx, target); err != nil {
 		return err
-	} else if rs != nil && rs.State != RepairReady {
+	} else if rs != nil && rs.State != RepairReady && !(rs.KeysChangedOnly && acceptHostKey != "") {
+		if rs.KeysChangedOnly {
+			return fmt.Errorf("plan: the host keys of %s changed: check the new key on the guest and accept it (accept_host_key); a repair without it is refused: %w", target, ErrRepairNotReady)
+		}
 		reasons := strings.Join(rs.Reasons, ", ")
 		if reasons == "" {
 			reasons = "no repair report yet"
@@ -347,7 +366,7 @@ func (e *Engine) ProposeRepair(ctx context.Context, target, reason, acceptHostKe
 	if err := e.repairNeeded(ctx, target); err != nil {
 		return store.Plan{}, err
 	}
-	if err := e.repairReady(ctx, target); err != nil {
+	if err := e.repairReady(ctx, target, acceptHostKey); err != nil {
 		return store.Plan{}, err
 	}
 	if err := e.checkAcceptHostKey(ctx, target, acceptHostKey); err != nil {
@@ -361,8 +380,25 @@ func (e *Engine) ProposeRepair(ctx context.Context, target, reason, acceptHostKe
 	}
 	tp := TargetPlan{Target: target, Resources: []ResourceChange{}}
 	if acceptHostKey != "" {
+		// The person sees the type and the fingerprint, old → new (T-207).
+		rs, err := e.RepairStatus(ctx, target)
+		if err != nil {
+			return store.Plan{}, err
+		}
+		var from any
+		to := acceptHostKey
+		if rs != nil {
+			to = hostKeyText(rs.HostKeyTypes, acceptHostKey)
+			if len(rs.HostKeys) > 0 {
+				pins := make([]string, len(rs.HostKeys))
+				for i, fp := range rs.HostKeys {
+					pins[i] = hostKeyText(rs.HostKeyTypes, fp)
+				}
+				from = strings.Join(pins, ", ")
+			}
+		}
 		tp.Resources = append(tp.Resources, ResourceChange{Resource: RepairHostKeyID, Action: wire.ActionUpdate,
-			Risk: wire.RiskDisruptive, Changes: []wire.Change{{Attr: AttrHostKey, To: acceptHostKey, Risk: wire.RiskDisruptive}}})
+			Risk: wire.RiskDisruptive, Changes: []wire.Change{{Attr: AttrHostKey, From: from, To: to, Risk: wire.RiskDisruptive}}})
 	}
 	changes, _ := json.Marshal([]TargetPlan{tp})
 	proposal, _ := json.Marshal(Proposal{Targets: []string{target}})
@@ -389,6 +425,15 @@ func repairTarget(p store.Plan) (TargetPlan, error) {
 	return tps[0], nil
 }
 
+// hostKeyText is "<type> <fingerprint>", or the bare fingerprint when the
+// type is unknown (an agent before T-207).
+func hostKeyText(types map[string]string, fp string) string {
+	if typ := types[fp]; typ != "" {
+		return typ + " " + fp
+	}
+	return fp
+}
+
 // acceptedHostKey is the fingerprint that the Plan accepts, or "".
 func (tp TargetPlan) acceptedHostKey() string {
 	for _, r := range tp.Resources {
@@ -397,7 +442,12 @@ func (tp TargetPlan) acceptedHostKey() string {
 		}
 		for _, c := range r.Changes {
 			if s, ok := c.To.(string); ok && c.Attr == AttrHostKey {
-				return s
+				// "<type> SHA256:…" since T-207, a bare fingerprint before.
+				f := strings.Fields(s)
+				if len(f) == 0 {
+					return ""
+				}
+				return f[len(f)-1]
 			}
 		}
 	}
@@ -420,7 +470,7 @@ func (e *Engine) approveRepair(ctx context.Context, p store.Plan, principal stri
 	if err := e.repairNeeded(ctx, tp.Target); err != nil {
 		return store.Run{}, err
 	}
-	if err := e.repairReady(ctx, tp.Target); err != nil {
+	if err := e.repairReady(ctx, tp.Target, tp.acceptedHostKey()); err != nil {
 		return store.Run{}, err
 	}
 	if err := e.checkAcceptHostKey(ctx, tp.Target, tp.acceptedHostKey()); err != nil {

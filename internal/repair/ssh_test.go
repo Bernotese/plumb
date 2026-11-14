@@ -40,6 +40,7 @@ type fakeSSHD struct {
 	t        *testing.T
 	ln       net.Listener
 	hostKey  ssh.Signer
+	more     []ssh.Signer // further host keys of other types (T-207)
 	mu       sync.Mutex
 	allowed  []ssh.PublicKey
 	stdin    [][]byte
@@ -102,6 +103,9 @@ func (f *fakeSSHD) handle(c net.Conn) {
 		return nil, errors.New("no")
 	}}
 	cfg.AddHostKey(f.hostKey)
+	for _, k := range f.more {
+		cfg.AddHostKey(k)
+	}
 	f.mu.Unlock()
 	_, chans, reqs, err := ssh.NewServerConn(c, cfg)
 	if err != nil {
@@ -428,7 +432,8 @@ func TestRepairSharedHostKey(t *testing.T) {
 	if err := e.s.CheckAcceptHostKey(e.ctx, "web1", f.fp()); err == nil || !strings.Contains(err.Error(), "Target db1") {
 		t.Fatalf("accept: %v", err)
 	}
-	if err := e.s.CheckAcceptHostKey(e.ctx, "db1", f.fp()); err != nil {
+	// The own pinned key is not a new key: nothing to accept (T-207).
+	if err := e.s.CheckAcceptHostKey(e.ctx, "db1", f.fp()); err == nil || !strings.Contains(err.Error(), "never reported") {
 		t.Fatalf("own key: %v", err)
 	}
 	// A pin made before (or by hand) that another Target holds too is

@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,7 +132,8 @@ func (a *Agent) sendRepair(ctx context.Context, now time.Time) error {
 
 // repairReport reads the lines, sshd and the host keys of the guest.
 func (a *Agent) repairReport(ctx context.Context, w *wire.RepairWatch) wire.RepairReport {
-	rep := wire.RepairReport{Lines: []string{}, HostKeys: hostKeyFingerprints(a.opt.Root)}
+	fps, types := hostKeys(a.opt.Root)
+	rep := wire.RepairReport{Lines: []string{}, HostKeys: fps, HostKeyTypes: types}
 	var keysFile bool
 	rep.SSHD, keysFile = a.sshdStatus(ctx)
 	// A line that sshd does not read is no line (review n1 of #298).
@@ -217,38 +220,68 @@ func parseSSHDT(out []byte) (st wire.RepairSSHD, keysFile bool) {
 // hostKeyFingerprints are the SHA256 fingerprints of the host keys, at
 // most wire.MaxRepairHostKeys, sorted.
 func hostKeyFingerprints(root string) []string {
+	fps, _ := hostKeys(root)
+	return fps
+}
+
+// hostKeys returns the SHA256 fingerprints of the host keys, at most
+// wire.MaxRepairHostKeys, sorted, and the key type of each one whose
+// type is in wire.HostKeyTypeList (T-207).
+func hostKeys(root string) ([]string, map[string]string) {
 	files, _ := filepath.Glob(filepath.Join(root, "/etc/ssh/ssh_host_*_key.pub"))
 	sort.Strings(files)
 	out := []string{}
+	types := map[string]string{}
 	for _, f := range files {
 		b, err := readSmall(f, 16<<10)
 		if err != nil {
 			continue
 		}
-		if fp, ok := pubKeyFingerprint(string(b)); ok {
-			out = append(out, fp)
+		fp, typ, ok := pubKey(string(b))
+		if !ok || slices.Contains(out, fp) {
+			continue
+		}
+		out = append(out, fp)
+		if wire.ValidHostKeyType(typ) {
+			types[fp] = typ
 		}
 		if len(out) == wire.MaxRepairHostKeys {
 			break
 		}
 	}
 	sort.Strings(out)
-	return out
+	if len(types) == 0 {
+		types = nil
+	}
+	return out, types
 }
 
 // pubKeyFingerprint is OpenSSH's SHA256 fingerprint of "type base64 …".
 func pubKeyFingerprint(line string) (string, bool) {
+	fp, _, ok := pubKey(line)
+	return fp, ok
+}
+
+// pubKey returns the SHA256 fingerprint of "type base64 …" and the key
+// type that the blob names itself (its first SSH string); the text type
+// in front is not trusted.
+func pubKey(line string) (fp, typ string, ok bool) {
 	f := strings.Fields(line)
 	if len(f) < 2 {
-		return "", false
+		return "", "", false
 	}
 	raw, err := base64.StdEncoding.DecodeString(f[1])
 	if err != nil || len(raw) == 0 {
-		return "", false
+		return "", "", false
 	}
 	sum := sha256.Sum256(raw)
-	fp := "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
-	return fp, wire.ValidHostKeyFP(fp)
+	fp = "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+	if len(raw) >= 4 {
+		if n := binary.BigEndian.Uint32(raw); n <= 64 && int(n) <= len(raw)-4 {
+			typ = string(raw[4 : 4+n])
+		}
+	}
+	return fp, typ, wire.ValidHostKeyFP(fp)
 }
 
 func readSmall(path string, max int64) ([]byte, error) {
