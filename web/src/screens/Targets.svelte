@@ -47,8 +47,12 @@
 
 <div class="spread">
   <h1 id="page-title" tabindex="-1">Targets</h1>
-  {#if can("createPlan")}<a class="btn primary" href={href({ name: "target-new" })}>New target</a
-    >{/if}
+  <div class="row">
+    {#if can("adoptTarget")}<a class="btn" href={href({ name: "target-adopt" })}>Adopt a guest</a
+      >{/if}
+    {#if can("createPlan")}<a class="btn primary" href={href({ name: "target-new" })}>New target</a
+      >{/if}
+  </div>
 </div>
 <ProblemBox {error} />
 {#if targets === null && !error}
@@ -113,10 +117,20 @@
                       aria-label="Agent of {t.document.name}: {agent.label}"
                       ><Badge tone={agent.tone} label={agent.label} /></a
                     >{/if}</span
+                >{/if}{#if t.status.agent === "offline"}<a
+                  class="ignored"
+                  id="repair-mark-{t.document.name}"
+                  href={href({ name: "target-agent", target: t.document.name })}
+                  >agent offline{t.status.repair?.state === "ready" ? " · repair possible" : ""}</a
+                >{:else if t.status.repair?.key_confirmed === false && t.status.repair.state !== "unknown"}<a
+                  class="ignored"
+                  id="repair-mark-{t.document.name}"
+                  href={href({ name: "target-agent", target: t.document.name })}>old repair key</a
                 >{/if}</td
             >
             <td class="mono"
-              >{t.document.spec.image}{#if t.status.image_version}
+              >{#if "adopted" in t.document.spec}<span class="muted">adopted</span>{:else}{t
+                  .document.spec.image}{/if}{#if t.status.image_version}
                 v{t.status.image_version}{/if}</td
             >
             <td class="nowrap">{g.cores} CPU · {g.memory / 1024} GiB · {g.disk} GiB</td>

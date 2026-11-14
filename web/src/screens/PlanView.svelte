@@ -133,6 +133,8 @@
     build: "Image build (no document change)",
     agent_update: "Agent update (no document change)",
     pin_refresh: "New base checksum of an image (only the pin changes)",
+    repair: "Repair of a dead agent over SSH (no document change)",
+    adopt: "Adoption of a guest of the pool as a new Target",
   };
   const pinSource = {
     "ubuntu-cloud": "Ubuntu cloud images (SHA256SUMS)",

@@ -5,6 +5,7 @@ export type Route =
   | { name: "password" }
   | { name: "targets" }
   | { name: "target-new" }
+  | { name: "target-adopt" }
   | { name: "target-edit"; target: string }
   | { name: "target-agent"; target: string }
   | { name: "images" }
@@ -63,6 +64,7 @@ export function parse(hash: string): Route {
   if (parts.length === 1 && a === "password") return { name: "password" };
   if (parts.length === 1 && a === "targets") return { name: "targets" };
   if (parts.length === 2 && a === "targets" && b === "new") return { name: "target-new" };
+  if (parts.length === 2 && a === "targets" && b === "adopt") return { name: "target-adopt" };
   if (parts.length === 3 && a === "targets" && b && NAME.test(b) && c === "edit") {
     return { name: "target-edit", target: b };
   }
@@ -117,6 +119,8 @@ export function href(r: Route): string {
       return "#/targets";
     case "target-new":
       return "#/targets/new";
+    case "target-adopt":
+      return "#/targets/adopt";
     case "target-edit":
       return `#/targets/${encodeURIComponent(r.target)}/edit`;
     case "target-agent":

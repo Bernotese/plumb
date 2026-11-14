@@ -2,7 +2,17 @@
 // examples of api/openapi.yaml; it computes plans, runs and events the way
 // the server does (ARCHITECTURE §3, §4), in a much simpler form.
 import { ApiError } from "../api";
-import type { CatalogBlock, PinRefresh, PlumbApi, Settings, User, UserRole } from "../client";
+import type {
+  CatalogBlock,
+  PinRefresh,
+  PlumbApi,
+  RepairKeyView,
+  RepairState,
+  Settings,
+  UnmanagedGuest,
+  User,
+  UserRole,
+} from "../client";
 import roles from "../roles.gen.json";
 import type {
   BlockDoc,
@@ -519,6 +529,78 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     };
   seedLxc(images, targets);
   seedAgents(targets);
+  // T-194 (D-384): SSH repair readiness per Target. web3's agent is dead
+  // while its guest runs: the repair demo. The fingerprints are examples.
+  const FP = (c: string) => `SHA256:${c.repeat(43)}`;
+  const repairOf: Record<string, RepairState> = {
+    web1: {
+      state: "ready",
+      reasons: [],
+      port: 22,
+      host_keys: [FP("a")],
+      host_keys_seen: [],
+      key_confirmed: true,
+    },
+    db1: {
+      state: "ready",
+      reasons: [],
+      port: 22,
+      host_keys: [FP("b")],
+      host_keys_seen: [FP("c")],
+      key_confirmed: true,
+    },
+    cache1: {
+      state: "off",
+      reasons: ["root-refused"],
+      port: 22,
+      host_keys: [FP("d")],
+      host_keys_seen: [],
+      key_confirmed: true,
+    },
+    backup1: {
+      state: "off",
+      reasons: ["no-line"],
+      port: null,
+      host_keys: [],
+      host_keys_seen: [],
+      key_confirmed: false,
+    },
+    worker1: {
+      state: "ready",
+      reasons: [],
+      port: 2222,
+      host_keys: [FP("e")],
+      host_keys_seen: [],
+      key_confirmed: false,
+    },
+    web3: {
+      state: "ready",
+      reasons: [],
+      port: 22,
+      host_keys: [FP("f")],
+      host_keys_seen: [],
+      key_confirmed: true,
+    },
+  };
+  for (const t of targets.values())
+    t.status.repair =
+      repairOf[t.document.name] ??
+      (t.document.spec.type === "lxc"
+        ? {
+            state: "off",
+            reasons: ["no-sshd"],
+            port: null,
+            host_keys: [],
+            host_keys_seen: [],
+            key_confirmed: false,
+          }
+        : { state: "unknown", reasons: [] });
+  const web3 = targets.get("web3");
+  if (web3) Object.assign(web3.status, { agent: "offline", last_seen: "2026-11-10T07:00:00Z" });
+  // D-373: guests of the pool that no Target holds (the contract example).
+  const unmanaged: UnmanagedGuest[] = exampleItems<UnmanagedGuest>(
+    example("listUnmanagedGuests", 200),
+  );
 
   // Slice 2 demo data that the examples of the list operations do not show
   // (D-140): the Block "app" with a secret parameter, as in the
@@ -808,6 +890,17 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   // D-361: the settings. The install values are the ones of the backup list.
   const installBackup = { time: backups.schedule.time, keep: backups.schedule.keep };
   const settings: Settings = structuredClone(example("getSettings", 200));
+  // D-382: the repair key; worker1's line still holds the previous one.
+  const repairKey: RepairKeyView = {
+    fingerprint: "SHA256:Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5",
+    created_at: "2026-11-14T10:00:00Z",
+    previous: {
+      fingerprint: "SHA256:b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2w",
+      created_at: "2026-10-01T08:00:00Z",
+      targets: ["worker1"],
+    },
+  };
+  settings.repair_key = repairKey;
   settings.backup = { ...installBackup, source: { time: "env", keep: "env" } };
   // The users of the mock (D-321): the restore locked all but admin.
   const MOCK_USERS = ["admin", "alice", "bob", "carol"];
@@ -2278,6 +2371,26 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           emit("issue.resolved", `issue:${issue.id}`, { plan_id: p.id });
         }
         applyRules(s.principal, p.id);
+        // T-194: a repair brings the agent back; an adopted guest has no agent yet.
+        for (const tp of p.targets) {
+          const t = targets.get(tp.target);
+          if (!t) continue;
+          if (p.origin === "repair") {
+            Object.assign(t.status, { agent: "online", last_seen: now() });
+            emit("repair.finished", `target:${t.document.name}`, { result: "succeeded" });
+          }
+          const g = p.origin === "adopt" ? adoptions.get(p.id) : undefined;
+          if (g) {
+            Object.assign(t.status, {
+              agent: "none",
+              power: g.power ?? "unknown",
+              guest_id: String(g.vmid),
+              repair: { state: "unknown", reasons: [] },
+            });
+            const at = unmanaged.indexOf(g);
+            if (at >= 0) unmanaged.splice(at, 1);
+          }
+        }
       });
       active.add(job);
       void job.finally(() => active.delete(job));
@@ -2674,6 +2787,145 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       }
       return structuredClone(t);
     },
+    async repairTarget(name, req) {
+      need("repairTarget");
+      writable();
+      const t = targets.get(name);
+      if (!t) throw new ApiError(example("getTarget", 404));
+      const offlineFor = Date.parse(now()) - Date.parse(t.status.last_seen ?? now());
+      if (t.status.agent === "online" || t.status.power !== "running" || offlineFor < 10 * 60_000)
+        throw problem(
+          "repair-not-needed",
+          "Repair not needed",
+          409,
+          t.status.agent === "online"
+            ? `The agent of ${name} is online.`
+            : t.status.power !== "running"
+              ? `The guest of ${name} is not running.`
+              : `The agent of ${name} has been offline for less than 10 minutes.`,
+        );
+      const r = t.status.repair;
+      if (r?.state !== "ready")
+        throw problem(
+          "repair-not-ready",
+          "Repair not ready",
+          409,
+          `${name} has no SSH repair way (${(r?.reasons ?? ["unknown"]).join(", ")}). Use an install command.`,
+        );
+      const accept = req?.accept_host_key;
+      if (accept && !(r.host_keys_seen ?? []).includes(accept))
+        throw problem("validation", "Validation failed", 422, undefined, {
+          errors: [
+            { pointer: "/accept_host_key", message: "This host key is not reported as new." },
+          ],
+        });
+      const p = newPlan({
+        origin: "repair",
+        issue_id: null,
+        reason: req?.reason?.trim() || `Repair the agent of ${name}.`,
+        targets: [{ target: name, resources: [] }],
+        warnings: accept
+          ? [`After your approval the Run pins the new host key ${accept} of ${name}.`]
+          : [],
+        human_only: ["repair"],
+      });
+      const stored = plans.get(p.id);
+      if (stored) stored.risk = "disruptive";
+      return withDocuments({ ...p, risk: "disruptive" });
+    },
+    async createInstallCommand(name) {
+      adminPerson();
+      writable();
+      if (!targets.has(name)) throw new ApiError(example("getTarget", 404));
+      emit("target.install_command", `target:${name}`, {});
+      // A mock token: random each time, never a real credential.
+      const token = Array.from({ length: 6 }, () => Math.random().toString(36).slice(2, 8)).join(
+        "",
+      );
+      return {
+        command: `umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n-----BEGIN CERTIFICATE-----\n(mock CA)\n-----END CERTIFICATE-----\nPLUMB_CA\ncat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n${token}\nPLUMB_TOKEN\ncurl -fsS --cacert /etc/plumb-agent/ca.pem https://plumb.lan:8444/agent/v1/install.sh | PLUMB_URL=https://plumb.lan:8444 sh`,
+        expires_at: new Date(Date.parse(now()) + 15 * 60_000).toISOString().replace(/\.\d+Z$/, "Z"),
+      };
+    },
+    async listUnmanagedGuests() {
+      need("listUnmanagedGuests");
+      return structuredClone(unmanaged);
+    },
+    async adoptTarget(name, req) {
+      need("adoptTarget");
+      writable();
+      const g = unmanaged.find((x) => x.node === req.node && x.vmid === req.vmid);
+      if (!g) throw problem("not-found", "Not found", 404, `Guest ${req.vmid} is not in the pool.`);
+      if (!g.adoptable)
+        throw problem(
+          "not-adoptable",
+          "Not adoptable",
+          409,
+          `Guest ${req.vmid}: ${g.reasons.join(", ")}.`,
+        );
+      if (g.digest !== req.digest)
+        throw problem(
+          "guest-changed",
+          "Guest changed",
+          409,
+          `The config of guest ${req.vmid} changed. Reload the list.`,
+        );
+      if (targets.has(name))
+        throw problem("document-exists", "Document exists", 409, `A Target "${name}" exists.`);
+      const doc = {
+        kind: "Target",
+        name,
+        spec: {
+          type: g.type,
+          guest: structuredClone(g.guest),
+          adopted: { node: g.node, vmid: g.vmid, delete_guest: false },
+        },
+      } as unknown as TargetDoc;
+      const p = newPlan({
+        origin: "adopt",
+        issue_id: null,
+        reason: req.reason?.trim() || `Adopt guest ${g.vmid} (${g.name}).`,
+        targets: [{ target: name, resources: [] }],
+        warnings: [
+          `The guest ${g.vmid} is not sealed: its SSH host keys, machine-id and root users stay as they are.`,
+        ],
+        human_only: ["accept-guest-data"],
+      });
+      const stored = plans.get(p.id);
+      if (stored) stored.risk = "reversible";
+      pendingDocs.set(p.id, { reason: p.reason, put: [doc as StateDocument] });
+      adoptions.set(p.id, g);
+      return withDocuments({ ...p, risk: "reversible" });
+    },
+    async rotateRepairKey(revokeOld) {
+      adminPerson();
+      writable();
+      if (revokeOld) {
+        if (!repairKey.previous)
+          throw problem("nothing-to-revoke", "Nothing to revoke", 409, "There is no previous key.");
+        repairKey.previous = null;
+      } else {
+        if (repairKey.previous)
+          throw problem(
+            "rotation-running",
+            "Rotation running",
+            409,
+            "Revoke the previous key first.",
+          );
+        repairKey.previous = {
+          fingerprint: repairKey.fingerprint,
+          created_at: repairKey.created_at,
+          targets: [...targets.values()]
+            .filter((t) => t.status.repair && t.status.repair.state !== "unknown")
+            .map((t) => t.document.name),
+        };
+        repairKey.fingerprint = `SHA256:${"n".repeat(43)}`;
+        repairKey.created_at = now();
+      }
+      settings.repair_key = repairKey;
+      emit("repair_key.rotated", "settings:repair_key", { revoke_old: revokeOld === true });
+      return structuredClone(repairKey);
+    },
     async getSettings() {
       const s = need("getSettings");
       // The Proxmox view is for a person only (review n2 of #276).
@@ -2944,6 +3196,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
   };
   const pendingDocs = new Map<number, Proposal>();
+  /** T-194: the guest of each adopt Plan. */
+  const adoptions = new Map<number, UnmanagedGuest>();
 
   // A demo Plan with nginx and two sites (T-049 screenshots, "/#/plans/<id>"):
   // web1 as if it had nginx and site a, then site a changes and site b is new.
