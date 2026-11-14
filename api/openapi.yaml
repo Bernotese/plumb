@@ -1131,7 +1131,10 @@ paths:
         with the Plumb repair key, checks the host key against the pins of this Target, and sends
         the fixed repair bundle (the agent binary of this controller, the CA, a new one-time
         enrollment token, the install script); the forced command of the guest's key line installs
-        and restarts the agent. The old credential is revoked when the Run makes the token.
+        and restarts the agent. The repair token does not touch the current credential: the old
+        credential ends only when the guest enrolls with the new token (review R1 of #290). A
+        failed or expired repair (for example of an agent that was only cut off from the network)
+        leaves the agent as it was.
         Nothing else runs in the guest, and no field of this request changes the bundle.
 
         409 `repair-not-needed`: the agent is online, the guest is not running, or the agent has
@@ -1199,9 +1202,11 @@ paths:
         the repair line). The answer holds, once and `no-store`, a shell command for a person to
         run as root in the guest: it writes the controller CA, fetches the install script from
         `GET /agent/v1/install.sh` of the agent listener with that CA, and enrolls with a new
-        one-time token (15 minutes, one use). Making the token revokes the old credential of the
-        Target at once. The command holds no other secret. Event `target.install_command`
-        (no token).
+        one-time token (15 minutes, one use). The token goes into a 0600 file through a here
+        document, never on a command line or into the environment of a process (review R6 of
+        #290). The old credential ends only when the guest enrolls with the new token. The
+        command holds no other secret; the UI says that it is a secret for 15 minutes. Event
+        `target.install_command` (no token).
       security:
         - session: []
       responses:
@@ -1213,7 +1218,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/InstallCommand" }
               example:
-                command: "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA' … PLUMB_CA … | PLUMB_ENROLL_TOKEN=<one-time token> sh"
+                command: "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA' … PLUMB_CA … cat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN' … PLUMB_TOKEN … | PLUMB_URL=https://plumb.lan:8444 sh"
                 expires_at: "2026-11-14T10:15:00Z"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1234,7 +1239,7 @@ paths:
         must be in `GET /guests/unmanaged` with `adoptable: true`. Makes a Plan of origin `adopt`,
         human-only `accept-guest-data`, that puts a Target with `spec.adopted: {node, vmid,
         delete_guest: false}` and the guest fields read from Proxmox (never `cipassword`,
-        `sshkeys` or the description). The Run checks node, VMID, name and the config `digest`
+        `sshkeys`, the description or an LXC `env`). The Run checks node, VMID, name and the config `digest`
         again before it binds the guest, and writes nothing to Proxmox. 409 `guest-changed`: the
         digest or the name differs from the request; 409 `not-adoptable`; 409 `guest-bound`: a
         Target or Image already holds the guest; 409 `document-exists`: a Target of that name
@@ -1293,8 +1298,8 @@ paths:
       description: |
         Guests that a person put into the pool `plumb` and that are no Target, no Image binding,
         no build guest and no template (D-373, D-378). Plumb never moves a guest into the pool.
-        Secrets of the Proxmox config are never read into the answer: `cipassword`, `sshkeys` and
-        the description show only as `present` (D-340). `adoptable: false` comes with `reasons`.
+        Secrets of the Proxmox config are never read into the answer: `cipassword`, `sshkeys`, the
+        description and an LXC `env` show only as `present` (D-340). `adoptable: false` comes with `reasons`.
       responses:
         "200":
           description: The guests.
@@ -1320,7 +1325,7 @@ paths:
                     reasons: []
                     warnings: [not-sealed, no-cloud-init]
                     guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0 }
-                    present: { cipassword: false, sshkeys: false, description: true }
+                    present: { cipassword: false, sshkeys: false, description: true, env: false }
                   - node: pve
                     vmid: 9124
                     name: old-db
@@ -1331,7 +1336,7 @@ paths:
                     reasons: [privileged, disk-layout]
                     warnings: [not-sealed]
                     guest: { cores: 1, memory: 512, disk: 8, bridge: vmbr0 }
-                    present: { cipassword: false, sshkeys: true, description: false }
+                    present: { cipassword: false, sshkeys: true, description: false, env: true }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
@@ -2888,13 +2893,26 @@ paths:
       x-plumb-planned: T-191
       summary: Make a new repair SSH key
       description: |
-        Human admin session only (D-382). Makes a new ed25519 repair key. Online agents get the new
-        public key with their next watch list, write the new line and remove the old one. The old
-        key stays valid for a repair until every bound agent confirmed the new line, at most 7
-        days; then it is deleted. 409 `rotation-running` while an old key is still valid. Event
-        `repair_key.rotated` (fingerprints only).
+        Human admin session only (D-382). Without `revoke_old`: makes a new ed25519 repair key;
+        agents get it with their next watch list and write its line next to the old one. The old
+        key stays valid until a person revokes it: never by time alone (review R2 of #290).
+        `previous.targets` lists the Targets whose line does not hold the new key yet. With
+        `revoke_old: true`: no new key; the previous key is deleted now, and agents remove its
+        line; a Target in `previous.targets` then has no repair fallback until its agent
+        confirms the new line. 409 `rotation-running`: a previous key exists (revoke it first);
+        409 `nothing-to-revoke`. Event `repair_key.rotated` (fingerprints and `revoke_old` only).
       security:
         - session: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                revoke_old: { type: boolean, default: false }
+            example: { revoke_old: true }
       responses:
         "200":
           description: The repair key state after the rotation.
@@ -2906,8 +2924,8 @@ paths:
                 created_at: "2026-11-14T10:00:00Z"
                 previous:
                   fingerprint: "SHA256:b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2w"
-                  valid_until: "2026-11-21T10:00:00Z"
-                  waiting: 3
+                  created_at: "2026-10-01T08:00:00Z"
+                  targets: [db1, web2]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -4844,12 +4862,13 @@ components:
         present:
           type: object
           additionalProperties: false
-          required: [cipassword, sshkeys, description]
-          description: Only whether these config keys exist; their values are never read into Plumb.
+          required: [cipassword, sshkeys, description, env]
+          description: Only whether these config keys exist; their values are never read into Plumb (D-340; `env` of an LXC, review R3 of #290).
           properties:
             cipassword: { type: boolean }
             sshkeys: { type: boolean }
             description: { type: boolean }
+            env: { type: boolean }
     RepairKeyView:
       type: object
       additionalProperties: false
@@ -4860,11 +4879,14 @@ components:
         previous:
           type: [object, "null"]
           additionalProperties: false
-          required: [fingerprint, valid_until, waiting]
+          required: [fingerprint, created_at, targets]
           properties:
             fingerprint: { type: string }
-            valid_until: { $ref: "#/components/schemas/Time" }
-            waiting: { type: integer, description: Bound agents that did not confirm the new line yet. }
+            created_at: { $ref: "#/components/schemas/Time" }
+            targets:
+              type: array
+              description: Targets whose line does not hold the current key yet (their agents did not confirm it).
+              items: { $ref: "#/components/schemas/Name" }
     RepairState:
       type: [object, "null"]
       additionalProperties: false
