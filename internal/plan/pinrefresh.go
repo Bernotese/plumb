@@ -97,7 +97,7 @@ func (e *Engine) ResolvePin(ctx context.Context, image string) (PinRefresh, erro
 		t := res.SignedAt.UTC()
 		out.SignedAt = &t
 	}
-	if out.LastSignedAt, err = e.lastSignedAt(ctx, image, info.Verify); err != nil {
+	if out.LastSignedAt, err = e.lastSignedAt(ctx, image, info.Verify, info.Pin()); err != nil {
 		return PinRefresh{}, err
 	}
 	if out.New != out.Old {
@@ -112,25 +112,36 @@ func (e *Engine) ResolvePin(ctx context.Context, image string) (PinRefresh, erro
 	return out, nil
 }
 
-// lastSignedAt is the newest signature time of an approved pin_refresh of
-// the Image from the source; nil when there is none.
-func (e *Engine) lastSignedAt(ctx context.Context, image, source string) (*time.Time, error) {
-	plans, err := e.st.ApprovedPlans(ctx, OriginPinRefresh)
+// lastSignedAt is the baseline of the "strictly newer" rule (D-335): the
+// newest signature time of the approved pin_refresh Plans of the Image
+// and source, but only while the current pin is the New of the newest of
+// them (review P1 of #255). A pin that a normal proposal, a rollback or an
+// import set since then has no signed baseline: nil, so a person approves.
+func (e *Engine) lastSignedAt(ctx context.Context, image, source, current string) (*time.Time, error) {
+	plans, err := e.st.ApprovedPlans(ctx, OriginPinRefresh) // oldest first
 	if err != nil {
 		return nil, err
 	}
 	var last *time.Time
+	newest := ""
 	for _, p := range plans {
 		var prop Proposal
 		if json.Unmarshal(p.Proposal, &prop) != nil {
 			continue
 		}
 		for _, pin := range prop.Pins {
-			if pin.Image == image && pin.Source == source && pin.SignedAt != nil && (last == nil || pin.SignedAt.After(*last)) {
+			if pin.Image != image || pin.Source != source {
+				continue
+			}
+			newest = pin.New
+			if pin.SignedAt != nil && (last == nil || pin.SignedAt.After(*last)) {
 				t := *pin.SignedAt
 				last = &t
 			}
 		}
+	}
+	if newest == "" || newest != current {
+		return nil, nil
 	}
 	return last, nil
 }

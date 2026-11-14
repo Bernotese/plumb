@@ -321,3 +321,68 @@ func (e *env) headImage(name string) (int64, string) {
 	}
 	return head.ID, string(row.Body)
 }
+
+// Review P1 of #255: the "strictly newer" baseline counts only while the
+// current pin is the New of the newest accepted refresh. A pin set by a
+// normal proposal or a rollback has no baseline, so even a newer signed
+// list (and a replayed older one) needs a person.
+func TestPinBaselineNeedsCurrentPin(t *testing.T) {
+	pins := &fakePins{}
+	e := newEnv(t, false, pins.opt())
+	adm := e.admin()
+	p1, p2, p3, p4 := strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64), strings.Repeat("4", 64)
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "image", "put": []state.Doc{verifiedImage("ubu", p1)}})
+	first, _ := e.st.Head(e.ctx)
+	t2 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	refresh := func() int64 {
+		t.Helper()
+		code, body := adm.do("POST", "/api/v1/images/ubu/refresh", nil)
+		var p pinPlan
+		json.Unmarshal(body, &p)
+		if code != 201 {
+			t.Fatalf("refresh: %d %s", code, body)
+		}
+		return p.ID
+	}
+	approve := func(id int64) {
+		t.Helper()
+		if code, body := adm.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 202 {
+			t.Fatalf("approve %d: %d %s", id, code, body)
+		}
+		e.eng.Wait()
+	}
+	pins.set(p2, t2)
+	approve(refresh()) // a person accepts p2 (signed t2)
+
+	// The baseline holds while the pin is p2: a newer list is verified.
+	pins.set(p3, t2.Add(time.Hour))
+	if got, _ := e.eng.ResolvePin(e.ctx, "ubu"); got.LastSignedAt == nil || !got.Verified() {
+		t.Fatalf("baseline with the current pin: %+v", got)
+	}
+
+	// A normal proposal sets p4: no baseline any more.
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "by hand", "put": []state.Doc{verifiedImage("ubu", p4)}})
+	if got, _ := e.eng.ResolvePin(e.ctx, "ubu"); got.LastSignedAt != nil || got.Verified() {
+		t.Fatalf("after a normal proposal: %+v", got)
+	}
+
+	// A rollback to the first revision (pin p1) and a replayed older
+	// signed list: no baseline, a person approves.
+	code, body := adm.do("POST", "/api/v1/revisions/"+itoa(first.ID)+"/rollback", map[string]string{"reason": "back"})
+	var rb pinPlan
+	json.Unmarshal(body, &rb)
+	if code != 201 {
+		t.Fatalf("rollback: %d %s", code, body)
+	}
+	approve(rb.ID)
+	pins.set(p3, t2.Add(-time.Hour))
+	got, err := e.eng.ResolvePin(e.ctx, "ubu")
+	if err != nil || got.Old != p1 || got.LastSignedAt != nil || got.Verified() {
+		t.Fatalf("after a rollback, replayed list: %+v %v", got, err)
+	}
+	id := refresh()
+	p, _ := e.st.GetPlan(e.ctx, id)
+	if !slices.Contains(p.HumanOnly, plan.HumanOnlyUnverifiedPin) {
+		t.Fatalf("refresh after a rollback not human-only: %v", p.HumanOnly)
+	}
+}
