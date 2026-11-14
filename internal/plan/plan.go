@@ -176,6 +176,9 @@ type Config struct {
 	// OnDrift receives drift reports of agents and of the guest poll.
 	// The issue package handles them.
 	OnDrift func(ctx context.Context, target string, rep wire.Report) error
+	// OnTargetDeleted ends the Issues and marks of a Target whose binding
+	// a delete dropped (T-209); reason is TargetDeletedReason.
+	OnTargetDeleted func(ctx context.Context, target, reason string) error
 	// OnPlanDone is called when the Run of a Plan ended (ok = succeeded)
 	// or a pending Plan went stale (ok = false).
 	OnPlanDone func(ctx context.Context, planID int64, ok bool)

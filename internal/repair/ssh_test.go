@@ -691,3 +691,46 @@ func (e *env) guestKey(target string) string {
 	}
 	return b.GuestKey()
 }
+
+// T-209 (host finding F10): the host case. The adopted guest 9100 is
+// deleted as "wiki" and adopted again as "wiki2": its keys are pinned for
+// wiki2, and repair is not off for host-key-shared or no-pin. A reused
+// name with another guest starts with that guest's first report.
+func TestRepairPinsAfterReadopt(t *testing.T) {
+	e := newEnv(t)
+	fp := "SHA256:" + strings.Repeat("K", 43)
+	id := e.currentID()
+	e.bind("wiki", "9100")
+	e.report("wiki", []string{id}, 22, fp)
+	if pins := e.pinsOf("wiki", "9100"); len(pins) != 1 {
+		t.Fatalf("first pins %v", pins)
+	}
+	// The delete step: revoke, then drop the binding.
+	if err := e.st.RevokeAgent(e.ctx, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.DeleteBinding(e.ctx, state.KindTarget, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	e.bind("wiki2", "9100")
+	e.report("wiki2", []string{id}, 22, fp)
+	if pins := e.pinsOf("wiki2", "9100"); len(pins) != 1 || pins[0] != fp {
+		t.Fatalf("pins after re-adopt %v", pins)
+	}
+	st, err := e.s.Status(e.ctx, "wiki2")
+	if err != nil || st == nil {
+		t.Fatalf("status %+v %v", st, err)
+	}
+	for _, r := range st.Reasons {
+		if r == "host-key-shared" || r == "no-pin" {
+			t.Fatalf("reasons %v", st.Reasons)
+		}
+	}
+	// The name wiki again, now for another guest: its own first report pins.
+	other := "SHA256:" + strings.Repeat("O", 43)
+	e.bind("wiki", "9200")
+	e.report("wiki", []string{id}, 22, other)
+	if pins := e.pinsOf("wiki", "9200"); len(pins) != 1 || pins[0] != other {
+		t.Fatalf("pins of the reused name %v", pins)
+	}
+}

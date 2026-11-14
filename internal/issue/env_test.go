@@ -99,9 +99,10 @@ func (e *env) start(configure ...func(*plan.Config)) {
 	var iss *issue.Service
 	cfg := plan.Config{
 		Store: e.st, Events: e.events, Agents: e.link, Driver: e.drv, Logger: quiet,
-		OnDrift:        func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
-		OnPlanDone:     func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
-		ObserveTimeout: 5 * time.Second, EnrollTimeout: 3 * time.Second, ApplyTimeout: 5 * time.Second,
+		OnDrift:         func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
+		OnTargetDeleted: func(ctx context.Context, target, reason string) error { return iss.TargetDeleted(ctx, target, reason) },
+		OnPlanDone:      func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
+		ObserveTimeout:  5 * time.Second, EnrollTimeout: 3 * time.Second, ApplyTimeout: 5 * time.Second,
 	}
 	for _, f := range configure {
 		f(&cfg)
