@@ -55,6 +55,7 @@ func TestQAToolSetPerTier(t *testing.T) {
 	}
 	bin := plumbBinary(t)
 	base, login := devServer(t, bin)
+	waitSeed(t, base, login)
 	want := slices.Clone(plumbmcp.ToolNames)
 	slices.Sort(want)
 	for _, tier := range []string{"read", "plan", "apply"} {
@@ -130,3 +131,24 @@ func TestQAToolSetPerTier(t *testing.T) {
 func itoa(n int64) string { return jsonInt(n) }
 
 func jsonInt(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+// waitSeed waits until the dev seed has committed (web1 exists): the seed
+// runs after serve prints its address, and a Plan made before it would go
+// stale (the race of #293).
+func waitSeed(t *testing.T, base, login string) {
+	t.Helper()
+	token := tierToken(t, base, login, "read")
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(300 * time.Millisecond) {
+		req, _ := http.NewRequest(http.MethodGet, base+"/api/v1/targets/web1", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the dev seed did not commit")
+		}
+	}
+}
