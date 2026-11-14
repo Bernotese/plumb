@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/link/agentinstall"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -467,18 +468,6 @@ func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (stri
 		return "", time.Time{}, err
 	}
 	e.emit(ctx, "target.install_command", "target:"+target, actor, map[string]any{"expires_at": tok.Expires.UTC()})
-	return installCommand(string(rc.CA), rc.AgentURL, tok.Token), tok.Expires, nil
+	return agentinstall.InstallCommand(string(rc.CA), rc.AgentURL, tok.Token), tok.Expires, nil
 }
 
-// installCommand is the command text of D-387: the CA and the token by
-// here documents with quoted delimiters (no expansion), umask 077 for
-// 0600 files, then the install script from the agent listener with the CA.
-func installCommand(ca, agentURL, token string) string {
-	ca = strings.TrimRight(ca, "\n") + "\n"
-	return "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n" + ca + "PLUMB_CA\n" +
-		"cat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n" + token + "\nPLUMB_TOKEN\n" +
-		// Only the Plumb CA: --capath to a dir without hashed names replaces
-		// the system CA store (review S1 of T-076, A2 of #299).
-		"curl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath /etc/plumb-agent --cacert /etc/plumb-agent/ca.pem '" +
-		agentURL + wire.PathInstallScript + "' | PLUMB_URL='" + agentURL + "' sh\n"
-}
