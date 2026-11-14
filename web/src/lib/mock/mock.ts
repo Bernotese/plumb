@@ -916,7 +916,9 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       storage: "plumb-guest-backup",
       state: "stated-clear",
       other_backup_storages: [],
+      disk_content: [],
     };
+    settings.proxmox.acl_extra = [];
   }
   const guestBackupFree = 62;
   // db1 has a schedule and a second NIC; its backups show each kind (D-407).

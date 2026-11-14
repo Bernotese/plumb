@@ -56,11 +56,10 @@ describe("backups tab", () => {
     const get = api.getSettings.bind(api);
     vi.spyOn(api, "getSettings").mockImplementation(async () => {
       const s = await get();
-      const p = s.proxmox as unknown as Record<string, unknown> & {
-        guest_backup: Record<string, unknown>;
-      };
-      p["acl_extra"] = [{ path: "/storage/old-backup", role: "PlumbGuestBackup" }];
-      p.guest_backup["disk_content"] = ["images", "rootdir"];
+      if (s.proxmox?.guest_backup) {
+        s.proxmox.acl_extra = [{ path: "/storage/old-backup", role: "PlumbGuestBackup" }];
+        s.proxmox.guest_backup.disk_content = ["images", "rootdir"];
+      }
       return s;
     });
     await open(api);

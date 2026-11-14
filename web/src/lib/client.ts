@@ -51,31 +51,27 @@ export type GuestBackup = S["GuestBackup"];
 export type GuestRestoreRequest = S["GuestRestoreRequest"];
 
 /** What the settings view says against guest backups and extra NICs (M2 of #321, M1/M2 of #330). */
+type ProxmoxView = NonNullable<Settings["proxmox"]>;
+type GuestBackupView = NonNullable<ProxmoxView["guest_backup"]>;
 export interface SettingsRisks {
   /** Other storages the token could write a vzdump to. */
-  otherStorages: string[];
+  otherStorages: GuestBackupView["other_backup_storages"];
   /** The guest backup storage, when it also takes guest disks. */
   diskStorage: string | null;
-  diskContent: string[];
+  diskContent: NonNullable<GuestBackupView["disk_content"]>;
   /** Rights of the token beyond the install's ACL lines. */
-  aclExtra: { path: string; role: string }[];
+  aclExtra: NonNullable<ProxmoxView["acl_extra"]>;
 }
 
 /**
- * The warnings of the settings view. `acl_extra` and `disk_content` are
- * missing on a controller before T-218 (#330): read as "nothing to warn".
+ * The warnings of the settings view. A field missing on an older controller
+ * (before T-218, #330) reads as "nothing to warn".
  */
 export function settingsRisks(s: Settings): SettingsRisks {
-  const p = s.proxmox as
-    | (NonNullable<Settings["proxmox"]> & {
-        acl_extra?: { path: string; role: string }[];
-        guest_backup?: { storage: string; disk_content?: string[] } | null;
-      })
-    | null;
+  const p = s.proxmox;
   const g = p?.guest_backup ?? null;
-  const other = (g as { other_backup_storages?: string[] } | null)?.other_backup_storages ?? [];
   return {
-    otherStorages: other,
+    otherStorages: g?.other_backup_storages ?? [],
     diskStorage: g?.disk_content?.length ? g.storage : null,
     diskContent: g?.disk_content ?? [],
     aclExtra: p?.acl_extra ?? [],

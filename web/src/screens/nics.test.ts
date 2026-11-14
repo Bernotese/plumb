@@ -131,10 +131,11 @@ describe("NIC list", () => {
     const get = api.getSettings.bind(api);
     vi.spyOn(api, "getSettings").mockImplementation(async () => {
       const s = await get();
-      (s.proxmox as unknown as Record<string, unknown>)["acl_extra"] = [
-        { path: "/sdn/zones/localnetwork/vmbr9", role: "PlumbBridge" },
-        { path: "/storage/old-backup", role: "PlumbGuestBackup" },
-      ];
+      if (s.proxmox)
+        s.proxmox.acl_extra = [
+          { path: "/sdn/zones/localnetwork/vmbr9", role: "PlumbBridge" },
+          { path: "/storage/old-backup", role: "PlumbGuestBackup" },
+        ];
       return s;
     });
     await edit(api);
