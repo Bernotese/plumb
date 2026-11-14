@@ -572,8 +572,8 @@ func agentURL(hosts []string, listen string) string {
 }
 
 // proxmoxView maps the driver's view to the API view; an empty value is
-// null. The backup storage is not known to the controller (the copy timer
-// runs on the host), so it is null.
+// null. The backup storage is not in the driver's view (the copy timer
+// runs on the host): the API fills it from the copy status (T-208).
 func proxmoxView(v proxmox.View) *api.ProxmoxView {
 	opt := func(s string) *string {
 		if s == "" {

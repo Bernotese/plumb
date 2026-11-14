@@ -253,7 +253,14 @@
             <tr>
               <th scope="row" class="mono">{b.name}</th>
               <td>{formatTime(b.created_at)}</td>
-              <td>{bytesText(b.size)}</td>
+              <td>
+                {bytesText(b.size)}
+                {#if b.state === "unreadable"}
+                  <span class="warn"
+                    >· Plumb cannot read this file. Give it to the user plumb in the container.</span
+                  >
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -271,6 +278,9 @@
 {/if}
 
 <style>
+  .warn {
+    color: var(--color-warn);
+  }
   .card h2 {
     margin-top: 0;
   }

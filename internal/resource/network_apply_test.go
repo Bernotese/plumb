@@ -610,3 +610,31 @@ func TestNetworkMainNICByMAC(t *testing.T) {
 		t.Fatalf("other MAC: %v", err)
 	}
 }
+
+// T-208 (host finding F4, D-192): a static Ubuntu VM whose first boot
+// kept ens18 with the initramfs DHCP address; cloud-init's entry (eth0,
+// MAC match, set-name, static address) is not active yet. The refusal
+// says in plain words to restart the VM once; nothing is changed.
+func TestNetworkFirstBootStaticRefusal(t *testing.T) {
+	ctx := context.Background()
+	env, f, _ := newNetEnv(t)
+	f.dev = "ens18"
+	f.main = "198.51.100.99" // the DHCP address of the first boot
+	ci := "network:\n  version: 2\n  ethernets:\n    eth0:\n      match:\n        macaddress: \"BC:24:11:00:00:01\"\n      set-name: \"eth0\"\n" +
+		"      addresses: [\"198.51.100.5/24\"]\n      routes:\n      - to: default\n        via: 198.51.100.1\n"
+	if err := os.WriteFile(filepath.Join(env.Root, "etc/netplan/50-cloud-init.yaml"), []byte(ci), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := netRes(t, env, cloneAttrs(extra)).Prepare(ctx)
+	if err == nil || !strings.Contains(err.Error(), "Restart the VM once") || strings.Contains(err.Error(), "netplan") {
+		t.Fatalf("refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.Root, NetworkFile("extra"))); !os.IsNotExist(err) {
+		t.Fatal("a file was written")
+	}
+	// Another MAC: not this NIC, the old text stays.
+	f.mac = "bc:24:11:00:00:09"
+	if err := netRes(t, env, cloneAttrs(extra)).Prepare(ctx); err == nil || !strings.Contains(err.Error(), "0 entries for the main NIC ens18") {
+		t.Fatalf("other MAC: %v", err)
+	}
+}

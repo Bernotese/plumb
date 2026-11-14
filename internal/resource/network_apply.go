@@ -350,10 +350,30 @@ func mainKey(view map[string]npView, dev, mac string, main netip.Addr) (string, 
 			keys = append(keys, k)
 		}
 	}
+	if len(keys) == 0 && firstBootState(view, dev, mac) {
+		return "", fmt.Errorf("the network card %s does not use its network settings yet: the VM still has the address of its first start. Restart the VM once, then apply again. Nothing was changed", dev)
+	}
 	if len(keys) != 1 {
 		return "", fmt.Errorf("netplan has %d entries for the main NIC %s, want exactly one", len(keys), dev)
 	}
 	return keys[0], nil
+}
+
+// firstBootState reports the D-192 state of a stock Ubuntu VM (T-208,
+// host finding F4): an entry names the live NIC (by key, set-name,
+// match.name or MAC) and holds static addresses, but the live main address
+// is in none of them, because the first boot kept the initramfs DHCP
+// setup. A reboot applies the entry.
+func firstBootState(view map[string]npView, dev, mac string) bool {
+	for k, v := range view {
+		name, _ := v.Match["name"].(string)
+		vmac, _ := v.Match["macaddress"].(string)
+		nic := k == dev || v.SetName == dev || name == dev || (mac != "" && strings.EqualFold(vmac, mac))
+		if nic && !v.DHCP4 && !v.DHCP6 && len(v.addrs()) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // liveMAC returns the permanent MAC of dev when present, else its current
