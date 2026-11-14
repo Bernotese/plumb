@@ -292,7 +292,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	// rawDrv is the unwrapped driver, for the dev agents of the fake one.
 	rawDrv := drv
 	drv = driver.ReadOnlyWhen(drv, restore.Active)
-	rep := repairService(ctx, log, st, secrets, events, agentURL(f.hosts, f.agentListen))
+	rep := repairService(ctx, log, st, secrets, events, agentURL(f.hosts, f.agentListen),
+		func(ctx context.Context) { eng.RewatchAll(ctx) }) // eng is set before the API takes a rotation
 	eng, err = plan.New(plan.Config{
 		Restore: restore,
 		Store:   st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,

@@ -52,9 +52,17 @@ func (s *Service) OnReport(ctx context.Context, target string, rep wire.RepairRe
 	if err := s.cfg.Store.SetRepairReport(ctx, target, store.RepairReportRow{GuestID: guest, Report: raw, ReportedAt: now}); err != nil {
 		return err
 	}
-	pinned, err := s.cfg.Store.PinFirstHostKeys(ctx, target, guest, rep.HostKeys, now)
+	// A host key that is pinned for another Target is never pinned here
+	// (review S3 of #298): the Target shows host-key-shared instead.
+	shared, err := s.cfg.Store.HostKeyOwners(ctx, rep.HostKeys, target)
 	if err != nil {
 		return err
+	}
+	pinned := false
+	if len(shared) == 0 {
+		if pinned, err = s.cfg.Store.PinFirstHostKeys(ctx, target, guest, rep.HostKeys, now); err != nil {
+			return err
+		}
 	}
 	if pinned {
 		s.log.Info("host keys pinned from the agent link", "target", target, "keys", len(rep.HostKeys))
@@ -113,7 +121,7 @@ func (s *Service) Status(ctx context.Context, target string) (*plan.RepairStatus
 		return nil, err
 	}
 	st.HostKeysSeen = minus(rep.HostKeys, st.HostKeys)
-	valid := false
+	valid, stale := false, false
 	for i, k := range keys {
 		if contains(rep.Lines, k.ID) {
 			valid = true
@@ -122,6 +130,16 @@ func (s *Service) Status(ctx context.Context, target string) (*plan.RepairStatus
 			}
 		}
 	}
+	for _, l := range rep.Lines {
+		known := false
+		for _, k := range keys {
+			known = known || k.ID == l
+		}
+		stale = stale || !known
+	}
+	// A line of a revoked key is still in the guest (review S2 of #298):
+	// the Target counts as on the old key until its agent removed it.
+	st.KeyConfirmed = st.KeyConfirmed && !stale
 	switch {
 	case len(s.cfg.From) == 0:
 		st.Reasons = append(st.Reasons, "no-from")
@@ -131,6 +149,13 @@ func (s *Service) Status(ctx context.Context, target string) (*plan.RepairStatus
 		st.Reasons = append(st.Reasons, "old-key")
 	case !valid:
 		st.Reasons = append(st.Reasons, "no-line")
+	}
+	shared, err := s.cfg.Store.HostKeyOwners(ctx, rep.HostKeys, target)
+	if err != nil {
+		return nil, err
+	}
+	if len(shared) > 0 {
+		st.Reasons = append(st.Reasons, "host-key-shared")
 	}
 	switch rep.SSHD.Status {
 	case wire.SSHDAbsent:
@@ -148,6 +173,11 @@ func (s *Service) Status(ctx context.Context, target string) (*plan.RepairStatus
 	st.State = plan.RepairReady
 	if len(st.Reasons) > 0 {
 		st.State = plan.RepairOff
+	}
+	if stale && valid {
+		// A warning, not off: the valid line still repairs, and a dead
+		// agent can drop the old line only after its repair.
+		st.Reasons = append(st.Reasons, "old-key")
 	}
 	return st, nil
 }

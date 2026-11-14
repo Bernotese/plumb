@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/repair"
@@ -32,7 +34,8 @@ func newKeyEnv(t *testing.T) *keyEnv {
 	envLog = slog.New(slog.NewTextHandler(k.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	defer func() { envLog = quiet }()
 	k.env = newEnv(t, false, func(c *plan.Config) {
-		svc, err := repair.New(repair.Config{Store: c.Store, Secrets: c.Secrets, Events: c.Events, Logger: c.Logger, From: []string{"192.0.2.10"}})
+		svc, err := repair.New(repair.Config{Store: c.Store, Secrets: c.Secrets, Events: c.Events, Logger: c.Logger, From: []string{"192.0.2.10"},
+			Rewatch: func(ctx context.Context) { k.eng.RewatchAll(ctx) }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -224,5 +227,70 @@ func TestRepairKeyLeakScan(t *testing.T) {
 	// test can pass by an empty haystack.
 	if !strings.Contains(string(hay[0]), "web1") {
 		t.Fatal("the export is empty")
+	}
+}
+
+// lastRepairWatch returns the repair key ids of the last watch command
+// that the agent of web1 took, and how many watches it took.
+func (k *keyEnv) lastRepairWatch() ([]string, int) {
+	k.t.Helper()
+	var ids []string
+	n := 0
+	a := k.agents["web1"]
+	bodies, types := a.Bodies(), a.Commands()
+	for i, b := range bodies {
+		if i >= len(types) || types[i] != wire.CommandWatch {
+			continue
+		}
+		var w wire.WatchBody
+		if json.Unmarshal(b, &w) != nil {
+			continue
+		}
+		n++
+		ids = nil
+		if w.Repair != nil {
+			for _, key := range w.Repair.Keys {
+				ids = append(ids, key.ID)
+			}
+		}
+	}
+	return ids, n
+}
+
+// TestRepairRotatePushesWatch (review S2 of #298): a rotation and a
+// revoke reach every connected agent at once, with the new key set.
+func TestRepairRotatePushesWatch(t *testing.T) {
+	k := newKeyEnv(t)
+	adm := k.admin()
+	k.seedAgent(adm, wire.Capabilities{Commands: wire.AgentCommands(), Resources: resource.Capabilities()})
+	k.waitWatch("web1")
+	wait := func(want int) []string {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if ids, n := k.lastRepairWatch(); n >= want {
+				return ids
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("no watch number %d", want)
+		return nil
+	}
+	ids, n := k.lastRepairWatch()
+	if len(ids) != 1 {
+		t.Fatalf("first watch keys %v", ids)
+	}
+	old := ids[0]
+	if code, body := adm.do("POST", "/api/v1/settings/repair-key/rotate", nil); code != 200 {
+		t.Fatalf("rotate: %d %s", code, body)
+	}
+	if ids := wait(n + 1); len(ids) != 2 || ids[1] != old {
+		t.Fatalf("after rotate %v", ids)
+	}
+	if code, body := adm.do("POST", "/api/v1/settings/repair-key/rotate", map[string]any{"revoke_old": true}); code != 200 {
+		t.Fatalf("revoke: %d %s", code, body)
+	}
+	if ids := wait(n + 2); len(ids) != 1 || ids[0] == old {
+		t.Fatalf("after revoke %v", ids)
 	}
 }

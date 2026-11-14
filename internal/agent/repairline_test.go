@@ -112,8 +112,20 @@ func TestParseSSHDT(t *testing.T) {
 		"":                                                  {Status: wire.SSHDAbsent},
 		"permitrootlogin yes\nport 99999\n":                 {Status: wire.SSHDAbsent},
 	} {
-		if got := parseSSHDT([]byte(in)); got != want {
+		if got, _ := parseSSHDT([]byte(in)); got != want {
 			t.Errorf("%q: %+v, want %+v", in, got, want)
+		}
+	}
+	// authorizedkeysfile (review n1 of #298).
+	for in, want := range map[string]bool{
+		"port 22\npermitrootlogin yes\n": true,
+		"port 22\npermitrootlogin yes\nauthorizedkeysfile .ssh/authorized_keys .ssh/authorized_keys2\n": true,
+		"port 22\npermitrootlogin yes\nauthorizedkeysfile %h/.ssh/authorized_keys\n":                    true,
+		"port 22\npermitrootlogin yes\nauthorizedkeysfile /etc/ssh/keys/%u\n":                           false,
+		"port 22\npermitrootlogin yes\nauthorizedkeysfile none\n":                                       false,
+	} {
+		if _, got := parseSSHDT([]byte(in)); got != want {
+			t.Errorf("%q: keysFile %v, want %v", in, got, want)
 		}
 	}
 }
@@ -123,7 +135,7 @@ func FuzzParseSSHDT(f *testing.F) {
 	f.Add("port 22\npermitrootlogin yes\n")
 	f.Add("port -1\npermitrootlogin \x00\n")
 	f.Fuzz(func(t *testing.T, out string) {
-		st := parseSSHDT([]byte(out))
+		st, _ := parseSSHDT([]byte(out))
 		r := wire.RepairReport{SSHD: st}
 		if err := wire.CheckRepairReport(&r); err != nil {
 			t.Fatalf("%q → %+v: %v", out, st, err)

@@ -9,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -159,9 +161,13 @@ type env struct {
 	ev  *event.Log
 	s   *Service
 	now time.Time
+	// neigh is the controller's neighbour table: address → MAC.
+	neigh      map[string]string
+	neighAsked []string
+	rewatches  int
 }
 
-func newEnv(t *testing.T, own ...string) *env {
+func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
@@ -174,13 +180,17 @@ func newEnv(t *testing.T, own ...string) *env {
 		t.Fatal(err)
 	}
 	e := &env{t: t, ctx: ctx, st: st, sec: sec, ev: event.New(st), now: time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)}
-	var nets []*net.IPNet
-	for _, o := range own {
-		_, n, _ := net.ParseCIDR(o)
-		nets = append(nets, n)
-	}
-	e.s, err = New(Config{Store: st, Secrets: sec, Events: e.ev, From: []string{"127.0.0.1"}, OwnNets: nets,
-		Now: func() time.Time { return e.now }, ConnectTimeout: 2 * time.Second})
+	e.neigh = map[string]string{}
+	e.s, err = New(Config{Store: st, Secrets: sec, Events: e.ev, From: []string{"127.0.0.1"},
+		Neigh: func(_ context.Context, ip net.IP) (string, error) {
+			e.neighAsked = append(e.neighAsked, ip.String())
+			if m, ok := e.neigh[ip.String()]; ok {
+				return m, nil
+			}
+			return "", errors.New("not on-link")
+		},
+		Rewatch: func(context.Context) { e.rewatches++ },
+		Now:     func() time.Time { return e.now }, ConnectTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,33 +340,103 @@ func TestRepairPinsFromFirstReportOnly(t *testing.T) {
 	}
 }
 
-// TestRepairNoRoutedDial (review R5 of #290): without a static address the
-// Run dials a reported address only inside a controller network.
-func TestRepairNoRoutedDial(t *testing.T) {
-	e := newEnv(t, "192.0.2.0/24", "2001:db8::/64")
-	got := e.s.dialAddrs("", []string{"198.51.100.7/24", "192.0.2.50/24", "127.0.0.1/8", "fe80::1/64", "2001:db8::9/64", "bad"})
-	if strings.Join(got, ",") != "192.0.2.50,2001:db8::9" {
+// TestRepairDialOnlyGuestMAC (review S1 of #298): without a static
+// address the Run dials a reported address only when the controller's
+// neighbour entry has the MAC of the guest's NIC in Proxmox. A guest that
+// reports the address of a LAN host (the router, the NAS) gets nothing
+// dialled; a routed address has no entry; IPv6 is not dialled.
+func TestRepairDialOnlyGuestMAC(t *testing.T) {
+	e := newEnv(t)
+	guestMAC := "bc:24:11:00:00:01"
+	e.neigh["192.0.2.1"] = "aa:bb:cc:dd:ee:01"  // the router
+	e.neigh["192.0.2.20"] = "aa:bb:cc:dd:ee:20" // the NAS
+	e.neigh["192.0.2.50"] = "BC:24:11:00:00:01" // the guest itself
+	got := e.s.dialAddrs(e.ctx, "", []string{"192.0.2.1/24", "192.0.2.20/24", "198.51.100.7/24", "2001:db8::9/64",
+		"127.0.0.1/8", "192.0.2.50/24"}, guestMAC)
+	if strings.Join(got, ",") != "192.0.2.50" {
 		t.Fatalf("dial %v", got)
 	}
-	if got := e.s.dialAddrs("10.9.9.9", []string{"192.0.2.50/24"}); len(got) != 1 || got[0] != "10.9.9.9" {
+	if slices.Contains(e.neighAsked, "2001:db8::9") || slices.Contains(e.neighAsked, "127.0.0.1") {
+		t.Fatalf("asked the neighbour table for %v", e.neighAsked)
+	}
+	if got := e.s.dialAddrs(e.ctx, "", []string{"192.0.2.50/24"}, ""); len(got) != 0 {
+		t.Fatalf("without a guest MAC: %v", got)
+	}
+	if got := e.s.dialAddrs(e.ctx, "10.9.9.9", []string{"192.0.2.50/24"}, guestMAC); len(got) != 1 || got[0] != "10.9.9.9" {
 		t.Fatalf("static %v", got)
 	}
 	many := []string{}
-	for i := 1; i < 20; i++ {
+	for i := 100; i < 120; i++ {
 		many = append(many, "192.0.2."+strconv.Itoa(i)+"/24")
 	}
-	if got := e.s.dialAddrs("", many); len(got) != maxDialAddrs {
-		t.Fatalf("%d addresses", len(got))
+	e.neighAsked = nil
+	e.s.dialAddrs(e.ctx, "", many, guestMAC)
+	if len(e.neighAsked) != maxDialAddrs {
+		t.Fatalf("%d neighbour checks", len(e.neighAsked))
 	}
-	// A DHCP Target whose address is routed: nothing is dialled.
+	// A DHCP guest that reports only the router's address: nothing is
+	// dialled, the Run says why.
 	e.bind("web1", "vm/101")
 	e.report("web1", []string{e.currentID()}, 22, "SHA256:"+strings.Repeat("A", 43))
 	dialed := false
 	e.s.cfg.Dial = func(context.Context, string) (net.Conn, error) { dialed = true; return nil, errors.New("no") }
-	_, sent, err := e.s.Send(e.ctx, plan.RepairSend{Target: "web1", Reported: []string{"198.51.100.7/24"},
+	_, sent, err := e.s.Send(e.ctx, plan.RepairSend{Target: "web1", Reported: []string{"192.0.2.1/24"}, GuestMAC: guestMAC,
 		Bundle: func(io.Writer) error { return nil }})
-	if err == nil || sent || dialed {
-		t.Fatalf("routed: err %v sent %v dialed %v", err, sent, dialed)
+	if err == nil || !strings.Contains(err.Error(), "no safe address") || sent || dialed {
+		t.Fatalf("LAN host: err %v sent %v dialed %v", err, sent, dialed)
+	}
+}
+
+func TestArpLookup(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "arp")
+	os.WriteFile(f, []byte("IP address       HW type     Flags       HW address            Mask     Device\n"+
+		"192.0.2.50       0x1         0x2         BC:24:11:00:00:01     *        eth0\n"+
+		"192.0.2.51       0x1         0x0         00:00:00:00:00:00     *        eth0\n"), 0o644)
+	old := arpFile
+	arpFile = f
+	defer func() { arpFile = old }()
+	if m, ok := arpLookup("192.0.2.50"); !ok || m != "bc:24:11:00:00:01" {
+		t.Fatalf("%q %v", m, ok)
+	}
+	if _, ok := arpLookup("192.0.2.51"); ok {
+		t.Fatal("an incomplete entry counts")
+	}
+	if _, ok := arpLookup("192.0.2.5"); ok {
+		t.Fatal("a prefix matched")
+	}
+}
+
+// TestRepairSharedHostKey (review S3 of #298): a host key pinned for
+// another Target is never pinned again, never accepted and refused in the
+// session, with the name of the other Target.
+func TestRepairSharedHostKey(t *testing.T) {
+	e := newEnv(t)
+	f := newFakeSSHD(t)
+	e.allow(f)
+	e.bind("db1", "vm/102")
+	e.report("db1", []string{e.currentID()}, f.port(), f.fp())
+	// web1 reports the same host key (a clone, or a hostile guest).
+	e.bind("web1", "vm/101")
+	e.report("web1", []string{e.currentID()}, f.port(), f.fp())
+	if pins, _ := e.st.HostKeyPins(e.ctx, "web1", "vm/101"); len(pins) != 0 {
+		t.Fatalf("a shared key was pinned: %v", pins)
+	}
+	st, _ := e.s.Status(e.ctx, "web1")
+	if st.State != plan.RepairOff || !contains(st.Reasons, "host-key-shared") {
+		t.Fatalf("status %+v", st)
+	}
+	if err := e.s.CheckAcceptHostKey(e.ctx, "web1", f.fp()); err == nil || !strings.Contains(err.Error(), "Target db1") {
+		t.Fatalf("accept: %v", err)
+	}
+	if err := e.s.CheckAcceptHostKey(e.ctx, "db1", f.fp()); err != nil {
+		t.Fatalf("own key: %v", err)
+	}
+	// A pin made before (or by hand) that another Target holds too is
+	// refused in the session before anything is sent.
+	e.st.AddHostKeyPin(e.ctx, "web1", "vm/101", f.fp(), "test", e.now)
+	_, sent, _, err := send(e, "")
+	if !errors.Is(err, ErrHostKey) || !strings.Contains(err.Error(), "Target db1") || sent || len(f.stdin) != 0 {
+		t.Fatalf("shared pin: sent %v err %v", sent, err)
 	}
 }
 
@@ -385,11 +465,12 @@ func TestRepairFromIPOnly(t *testing.T) {
 // the new line; 409 cases.
 func TestRepairKeyRotation(t *testing.T) {
 	e := newEnv(t)
+	fpA, fpB := "SHA256:"+strings.Repeat("A", 43), "SHA256:"+strings.Repeat("B", 43)
 	old := e.currentID()
 	e.bind("web1", "vm/101")
 	e.bind("db1", "vm/102")
-	e.report("web1", []string{old}, 22)
-	e.report("db1", []string{old}, 22)
+	e.report("web1", []string{old}, 22, fpA)
+	e.report("db1", []string{old}, 22, fpB)
 	v, err := e.s.Rotate(e.ctx, false, "user:admin")
 	if err != nil || v.Previous == nil || strings.Join(v.Previous.Targets, ",") != "db1,web1" {
 		t.Fatalf("rotate: %+v %v", v, err)
@@ -402,13 +483,29 @@ func TestRepairKeyRotation(t *testing.T) {
 	if len(w.Keys) != 2 || w.Keys[1].ID != old {
 		t.Fatalf("after 30 days the old key is gone: %+v", w.Keys)
 	}
-	e.report("web1", []string{e.currentID(), old}, 22)
+	e.report("web1", []string{e.currentID(), old}, 22, fpA)
 	v, _ = e.s.View(e.ctx)
 	if strings.Join(v.Previous.Targets, ",") != "db1" {
 		t.Fatalf("previous.targets %v", v.Previous.Targets)
 	}
+	if e.rewatches != 1 {
+		t.Fatalf("rotate pushed %d watches, want 1", e.rewatches)
+	}
 	if v, err = e.s.Rotate(e.ctx, true, "user:admin"); err != nil || v.Previous != nil {
 		t.Fatalf("revoke: %+v %v", v, err)
+	}
+	if e.rewatches != 2 {
+		t.Fatalf("revoke pushed %d watches in all, want 2", e.rewatches)
+	}
+	// web1 still has the revoked line next to the new one: ready, but it
+	// counts as on the old key until its agent drops that line.
+	st, _ := e.s.Status(e.ctx, "web1")
+	if st.State != plan.RepairReady || st.KeyConfirmed || !contains(st.Reasons, "old-key") {
+		t.Fatalf("web1 after revoke %+v", st)
+	}
+	e.report("web1", []string{e.currentID()}, 22, fpA)
+	if st, _ := e.s.Status(e.ctx, "web1"); !st.KeyConfirmed || contains(st.Reasons, "old-key") {
+		t.Fatalf("web1 after its new report %+v", st)
 	}
 	if w := e.s.Watch(e.ctx); len(w.Keys) != 1 || w.Keys[0].ID == old {
 		t.Fatalf("after revoke %+v", w.Keys)
@@ -417,7 +514,7 @@ func TestRepairKeyRotation(t *testing.T) {
 		t.Fatalf("revoke twice: %v", err)
 	}
 	// db1 still has only the old line: off with old-key.
-	st, _ := e.s.Status(e.ctx, "db1")
+	st, _ = e.s.Status(e.ctx, "db1")
 	if st.State != plan.RepairOff || !contains(st.Reasons, "old-key") {
 		t.Fatalf("db1 %+v", st)
 	}

@@ -18,7 +18,8 @@ import (
 // repairService builds the SSH repair transport (T-191). The controller
 // addresses of the repair line are the agent URL host as IP literals
 // (review R4 of #290); an error turns repair off with a warning.
-func repairService(ctx context.Context, log *slog.Logger, st *store.Store, sec *secret.Store, ev *event.Log, agentURL string) *repair.Service {
+func repairService(ctx context.Context, log *slog.Logger, st *store.Store, sec *secret.Store, ev *event.Log, agentURL string,
+	rewatch func(context.Context)) *repair.Service {
 	u, err := url.Parse(agentURL)
 	if err != nil {
 		log.Warn("SSH repair is off: bad agent URL", "err", err)
@@ -31,7 +32,7 @@ func repairService(ctx context.Context, log *slog.Logger, st *store.Store, sec *
 		log.Warn("SSH repair is off: the agent URL host has no IP address", "host", u.Hostname(), "err", err)
 		from = nil
 	}
-	s, err := repair.New(repair.Config{Store: st, Secrets: sec, Events: ev, Logger: log, From: from, OwnNets: ownNets()})
+	s, err := repair.New(repair.Config{Store: st, Secrets: sec, Events: ev, Logger: log, From: from, Rewatch: rewatch})
 	if err != nil {
 		log.Warn("SSH repair is off", "err", err)
 		return nil
@@ -41,22 +42,6 @@ func repairService(ctx context.Context, log *slog.Logger, st *store.Store, sec *
 		return nil
 	}
 	return s
-}
-
-// ownNets are the networks of the controller's interfaces, without
-// loopback: a DHCP guest is dialled only on-link (review R5 of #290).
-func ownNets() []*net.IPNet {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil
-	}
-	var out []*net.IPNet
-	for _, a := range addrs {
-		if n, ok := a.(*net.IPNet); ok && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() {
-			out = append(out, n)
-		}
-	}
-	return out
 }
 
 // repairConfig is the repair part of the engine config; without a

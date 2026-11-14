@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,6 +50,10 @@ func TestGuestRepair(t *testing.T) {
 		t.Fatal("requires root in the guest")
 	}
 	ctx := context.Background()
+	runOut := func(name string, args ...string) (string, error) {
+		o, err := exec.Command(name, args...).Output()
+		return string(o), err
+	}
 	run := func(name string, args ...string) (string, error) {
 		out, err := exec.Command(name, args...).CombinedOutput()
 		return string(out), err
@@ -136,12 +142,27 @@ func TestGuestRepair(t *testing.T) {
 		t.Fatal("the bundle dir stays")
 	}
 
-	// Nothing but the fixed command: with the repair key on disk (test only).
+	// Nothing but the fixed command: with the repair key on disk (test
+	// only). The forced command waits on stdin, so every check has a time
+	// limit and stdin from /dev/null; a timeout counts as refused (review
+	// C1 of #298), and each check looks for its side effect.
 	keyFile := writeRepairKeyFile(t, st, sec)
+	opts := []string{"-i", keyFile, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10"}
+	limited := func(env []string, stdin io.Reader, name string, args ...string) (string, error) {
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(cctx, name, args...)
+		cmd.Env = append(os.Environ(), env...)
+		cmd.Stdin = stdin
+		out, err := cmd.CombinedOutput()
+		if cctx.Err() != nil {
+			return string(out), errors.New("timeout")
+		}
+		return string(out), err
+	}
 	ssh := func(args ...string) (string, error) {
-		base := []string{"-i", keyFile, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
-			"-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10"}
-		return run("ssh", append(base, args...)...)
+		return limited(nil, nil, "ssh", append(append([]string{}, opts...), args...)...)
 	}
 	if out, _ := ssh("root@127.0.0.1", "id; touch /tmp/plumb-shell"); strings.Contains(out, "uid=") || exists("/", "/tmp/plumb-shell") {
 		t.Fatalf("a shell command ran: %s", out)
@@ -152,9 +173,51 @@ func TestGuestRepair(t *testing.T) {
 	if out, err := ssh("-o", "ExitOnForwardFailure=yes", "-N", "-R", "127.0.0.1:19999:127.0.0.1:22", "root@127.0.0.1"); err == nil {
 		t.Fatalf("a remote forward passed: %s", out)
 	}
-	if out, err := run("scp", "-i", keyFile, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-		"/etc/hostname", "root@127.0.0.1:/tmp/plumb-scp"); err == nil || exists("/", "/tmp/plumb-scp") {
+	// -W opens the same direct-tcpip channel as -L: it must be refused.
+	if out, err := limited(nil, strings.NewReader(""), "ssh", append(append([]string{}, opts...), "-W", "127.0.0.1:22", "root@127.0.0.1")...); err == nil || strings.Contains(out, "SSH-2.0") {
+		t.Fatalf("a local forward passed: %s", out)
+	}
+	if out, err := limited(nil, nil, "scp", append(append([]string{}, opts...), "/etc/hostname", "root@127.0.0.1:/tmp/plumb-scp")...); err == nil || exists("/", "/tmp/plumb-scp") {
 		t.Fatalf("scp passed: %s", out)
+	}
+	if out, err := limited(nil, strings.NewReader("put /etc/hostname /tmp/plumb-sftp\n"), "sftp",
+		append(append([]string{}, opts...), "-b", "-", "root@127.0.0.1")...); err == nil || exists("/", "/tmp/plumb-sftp") {
+		t.Fatalf("sftp passed: %s", out)
+	}
+	// An environment the client sets never reaches the shell that runs the
+	// forced command (bash reads BASH_ENV).
+	if err := os.WriteFile("/tmp/plumb-bashenv.sh", []byte("touch /tmp/plumb-bashenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ssh("-o", "SetEnv=BASH_ENV=/tmp/plumb-bashenv.sh", "root@127.0.0.1", "x")
+	if exists("/", "/tmp/plumb-bashenv") {
+		t.Fatal("BASH_ENV from the client ran")
+	}
+	// Agent forwarding: sshd makes no agent socket for the session.
+	agentSock := filepath.Join(t.TempDir(), "agent.sock")
+	agentOut, err := runOut("ssh-agent", "-a", agentSock)
+	if err != nil {
+		t.Fatalf("ssh-agent: %v %s", err, agentOut)
+	}
+	if _, rest, ok := strings.Cut(agentOut, "SSH_AGENT_PID="); ok {
+		pid, _, _ := strings.Cut(rest, ";")
+		if n, err := strconv.Atoi(pid); err == nil {
+			defer syscall.Kill(n, syscall.SIGTERM)
+		}
+	}
+	before, _ := filepath.Glob("/tmp/ssh-*/agent.*")
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		limited([]string{"SSH_AUTH_SOCK=" + agentSock}, pr, "ssh", append(append([]string{}, opts...), "-A", "root@127.0.0.1", "x")...)
+		close(done)
+	}()
+	time.Sleep(3 * time.Second) // the session waits on stdin meanwhile
+	after, _ := filepath.Glob("/tmp/ssh-*/agent.*")
+	pw.Close()
+	<-done
+	if len(after) > len(before) {
+		t.Fatalf("an agent socket was made for the session: %v", after)
 	}
 
 	// New host keys: refused before anything is sent.

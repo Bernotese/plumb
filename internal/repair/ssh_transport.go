@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,31 +26,37 @@ const maxDialAddrs = 8
 // sent (no SSH TOFU, D-384).
 var ErrHostKey = errors.New("repair: the guest's host key is not pinned; nothing was sent")
 
-// dialAddrs returns the addresses that a Run may dial: the static address
-// of the Target, or the reported addresses that lie inside one of the
-// controller's own networks (on-link). A routed address is never dialled.
-func (s *Service) dialAddrs(static string, reported []string) []string {
+// dialAddrs returns the addresses that a Run may dial (review S1 of
+// #298): the static address of the Target document, or, for a DHCP
+// Target, a reported IPv4 address whose neighbour entry on the controller
+// has the MAC of the guest's NIC in Proxmox. A guest can so make the
+// controller dial only itself; a LAN host, a routed address or an address
+// without that MAC is never dialled.
+func (s *Service) dialAddrs(ctx context.Context, static string, reported []string, guestMAC string) []string {
 	if ip := net.ParseIP(static); ip != nil {
 		return []string{ip.String()}
 	}
+	if guestMAC == "" {
+		return nil
+	}
 	var out []string
+	tried := 0
 	for _, r := range reported {
 		ip, _, err := net.ParseCIDR(r)
 		if err != nil {
 			ip = net.ParseIP(r)
 		}
-		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
+		if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
 			continue
 		}
-		for _, n := range s.cfg.OwnNets {
-			if n.Contains(ip) {
-				out = append(out, ip.String())
-				break
-			}
-		}
-		if len(out) == maxDialAddrs {
+		if tried++; tried > maxDialAddrs {
 			break
 		}
+		mac, err := s.cfg.Neigh(ctx, ip)
+		if err != nil || !strings.EqualFold(mac, guestMAC) {
+			continue
+		}
+		out = append(out, ip.String())
 	}
 	return out
 }
@@ -82,13 +89,17 @@ func (s *Service) Send(ctx context.Context, rs plan.RepairSend) (int, bool, erro
 	if rs.AcceptHostKey != "" && !wire.ValidHostKeyFP(rs.AcceptHostKey) {
 		return 0, false, errors.New("repair: bad accepted fingerprint")
 	}
-	addrs := s.dialAddrs(rs.StaticIP, rs.Reported)
+	addrs := s.dialAddrs(ctx, rs.StaticIP, rs.Reported, rs.GuestMAC)
 	if len(addrs) == 0 {
-		return 0, false, errors.New("repair: no address to dial: no static address and no reported address on a controller network")
+		return 0, false, errors.New("repair: no safe address: the Target has no static address, and no reported address belongs to the MAC of the guest's NIC in Proxmox")
+	}
+	shared, err := s.cfg.Store.HostKeyOwners(ctx, append(append([]string{}, pins...), rs.AcceptHostKey), rs.Target)
+	if err != nil {
+		return 0, false, err
 	}
 	var lastErr error
 	for _, a := range addrs {
-		exit, sent, err := s.session(ctx, net.JoinHostPort(a, strconv.Itoa(*st.Port)), signer, pins, rs, guest)
+		exit, sent, err := s.session(ctx, net.JoinHostPort(a, strconv.Itoa(*st.Port)), signer, pins, shared, rs, guest)
 		if err == nil || sent || errors.Is(err, ErrHostKey) {
 			return exit, sent, err
 		}
@@ -98,7 +109,7 @@ func (s *Service) Send(ctx context.Context, rs plan.RepairSend) (int, bool, erro
 }
 
 // session runs one SSH session on addr.
-func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, pins []string, rs plan.RepairSend, guest string) (int, bool, error) {
+func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, pins []string, shared map[string]string, rs plan.RepairSend, guest string) (int, bool, error) {
 	dctx, cancel := context.WithTimeout(ctx, s.cfg.ConnectTimeout)
 	conn, err := s.cfg.Dial(dctx, addr)
 	cancel()
@@ -118,6 +129,12 @@ func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, p
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			fp := ssh.FingerprintSHA256(key)
+			if other, ok := shared[fp]; ok {
+				// The same host key is pinned for another Target: this may
+				// be that guest (review S3 of #298).
+				hostKeyErr = fmt.Errorf("%w: the host key %s is pinned for Target %s too", ErrHostKey, fp, other)
+				return hostKeyErr
+			}
 			if contains(pins, fp) {
 				return nil
 			}
@@ -160,7 +177,10 @@ func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, p
 	if out == nil {
 		out = io.Discard
 	}
-	sess.Stdout, sess.Stderr = out, out
+	// stdout and stderr copy in two goroutines: one locked Write, never
+	// a ReaderFrom of the caller's writer (a bytes.Buffer loses data).
+	lw := &lockedWriter{w: out}
+	sess.Stdout, sess.Stderr = lw, lw
 	// The forced command of the line runs whatever is asked here.
 	if err := sess.Start("plumb-repair"); err != nil {
 		return 0, false, fmt.Errorf("repair: start: %w", err)
@@ -178,4 +198,28 @@ func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, p
 		return 0, true, fmt.Errorf("repair: bundle: %s", strings.TrimPrefix(werr.Error(), "agentinstall: "))
 	}
 	return 0, true, nil
+}
+
+// CheckAcceptHostKey implements plan.HostKeyChecker (review S3 of #298).
+func (s *Service) CheckAcceptHostKey(ctx context.Context, target, fp string) error {
+	owners, err := s.cfg.Store.HostKeyOwners(ctx, []string{fp}, target)
+	if err != nil {
+		return err
+	}
+	if other, ok := owners[fp]; ok {
+		return fmt.Errorf("the host key %s is pinned for Target %s; a repair does not accept it (host-key-shared)", fp, other)
+	}
+	return nil
+}
+
+// lockedWriter serializes writes and hides any ReadFrom of w.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

@@ -127,6 +127,9 @@ func TestGuestAgentLoop(t *testing.T) {
 				if d.Report.Type == wire.ReportProgress && d.Report.CommandID == id {
 					continue
 				}
+				if d.Report.Type == wire.ReportRepair && typ != wire.ReportRepair {
+					continue // sent after every hello (D-384, T-191)
+				}
 				if d.Target != "guest" || d.Report.Type != typ || d.Report.CommandID != id {
 					t.Fatalf("unexpected delivery: %+v", d)
 				}

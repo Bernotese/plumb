@@ -131,16 +131,19 @@ func (a *Agent) sendRepair(ctx context.Context, now time.Time) error {
 // repairReport reads the lines, sshd and the host keys of the guest.
 func (a *Agent) repairReport(ctx context.Context, w *wire.RepairWatch) wire.RepairReport {
 	rep := wire.RepairReport{Lines: []string{}, HostKeys: hostKeyFingerprints(a.opt.Root)}
-	if w != nil {
+	var keysFile bool
+	rep.SSHD, keysFile = a.sshdStatus(ctx)
+	// A line that sshd does not read is no line (review n1 of #298).
+	if w != nil && keysFile {
 		rep.Lines = presentLines(a.opt.Root, w)
 	}
-	rep.SSHD = a.sshdStatus(ctx)
 	return rep
 }
 
 // sshdStatus runs `sshd -T`: root login with a forced command must be
 // allowed (yes, prohibit-password, without-password, forced-commands-only).
-func (a *Agent) sshdStatus(ctx context.Context) wire.RepairSSHD {
+// keysFile reports whether sshd reads root's .ssh/authorized_keys.
+func (a *Agent) sshdStatus(ctx context.Context) (st wire.RepairSSHD, keysFile bool) {
 	bin := ""
 	for _, p := range []string{"/usr/sbin/sshd", "/sbin/sshd"} {
 		if fi, err := os.Stat(filepath.Join(a.opt.Root, p)); err == nil && fi.Mode().IsRegular() {
@@ -149,21 +152,24 @@ func (a *Agent) sshdStatus(ctx context.Context) wire.RepairSSHD {
 		}
 	}
 	if bin == "" {
-		return wire.RepairSSHD{Status: wire.SSHDAbsent}
+		return wire.RepairSSHD{Status: wire.SSHDAbsent}, false
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	out, err := a.opt.Runner.Run(cctx, bin, "-T")
 	if err != nil {
-		return wire.RepairSSHD{Status: wire.SSHDAbsent}
+		return wire.RepairSSHD{Status: wire.SSHDAbsent}, false
 	}
 	return parseSSHDT(out)
 }
 
-// parseSSHDT reads permitrootlogin and the first port of `sshd -T`.
-func parseSSHDT(out []byte) wire.RepairSSHD {
-	st := wire.RepairSSHD{Status: wire.SSHDAbsent}
+// parseSSHDT reads permitrootlogin, the first port and authorizedkeysfile
+// of `sshd -T`. keysFile: one of its entries is root's
+// .ssh/authorized_keys (relative to the home, %h/… or /root/…).
+func parseSSHDT(out []byte) (st wire.RepairSSHD, keysFile bool) {
+	st = wire.RepairSSHD{Status: wire.SSHDAbsent}
 	root, port := "", 0
+	akfSeen := false
 	sc := bufio.NewScanner(io.LimitReader(bytes.NewReader(out), 1<<20))
 	sc.Buffer(make([]byte, 0, 4096), 64<<10)
 	for sc.Scan() {
@@ -176,6 +182,14 @@ func parseSSHDT(out []byte) wire.RepairSSHD {
 			if root == "" {
 				root = strings.TrimSpace(v)
 			}
+		case "authorizedkeysfile":
+			akfSeen = true
+			for _, f := range strings.Fields(v) {
+				switch f {
+				case ".ssh/authorized_keys", "%h/.ssh/authorized_keys", "/root/.ssh/authorized_keys", "~/.ssh/authorized_keys":
+					keysFile = true
+				}
+			}
 		case "port":
 			if port == 0 {
 				if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && p > 0 && p < 65536 {
@@ -184,8 +198,11 @@ func parseSSHDT(out []byte) wire.RepairSSHD {
 			}
 		}
 	}
+	if !akfSeen {
+		keysFile = true // the sshd default is .ssh/authorized_keys
+	}
 	if port == 0 || root == "" {
-		return st
+		return st, false
 	}
 	st.Port = port
 	switch root {
@@ -194,7 +211,7 @@ func parseSSHDT(out []byte) wire.RepairSSHD {
 	default:
 		st.Status = wire.SSHDRootRefused
 	}
-	return st
+	return st, keysFile
 }
 
 // hostKeyFingerprints are the SHA256 fingerprints of the host keys, at

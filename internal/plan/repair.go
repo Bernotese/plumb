@@ -75,6 +75,10 @@ type RepairSend struct {
 	// them only on-link (review R5 of #290).
 	StaticIP string
 	Reported []string
+	// GuestMAC is the MAC of the guest's NIC in Proxmox (trusted, review
+	// S1 of #298): a reported address counts only when the controller's
+	// neighbour table maps it to this MAC.
+	GuestMAC string
 	// Output receives the guest's stdout and stderr. The Run bounds and
 	// escapes it; the transport may stop reading after MaxRepairOutput.
 	Output io.Writer
@@ -113,6 +117,12 @@ const (
 // (T-191). nil status: no agent (TargetStatus.repair is null).
 type RepairStatuser interface {
 	Status(ctx context.Context, target string) (*RepairStatus, error)
+}
+
+// HostKeyChecker refuses an accepted host key that is pinned for another
+// Target (review S3 of #298). Optional on a transport.
+type HostKeyChecker interface {
+	CheckAcceptHostKey(ctx context.Context, target, fingerprint string) error
 }
 
 // RepairTokens makes and drops repair enrollment tokens (link.Link).
@@ -340,6 +350,9 @@ func (e *Engine) ProposeRepair(ctx context.Context, target, reason, acceptHostKe
 	if err := e.repairReady(ctx, target); err != nil {
 		return store.Plan{}, err
 	}
+	if err := e.checkAcceptHostKey(ctx, target, acceptHostKey); err != nil {
+		return store.Plan{}, err
+	}
 	if err := e.checkIdle([]string{target}); err != nil {
 		return store.Plan{}, err
 	}
@@ -408,6 +421,9 @@ func (e *Engine) approveRepair(ctx context.Context, p store.Plan, principal stri
 		return store.Run{}, err
 	}
 	if err := e.repairReady(ctx, tp.Target); err != nil {
+		return store.Run{}, err
+	}
+	if err := e.checkAcceptHostKey(ctx, tp.Target, tp.acceptedHostKey()); err != nil {
 		return store.Run{}, err
 	}
 	if err := e.reserve(names); err != nil {
@@ -490,7 +506,7 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 	start := e.cfg.Now()
 	static, reported := e.repairAddrs(ctx, set, tp.Target)
 	exit, sent, err := rc.Transport.Send(sess, RepairSend{Target: tp.Target, AcceptHostKey: tp.acceptedHostKey(),
-		StaticIP: static, Reported: reported,
+		StaticIP: static, Reported: reported, GuestMAC: e.guestMAC(ctx, tp.Target),
 		Bundle: func(w io.Writer) error { return agentinstall.WriteBundle(w, bundle) }, Output: out})
 	cancel()
 	tok.Token = "" // not needed past the session
@@ -552,6 +568,75 @@ func (e *Engine) repairAddrs(ctx context.Context, set *state.Set, target string)
 		return static, nil
 	}
 	return static, rep.List
+}
+
+// guestMAC is the MAC of the Target's guest NIC in Proxmox, or "".
+func (e *Engine) guestMAC(ctx context.Context, target string) string {
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		return ""
+	}
+	st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+	if err != nil {
+		return ""
+	}
+	return st.MAC
+}
+
+// checkAcceptHostKey refuses an accepted fingerprint that is pinned for
+// another Target (review S3 of #298).
+func (e *Engine) checkAcceptHostKey(ctx context.Context, target, fp string) error {
+	if fp == "" {
+		return nil
+	}
+	c, ok := e.cfg.Repair.Transport.(HostKeyChecker)
+	if !ok {
+		return nil
+	}
+	if err := c.CheckAcceptHostKey(ctx, target, fp); err != nil {
+		return fmt.Errorf("plan: %v: %w", err, ErrRepairNotReady)
+	}
+	return nil
+}
+
+// RewatchAll sends the watch list, with the current repair key set, to
+// the agent of every bound Target that is online and idle (review S2 of
+// #298: a rotation or a revoke reaches the guests now, not at their next
+// hello). A Target that is busy gets it at the end of its Run.
+func (e *Engine) RewatchAll(ctx context.Context) {
+	if e.restoreActive() {
+		return
+	}
+	head, err := e.st.Head(ctx)
+	if err != nil {
+		return
+	}
+	set, err := e.load(ctx, head.ID)
+	if err != nil {
+		e.log.Error("rewatch: load the head", "err", err)
+		return
+	}
+	for _, d := range set.Docs() {
+		if d.Kind != state.KindTarget || !e.cfg.Agents.Online(d.Name) {
+			continue
+		}
+		if bound, err := e.bound(ctx, d.Name); err != nil || !bound {
+			continue
+		}
+		e.mu.Lock()
+		busy := e.busy[d.Name] > 0
+		e.mu.Unlock()
+		if busy {
+			continue
+		}
+		r, err := renderOrNil(set, d.Name)
+		if err != nil || r == nil {
+			continue
+		}
+		if err := e.watch(ctx, d.Name, r); err != nil {
+			e.log.Warn("rewatch after a repair key change", "target", d.Name, "err", err)
+		}
+	}
 }
 
 // repairWatch is the repair key set of a watch command, or nil.

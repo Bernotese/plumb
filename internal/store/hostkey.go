@@ -202,3 +202,25 @@ func (s *Store) RepairReportTargets(ctx context.Context) (map[string]json.RawMes
 	}
 	return out, rows.Err()
 }
+
+// HostKeyOwners maps each fingerprint that is pinned for another target
+// than except to that target (review S3 of #298).
+func (s *Store) HostKeyOwners(ctx context.Context, fps []string, except string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, f := range fps {
+		if f == "" {
+			continue
+		}
+		var t string
+		err := s.db.QueryRowContext(ctx,
+			`SELECT target FROM guest_host_key WHERE fingerprint = ? AND target <> ? ORDER BY target LIMIT 1`, f, except).Scan(&t)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[f] = t
+	}
+	return out, nil
+}

@@ -40,10 +40,12 @@ type Config struct {
 	// From are the controller addresses that guests see, IP literals only
 	// (review R4 of #290). Empty: repair is off ("no-from").
 	From []string
-	// OwnNets are the networks of the controller's own interfaces: a
-	// reported (DHCP) address is dialled only inside one of them (review
-	// R5 of #290).
-	OwnNets []*net.IPNet
+	// Neigh returns the MAC of the controller's neighbour entry of an
+	// address (review S1 of #298); default: /proc/net/arp after a probe.
+	Neigh func(ctx context.Context, ip net.IP) (string, error)
+	// Rewatch sends the watch list with the current key set to every
+	// online agent (review S2 of #298); nil: none (tests).
+	Rewatch func(ctx context.Context)
 	// Dial opens the TCP connection (tests); default net.Dialer.
 	Dial func(ctx context.Context, addr string) (net.Conn, error)
 	// ConnectTimeout bounds the TCP connect and the SSH handshake;
@@ -72,6 +74,9 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.Neigh == nil {
+		cfg.Neigh = neighMAC
 	}
 	if cfg.ConnectTimeout <= 0 {
 		cfg.ConnectTimeout = 10 * time.Second
@@ -254,6 +259,7 @@ func (s *Service) Rotate(ctx context.Context, revokeOld bool, actor string) (*Ke
 		}
 		s.emit(ctx, "repair_key.rotated", actor, map[string]any{"revoke_old": true,
 			"fingerprint": before.Fingerprint, "revoked": before.Previous.Fingerprint})
+		s.rewatch(ctx)
 		return s.View(ctx)
 	}
 	k, err := s.newKey()
@@ -264,6 +270,7 @@ func (s *Service) Rotate(ctx context.Context, revokeOld bool, actor string) (*Ke
 		return nil, err
 	}
 	s.emit(ctx, "repair_key.rotated", actor, map[string]any{"revoke_old": false, "fingerprint": k.Fingerprint})
+	s.rewatch(ctx)
 	return s.View(ctx)
 }
 
@@ -284,6 +291,14 @@ func (s *Service) RotateJSON(ctx context.Context, revokeOld bool, actor string) 
 		return nil, err
 	}
 	return json.Marshal(v)
+}
+
+// rewatch pushes the new key set to the online agents now (review S2 of
+// #298). A dead agent gets it with the watch at the end of its repair.
+func (s *Service) rewatch(ctx context.Context) {
+	if s.cfg.Rewatch != nil {
+		s.cfg.Rewatch(ctx)
+	}
 }
 
 func (s *Service) emit(ctx context.Context, typ, actor string, data any) {
