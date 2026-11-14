@@ -30,7 +30,7 @@ func compile(t *testing.T, typ Type) *jsonschema.Schema {
 }
 
 func TestTypeTable(t *testing.T) {
-	want := []string{"apt_repository", "command", "directory", "file", "firewall", "network", "package", "service", "symlink", "sysctl", "unit", "user"}
+	want := []string{"apt_repository", "command", "directory", "file", "firewall", "group", "network", "package", "service", "symlink", "sysctl", "unit", "user"}
 	if got := Names(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}

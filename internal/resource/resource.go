@@ -122,6 +122,7 @@ var types = map[string]Type{
 	"directory":      {Name: "directory", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newDirectory},
 	"package":        {Name: "package", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newPackage},
 	"service":        {Name: "service", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newService},
+	"group":          {Name: "group", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newGroup},
 	"user":           {Name: "user", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newUser},
 	"symlink":        {Name: "symlink", Key: "path", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newSymlink},
 	"apt_repository": {Name: "apt_repository", Key: "name", Kinds: []wire.Kind{wire.KindVM, wire.KindLXC}, New: newAptRepo},
