@@ -557,6 +557,12 @@ func TestAdoptStaleSameNameAndDelete(t *testing.T) {
 	if n := a.drv.Calls(fake.OpDelete) + a.drv.Calls(fake.OpObserve); n != calls {
 		t.Fatalf("the delete of a stale Target called the hypervisor %d times", n-calls)
 	}
+	if run := a.lastRun(t); run.Status != "succeeded" {
+		t.Fatalf("the delete of a stale Target: run %s", run.Status)
+	}
+	if _, set, _ := a.e.base(a.ctx); slices.Contains(set.Targets(), "db") {
+		t.Fatal("the stale Target stays after its delete")
+	}
 	if _, err := a.drv.InspectGuest(a.ctx, id2); err != nil {
 		t.Fatalf("the guest is gone: %v", err)
 	}
