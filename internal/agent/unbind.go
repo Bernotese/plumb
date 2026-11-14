@@ -70,6 +70,17 @@ func (a *Agent) finishUnbind(ctx context.Context) {
 	}
 }
 
+// unbindRefused handles a 401 on the result of an unbind (review L1 of
+// #299): the Run revoked the credential, also when the result got lost,
+// so the agent finishes the unbind instead of lingering with its state.
+func (a *Agent) unbindRefused(ctx context.Context, cmdID string) bool {
+	if !a.unboundBy(cmdID) {
+		return false
+	}
+	a.finishUnbind(ctx)
+	return true
+}
+
 // unboundBy reports whether the command id is an unbind that ended
 // (handle sets it).
 func (a *Agent) unboundBy(cmdID string) bool { return cmdID != "" && a.unbindID == cmdID }

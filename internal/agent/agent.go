@@ -312,6 +312,9 @@ func (a *Agent) Run(ctx context.Context) error {
 				}
 				if errors.Is(err, errUnauthorized) {
 					a.log.Warn("result dropped after 401", "command", pending.CommandID)
+					if a.unbindRefused(ctx, pending.CommandID) {
+						return nil // the unbind is done; the controller revoked this agent
+					}
 					pending = nil
 				}
 				connected = a.connError(ctx, err, &b, connected)

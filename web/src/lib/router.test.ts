@@ -6,6 +6,7 @@ const routes: Route[] = [
   { name: "password" },
   { name: "targets" },
   { name: "target-new" },
+  { name: "target-adopt" },
   { name: "target-edit", target: "web1" },
   { name: "target-agent", target: "web1" },
   { name: "images" },
