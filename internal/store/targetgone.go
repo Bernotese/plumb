@@ -6,17 +6,16 @@ import (
 )
 
 // ForgetTargetMarks drops the per-Target marks that belong to the guest of
-// a deleted Target (T-209 sweep): the "Ignore once" memory (D-091), the
-// record of drift that a Rule dropped (D-092) and the value cap flag
-// (D-353). A new Target of the same name starts without them. The stored
-// guest values stay: they are the evidence of the copy rule (D-331) and
-// go by the normal prune.
+// a deleted Target (T-209 sweep, D-397): the "Ignore once" memory (D-091)
+// and the record of drift that a Rule dropped (D-092). A new Target of the
+// same name starts without them. What the copy rule needs stays: the
+// stored guest values (D-331, normal prune) and the value cap flag (D-353,
+// until it ends).
 func (s *Store) ForgetTargetMarks(ctx context.Context, target string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, q := range []string{
 			`DELETE FROM issue_ignore WHERE target = ?`,
 			`DELETE FROM ignored_drift WHERE target = ?`,
-			`DELETE FROM guest_value_flag WHERE target = ?`,
 		} {
 			if _, err := tx.ExecContext(ctx, q, target); err != nil {
 				return err

@@ -228,6 +228,7 @@ func TestHostKeySharedLiveClone(t *testing.T) {
 }
 
 // T-209 sweep: the marks of a deleted Target go; another Target's stay.
+// The value cap flag stays for both (D-397: the copy rule needs it).
 func TestForgetTargetMarks(t *testing.T) {
 	s, ctx := genEnv(t)
 	const ts = "'2026-11-14T00:00:00.000000000Z'"
@@ -253,7 +254,12 @@ func TestForgetTargetMarks(t *testing.T) {
 	if err := s.ForgetTargetMarks(ctx, "web1"); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"issue_ignore", "ignored_drift", "guest_value_flag"} {
+	var flags int
+	s.db.QueryRow(`SELECT count(*) FROM guest_value_flag`).Scan(&flags)
+	if flags != 2 {
+		t.Errorf("value cap flags: %d, want 2 (kept)", flags)
+	}
+	for _, table := range []string{"issue_ignore", "ignored_drift"} {
 		var w1, w2 int
 		s.db.QueryRow(`SELECT count(*) FROM ` + table + ` WHERE target = 'web1'`).Scan(&w1)
 		s.db.QueryRow(`SELECT count(*) FROM ` + table + ` WHERE target = 'web2'`).Scan(&w2)

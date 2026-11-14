@@ -11,16 +11,29 @@ import (
 // report without a binding is dropped, D-211), and a new Target of the
 // same name must not inherit them. Every open Issue is resolved "gone" by
 // system, with the reason as a comment and an issue.resolved event. An
-// Issue that a Plan is resolving stays for its Run. The engine calls it
-// after the delete step.
+// Issue that a Plan is resolving stays for its Run.
+//
+// The copy rule keeps what it needs (D-397, pl-lead's caution): the value
+// cap flag (D-353) and its agent:values Issue stay until the flag ends, so
+// a Target that is deleted and made again under the name stays human-only
+// for the values that were never stored; the stored value hashes stay
+// for their normal retention (D-331) and still match a copy into any
+// Target. The engine calls it after the delete step.
 func (s *Service) TargetDeleted(ctx context.Context, target, reason string) error {
 	list, err := s.st.Issues(ctx, target)
+	if err != nil {
+		return err
+	}
+	flagged, err := s.st.GuestValueFlagged(ctx, []string{target}, s.st.Now())
 	if err != nil {
 		return err
 	}
 	for _, iss := range list {
 		if iss.Status != store.IssueOpen {
 			continue
+		}
+		if iss.Resource == GuestValuesID && len(flagged) > 0 {
+			continue // the end of the flag resolves it (PruneGuestValues)
 		}
 		if err := s.st.ResolveIssue(ctx, iss.ID, "gone", "system"); err != nil {
 			return err
