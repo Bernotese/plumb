@@ -236,6 +236,13 @@ type Config struct {
 type Engine struct {
 	cfg Config
 	st  *store.Store
+	// parkMu orders the park write of a delete Run and a late unbind
+	// result (T-210 M1): either order ends the park. lateOK holds a
+	// confirmed late unbind that found no park yet: target → agent id and
+	// when. beforePark is a test hook between the wait and the park.
+	parkMu     sync.Mutex
+	lateOK     map[string]lateUnbindOK
+	beforePark func()
 	// restore is what the engine keeps of a restore (D-303).
 	restore restoreState
 	log     *slog.Logger

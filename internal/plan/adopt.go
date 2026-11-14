@@ -524,6 +524,19 @@ func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.
 		}
 		why = "the agent could not remove itself (" + clipText(why, 300) + ")"
 	}
+	if why != "" && e.beforePark != nil {
+		e.beforePark()
+	}
+	// T-210 M1: the park and a late unbind result take the same mutex. A
+	// confirmed result that came after the wait but before this point
+	// ends the delete as a confirmed unbind; one that comes after the
+	// park ends the park (lateUnbind).
+	e.parkMu.Lock()
+	defer e.parkMu.Unlock()
+	late := why != "" && e.takeLateOK(target, ag.ID)
+	if late {
+		why = ""
+	}
 	left := why != ""
 	if left {
 		// D-396: the credential stays, parked: the agent can take unbind
@@ -555,6 +568,9 @@ func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.
 	}
 	if left {
 		return fmt.Sprintf(textAgentLeft, b.Ref, why), true, nil
+	}
+	if late {
+		return "the agent removed itself and the repair key lines (its answer came after the wait); the guest stays in Proxmox", false, nil
 	}
 	return "the agent removed itself and the repair key lines; the guest stays in Proxmox", false, nil
 }
@@ -590,7 +606,7 @@ func (e *Engine) RetryUnbinds(ctx context.Context) error {
 		if err != nil || rep.Error != "" {
 			continue // tried again at the next poll
 		}
-		if err := e.endUnbindPark(ctx, p); err != nil {
+		if err := e.endParkIfStill(ctx, p); err != nil {
 			return err
 		}
 	}
@@ -610,6 +626,8 @@ func (e *Engine) lateUnbind(ctx context.Context, d link.Delivery) error {
 		e.log.Info("a late unbind failed; the agent stays parked", "target", d.Target)
 		return nil
 	}
+	e.parkMu.Lock()
+	defer e.parkMu.Unlock()
 	parked, err := e.st.ParkedTargets(ctx)
 	if err != nil {
 		return err
@@ -619,7 +637,46 @@ func (e *Engine) lateUnbind(ctx context.Context, d link.Delivery) error {
 			return e.endUnbindPark(ctx, p)
 		}
 	}
-	return nil // not parked (the Run's own waiter took it, or another agent)
+	// No park yet: the delete Run may be between its wait and its park
+	// write (T-210 M1). It reads this under parkMu before it parks.
+	if e.lateOK == nil {
+		e.lateOK = map[string]lateUnbindOK{}
+	}
+	e.lateOK[d.Target] = lateUnbindOK{agentID: d.AgentID, at: e.cfg.Now()}
+	return nil
+}
+
+// endParkIfStill ends the park of p under parkMu, unless a late result
+// ended it meanwhile (one agent.unbound per park).
+func (e *Engine) endParkIfStill(ctx context.Context, p store.Parked) error {
+	e.parkMu.Lock()
+	defer e.parkMu.Unlock()
+	still, err := e.st.IsParked(ctx, p.Target, p.AgentID)
+	if err != nil || !still {
+		return err
+	}
+	return e.endUnbindPark(ctx, p)
+}
+
+// SetBeforeParkHook sets a function that a delete Run calls after its
+// unbind wait failed and before it decides on the park (tests of the
+// order of T-210 M1 only; nil clears).
+func (e *Engine) SetBeforeParkHook(f func()) { e.beforePark = f }
+
+// lateUnbindOK is a confirmed unbind that came without a waiter and
+// before any park of its agent.
+type lateUnbindOK struct {
+	agentID string
+	at      time.Time
+}
+
+// takeLateOK reports, and forgets, a confirmed late unbind of agentID on
+// target that is young enough to belong to this delete (two unbind
+// waits). Caller holds parkMu.
+func (e *Engine) takeLateOK(target, agentID string) bool {
+	ok, found := e.lateOK[target]
+	delete(e.lateOK, target)
+	return found && ok.agentID == agentID && e.cfg.Now().Sub(ok.at) <= 2*e.cfg.UnbindTimeout
 }
 
 // endUnbindPark ends a park after a confirmed unbind: the credential is

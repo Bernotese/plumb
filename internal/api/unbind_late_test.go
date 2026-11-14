@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,5 +162,53 @@ func TestLateUnbindEndsNothingElse(t *testing.T) {
 	time.Sleep(200 * time.Millisecond) // its result is in
 	if !parked() {
 		t.Fatal("a failed unbind ended the park")
+	}
+}
+
+// T-210 M1 (review of #313): the agent's late success comes after the
+// delete Run's wait but BEFORE it writes the park. The engine takes the
+// park write and a late result under one mutex and remembers the result,
+// so the Run ends as a confirmed unbind: no park, no warning, the
+// credential is revoked. (The other order, park first and result after,
+// is TestParkEndsOnLateUnbindResult.) Without this, the agent that has
+// finished never answers a retry and the park stays until a person forgets
+// it.
+func TestLateUnbindBeforeParkWrite(t *testing.T) {
+	e := newEnv(t, true, withInstall, withShortUnbind)
+	adm := e.admin()
+	vmid, a := e.adoptWithAgent(adm, "wiki")
+	a.Pause(true)
+	e.eng.SetBeforeParkHook(func() {
+		// The wait is over; the agent comes back, takes the queued unbind
+		// and answers before the Run decides on the park.
+		a.Pause(false)
+		for deadline := time.Now().Add(5 * time.Second); !a.Unbound(); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Error("the agent did not answer the queued unbind")
+				return
+			}
+		}
+	})
+	defer e.eng.SetBeforeParkHook(nil)
+
+	run := e.deleteTarget(adm, "wiki")
+	if run.Status != "succeeded" || run.Warnings != 0 {
+		t.Fatalf("run %+v, want succeeded without a warning", run)
+	}
+	out := ""
+	for _, s := range run.Targets[0].Steps {
+		out += s.Output
+	}
+	if !strings.Contains(out, "its answer came after the wait") {
+		t.Fatalf("step output %q", out)
+	}
+	if g := e.unmanaged(adm, vmid); g.AgentLeft || !g.Adoptable {
+		t.Fatalf("parked after a confirmed late unbind: %+v", g)
+	}
+	if _, err := e.st.AgentByTarget(e.ctx, "wiki"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the credential stays: %v", err)
+	}
+	if n := countType(a.Commands(), wire.CommandUnbind); n != 1 {
+		t.Fatalf("%d unbind commands, want 1", n)
 	}
 }
