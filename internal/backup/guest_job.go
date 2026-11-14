@@ -102,8 +102,9 @@ func NewGuests(cfg GuestConfig) *Guests {
 	return &Guests{cfg: cfg, last: map[string]time.Time{}, base: base, cancel: cancel}
 }
 
-// Background runs a started job without the caller's request context; a
-// job that runs at Close is stopped (its Proxmox task too) and fails.
+// Background runs a started job without the caller's request context. At
+// Close its context ends: the driver's task wait then asks Proxmox to
+// stop the task (Client.WaitTask → stopTask), and the row ends failed.
 func (g *Guests) Background(target string, run func(context.Context) error) {
 	g.wg.Add(1)
 	go func() {
@@ -117,6 +118,12 @@ func (g *Guests) Background(target string, run func(context.Context) error) {
 // Wait waits for the background jobs (tests).
 func (g *Guests) Wait() { g.wg.Wait() }
 
+// Recover ends the rows of jobs that a stopped controller left running.
+// serve calls it at start, before the first Tick (part B).
+func (g *Guests) Recover(ctx context.Context) error {
+	return g.cfg.Store.EndRunningGuestBackups(ctx, "the controller stopped during the backup")
+}
+
 // Close stops and waits for the background jobs.
 func (g *Guests) Close() {
 	g.cancel()
@@ -128,6 +135,9 @@ var (
 	// ErrGuestBackupRefused: the job did not start (the reason is in the
 	// error and in the run row).
 	ErrGuestBackupRefused = errors.New("backup: guest backup refused")
+	// ErrManyNew: the driver found not exactly one new volume after the
+	// vzdump (another backup of the guest at the same time).
+	ErrManyNew = errors.New("backup: not exactly one new backup volume")
 	// ErrGuestBackupBusy: a job of this Target runs.
 	ErrGuestBackupBusy = errors.New("backup: a guest backup of this Target runs")
 )
@@ -226,7 +236,16 @@ func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, mark
 	}
 	volid, warned, err := g.cfg.Driver.BackUpGuest(ctx, g.cfg.Storage, t.Guest, marker, exclude)
 	if err != nil {
-		g.finish(ctx, id, t.Name, actor, trigger, "failed", "", "the backup failed in Proxmox (see the task log there)")
+		msg := "the backup failed in Proxmox (see the task log there)"
+		switch {
+		case ctx.Err() != nil:
+			// The driver's wait stops the Proxmox task when its context
+			// ends (Client.WaitTask → stopTask, TestBackUpGuestCancelStopsTask).
+			msg = "the controller stopped during the backup; the Proxmox task was asked to stop"
+		case errors.Is(err, ErrManyNew):
+			msg = "another backup of this guest ran at the same time; Plumb's volume stays and is listed when its record is complete"
+		}
+		g.finish(ctx, id, t.Name, actor, trigger, "failed", "", msg)
 		return fmt.Errorf("backup: guest backup of %s: %w", t.Name, err)
 	}
 	// vzdump only warns when the notes fail (T-214): read the marker back.
@@ -246,13 +265,33 @@ func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, mark
 		msg = "Proxmox reported warnings"
 	}
 	g.finish(ctx, id, t.Name, actor, trigger, result, volid, msg)
-	if err == nil && t.Backup != nil {
+	if err == nil && ctx.Err() == nil {
+		// Also without a backup field: the manual cap holds (M3 of #331).
 		g.retain(ctx, t, lineage, vols)
 	}
 	return nil
 }
 
+// recorded returns the volumes that this controller's jobs of target
+// recorded (M1 of #331).
+func (g *Guests) recorded(ctx context.Context, target string) (map[string]Recorded, error) {
+	rows, err := g.cfg.Store.RecordedGuestBackups(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Recorded, len(rows))
+	for v, r := range rows {
+		out[v] = Recorded{Lineage: r.Lineage, Trigger: r.Trigger}
+	}
+	return out, nil
+}
+
+// finish ends a job row. It uses its own short context: a job stopped by
+// Close (or a cancelled request) must still end its row, else the Target
+// answers 409 backup-running for ever (M2 of #331).
 func (g *Guests) finish(ctx context.Context, id int64, target, actor, trigger, result, volid, msg string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	if err := g.cfg.Store.FinishGuestBackupRun(ctx, id, result, volid, msg); err != nil {
 		g.cfg.Logger.Error("finish guest backup run", "target", target, "err", err)
 	}
@@ -266,7 +305,16 @@ func (g *Guests) finish(ctx context.Context, id int64, target, actor, trigger, r
 // retain deletes the Target's own volumes above keep (scheduled) and above
 // MaxManualKept (manual). Nothing else (D-407, D-417).
 func (g *Guests) retain(ctx context.Context, t GuestTarget, lineage string, vols []Volume) {
-	for _, v := range Retention(Classify(vols, g.cfg.InstallID, t.Name, lineage), t.Backup.Keep) {
+	rec, err := g.recorded(ctx, t.Name)
+	if err != nil {
+		g.cfg.Logger.Warn("guest backup retention", "target", t.Name, "err", err)
+		return
+	}
+	keep := 0 // no backup field: no scheduled volume goes
+	if t.Backup != nil {
+		keep = t.Backup.Keep
+	}
+	for _, v := range Retention(Classify(vols, g.cfg.InstallID, t.Name, lineage, rec), keep) {
 		if err := g.cfg.Driver.DeleteGuestBackup(ctx, g.cfg.Storage, t.Guest, v.Volid); err != nil {
 			g.cfg.Logger.Warn("guest backup retention", "target", t.Name, "err", err)
 			continue

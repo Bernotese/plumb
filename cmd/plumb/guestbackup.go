@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/backup"
@@ -17,6 +19,9 @@ type guestDriver struct{ d *proxmox.Driver }
 
 func (g guestDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, exclude []string) (string, bool, error) {
 	r, err := g.d.BackUpGuest(ctx, storage, guest, notes, exclude)
+	if errors.Is(err, proxmox.ErrManyNewVolumes) {
+		err = fmt.Errorf("%w: %w", backup.ErrManyNew, err)
+	}
 	return r.Volid, r.Warned, err
 }
 

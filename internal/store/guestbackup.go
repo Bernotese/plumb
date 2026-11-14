@@ -152,3 +152,33 @@ func clipText(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// RecordedGuestBackup is a volume that this controller's job made and
+// recorded (M1 of #331): only such a volume is Plumb's.
+type RecordedGuestBackup struct {
+	Lineage string
+	Trigger string // scheduled | manual
+}
+
+// RecordedGuestBackups maps the volume ids that finished jobs of target
+// recorded ("done": the marker was read back) to their lineage and
+// trigger. A volume without such a row (a forged marker, a row lost by a
+// controller restore) is never Plumb's.
+func (s *Store) RecordedGuestBackups(ctx context.Context, target string) (map[string]RecordedGuestBackup, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT volid, lineage, trigger FROM guest_backup_run WHERE target = ? AND result = 'done' AND volid <> ''`, target)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]RecordedGuestBackup{}
+	for rows.Next() {
+		var v string
+		var r RecordedGuestBackup
+		if err := rows.Scan(&v, &r.Lineage, &r.Trigger); err != nil {
+			return nil, err
+		}
+		out[v] = r
+	}
+	return out, rows.Err()
+}

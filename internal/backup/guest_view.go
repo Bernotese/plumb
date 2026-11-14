@@ -63,7 +63,11 @@ func (g *Guests) List(ctx context.Context, target string) (GuestList, error) {
 	if err != nil {
 		return GuestList{}, err
 	}
-	for _, c := range Classify(vols, g.cfg.InstallID, t.Name, lineage) {
+	rec, err := g.recorded(ctx, t.Name)
+	if err != nil {
+		return GuestList{}, err
+	}
+	for _, c := range Classify(vols, g.cfg.InstallID, t.Name, lineage, rec) {
 		mode := "unknown"
 		if run, err := g.cfg.Store.GuestBackupRunOfVolume(ctx, t.Name, c.Volid); err == nil && run.Result != "failed" {
 			mode = "snapshot" // every Plumb job runs in snapshot mode
@@ -100,7 +104,11 @@ func (g *Guests) Delete(ctx context.Context, target, id, actor string) error {
 	if err != nil {
 		return err
 	}
-	for _, c := range Classify(vols, g.cfg.InstallID, t.Name, lineage) {
+	rec, err := g.recorded(ctx, t.Name)
+	if err != nil {
+		return err
+	}
+	for _, c := range Classify(vols, g.cfg.InstallID, t.Name, lineage, rec) {
 		if c.ID != id {
 			continue
 		}
@@ -179,16 +187,22 @@ func (g *Guests) Tick(ctx context.Context) {
 	}
 }
 
-// RunSchedule ticks every interval (serve: a minute) until ctx ends.
-func (g *Guests) RunSchedule(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		g.Tick(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
+// StartSchedule ticks every interval (serve: a minute) in the background
+// until Close, which ends and waits for it, also for a job that a tick
+// runs (M2 of #331).
+func (g *Guests) StartSchedule(interval time.Duration) {
+	g.wg.Add(1)
+	go func() {
+		defer g.wg.Done()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			g.Tick(g.base)
+			select {
+			case <-g.base.Done():
+				return
+			case <-t.C:
+			}
 		}
-	}
+	}()
 }

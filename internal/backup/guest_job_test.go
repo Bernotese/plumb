@@ -24,11 +24,18 @@ type memDriver struct {
 	excludes [][]string
 	deleted  []string
 	clock    *time.Time
+	rewrite  func(string) string // changes the notes that vzdump writes
+	block    chan struct{}       // non-nil: BackUpGuest waits for ctx end
 }
 
-func (d *memDriver) BackUpGuest(_ context.Context, storage, guest, notes string, ex []string) (string, bool, error) {
+func (d *memDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, ex []string) (string, bool, error) {
 	if d.fail {
 		return "", false, errors.New("vzdump failed")
+	}
+	if d.block != nil {
+		close(d.block)
+		<-ctx.Done()
+		return "", false, ctx.Err()
 	}
 	d.seq++
 	d.notes = append(d.notes, notes)
@@ -36,6 +43,9 @@ func (d *memDriver) BackUpGuest(_ context.Context, storage, guest, notes string,
 	n := notes
 	if d.noNotes {
 		n = ""
+	}
+	if d.rewrite != nil {
+		n = d.rewrite(n)
 	}
 	*d.clock = d.clock.Add(time.Minute)
 	v := Volume{Volid: fmt.Sprintf("%s:backup/vzdump-%s-%03d", storage, guest, d.seq), Time: *d.clock, Notes: n}
@@ -301,5 +311,118 @@ func TestGuestBackupSchedule(t *testing.T) {
 	e2.Tick(ctx)
 	if len(e.d.notes) != 1 {
 		t.Fatal("a restart made up a slot")
+	}
+}
+
+// n1 of #331 (K3): the read-back checks the lineage too: a marker of
+// another lineage on the new volume → warning, never recorded as done.
+func TestGuestBackupReadBackLineage(t *testing.T) {
+	e := newJobEnv(t, nil)
+	e.d.rewrite = func(n string) string { return strings.Replace(n, tLineageOf(n), "fedcba9876543210", 1) }
+	if err := e.g.BackUp(context.Background(), "db1", TriggerScheduled, "system"); err != nil {
+		t.Fatal(err)
+	}
+	last, _ := e.st.LastGuestBackupRun(context.Background(), "db1")
+	if last.Result != "warning" {
+		t.Fatalf("run %+v", last)
+	}
+}
+
+func tLineageOf(marker string) string {
+	m, _ := ParseMarker(marker)
+	return m.Lineage
+}
+
+// M3 of #331: "back up now" on a Target without a backup field keeps at
+// most MaxManualKept manual volumes.
+func TestGuestBackupManualCapWithoutField(t *testing.T) {
+	e := newJobEnv(t, nil)
+	e.t.Backup = nil
+	for range 5 {
+		if err := e.g.BackUp(context.Background(), "db1", TriggerManual, "token:tok_qa"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(e.d.vols["9001"]); n != MaxManualKept {
+		t.Fatalf("%d manual volumes kept, want %d", n, MaxManualKept)
+	}
+}
+
+// M1 of #331: a lost record (a controller restore) makes the volumes
+// unmarked: retention never deletes them, the storage only grows.
+func TestGuestBackupLostRecord(t *testing.T) {
+	e := newJobEnv(t, nil)
+	ctx := context.Background()
+	e.t.Backup.Keep = 1
+	e.g.BackUp(ctx, "db1", TriggerScheduled, "system")
+	e.g.BackUp(ctx, "db1", TriggerScheduled, "system")
+	if len(e.d.vols["9001"]) != 1 {
+		t.Fatalf("setup: %d volumes", len(e.d.vols["9001"]))
+	}
+	// The record is gone: drop the binding (its rows go) and bind again.
+	if err := e.st.DeleteBinding(ctx, "Target", "db1"); err != nil {
+		t.Fatal(err)
+	}
+	e.st.PutBinding(ctx, store.Binding{Kind: "Target", Name: "db1", Ref: "9001"})
+	b, _ := e.st.GetBinding(ctx, "Target", "db1")
+	e.t.Gen = b.Gen
+	before := len(e.d.deleted)
+	e.g.BackUp(ctx, "db1", TriggerScheduled, "system")
+	e.g.BackUp(ctx, "db1", TriggerScheduled, "system")
+	l, _ := e.g.List(ctx, "db1")
+	unmarked := 0
+	for _, it := range l.Items {
+		if it.Kind == KindUnmarked {
+			unmarked++
+		}
+	}
+	if unmarked != 1 || len(e.d.deleted)-before != 1 {
+		t.Fatalf("unmarked %d, deleted %d (only the new lineage's own)", unmarked, len(e.d.deleted)-before)
+	}
+}
+
+// M2 of #331: Close during a running job (background and schedule) ends
+// it; the row ends failed and a new job of the Target can start.
+func TestGuestBackupCloseDuringJob(t *testing.T) {
+	e := newJobEnv(t, nil)
+	ctx := context.Background()
+	e.d.block = make(chan struct{})
+	run, err := e.g.Start(ctx, "db1", TriggerManual, "user:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.g.Background("db1", run)
+	<-e.d.block
+	e.g.Close()
+	last, _ := e.st.LastGuestBackupRun(ctx, "db1")
+	if last.Result != "failed" || !strings.Contains(last.Message, "controller stopped") {
+		t.Fatalf("run after Close %+v", last)
+	}
+	e.d.block = nil
+	g2 := NewGuests(e.g.cfg)
+	defer g2.Close()
+	if err := g2.BackUp(ctx, "db1", TriggerManual, "user:admin"); err != nil {
+		t.Fatalf("a new job after Close: %v", err)
+	}
+	// The schedule: a tick that runs a job at Close is ended and waited for.
+	e.d.block = make(chan struct{})
+	g3 := NewGuests(e.g.cfg)
+	g3.last["db1"] = time.Date(2026, 11, 14, 3, 0, 0, 0, time.UTC)
+	e.now = time.Date(2026, 11, 15, 3, 0, 1, 0, time.UTC)
+	g3.StartSchedule(time.Hour)
+	<-e.d.block
+	g3.Close()
+	if last, _ := e.st.LastGuestBackupRun(ctx, "db1"); last.Result != "failed" {
+		t.Fatalf("scheduled run after Close %+v", last)
+	}
+	// Recover ends a row that a crash left running.
+	if _, err := e.st.StartGuestBackupRun(ctx, "db1", "0123456789abcdef", TriggerScheduled); err != nil {
+		t.Fatal(err)
+	}
+	if err := g2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if last, _ := e.st.LastGuestBackupRun(ctx, "db1"); last.Result != "failed" {
+		t.Fatalf("after Recover %+v", last)
 	}
 }

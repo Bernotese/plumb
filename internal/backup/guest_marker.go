@@ -16,10 +16,16 @@ import (
 
 // Volume kinds (GuestBackup.kind).
 const (
-	KindPlumb      = "plumb"       // this install, this Target, its current lineage
-	KindOlderGuest = "older-guest" // this install's marker of another lineage or Target
-	KindUnmarked   = "unmarked"    // no Plumb marker: never touched
+	KindPlumb      = "plumb"       // recorded by this controller: this Target, its current lineage
+	KindOlderGuest = "older-guest" // recorded by this controller: this Target, an older lineage
+	KindUnmarked   = "unmarked"    // not recorded by this controller (no marker, a marker without a job record): never touched
 )
+
+// Recorded is a volume that a finished job of this controller made (its
+// run row): its lineage and trigger (M1 of #331).
+type Recorded struct {
+	Lineage, Trigger string
+}
 
 // Triggers (GuestBackup.trigger).
 const (
@@ -108,17 +114,23 @@ type Classified struct {
 }
 
 // Classify sorts the volumes of a Target's guest by kind, newest first.
-func Classify(vols []Volume, install, target, lineage string) []Classified {
+// A volume is Plumb's only when a finished job of this controller
+// recorded it (recorded, by volume id) and its marker agrees with that
+// record: this install, this Target, the recorded lineage and trigger.
+// Notes alone prove nothing: anyone who can write the storage (a .notes
+// file, a PBS comment) can copy a marker (M1 of #331). A volume whose
+// record was lost (a controller restore) is unmarked, so the storage
+// grows until a person deletes by hand: the safe direction.
+func Classify(vols []Volume, install, target, lineage string, recorded map[string]Recorded) []Classified {
 	out := make([]Classified, 0, len(vols))
 	for _, v := range vols {
 		c := Classified{Volume: v, ID: VolumeID(v.Volid), Kind: KindUnmarked, Trigger: TriggerUnknown}
-		if m, ok := ParseMarker(v.Notes); ok && m.Install == install {
-			c.Trigger = TriggerScheduled
-			if m.Manual {
-				c.Trigger = TriggerManual
-			}
+		m, ok := ParseMarker(v.Notes)
+		r, rec := recorded[v.Volid]
+		if ok && rec && m.Install == install && m.Target == target && m.Lineage == r.Lineage && m.Manual == (r.Trigger == TriggerManual) {
+			c.Trigger = r.Trigger
 			c.Kind = KindOlderGuest
-			if m.Target == target && m.Lineage == lineage {
+			if r.Lineage == lineage {
 				c.Kind = KindPlumb
 			}
 		}
@@ -131,10 +143,9 @@ func Classify(vols []Volume, install, target, lineage string) []Classified {
 // Retention returns the volumes to delete: of kind plumb only, the
 // scheduled ones above keep and the manual ones above MaxManualKept,
 // oldest first among each. Nothing else is ever returned (D-407, D-417).
+// keep < 1 (no backup field): no scheduled volume goes, but the manual
+// cap holds (M3 of #331).
 func Retention(vols []Classified, keep int) []Classified {
-	if keep < 1 {
-		return nil // a missing or broken keep deletes nothing
-	}
 	var del []Classified
 	sched, manual := 0, 0
 	for _, v := range vols { // newest first
@@ -143,7 +154,7 @@ func Retention(vols []Classified, keep int) []Classified {
 		}
 		switch v.Trigger {
 		case TriggerScheduled:
-			if sched++; sched > keep {
+			if sched++; keep >= 1 && sched > keep {
 				del = append(del, v)
 			}
 		case TriggerManual:

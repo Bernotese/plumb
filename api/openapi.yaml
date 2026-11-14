@@ -1121,7 +1121,6 @@ paths:
     get:
       tags: [targets]
       operationId: listGuestBackups
-      x-plumb-planned: T-221
       x-plumb-rate: read
       summary: List the guest backups of a Target
       description: |
@@ -1150,7 +1149,6 @@ paths:
     post:
       tags: [targets]
       operationId: backUpGuestNow
-      x-plumb-planned: T-221
       x-plumb-rate: proposal
       summary: Back up a Target's guest now
       description: |
@@ -1187,7 +1185,6 @@ paths:
     delete:
       tags: [targets]
       operationId: deleteGuestBackup
-      x-plumb-planned: T-221
       summary: Delete one guest backup
       description: |
         Human admin session only (D-409). Deletes one volume of `kind: plumb` or `older-guest`; an
@@ -5145,13 +5142,16 @@ components:
       type: object
       additionalProperties: false
       description: |
-        One backup volume. `kind`:
-        - `plumb`: this install's marker and the Target's current lineage (D-407). Retention, restore
-          and delete act on it.
-        - `older-guest`: this install's marker of another lineage, for example an older Target of the
-          name or an older guest on this VMID. Only a person may delete it; never restored.
-        - `unmarked`: no Plumb marker (a vzdump made by a person, or the notes failed). Never touched by
-          Plumb.
+        One backup volume. A volume is Plumb's only when a finished job of this controller recorded
+        it and its marker agrees with that record: notes alone prove nothing (anyone who can write the
+        storage can copy a marker; M1 of #331). `kind`:
+        - `plumb`: recorded for the Target's current lineage (D-407, D-417). Retention, restore and
+          delete act on it.
+        - `older-guest`: recorded for an older lineage of this Target, for example an older guest on
+          this VMID. Only a person may delete it; never restored.
+        - `unmarked`: not recorded by this controller: no marker, the notes failed, a copied marker, or
+          a record lost by a controller restore. Never touched by Plumb; a person deletes it in
+          Proxmox.
       required: [id, time, size, kind, trigger, mode]
       properties:
         id:

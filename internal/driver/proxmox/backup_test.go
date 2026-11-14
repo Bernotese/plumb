@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
 )
@@ -129,5 +130,24 @@ func TestBackupStorageInfo(t *testing.T) {
 	f.backup.others = []storageEntry{{Storage: "plumb-snippets", Type: "dir", Content: "snippets,backup"}, {Storage: "local-lvm", Type: "lvmthin", Content: "images,rootdir"}}
 	if o, _ := d.OtherBackupStorages(ctx, "plumb-backup"); !slices.Equal(o, []string{"plumb-snippets"}) {
 		t.Fatalf("others %v", o)
+	}
+}
+
+// M2 of #331: when the job's context ends during the vzdump (Close), the
+// task wait asks Proxmox to stop the task (Client.WaitTask → stopTask).
+func TestBackUpGuestCancelStopsTask(t *testing.T) {
+	f, d := backupFake(t)
+	f.mu.Lock()
+	f.taskPolls = 1 << 20 // the task runs until stopped
+	f.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9001", testMarker, nil); err == nil {
+		t.Fatal("a cancelled vzdump passed")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.stoppedTasks) != 1 {
+		t.Fatalf("stopped tasks %v", f.stoppedTasks)
 	}
 }

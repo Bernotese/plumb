@@ -40,6 +40,11 @@ type BackupStorage struct {
 // wrong name, or no Audit right on it).
 var ErrNoBackupStorage = errors.New("proxmox: the guest backup storage is not visible to the token")
 
+// ErrManyNewVolumes: the list after a vzdump has not exactly one new
+// volume of the guest (for example a person's vzdump at the same time,
+// L1 of #331). Plumb's volume stays.
+var ErrManyNewVolumes = errors.New("proxmox: not exactly one new backup volume")
+
 // ErrBackupNotFound: the volume is not a backup of this guest.
 var ErrBackupNotFound = errors.New("proxmox: no such backup of this guest")
 
@@ -198,7 +203,7 @@ func (d *Driver) BackUpGuest(ctx context.Context, storage, guest, notes string, 
 		}
 	}
 	if len(made) != 1 {
-		return BackupResult{}, fmt.Errorf("proxmox: vzdump of VMID %d made %d new volumes, want 1", id, len(made))
+		return BackupResult{}, fmt.Errorf("%w: vzdump of VMID %d made %d", ErrManyNewVolumes, id, len(made))
 	}
 	res.Volid = made[0]
 	return res, nil
