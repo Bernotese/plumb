@@ -2695,6 +2695,7 @@ paths:
                     created_at: "2026-11-13T03:00:04Z"
                     size: 2621440
                     sha256: 9f2c3d4e5f60718293a4b5c6d7e8f9011223344556677889900aabbccddeeff0
+                    state: ok
                 copy:
                   state: ok
                   at: "2026-11-13T03:30:02Z"
@@ -4765,9 +4766,16 @@ components:
     Backup:
       type: object
       additionalProperties: false
-      required: [name, created_at, size, sha256]
+      required: [name, created_at, size, sha256, state]
       properties:
         name: { type: string, pattern: "^plumb-[0-9]{8}T[0-9]{6}Z(-[0-9]{1,3})?\\.pbk$", examples: ["plumb-20261113T030000Z.pbk"] }
+        state:
+          type: string
+          enum: [ok, unreadable]
+          description: |
+            `unreadable`: the controller cannot read the file (for example a backup that root made
+            in the container instead of the user `plumb`). It is listed so that it is not hidden;
+            `sha256` is then `null`, and the person fixes the owner by hand (T-208).
         created_at:
           $ref: "#/components/schemas/Time"
           description: |
@@ -4775,7 +4783,7 @@ components:
             of the backup; after a clock change the two can differ. The list and the retention go by
             the order in which the backups were made, not by either time.
         size: { type: integer, format: int64, minimum: 0 }
-        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
     BackupRun:
       type: object
       additionalProperties: false
@@ -5027,7 +5035,11 @@ components:
           properties:
             images: { type: [string, "null"] }
             snippets: { type: [string, "null"] }
-            backup: { type: [string, "null"] }
+            backup:
+              type: [string, "null"]
+              description: |
+                The storage of the host copy, from the status file of the copy timer (the copy
+                runs on the host, D-289). `null` before its first run (T-208).
         api:
           type: object
           additionalProperties: false

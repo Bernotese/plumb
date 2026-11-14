@@ -3034,6 +3034,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           created_at: at,
           size: 2621440 + backups.items.length * 4096,
           sha256: "0".repeat(56) + String(backups.items.length).padStart(8, "0"),
+          state: "ok",
         });
         backups.items = backups.items.slice(0, backups.schedule.keep);
         backups.running = false;

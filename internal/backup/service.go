@@ -721,8 +721,17 @@ type Item struct {
 	Name      string
 	CreatedAt time.Time
 	Size      int64
-	SHA256    string
+	SHA256    string // "" when State is ItemUnreadable
+	State     string // ItemOK or ItemUnreadable
 }
+
+// The states of an Item (T-208, host finding F2).
+const (
+	ItemOK = "ok"
+	// ItemUnreadable: serve cannot read the file (for example a backup
+	// that root made in the container): it is listed, not hidden.
+	ItemUnreadable = "unreadable"
+)
 
 // Items lists the backups, newest first. The hash comes from the sum
 // file; a backup without a good sum file is hashed now.
@@ -738,13 +747,18 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 		if err != nil {
 			continue
 		}
-		sum := s.sum(f.name)
-		if sum == "" {
-			if sum, err = hashFile(p); err != nil {
-				continue
+		it := Item{Name: f.name, CreatedAt: st.ModTime().UTC(), Size: st.Size(), State: ItemOK}
+		switch it.SHA256 = s.sum(f.name); {
+		case !canOpen(p):
+			// Also with a readable sum file: the backup itself counts
+			// (review L1 of #311).
+			it.SHA256, it.State = "", ItemUnreadable
+		case it.SHA256 == "":
+			if it.SHA256, err = hashFile(p); err != nil {
+				it.SHA256, it.State = "", ItemUnreadable
 			}
 		}
-		out = append(out, Item{Name: f.name, CreatedAt: st.ModTime().UTC(), Size: st.Size(), SHA256: sum})
+		out = append(out, it)
 	}
 	return out, nil
 }
@@ -763,6 +777,16 @@ func (s *Service) sum(name string) string {
 		return ""
 	}
 	return hexSum
+}
+
+// canOpen reports whether serve can open p for reading; it reads nothing.
+func canOpen(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
 }
 
 func hashFile(p string) (string, error) {

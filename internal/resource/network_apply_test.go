@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/netip"
 	"os"
@@ -563,6 +564,36 @@ func TestMainKey(t *testing.T) {
 			}
 		})
 	}
+	// T-208 (host finding F4, D-192): the first-boot text only when a
+	// static entry matches the NIC by MAC alone and renames it; a static
+	// entry that names the NIC (the generic "no entry" case) keeps the
+	// old text. Runs without netplan.
+	static := func(key, setName, matchMAC, addr string) map[string]npView {
+		v := npView{SetName: setName, Addresses: []any{addr}, Match: map[string]any{}}
+		if matchMAC != "" {
+			v.Match["macaddress"] = matchMAC
+		}
+		return map[string]npView{key: v}
+	}
+	for _, c := range []struct {
+		name string
+		view map[string]npView
+		want string
+	}{
+		{"D-192 first boot", static("eth0", "eth0", "BC:24:11:00:00:01", "198.51.100.7/24"), "Restart the VM once"},
+		{"static entry by key", static("ens18", "", "", "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+		{"static entry, set-name is the live name", static("lan", "ens18", mac, "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+		{"static entry, other MAC", static("eth0", "eth0", "bc:24:11:00:00:09", "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+		{"MAC match without set-name", static("eth0", "", mac, "198.51.100.7/24"), "0 entries for the main NIC ens18"},
+	} {
+		_, err := mainKey(c.view, "ens18", mac, main)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+		if c.want != "Restart the VM once" && strings.Contains(fmt.Sprint(err), "Restart") {
+			t.Errorf("%s: first-boot text for another cause: %v", c.name, err)
+		}
+	}
 	// An empty MAC (never expected: Prepare reads it) matches no entry.
 	if _, err := mainKey(dhcp("eth0", "eth0", "", ""), "ens18", "", main); err == nil {
 		t.Fatal("an empty MAC matched an entry without a MAC")
@@ -607,6 +638,34 @@ func TestNetworkMainNICByMAC(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := netRes(t, env2, cloneAttrs(extra)).Prepare(ctx); err == nil || !strings.Contains(err.Error(), "0 entries for the main NIC ens18") {
+		t.Fatalf("other MAC: %v", err)
+	}
+}
+
+// T-208 (host finding F4, D-192): a static Ubuntu VM whose first boot
+// kept ens18 with the initramfs DHCP address; cloud-init's entry (eth0,
+// MAC match, set-name, static address) is not active yet. The refusal
+// says in plain words to restart the VM once; nothing is changed.
+func TestNetworkFirstBootStaticRefusal(t *testing.T) {
+	ctx := context.Background()
+	env, f, _ := newNetEnv(t)
+	f.dev = "ens18"
+	f.main = "198.51.100.99" // the DHCP address of the first boot
+	ci := "network:\n  version: 2\n  ethernets:\n    eth0:\n      match:\n        macaddress: \"BC:24:11:00:00:01\"\n      set-name: \"eth0\"\n" +
+		"      addresses: [\"198.51.100.5/24\"]\n      routes:\n      - to: default\n        via: 198.51.100.1\n"
+	if err := os.WriteFile(filepath.Join(env.Root, "etc/netplan/50-cloud-init.yaml"), []byte(ci), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := netRes(t, env, cloneAttrs(extra)).Prepare(ctx)
+	if err == nil || !strings.Contains(err.Error(), "Restart the VM once") || strings.Contains(err.Error(), "netplan") {
+		t.Fatalf("refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.Root, NetworkFile("extra"))); !os.IsNotExist(err) {
+		t.Fatal("a file was written")
+	}
+	// Another MAC: not this NIC, the old text stays.
+	f.mac = "bc:24:11:00:00:09"
+	if err := netRes(t, env, cloneAttrs(extra)).Prepare(ctx); err == nil || !strings.Contains(err.Error(), "0 entries for the main NIC ens18") {
 		t.Fatalf("other MAC: %v", err)
 	}
 }
