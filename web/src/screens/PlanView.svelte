@@ -4,10 +4,11 @@
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import { can, canApprove, me, roleOf } from "../lib/session.svelte";
-  import type { Plan } from "../lib/types";
+  import type { DocumentChange, Plan } from "../lib/types";
   import { formatTime, humanOnlyReasons } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ChangeTable from "../ui/ChangeTable.svelte";
+  import DocDiff from "../ui/DocDiff.svelte";
   import ImagePlanPart from "../ui/ImagePlanPart.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
@@ -70,6 +71,43 @@
       );
     }
   });
+  // T-168 (host finding F1 of T-158): the document changes that the
+  // approval commits, so that no Plan is approved blind. A long list shows
+  // the first diffs and the rest on request; an entry past the server bound
+  // (T-170) has no text.
+  const FIRST_DOCS = 20;
+  let allDocs = $state(false);
+  // An approved Plan has no `documents` (T-170): its committed revision
+  // diff shows what the approval changed.
+  let committed = $state<DocumentChange[] | undefined>(undefined);
+  let committedError = $state<unknown>(null);
+  $effect(() => {
+    const n = plan?.status === "approved" && !plan.documents ? plan.revision : null;
+    if (n === null || n === undefined) return;
+    api.diffRevision(n).then(
+      (d) => (committed = d.changes),
+      (e: unknown) => (committedError = e),
+    );
+  });
+  const docs = $derived(plan?.documents_unavailable ? undefined : (plan?.documents ?? committed));
+  const docCount = $derived({
+    added: docs?.filter((c) => c.op === "added").length ?? 0,
+    changed: docs?.filter((c) => c.op === "changed").length ?? 0,
+    removed: docs?.filter((c) => c.op === "removed").length ?? 0,
+  });
+  // More diffs than shown: the Approve form says so (review n2 of #269).
+  const docsHidden = $derived(!allDocs && (docs?.length ?? 0) > FIRST_DOCS);
+  async function openAllDocs() {
+    allDocs = true;
+    await tick();
+    document.getElementById(`pdoc-${FIRST_DOCS}-title`)?.scrollIntoView({ block: "start" });
+  }
+  const shownDocs = $derived(docs && !allDocs ? docs.slice(0, FIRST_DOCS) : (docs ?? []));
+  const noText = (c: DocumentChange) =>
+    (c.op !== "added" && c.before === null) || (c.op !== "removed" && c.after === null);
+  const opLabel = { added: "Added", changed: "Changed", removed: "Removed" } as const;
+  const opTone = { added: "ok", changed: "info", removed: "danger" } as const;
+
   const builds = $derived((plan?.images ?? []).filter((i) => i.build).length);
 
   const count = $derived(
@@ -191,6 +229,67 @@
   {#each plan.warnings as w, i (i)}
     <p class="banner warn">{w}</p>
   {/each}
+
+  <section class="docs" aria-labelledby="docs-title">
+    <h2 id="docs-title">Document changes</h2>
+    {#if plan.documents_unavailable}
+      <p class="banner warn" id="docs-unavailable" role="note">
+        <strong>Document changes not available.</strong> Plumb cannot compute them for this plan, for
+        example because its proposal is no longer valid. Make the change again to see them.
+      </p>
+    {:else if plan.status === "approved" && !plan.documents && plan.revision === null}
+      <p class="muted" id="docs-none">This plan changed no document.</p>
+    {:else if plan.status === "approved" && !plan.documents}
+      <p class="muted" id="docs-revision">
+        The approval committed <a href={href({ name: "revision", id: plan.revision ?? 0 })}
+          >revision {plan.revision}</a
+        >.
+      </p>
+      <ProblemBox error={committedError} />
+    {:else if docs === undefined}
+      <p class="banner warn" id="docs-missing" role="note">
+        <strong>This server does not list the document changes of a plan.</strong> Update Plumb to see
+        them before you approve.
+      </p>
+    {/if}
+    {#if plan.documents_unavailable || docs === undefined}
+      <!-- nothing more to list -->
+    {:else if docs.length === 0}
+      <p class="muted" id="docs-none">
+        {plan.status === "approved" ? "This plan changed" : "This plan changes"} no document.
+      </p>
+    {:else}
+      <p id="docs-count">
+        {plan.status === "approved" ? "The approval committed" : "Approving commits"}
+        {docCount.added} added, {docCount.changed} changed, {docCount.removed} removed document{docs.length ===
+        1
+          ? ""
+          : "s"}{plan.base_revision !== null ? ` (base: revision ${plan.base_revision})` : ""}.
+        Secret values are never shown, only the names of the secrets.
+      </p>
+      {#if plan.documents_truncated}
+        <p class="banner warn" id="docs-truncated" role="note">
+          This plan changes too much text to show here. Some documents are listed by name only.
+        </p>
+      {/if}
+      {#each shownDocs as c, i (`${c.kind}/${c.name}`)}
+        {#if noText(c)}
+          <p class="card doc-name" id="pdoc-{i}">
+            <Badge tone={opTone[c.op]} label={opLabel[c.op]} />
+            <span class="mono">{c.kind} {c.name}</span>
+            <span class="muted">(too large to show here)</span>
+          </p>
+        {:else}
+          <DocDiff change={c} id="pdoc-{i}" />
+        {/if}
+      {/each}
+      {#if !allDocs && docs.length > FIRST_DOCS}
+        <button class="btn" type="button" id="docs-all" onclick={openAllDocs}
+          >Show the other {docs.length - FIRST_DOCS} documents</button
+        >
+      {/if}
+    {/if}
+  </section>
 
   {#each plan.pins ?? [] as pin, pi (pin.image)}
     <section class="card pin" aria-labelledby="pin-{pi}">
@@ -341,14 +440,24 @@
         </p>
       {/if}
       <ProblemBox error={approveError} />
+      {#if docsHidden}
+        <p class="banner warn" id="approve-docs-hint" role="note">
+          Not all document diffs are open: {FIRST_DOCS} of {docs?.length} are shown above.
+          <button class="link" type="button" onclick={openAllDocs}>Show all diffs</button>
+        </p>
+      {/if}
       <div class="row">
         {#if canApprove(plan)}
           <button
             class="btn primary"
             type="submit"
             disabled={busy || restored.mode}
-            aria-describedby={restored.mode ? "approve-restored" : undefined}
-            >Approve and apply</button
+            aria-describedby={[
+              restored.mode ? "approve-restored" : "",
+              docsHidden ? "approve-docs-hint" : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined}>Approve and apply</button
           >
         {/if}
         <a class="btn" href={href({ name: "plans" })}>Not now</a>
@@ -387,6 +496,28 @@
 {/if}
 
 <style>
+  .link {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .link:focus-visible {
+    outline: 2px solid var(--color-accent);
+  }
+  .docs {
+    margin-bottom: var(--space-4);
+  }
+  .doc-name {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+  }
   .pin h2 {
     margin-top: 0;
   }

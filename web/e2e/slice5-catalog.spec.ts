@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { approveAndRun, login } from "./login";
 
 // T-154 on the real API: the starter catalogue (D-328, T-146). Users and
-// roles: slice5-users-roles.spec.ts.
+// roles: slice5-users-roles.spec.ts. T-168: the Plan screen shows the
+// document changes (Plan.documents, T-170) before the approval.
 
 /** The row of a catalogue Block (the second table of the Blocks page). */
 const catalogRow = (page: Page, name: string) =>
@@ -22,6 +23,7 @@ test("catalogue: add a starter Block by a plan, update offers the difference", a
   await expect(
     page.getByText("Add the starter Block common-tools from the catalogue."),
   ).toBeVisible();
+  await expect(page.locator("#pdoc-0-title")).toHaveText(/Added\s*Block common-tools/);
   // Not stored before the approval.
   expect((await page.request.get("/api/v1/blocks/common-tools")).status()).toBe(404);
   await approveAndRun(page);
@@ -39,6 +41,47 @@ test("catalogue: add a starter Block by a plan, update offers the difference", a
   await motd.getByRole("button", { name: "Update from the catalogue: motd" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText("Update the Block motd from the catalogue.")).toBeVisible();
+  await page.getByRole("button", { name: "Drop plan" }).click();
+  await page.locator("#drop-confirm").click();
+  await expect(page.getByText("This plan is stale.")).toBeVisible();
+});
+
+test("plan screen: the catalogue update of a Block without Targets shows its diff", async ({
+  page,
+}) => {
+  await login(page);
+  // common-tools (added by the test above) is used by no Target. Change
+  // the stored copy, so that the catalogue offers an update.
+  const origin = new URL(page.url()).origin;
+  const doc = (await (await page.request.get("/api/v1/blocks/common-tools")).json()) as {
+    document: { spec: { description: string } };
+  };
+  doc.document.spec.description = "Changed by the T-168 e2e.";
+  const made = await page.request.post("/api/v1/plans", {
+    headers: { origin },
+    data: { reason: "e2e: change common-tools", put: [doc.document] },
+  });
+  expect(made.status()).toBe(201);
+  const id = ((await made.json()) as { id: number }).id;
+  const ok = await page.request.post(`/api/v1/plans/${id}/approve`, {
+    headers: { origin },
+    data: {},
+  });
+  expect(ok.status()).toBe(202);
+
+  await page.goto("/#/blocks");
+  const tools = catalogRow(page, "common-tools");
+  await expect(tools).toContainText("added, differs");
+  await tools.getByRole("button", { name: "Update from the catalogue: common-tools" }).click();
+  await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
+  await expect(page.getByText("0 resource changes")).toBeVisible();
+  await expect(page.locator("#docs-count")).toContainText(
+    "Approving commits 0 added, 1 changed, 0 removed document",
+  );
+  const diff = page.getByRole("region", { name: "YAML diff of Block common-tools" });
+  await expect(diff).toContainText("Changed by the T-168 e2e.");
+  await expect(diff.locator("tr.del")).toContainText("Changed by the T-168 e2e.");
+  await expect(page.getByRole("button", { name: "Approve and apply" })).toBeVisible();
   await page.getByRole("button", { name: "Drop plan" }).click();
   await page.locator("#drop-confirm").click();
   await expect(page.getByText("This plan is stale.")).toBeVisible();

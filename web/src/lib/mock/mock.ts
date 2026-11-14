@@ -1023,6 +1023,48 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     });
   }
 
+  // T-170: the bound of Plan.documents. Past 500 entries or 8 MiB of text
+  // the rest keep kind, name and op only.
+  const DOC_ENTRIES = 500;
+  const DOC_BYTES = 8 << 20;
+
+  /**
+   * The Plan with `documents`: what its approval commits, the base
+   * revision against the proposal applied (T-170); pending and stale
+   * Plans only. A seeded example Plan
+   * without a stored proposal leaves the field out, like a server before
+   * T-170.
+   */
+  function withDocuments(p: Plan): Plan {
+    const out = structuredClone(p);
+    // An approved Plan has no list: its revision diff shows the change.
+    if (p.status === "approved") return out;
+    if (p.origin === "build" || p.origin === "agent_update") {
+      out.documents = [];
+      return out;
+    }
+    const base = p.base_revision === null ? undefined : revisions.get(p.base_revision);
+    const before: Snapshot = base?.docs ?? new Map();
+    let after: Snapshot | undefined;
+    const proposal = pendingDocs.get(p.id);
+    if (p.origin === "rollback" && p.rollback_to) {
+      after = revisions.get(p.rollback_to)?.docs;
+    } else if (proposal) {
+      after = new Map(before);
+      for (const d of proposal.put ?? []) after.set(docKey(d), d);
+      for (const d of proposal.delete ?? []) after.delete(docKey(d));
+    }
+    if (!after) return out;
+    let bytes = 0;
+    out.documents = diffDocs(before, after).map((c, i) => {
+      bytes += JSON.stringify([c.before, c.after]).length;
+      if (i < DOC_ENTRIES && bytes <= DOC_BYTES) return c;
+      out.documents_truncated = true;
+      return { ...c, before: null, after: null };
+    });
+    return out;
+  }
+
   function findPlan(id: number): Plan {
     const p = plans.get(id);
     if (!p) throw problem("not-found", "Not found", 404, `Plan ${id} does not exist.`);
@@ -1802,7 +1844,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       void s;
       pendingDocs.set(p.id, { reason: p.reason, put: [doc] });
       if (signed) pinSignedAt.set(name, pin.signed_at);
-      return { plan: p };
+      return { plan: withDocuments(p) };
     },
     async listTargets() {
       auth();
@@ -2012,12 +2054,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         human_only: [...humanOnly],
         ...(imagePart.images.length ? { images: imagePart.images } : {}),
       });
-      pendingDocs.set(p.id, proposal);
-      return p;
+      // Kept as the server keeps it: a copy of the JSON body, not the
+      // caller's objects (a screen may pass a Svelte state proxy).
+      pendingDocs.set(p.id, JSON.parse(JSON.stringify(proposal)) as Proposal);
+      return withDocuments(p);
     },
     async getPlan(id) {
       auth();
-      return structuredClone(findPlan(id));
+      return withDocuments(findPlan(id));
     },
     async approvePlan(id) {
       const s = auth();
@@ -2181,6 +2225,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     async listPlans(filter, cursor, limit = 50) {
       auth();
       return page(
+        // Plan.documents is only in answers with one Plan (T-170).
         [...plans.values()].filter((p) => !filter?.status || p.status === filter.status),
         cursor,
         limit,
