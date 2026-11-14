@@ -235,6 +235,11 @@
           <strong>This command is a secret until {formatTime(command.expires_at)}.</strong> It holds a
           one-time enrollment token. Run it once as root in the guest. Plumb does not show it again.
         </p>
+        <p class="muted" id="install-command-history">
+          The shell keeps a pasted command, with the token, in root's history. Run
+          <code>unset HISTFILE</code> before you paste it, or <code>history -c</code> after it. After
+          a failed try, the token stays valid until the time above.
+        </p>
         <pre class="mono command" id="install-command-text">{command.command}</pre>
         <div class="row">
           <button class="btn primary" type="button" onclick={copyCommand}>Copy command</button>
