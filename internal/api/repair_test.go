@@ -69,7 +69,7 @@ func (f *fakeTransport) Send(ctx context.Context, s plan.RepairSend) (int, bool,
 	f.mu.Unlock()
 	switch mode {
 	case "exit1":
-		fmt.Fprint(s.Output, "plumb-agent-install: systemctl failed\n")
+		fmt.Fprint(s.Output, "plumb-install: systemctl failed\n")
 		return 1, true, nil
 	case "hang":
 		<-ctx.Done()
@@ -103,7 +103,7 @@ func (f *fakeTransport) Send(ctx context.Context, s plan.RepairSend) (int, bool,
 	f.newAgent = a
 	f.mu.Unlock()
 	go a.Run(f.e.ctx)
-	fmt.Fprint(s.Output, "plumb-agent-install: the agent is installed and restarted\n")
+	fmt.Fprint(s.Output, "plumb-install: the agent is installed and restarted\n")
 	return 0, true, nil
 }
 
