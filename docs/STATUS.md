@@ -49,7 +49,7 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-135 README: backup and restore, day 2, firewall (after the host proof) | pl-frontend | merged (PR #237) |
 | T-136 CI: install tests run in parallel, each script run bounded; "lint, test, build" needs 8 min of 15 (was 11.7–13.6, cancelled on slow runners) | pl-backend | merged (PR #239) |
 | T-137 a restored Plumb keeps its off-host copy: the installer keeps the backup storage name over `--remove --keep-guests` | pl-codex-fix | merged (PR #238) |
-| T-138 road to the release (all open points of BRIEF §5/§6 in slices 5–9, `docs/plans/ROADMAP.md`) + plan of slice 5 ("People, network, trusted images") | pl-architect, check: pl-reviewer | merged (PR #241), D-327 … D-341. Child cards: T-144 … T-159. User questions U1 … U5 sent 2026-11-13 (needed from slice 6), no answer yet |
+| T-138 road to the release (all open points of BRIEF §5/§6 in slices 5–9, `docs/plans/ROADMAP.md`) + plan of slice 5 ("People, network, trusted images") | pl-architect, check: pl-reviewer | **slice 5 done 2026-11-14**: all cards T-144 … T-171 on main, real-host acceptance T-158 passed (findings F1–F4 fixed, F5 gets a CI proof in T-184). Plan merged (PR #241), D-327 … D-341. Child cards: T-144 … T-159. User questions U1 … U5 sent 2026-11-13 (needed from slice 6), no answer yet |
 | T-139 prep: facts from the test host for the coming topics (read-only) + test controller to latest main | pl-backend | **done**: facts on branch `pl-backend/T-139-prep-host-facts` (no PR); the test controller runs 71c14c0 since 2026-11-13 (repair run, 7 ACL lines, storage.cfg unchanged) |
 | T-140 prep: risk draft for user management, guest adoption, SSH repair fallback, MCP / AI help | pl-reviewer | done: branch `pl-reviewer/T-140-risk-draft` (plan file only) |
 | T-141 prep: gap list BRIEF §5.2 against the web UI | pl-frontend | done: branch `pl-frontend/T-141-prep-web-gaps` (plan file only) |
@@ -79,8 +79,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-167 `network`: main NIC entry by MAC match (host finding F3) | pl-backend | merged (PR #268) |
 | T-168 Plan screen shows the document changes of a Plan (host finding F1) | pl-frontend | merged (PR #269) |
 | T-170 API: a pending Plan lists its document changes (`Plan.documents`) | pl-architect (implementer) | merged (PR #267) |
-| T-159 slice 5 C14: README | pl-frontend | PR #270, review passed, waits for CI |
-| T-171 users page: role hints from the contract | pl-frontend | PR #271, review passed, waits for CI |
+| T-159 slice 5 C14: README (users, catalogue, `network`, `group`, signed images, Plan document changes; 4 new pictures) | pl-frontend | merged (PR #270) |
+| T-171 users page: role hints from the contract | pl-frontend | merged (PR #271) |
 | T-172 plan of slice 6: part A (no user answer: settings, Accept to a parameter, nested forms, MCP server, rate limits, live drift of ip/nft, leftovers), part B (SSH repair, adoption; waits for U1/U2) | pl-architect, check: pl-reviewer | PR #272, in review. Cards T-173 … T-195 |
 | Slice 6 part A, started: T-173 A1 contract (pl-architect), T-177 A4b nested forms + YAML (pl-frontend), T-181 A7 live drift (pl-backend), T-183 A9 MAC checks + T-185 A11 leftovers (pl-codex-fix), T-184 A10 F5 proof (pl-codex-qa) | – | in work |
 | T-169 `group`: the Plan of a create shows the gid (host finding F4) | pl-codex-fix | merged (PR #266) |
