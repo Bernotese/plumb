@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
@@ -37,7 +38,7 @@ func newAdoptEnv(t *testing.T) *adoptEnv {
 		t.Fatal(err)
 	}
 	drv := fake.New()
-	e, err := New(Config{Store: st, Agents: lk, Driver: drv})
+	e, err := New(Config{Store: st, Agents: lk, Driver: drv, EnrollTimeout: 2 * time.Second, ApplyTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,9 +446,14 @@ func TestAdoptStaleHostSequence(t *testing.T) {
 		}
 	}
 	more := state.Doc{Kind: stale.Kind, Name: stale.Name, Spec: []byte(strings.Replace(string(stale.Spec), `"cores":2`, `"cores":4`, 1))}
+	// A Block on the stale Target: without the skip, its Run would wait
+	// for an agent that does not exist and fail.
+	motd := state.Doc{Kind: state.KindBlock, Name: "motd", Spec: []byte(`{"resources":[{"file":{"path":"/etc/motd","content":"x"}}]}`)}
+	withBlock := state.Doc{Kind: stale.Kind, Name: stale.Name, Spec: []byte(strings.Replace(string(stale.Spec), `"type":"vm"`, `"type":"vm","blocks":[{"use":"motd"}]`, 1))}
 	for _, in := range []Input{
 		{Author: "token:tok_qa", Reason: "touch", Proposal: Proposal{Targets: []string{"wiki"}}},
 		{Author: "token:tok_qa", Reason: "cores", Proposal: Proposal{Put: []state.Doc{more}}},
+		{Author: "token:tok_qa", Reason: "block", Proposal: Proposal{Put: []state.Doc{motd, withBlock}}},
 	} {
 		p, err := a.e.Propose(a.ctx, in)
 		if err != nil {
@@ -463,6 +469,9 @@ func TestAdoptStaleHostSequence(t *testing.T) {
 			t.Fatal(err)
 		}
 		a.e.Wait()
+		if run := a.lastRun(t); run.Status != "succeeded" {
+			t.Fatalf("%s: the Run of a Plan that does nothing for the stale Target is %s", in.Reason, run.Status)
+		}
 		if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("%s bound the stale Target", in.Reason)
 		}

@@ -185,13 +185,8 @@ func (e *Engine) ProposeAdopt(ctx context.Context, req AdoptRequest, author, rea
 		if t == req.Target && !same {
 			return store.Plan{}, fmt.Errorf("%w: a Target %s exists", ErrDocumentExists, t)
 		}
-		bound, err := e.isBound(ctx, t)
-		if err != nil {
-			return store.Plan{}, err
-		}
-		if bound {
-			return store.Plan{}, fmt.Errorf("%w: Target %s holds the guest", ErrGuestBound, t)
-		}
+		// A Target of the same guest is not bound here: AdoptDoc refused a
+		// bound VMID already (guest-bound).
 		if t != req.Target {
 			drop = append(drop, DocKey{Kind: state.KindTarget, Name: t})
 		}
@@ -211,14 +206,6 @@ var ErrDocumentExists = errors.New("document-exists")
 
 // ErrAdoptClaimed: a Plan would make two Targets claim one guest (D-395).
 var ErrAdoptClaimed = errors.New("adopt-claimed")
-
-func (e *Engine) isBound(ctx context.Context, target string) (bool, error) {
-	_, err := e.st.GetBinding(ctx, state.KindTarget, target)
-	if errors.Is(err, store.ErrNotFound) {
-		return false, nil
-	}
-	return err == nil, err
-}
 
 // adoptClaims refuses a Plan after which two Targets claim the same
 // adopted node and VMID (D-395 rule 1). A pair that the base has already
