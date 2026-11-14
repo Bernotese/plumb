@@ -830,6 +830,16 @@
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
 {#if loaded && existing}
+  {#if existing.status.not_adopted}
+    <div class="banner warn" role="alert" id="not-adopted">
+      <strong>Not adopted: the guest changed.</strong> The adopt plan of this Target was approved,
+      but its run did not bind the guest (it was renamed or changed in Proxmox before the approval).
+      Plans do nothing for this Target. Either
+      <a href={href({ name: "target-adopt" })}>adopt the guest again</a> (under its Proxmox name; the
+      new plan removes this Target), or delete this Target below: that makes no Proxmox call and never
+      touches the guest.
+    </div>
+  {/if}
   <RawResources {api} target={existing} />
   <AgentCard {api} target={existing} />
   {#if adopted}
