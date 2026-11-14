@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -168,18 +170,38 @@ func TestSecretSlice(t *testing.T) {
 
 // noValue scans the database files, all events, all API answers and the
 // log for the values and for marker characters in answers.
+// rawScanMin is the shortest needle that noValue looks for in the raw
+// database files (T-213). The files hold random bytes (sealed values,
+// nonces, keyed hashes): a k-byte needle occurs by chance in an n-byte
+// file with a chance of about n/256^k, that is 25 % for 3 bytes in a
+// 4 MiB WAL, but 2e-13 for 8 bytes. A shorter value is looked for in the
+// decoded text values of every table instead (textValuesHold), and, like
+// every value, in the events, the API answers and the log.
+const rawScanMin = 8
+
 func (e *env) noValue(logs *bytes.Buffer, values ...string) {
 	e.t.Helper()
 	files, _ := filepath.Glob(filepath.Join(e.dir, "plumb.db*"))
 	if len(files) == 0 {
 		e.t.Fatal("no database file")
 	}
+	var short []string
+	for _, v := range values {
+		if len(v) < rawScanMin {
+			short = append(short, v)
+		}
+	}
 	for _, f := range files {
 		b, _ := os.ReadFile(f)
 		for _, v := range values {
-			if bytes.Contains(b, []byte(v)) {
+			if len(v) >= rawScanMin && bytes.Contains(b, []byte(v)) {
 				e.t.Errorf("%s holds a secret value", filepath.Base(f))
 			}
+		}
+	}
+	if len(short) > 0 {
+		if where := e.textValuesHold(short); where != "" {
+			e.t.Errorf("the database text value %s holds a short secret value", where)
 		}
 	}
 	evs, err := e.st.EventsAfter(e.ctx, 0, 10000)
@@ -592,4 +614,68 @@ func TestSecretNewBindingRestartOfUnchangedService(t *testing.T) {
 		steps, _ := e.st.Steps(e.ctx, run.ID)
 		t.Fatalf("run %s: %+v", run.Status, steps)
 	}
+}
+
+// textValuesHold reports the first table and column whose TEXT value
+// holds one of needles, through a read-only connection to the env's
+// database ("" when none does). BLOB values (sealed data, nonces) are
+// skipped: their random bytes are what the raw scan cannot tell apart.
+func (e *env) textValuesHold(needles []string) string {
+	e.t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(e.dir, "plumb.db")+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer db.Close()
+	var tables []string
+	rows, err := db.QueryContext(e.ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			e.t.Fatal(err)
+		}
+		tables = append(tables, n)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		e.t.Fatal(err)
+	}
+	if len(tables) < 10 {
+		e.t.Fatalf("only %d tables read: the text scan would prove nothing", len(tables))
+	}
+	for _, tbl := range tables {
+		rows, err := db.QueryContext(e.ctx, `SELECT * FROM "`+tbl+`"`)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		cols, _ := rows.Columns()
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		for rows.Next() {
+			if err := rows.Scan(ptrs...); err != nil {
+				e.t.Fatal(err)
+			}
+			for i, v := range vals {
+				text, ok := v.(string)
+				if !ok {
+					continue
+				}
+				for _, n := range needles {
+					if strings.Contains(text, n) {
+						rows.Close()
+						return tbl + "." + cols[i]
+					}
+				}
+			}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	return ""
 }
