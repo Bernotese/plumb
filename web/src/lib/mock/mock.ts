@@ -742,7 +742,9 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     const snaps: Record<number, Snapshot> = { [head]: headDocs, [diff.from ?? 0]: r6, 5: r5 };
     for (const info of listed) {
       const docs = snaps[info.id];
-      if (docs) revisions.set(info.id, { info: { ...info, documents: docs.size }, docs });
+      // D-128: a revision's author is its Plan's author (the examples differ).
+      const author = (info.plan_id !== null && plans.get(info.plan_id)?.author) || info.author;
+      if (docs) revisions.set(info.id, { info: { ...info, author, documents: docs.size }, docs });
     }
     revisions.set(5, {
       info: {
@@ -2156,7 +2158,8 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       revisions.set(head, {
         info: {
           id: head,
-          author: s.principal,
+          // D-128: the author of the Plan, not the approver (approved_by).
+          author: p.author,
           reason: p.reason,
           plan_id: p.id,
           created_at: now(),
