@@ -12,7 +12,9 @@ import (
 // goes.
 func TestDropEnrollTokenKeepsUsed(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "t.db"))
+	fresh := filepath.Join(t.TempDir(), "t.db")
+	copyMigratedTemplate(t, fresh) // T-227 row 30
+	s, err := Open(ctx, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}

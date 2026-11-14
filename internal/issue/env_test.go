@@ -65,6 +65,7 @@ func newEnv(t *testing.T, configure ...func(*plan.Config)) *env {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
+	copyMigratedTemplate(t, filepath.Join(dir, "plumb.db")) // T-227 row 30
 	st, err := store.Open(ctx, filepath.Join(dir, "plumb.db"))
 	if err != nil {
 		t.Fatal(err)
