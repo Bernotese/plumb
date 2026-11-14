@@ -54,7 +54,9 @@ func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, 
 		if iss.Resource == GuestValuesID && len(flagged) > 0 {
 			continue // the end of the flag resolves it (PruneGuestValues)
 		}
-		if err := s.st.ResolveIssue(ctx, iss.ID, "gone", "system"); err != nil {
+		// Marked: never opened again by a report of a new Target of the
+		// name (T-227 row 31).
+		if err := s.st.ResolveIssueTargetDeleted(ctx, iss.ID); err != nil {
 			return n, err
 		}
 		if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: " + reason + "."}); err != nil {
@@ -63,8 +65,13 @@ func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, 
 		s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": "gone", "reason": reason})
 		n++
 	}
+	// The Issues that were resolved before the delete (F1 of #324).
+	k, err := s.st.MarkIssuesTargetDeleted(ctx, target)
+	if err != nil {
+		return n, err
+	}
 	m, err := s.st.ForgetTargetMarks(ctx, target)
-	return n + m, err
+	return n + k + m, err
 }
 
 // planRunning reports whether the Run of a Plan is running.

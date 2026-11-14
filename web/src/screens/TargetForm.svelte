@@ -51,7 +51,11 @@
 
   // One schema source (D-043): the guest form comes from the Target schema.
   const specSchema = targetSchema.properties.spec;
-  const guestFields: Field[] = fieldsOf(specSchema.properties.guest);
+  // `nics` is planned (T-217 contract): the server refuses it until T-219,
+  // and T-223 adds its own form part; so the generic form leaves it out.
+  const guestFields: Field[] = fieldsOf(specSchema.properties.guest).filter(
+    (f) => f.name !== "nics",
+  );
   const namePattern = new RegExp(targetSchema.properties.name.pattern, "u");
   const editing = $derived(name !== undefined);
 

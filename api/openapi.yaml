@@ -1115,6 +1115,169 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
 
+  /targets/{name}/backups:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    get:
+      tags: [targets]
+      operationId: listGuestBackups
+      x-plumb-planned: T-221
+      x-plumb-rate: read
+      summary: List the guest backups of a Target
+      description: |
+        Slice 7 (D-405 … D-409). The volumes of the Target's guest on the install's guest backup
+        storage, with their `kind`, the storage state, the next scheduled job and the last result.
+      security:
+        - session: []
+        - token: [read]
+      responses:
+        "200":
+          description: The backups.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GuestBackupList" }
+              example:
+                storage: { id: plumb-backup, state: stated-clear, free_pct: 62 }
+                items:
+                  - { id: 3f2a9c0d1e4b5a67, time: "2026-11-15T03:00:12Z", size: 812345678, kind: plumb, trigger: scheduled, mode: snapshot }
+                  - { id: 9b1c2d3e4f5a6b7c, time: "2026-10-01T03:00:09Z", size: 790000000, kind: older-guest, trigger: scheduled, mode: snapshot }
+                next_at: "2026-11-16T03:00:00Z"
+                last: { at: "2026-11-15T03:00:12Z", result: done, message: "" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+    post:
+      tags: [targets]
+      operationId: backUpGuestNow
+      x-plumb-planned: T-221
+      x-plumb-rate: proposal
+      summary: Back up a Target's guest now
+      description: |
+        Slice 7 (D-408). Starts one guest backup job now: risk `reversible` (no Plan; the guest is not
+        changed). A manual backup is marked as such (`trigger: manual`). Retention keeps at most 2
+        manual backups beside the `keep` scheduled ones and never deletes a scheduled backup because
+        of a manual one (review M1 of #325), so repeated calls cannot push out the good backups. 409 `backup-running` (a job of this Target runs), 409 `backup-refused` (no storage, a
+        clear storage without `--guest-backup-clear`, less than 10 % free, or restored mode; the detail
+        says which). Events `guest_backup.started`, then `done`, `failed` or `warning` in `done` (the
+        marker could not be read back: the volume is `unmarked`, D-407).
+      security:
+        - session: []
+        - token: [apply]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "202": { description: The job started. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /targets/{name}/backups/{backup}:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+      - name: backup
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[0-9a-f]{16}$" }
+    delete:
+      tags: [targets]
+      operationId: deleteGuestBackup
+      x-plumb-planned: T-221
+      summary: Delete one guest backup
+      description: |
+        Human admin session only (D-409). Deletes one volume of `kind: plumb` or `older-guest`; an
+        `unmarked` volume is refused (409 `not-plumb`). Not reversible. Event `guest_backup.deleted`.
+      security:
+        - session: []
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /targets/{name}/restore:
+    parameters:
+      - $ref: "#/components/parameters/DocName"
+    post:
+      tags: [targets]
+      operationId: restoreGuest
+      x-plumb-planned: T-222
+      x-plumb-rate: proposal
+      summary: Propose a restore of the guest from a backup
+      description: |
+        Slice 7 (D-410, D-411). Makes a Plan of origin `restore`, risk `destructive`, human-only
+        `guest-restore`, that restores a `kind: plumb` backup **over the same bound guest**. The Plan
+        names the volume and its time. The Run:
+        - checks the marker, the lineage, the binding and the guest name again;
+        - stops the guest (`allow_restart`, D-194);
+        - revokes the agent credential before the guest starts;
+        - restores;
+        - then makes a re-enroll Plan (a Plumb-made Target) or shows the install command (an adopted
+          Target).
+
+        The desired state is not rolled back: the next Run converges the guest to the head. A restore
+        brings back what the guest held at the backup time, also access that a person removed later
+        (`authorized_keys` lines, passwords); the Plan says so (review L1 of #325). The Target keeps
+        its binding and its backup lineage; the Run drops the host key pins, and the next repair
+        report pins the keys again. There is
+        no restore after the guest is gone: it would need a new right (D-411, a later user question).
+        A person restores such a volume in Proxmox into pool `plumb` and adopts it. 409
+        `restored-mode` in restored mode. The token itself can restore at the Proxmox API with the
+        D-380 rights; this rule holds inside Plumb.
+      security:
+        - session: []
+        - token: [plan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GuestRestoreRequest" }
+            example: { backup: 3f2a9c0d1e4b5a67, reason: The update broke the database. }
+      responses:
+        "201":
+          description: The Plan.
+          headers:
+            Location: { $ref: "#/components/headers/Location" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Plan" }
+              example:
+                id: 31
+                origin: restore
+                issue_id: null
+                status: pending
+                risk: destructive
+                reason: The update broke the database.
+                author: "token:tok_claude"
+                created_at: "2026-11-15T09:20:00Z"
+                base_revision: 40
+                approved_by: null
+                approved_at: null
+                revision: null
+                run_id: null
+                human_only: [guest-restore]
+                targets:
+                  - target: db1
+                    resources:
+                      - resource: "guest:config"
+                        action: update
+                        risk: destructive
+                        changes:
+                          - { attr: restore, to: "backup 3f2a9c0d1e4b5a67 of 2026-11-15T03:00:12Z", risk: destructive }
+                warnings: []
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
   /targets/{name}/repair:
     parameters:
       - $ref: "#/components/parameters/DocName"
@@ -2958,6 +3121,7 @@ paths:
               example:
                 fingerprint: "SHA256:Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5"
                 created_at: "2026-11-14T10:00:00Z"
+                left_behind: []
                 previous:
                   fingerprint: "SHA256:b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2w"
                   created_at: "2026-10-01T08:00:00Z"
@@ -3955,7 +4119,7 @@ components:
         id: { $ref: "#/components/schemas/Id" }
         origin:
           type: string
-          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update, pin_refresh, repair, adopt]
+          enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update, pin_refresh, repair, adopt, restore]
           description: |
             What made the Plan. `pin_refresh`: `POST /images/{name}/refresh` or the build schedule
             changes only the pin of an Image (D-335). `build`: a manual or scheduled image build with no document
@@ -4025,12 +4189,14 @@ components:
             override change), always, whatever the origin (D-368). `repair`: a Plan of origin
             `repair` (D-372). `adopted-guest-delete`: the Plan sets `spec.adopted.delete_guest` of
             an adopted Target to `true`, or deletes an adopted Target that has it (D-388).
+            `guest-restore`: a Plan of origin `restore` (D-410): it overwrites the guest with a
+            backup.
             The server computes it from the content of the proposal, for every origin, and from
             the origin for `accept-guest-data` and `unverified-pin`; no client field sets or
             clears it.
           items:
             type: string
-            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off, repair, adopted-guest-delete]
+            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off, repair, adopted-guest-delete, guest-restore]
         guest_data_issues:
           type: array
           description: |
@@ -4942,13 +5108,93 @@ components:
             sshkeys: { type: boolean }
             description: { type: boolean }
             env: { type: boolean }
+    GuestBackupList:
+      type: object
+      additionalProperties: false
+      description: |
+        The guest backups of one Target (D-405 … D-409). Only volumes that the token can see: on the
+        install's guest backup storage, of a VMID that is in the pool now (T-214 FACT 1).
+      required: [storage, items, next_at, last]
+      properties:
+        storage:
+          type: [object, "null"]
+          additionalProperties: false
+          description: "`null`: the install named no guest backup storage."
+          required: [id, state, free_pct]
+          properties:
+            id: { type: string }
+            state: { type: string, enum: [pbs-key, stated-clear, clear-refused] }
+            free_pct: { type: [integer, "null"], minimum: 0, maximum: 100 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GuestBackup" }
+        next_at: { $ref: "#/components/schemas/NullableTime" }
+        last:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [at, result, message]
+          properties:
+            at: { $ref: "#/components/schemas/Time" }
+            result: { type: string, enum: [running, done, warning, failed, refused] }
+            message:
+              type: string
+              maxLength: 1024
+              description: Plumb's own short text (the result and, on a failure, Plumb's reason). Never a raw Proxmox task log (review L2 of #325).
+
+    GuestBackup:
+      type: object
+      additionalProperties: false
+      description: |
+        One backup volume. `kind`:
+        - `plumb`: this install's marker and the Target's current lineage (D-407). Retention, restore
+          and delete act on it.
+        - `older-guest`: this install's marker of another lineage, for example an older Target of the
+          name or an older guest on this VMID. Only a person may delete it; never restored.
+        - `unmarked`: no Plumb marker (a vzdump made by a person, or the notes failed). Never touched by
+          Plumb.
+      required: [id, time, size, kind, trigger, mode]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: Plumb's id of the volume, stable as long as the volume exists (a hash of its volume id). Used in the paths below, so the volume id never goes into a URL.
+        time: { $ref: "#/components/schemas/Time" }
+        size: { type: integer, minimum: 0 }
+        kind: { type: string, enum: [plumb, older-guest, unmarked] }
+        trigger:
+          type: string
+          enum: [scheduled, manual, unknown]
+          description: |
+            From the marker (`…:m` for a manual backup, review M1 of #325): `scheduled` by the Target's
+            `backup` schedule, `manual` by "Back up now". `unknown` for a volume without a Plumb marker.
+            Retention keeps the newest `keep` scheduled volumes and, apart from them, at most 2 manual
+            ones (the oldest manual one goes first): a manual backup never pushes out a scheduled one.
+        mode:
+          type: string
+          enum: [snapshot, stop, suspend, unknown]
+          description: The vzdump mode. A VM snapshot without the guest agent is crash-consistent (like a power cut, T-214 FACT 3).
+    GuestRestoreRequest:
+      type: object
+      additionalProperties: false
+      required: [backup, reason]
+      properties:
+        backup: { type: string, pattern: "^[0-9a-f]{16}$", description: "`GuestBackup.id` of a `kind: plumb` volume." }
+        reason: { type: string, minLength: 1, maxLength: 2000 }
     RepairKeyView:
       type: object
       additionalProperties: false
-      required: [fingerprint, created_at, previous]
+      required: [fingerprint, created_at, previous, left_behind]
       properties:
         fingerprint: { type: string, description: "`SHA256:…` of the current public key." }
         created_at: { $ref: "#/components/schemas/Time" }
+        left_behind:
+          type: array
+          description: |
+            The guests of deleted adopted Targets whose agent is parked (D-396), as "<target> (VMID <n>)", and those
+            whose agent an admin forgot, as "<target> (VMID <n>, agent forgotten)": their repair line may still hold a
+            valid key. Shown also without a previous key (T-217, ROADMAP row 32). `previous.left_behind` is the
+            same list, kept for one release.
+          items: { type: string }
         previous:
           type: [object, "null"]
           additionalProperties: false
@@ -5066,6 +5312,45 @@ components:
               path: { type: string }
               role: { type: string }
               ok: { type: boolean }
+        extra_nets:
+          type: array
+          description: |
+            Slice 7 (D-401, T-218): the extra bridges and bridge/tag paths that the install named
+            (`--extra-bridge`, `--extra-vlan`). A Target NIC may use only these (422
+            `network-not-allowed`). Missing on a controller before T-218.
+          items:
+            type: object
+            additionalProperties: false
+            required: [bridge, tag]
+            properties:
+              bridge: { type: string }
+              tag: { type: [integer, "null"], minimum: 1, maximum: 4094, description: "`null`: untagged on this bridge." }
+        guest_backup:
+          type: [object, "null"]
+          additionalProperties: false
+          description: |
+            Slice 7 (D-405, D-406, T-218): the guest backup storage of the install. `null`: none named, so
+            guest backups are off. The token itself can back up, restore over and delete the backups of
+            every pool guest directly at the Proxmox API with these rights (D-380, accepted by the user);
+            Plumb's human-only rules hold only inside Plumb. Missing on a controller before T-218.
+          required: [storage, state, other_backup_storages]
+          properties:
+            storage: { type: string }
+            state:
+              type: string
+              enum: [pbs-key, stated-clear, clear-refused]
+              description: |
+                `pbs-key`: a PBS storage with client-side encryption (`GET /storage`: `type: pbs` with
+                `encryption-key`). `stated-clear`: another storage, and the install said
+                `--guest-backup-clear`. `clear-refused`: another storage without that flag: every guest
+                backup is refused.
+            other_backup_storages:
+              type: array
+              description: |
+                Other storages with a Plumb `AllocateSpace` line whose `content` holds `backup` (M2 of
+                #321): the token could write a vzdump there. Must be empty; the installer refuses
+                otherwise, and the UI warns.
+              items: { type: string }
     ChangeSettingsRequest:
       type: object
       additionalProperties: false
@@ -5127,6 +5412,10 @@ components:
             - target.install_command
             - agent.unbound
             - agent.forgotten
+            - guest_backup.started
+            - guest_backup.done
+            - guest_backup.failed
+            - guest_backup.deleted
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string

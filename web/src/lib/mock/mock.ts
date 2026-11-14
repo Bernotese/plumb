@@ -894,6 +894,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   const repairKey: RepairKeyView = {
     fingerprint: "SHA256:Zm9vYmFyYmF6cXV4cXV1eGNvcmdlZ3JhdWx0Z2FycGx5",
     created_at: "2026-11-14T10:00:00Z",
+    left_behind: [],
     previous: {
       fingerprint: "SHA256:b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2w",
       created_at: "2026-10-01T08:00:00Z",

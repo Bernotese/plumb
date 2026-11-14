@@ -106,7 +106,9 @@ func TestMigrateBindingGen(t *testing.T) {
 func genEnv(t *testing.T) (*Store, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "g.db"))
+	fresh := filepath.Join(t.TempDir(), "g.db")
+	copyMigratedTemplate(t, fresh) // T-227 row 30
+	s, err := Open(ctx, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}

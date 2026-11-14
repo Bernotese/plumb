@@ -41,8 +41,10 @@ test-go:
 ## test-race: Go tests with the race detector (needs cgo and a C compiler; CI runs it).
 ## Without ./install: those tests run bash scripts against fakes, so the
 ## detector sees only the test harness, and they doubled the job time (T-136).
+## internal/api runs in shards beside the other packages (T-211); the
+## script checks that the shards ran every listed test.
 test-race:
-	CGO_ENABLED=1 go test -race -count=1 $$(go list ./... | grep -v '/install$$')
+	bash scripts/test-race.sh
 
 ## test-web: unit tests of the web UI (vitest)
 test-web: $(WEB_DEPS)
@@ -58,7 +60,7 @@ lint: lint-go lint-sh lint-web
 
 ## lint-sh: shellcheck for the shell scripts. CI must have shellcheck; on a
 ## machine without it the check is skipped with a warning.
-SH_FILES = scripts/package-release.sh install/install.sh install/testdata/fakepve scripts/check-embed.sh scripts/test-slice-pve.sh test/guest/lxd.sh internal/link/agentinstall/install.sh
+SH_FILES = scripts/test-race.sh scripts/package-release.sh install/install.sh install/testdata/fakepve scripts/check-embed.sh scripts/test-slice-pve.sh test/guest/lxd.sh internal/link/agentinstall/install.sh
 lint-sh:
 	@for f in $(SH_FILES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then shellcheck -x $(SH_FILES); \

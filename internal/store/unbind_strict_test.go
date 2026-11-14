@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 0026 (T-227, ROADMAP row 29) rebuilds unbind_pending as STRICT and
+// 0025 (T-227, ROADMAP row 29) rebuilds unbind_pending as STRICT and
 // keeps every row: a parked and a forgotten one.
 func TestMigrationUnbindPendingStrict(t *testing.T) {
 	v := migrationNumber(t, "_unbind_pending_strict.sql")
