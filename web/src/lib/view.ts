@@ -275,6 +275,18 @@ export function humanOnlyReasons(plan: Plan): string[] {
       );
       continue;
     }
+    if (reason === "repair") {
+      out.push(
+        "It repairs a dead agent over SSH with the Plumb repair key (D-372): it installs the agent and gives it a new enrollment.",
+      );
+      continue;
+    }
+    if (reason === "adopted-guest-delete") {
+      out.push(
+        "It lets Plumb delete an adopted guest that Plumb did not make (D-388): the guest and its disks go when the Target is deleted.",
+      );
+      continue;
+    }
     if (reason === "firewall-off") {
       out.push(
         "It turns off the firewall of a target (D-368): every port of that guest is open then.",

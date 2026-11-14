@@ -14,7 +14,7 @@ export interface RoleHint {
 export const ROLE_HINTS: Record<Role, RoleHint> = {
   read: { text: "Sees everything. Changes nothing.", ops: [] },
   plan: {
-    text: "Also proposes changes (plans, also image builds, checksum refreshes, rollbacks and agent updates), comments on and resolves issues, drops plans.",
+    text: "Also proposes changes (plans, also image builds, checksum refreshes, rollbacks and agent updates), comments on and resolves issues, drops plans, proposes the SSH repair of a dead agent and the adoption of a guest.",
     ops: [
       "createPlan",
       "buildImage",
@@ -25,6 +25,8 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
       "commentIssue",
       "resolveIssue",
       "discardPlan",
+      "repairTarget",
+      "adoptTarget",
     ],
   },
   apply: {
@@ -32,7 +34,7 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
     ops: ["approvePlan", "createBackup"],
   },
   admin: {
-    text: "Everything: destructive plans, users, API tokens, secrets, settings, an export with secret values, import, and the confirm after a restore.",
+    text: "Everything: destructive plans, users, API tokens, secrets, settings, the repair key, agent install commands, an export with secret values, import, and the confirm after a restore.",
     ops: [
       "listUsers",
       "createUser",
@@ -48,6 +50,8 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
       "importState",
       "confirmRestore",
       "changeSettings",
+      "createInstallCommand",
+      "rotateRepairKey",
     ],
   },
 };
