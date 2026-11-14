@@ -540,6 +540,8 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		next := spec
 		next.SSHKeys = append([]string(nil), spec.SSHKeys...)
 		next.Tags = append([]string(nil), spec.Tags...)
+		spec.NICs = append([]driver.NIC(nil), spec.NICs...) // T-219: own copies
+		next.NICs = append([]driver.NIC(nil), spec.NICs...)
 		g := &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
 			env: spec.Kind == wire.KindLXC}
 		if g.env {
@@ -684,6 +686,13 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 				}
 			case driver.AttrMounts, driver.AttrDevices, driver.AttrRawLXC:
 				err = &driver.OutsideError{Attr: c.Attr}
+			case driver.AttrNIC(1), driver.AttrNIC(2), driver.AttrNIC(3):
+				// More NICs (T-219): hot-plug of a VM, live in a container.
+				var nic driver.NIC
+				if nic, err = driver.ParseNICValue(c.To); err == nil {
+					n := driver.NICIndex(c.Attr)
+					run.NICs, next.NICs = withNIC(run.NICs, n, nic), withNIC(next.NICs, n, nic)
+				}
 			case driver.AttrEnrollToken:
 				if !c.Sensitive || c.From != nil || c.To != nil {
 					err = errors.New("fake: enroll_token change must be sensitive and carry no value")
@@ -1058,4 +1067,22 @@ func fakeMAC(id driver.GuestID) string {
 	h.Write([]byte(id))
 	s := h.Sum32()
 	return fmt.Sprintf("bc:24:11:%02x:%02x:%02x", byte(s>>16), byte(s>>8), byte(s))
+}
+
+// withNIC returns a copy of nics with NIC n (1 … MaxNICs) set to nic (an
+// empty one removes it); the list ends at its last NIC (nil without one).
+func withNIC(nics []driver.NIC, n int, nic driver.NIC) []driver.NIC {
+	out := make([]driver.NIC, driver.MaxNICs)
+	copy(out, nics)
+	out[n-1] = nic
+	last := 0
+	for i, x := range out {
+		if x.Bridge != "" {
+			last = i + 1
+		}
+	}
+	if last == 0 {
+		return nil
+	}
+	return out[:last]
 }

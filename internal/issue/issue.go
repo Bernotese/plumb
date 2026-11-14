@@ -70,10 +70,22 @@ func AcceptRefused(resource string, changes []wire.Change) error {
 			return ErrAcceptImage
 		case resource == wire.GuestConfigID && containerAttrs[c.Attr]:
 			return ErrAcceptOutside
+		case resource == wire.GuestConfigID && nicAttrs[c.Attr]:
+			return ErrAcceptNIC
 		}
 	}
 	return nil
 }
+
+// nicAttrs are the guest:config attributes of the more NICs
+// (driver.AttrNIC(1) … AttrNIC(3), T-219); this package does not import
+// the driver (ARCHITECTURE §2).
+var nicAttrs = map[string]bool{"nic1": true, "nic2": true, "nic3": true}
+
+// ErrAcceptNIC is returned for accept of a more NIC (nic1 … nic3, D-418):
+// the bridge, tag and MAC of a hand change are not taken into the
+// document; Plumb's MAC is fixed and the bridge must be named at install.
+var ErrAcceptNIC = errors.New("issue: accept is not possible for a NIC (nic1 … nic3); revert it, or change guest.nics in the Target")
 
 // ErrAcceptOutside is returned for accept of the features, mount points,
 // devices or raw lxc lines of a container: a Target cannot hold them

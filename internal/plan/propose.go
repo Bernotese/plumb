@@ -538,6 +538,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 			return tp, &ProposalError{Target: target, Msg: "the guest is not adopted yet; there is nothing to re-enroll"}
 		}
 		tp.Guest = "adopt"
+		if _, err := e.docNICs(target, r); err != nil { // D-404
+			return tp, err
+		}
 		tp.Resources = append(tp.Resources, ResourceChange{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
 			Risk: wire.RiskReversible, Changes: []wire.Change{{Attr: attrAdopted, From: nil, To: adoptedText(*r.Adopted), Risk: wire.RiskReversible}}})
 		// No agent yet: its resources apply after the install command.
@@ -740,6 +743,9 @@ func createChanges(s driver.GuestSpec) []wire.Change {
 	if s.TagsSet && len(s.Tags) > 0 {
 		c = append(c, wire.Change{Attr: driver.AttrTags, To: s.Tags, Risk: wire.RiskReversible})
 	}
+	for i, n := range s.NICs { // T-219
+		c = append(c, wire.Change{Attr: driver.AttrNIC(i + 1), To: n.Value(), Risk: wire.RiskReversible})
+	}
 	if s.Power == driver.PowerStopped {
 		// Created, enrolled and applied, then stopped (D-299).
 		c = append(c, wire.Change{Attr: driver.AttrPower, From: string(driver.PowerRunning), To: string(driver.PowerStopped), Risk: driver.PowerRisk(driver.PowerStopped)})
@@ -816,6 +822,9 @@ func (e *Engine) guestSpec(target string, r *state.Rendered) (driver.GuestSpec, 
 	spec.ImageName = r.Image
 	if spec.Kind == wire.KindLXC {
 		spec.Features = driver.CTFeatures // D-227: nesting only
+	}
+	if spec.NICs, err = e.docNICs(target, r); err != nil { // T-219
+		return spec, err
 	}
 	return spec, nil
 }

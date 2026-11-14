@@ -202,7 +202,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		return err
 	}
 	var drv driver.Driver
-	var extras proxmox.InstallExtras // slice 7 install settings (D-401, D-405)
+	var extras proxmox.InstallExtras      // slice 7 install settings (D-401, D-405)
+	var netAllowed func(string, int) bool // nil with the fake driver: every network (T-219)
 	switch f.driver {
 	case "fake":
 		drv = fake.New()
@@ -218,6 +219,8 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		if err != nil {
 			return err
 		}
+		d.SetExtraNets(extras) // T-219
+		netAllowed = d.NetAllowed
 		drv = d
 	}
 	if f.data == "" {
@@ -316,6 +319,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		OnPlanDone:          func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
 		AddrStable:          devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
+		InstallID: os.Getenv("PLUMB_INSTALL_ID"), NetAllowed: netAllowed, // T-219 (D-400, D-401)
 		// The transport comes with T-191; without it a repair is not ready.
 		Repair: repairConfig(ctx, log, rep, lk, agentURL(f.hosts, f.agentListen)),
 	})
