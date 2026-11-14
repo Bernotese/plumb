@@ -1204,7 +1204,8 @@ paths:
         document, never on a command line or into the environment of a process (review R6 of
         #290). The old credential ends only when the guest enrolls with the new token. The
         command holds no other secret; the UI says that it is a secret for 15 minutes. Event
-        `target.install_command` (no token).
+        `target.install_command` (no token). 409 `agent-left`: the name has the agent of a deleted
+        Target that still waits for unbind (D-396); it is forgotten first.
       security:
         - session: []
       responses:
@@ -1240,7 +1241,8 @@ paths:
         again before it binds the guest, and writes nothing to Proxmox. 409 `guest-changed`: the
         digest or the name differs from the request; 409 `not-adoptable`; 409 `guest-bound`: a
         Target or Image already holds the guest; 409 `document-exists`: a Target of that name
-        exists.
+        exists; 409 `agent-left`: the guest, or the Target name, still has the agent of a deleted
+        Target that waits for unbind (D-396, `agent_left`); it is unbound or forgotten first.
       security:
         - session: []
         - token: [plan]

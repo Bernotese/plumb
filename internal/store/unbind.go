@@ -15,13 +15,25 @@ type Parked struct {
 }
 
 // Park records the agent of a deleted adopted Target that still has to
-// take unbind.
+// take unbind. It also drops the unused enrollment and repair tokens of
+// the target: an enrollment would replace the parked agent with one that
+// is not parked (the link makes no new token while the park lasts).
 func (s *Store) Park(ctx context.Context, p Parked) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM enroll_token WHERE target = ? AND used_at IS NULL`, p.Target); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO unbind_pending (target, agent_id, guest_ref, node, since) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (target) DO UPDATE SET agent_id = excluded.agent_id, guest_ref = excluded.guest_ref, node = excluded.node, since = excluded.since`,
-		p.Target, p.AgentID, p.GuestRef, p.Node, formatTime(p.Since))
-	return err
+		p.Target, p.AgentID, p.GuestRef, p.Node, formatTime(p.Since)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Unpark drops the record of a target.

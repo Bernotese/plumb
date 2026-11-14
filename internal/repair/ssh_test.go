@@ -585,3 +585,31 @@ func TestRepairKeyNeverLeaks(t *testing.T) {
 		}
 	}
 }
+
+// T-205 (review F7 of T-192, D-396): a deleted Target is not in
+// previous.targets; a guest whose agent was not unbound is in
+// previous.left_behind.
+func TestRepairKeyViewDeletedAndLeftBehind(t *testing.T) {
+	e := newEnv(t)
+	old := e.currentID()
+	e.bind("web1", "vm/101")
+	e.bind("wiki", "150")
+	e.report("web1", []string{old}, 22, "SHA256:"+strings.Repeat("A", 43))
+	e.report("wiki", []string{old}, 22, "SHA256:"+strings.Repeat("B", 43))
+	if err := e.st.DeleteBinding(e.ctx, state.KindTarget, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.Park(e.ctx, store.Parked{Target: "wiki", AgentID: "ag", GuestRef: "150", Node: "pve", Since: e.now}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := e.s.Rotate(e.ctx, false, "user:admin")
+	if err != nil || v.Previous == nil {
+		t.Fatalf("rotate: %+v %v", v, err)
+	}
+	if strings.Join(v.Previous.Targets, ",") != "web1" {
+		t.Fatalf("previous.targets %v: a deleted Target is listed", v.Previous.Targets)
+	}
+	if strings.Join(v.Previous.LeftBehind, ",") != "wiki (VMID 150)" {
+		t.Fatalf("previous.left_behind %v", v.Previous.LeftBehind)
+	}
+}

@@ -135,6 +135,18 @@ func TestParkedAgentOnlyTakesUnbind(t *testing.T) {
 			t.Errorf("web2: %v", err)
 		}
 	})
+	t.Run("a token made before the park cannot enroll", func(t *testing.T) {
+		f := newFixture(t)
+		cred := f.agent("web1")
+		tok := f.token("web1") // e.g. an install command shown before the delete
+		id, _, _ := strings.Cut(cred, ".")
+		if err := f.st.Park(context.Background(), store.Parked{Target: "web1", AgentID: id, GuestRef: "150", Since: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if code, _, body := f.enroll(tok); code != 401 {
+			t.Fatalf("enroll with an old token: %d %s", code, body)
+		}
+	})
 	t.Run("unpark ends it", func(t *testing.T) {
 		f, cred := parkedFixture(t)
 		f.st.Unpark(context.Background(), "web1")

@@ -92,9 +92,13 @@
     </p>
   {/if}
   {#each run.targets as t (t.target)}
+    {@const warned = t.status === "succeeded" && t.steps.some((s) => s.status === "warning")}
     <h2>
       Target <span class="mono">{t.target}</span>
-      <Badge tone={tone[t.status] ?? "muted"} label={t.status} />
+      <Badge
+        tone={warned ? "warn" : (tone[t.status] ?? "muted")}
+        label={warned ? "succeeded, with warnings" : t.status}
+      />
     </h2>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div

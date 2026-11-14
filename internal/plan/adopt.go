@@ -163,6 +163,9 @@ func (e *Engine) AdoptDoc(ctx context.Context, req AdoptRequest) (state.Doc, err
 // guest, builds the Target document and proposes it with origin adopt and
 // the checked request (the Run checks it again). Human-only by origin.
 func (e *Engine) ProposeAdopt(ctx context.Context, req AdoptRequest, author, reason string) (store.Plan, error) {
+	if err := e.checkAgentLeft(ctx, req.Target, strconv.Itoa(req.VMID)); err != nil {
+		return store.Plan{}, err
+	}
 	doc, err := e.AdoptDoc(ctx, req)
 	if err != nil {
 		return store.Plan{}, err
@@ -406,7 +409,11 @@ const unbindTimeout = 2 * time.Minute
 func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.Adopted) (string, bool, error) {
 	ag, aerr := e.st.AgentByTarget(ctx, target)
 	if errors.Is(aerr, store.ErrNotFound) {
-		// No agent ever enrolled: nothing of Plumb is in the guest.
+		// No agent ever enrolled: nothing of Plumb is in the guest. Revoke
+		// still drops an unused install command token.
+		if err := e.cfg.Agents.Revoke(ctx, target); err != nil {
+			return "", false, err
+		}
 		if err := e.st.DeleteBinding(ctx, state.KindTarget, target); err != nil {
 			return "", false, err
 		}
@@ -498,8 +505,34 @@ func (e *Engine) ForgetAgent(ctx context.Context, ref, actor string) error {
 	return e.endPark(ctx, p, actor, "agent.forgotten")
 }
 
+// checkAgentLeft refuses a Target name or a guest ref with a parked agent.
+func (e *Engine) checkAgentLeft(ctx context.Context, target, ref string) error {
+	if parked, err := e.st.IsParkedTarget(ctx, target); err != nil {
+		return err
+	} else if parked {
+		return fmt.Errorf("%w (Target name %s)", ErrAgentLeft, target)
+	}
+	if ref == "" {
+		return nil
+	}
+	if _, err := e.st.ParkedByRef(ctx, ref); err == nil {
+		return fmt.Errorf("%w (VMID %s)", ErrAgentLeft, ref)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 func (e *Engine) endPark(ctx context.Context, p store.Parked, actor, event string) error {
-	if err := e.cfg.Agents.Revoke(ctx, p.Target); err != nil {
+	// Only the parked agent: no other agent can enroll under the name while
+	// the park lasts (the link makes no token), but check it anyway.
+	ag, err := e.st.AgentByTarget(ctx, p.Target)
+	switch {
+	case err == nil && ag.ID == p.AgentID:
+		if err := e.cfg.Agents.Revoke(ctx, p.Target); err != nil {
+			return err
+		}
+	case err != nil && !errors.Is(err, store.ErrNotFound):
 		return err
 	}
 	if err := e.st.Unpark(ctx, p.Target); err != nil {
@@ -520,6 +553,10 @@ func clipText(s string, n int) string {
 // an agent in.
 var ErrNoGuest = errors.New("no-guest")
 
+// ErrAgentLeft: the guest or the Target name still has a parked agent
+// (D-396). It is unbound or forgotten first.
+var ErrAgentLeft = errors.New("plan: the agent of a deleted Target is still in the guest; forget it first")
+
 // ErrInstallUnavailable: the controller has no agent URL, CA or token
 // source (a controller without a Proxmox driver).
 var ErrInstallUnavailable = errors.New("plan: the install command needs the agent URL and the CA of this controller")
@@ -533,6 +570,9 @@ func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (stri
 	rc := e.repairConfig()
 	if strings.ContainsAny(rc.AgentURL, "' \n") {
 		return "", time.Time{}, ErrInstallUnavailable // never quote around a strange URL
+	}
+	if err := e.checkAgentLeft(ctx, target, ""); err != nil {
+		return "", time.Time{}, err
 	}
 	if _, err := e.st.GetBinding(ctx, state.KindTarget, target); errors.Is(err, store.ErrNotFound) {
 		return "", time.Time{}, fmt.Errorf("%w: Target %s has no guest", ErrNoGuest, target)

@@ -175,6 +175,8 @@ func adoptProblem(w http.ResponseWriter, err error) bool {
 		problem(w, http.StatusConflict, "not-adoptable", "Guest cannot be adopted", detail())
 	case errors.Is(err, plan.ErrAdoptedTarget):
 		problem(w, http.StatusConflict, "adopted-target", "Adopted Target", detail())
+	case errors.Is(err, plan.ErrAgentLeft):
+		problem(w, http.StatusConflict, "agent-left", "Agent left in the guest", detail())
 	case errors.Is(err, plan.ErrNoGuest):
 		problem(w, http.StatusConflict, "no-guest", "No guest", detail())
 	case errors.Is(err, plan.ErrNoAdopter), errors.Is(err, plan.ErrInstallUnavailable):
