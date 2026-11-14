@@ -82,8 +82,10 @@ type fakePVE struct {
 	storageStatus int
 	noPool        bool
 	perms         map[string]map[string]int
-	authFails     int    // requests refused with 401
-	dropPath      string // a request to this path loses its connection
+	// storageConfigs: the answer of GET /storage (nil: 500).
+	storageConfigs []map[string]any
+	authFails      int    // requests refused with 401
+	dropPath       string // a request to this path loses its connection
 	// writeDuringRead: this many reads of the config without current=1
 	// change the config first (a write between the reads of Observe).
 	writeDuringRead     int
@@ -407,6 +409,14 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, f.storages)
+	case r.Method == "GET" && path == "/storage":
+		// The storage index: every storage config the token may see (T-214
+		// FACT 2). storageConfigs nil: the call fails.
+		if f.storageConfigs == nil {
+			fail(w, 500, "storage config not readable", nil)
+			return
+		}
+		reply(w, 200, f.storageConfigs)
 	case r.Method == "GET" && path == "/access/permissions":
 		if f.perms == nil {
 			fail(w, 403, "Permission check failed", nil)

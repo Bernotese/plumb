@@ -77,6 +77,13 @@ BACKUP_COPY_TIME=""
 BACKUP_COPY_KEEP=14
 BACKUP_MAX_SIZE=1G
 BACKUP_MAX_BYTES=""
+# Slice 7 (D-401, D-405, D-406). A repair run sets the rights from these
+# flags alone: a line that a run no longer names is removed.
+EXTRA_BRIDGE_ARGS=()
+EXTRA_VLAN_ARGS=()
+EXTRA_NETS=() # "bridge" (untagged) or "bridge/tag": one PlumbBridge line each
+GUEST_BACKUP_STORAGE=""
+GUEST_BACKUP_CLEAR=0
 BACKUP_STORAGE_SET=""
 KEEP_GUESTS=0
 BACKUP_TO=""
@@ -114,6 +121,17 @@ Options:
                          (D-081, D-229); install.sh does not change it
   --template-storage ID  storage for the LXC template (default local)
   --bridge NAME          bridge for guests and the LXC (default vmbr0)
+  --extra-bridge NAME    one more bridge for untagged guest NICs (repeat it for more); one SDN.Use
+                         line on /sdn/zones/localnetwork/NAME (D-401)
+  --extra-vlan NAME:TAG[,TAG…]
+                         VLAN tags on a VLAN-aware bridge for guest NICs (repeat it for more); one
+                         SDN.Use line per tag on /sdn/zones/localnetwork/NAME/TAG, never the whole bridge
+  --guest-backup-storage ID
+                         storage for guest backups (vzdump, content "backup"): VM.Backup on the pool and
+                         Datastore.AllocateSpace + Audit on ID (D-405). With these rights the token itself can
+                         back up, restore over and delete the backups of every pool guest at the Proxmox API
+  --guest-backup-clear   allow guest backups on a storage without encryption (not a PBS with a client key):
+                         a backup holds the whole guest disk with its secrets, in clear (D-406)
   --lxc-id N             VMID of the Plumb LXC (default: next free id)
   --lxc-ip CIDR|dhcp     address of the LXC (default dhcp; a static address is recommended:
                          the vendor snippet holds it, D-179)
@@ -246,6 +264,10 @@ parse_args() {
 		--image-storage) IMAGE_STORAGE=${2:?}; shift ;;
 		--template-storage) TEMPLATE_STORAGE=${2:?}; shift ;;
 		--bridge) BRIDGE=${2:?}; shift ;;
+		--extra-bridge) EXTRA_BRIDGE_ARGS+=("${2:?}"); shift ;;
+		--extra-vlan) EXTRA_VLAN_ARGS+=("${2:?}"); shift ;;
+		--guest-backup-storage) GUEST_BACKUP_STORAGE=${2:?}; shift ;;
+		--guest-backup-clear) GUEST_BACKUP_CLEAR=1 ;;
 		--lxc-id) LXC_ID=${2:?}; shift ;;
 		--lxc-ip) LXC_IP=${2:?}; shift ;;
 		--lxc-gw) LXC_GW=${2:?}; shift ;;
@@ -292,6 +314,7 @@ parse_args() {
 		[[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die "bad name: $name"
 	done
 	[[ $BRIDGE =~ ^[A-Za-z][A-Za-z0-9_.-]{0,14}$ ]] || die "bad bridge name: $BRIDGE"
+	check_extra_args
 	[[ $VMID_MIN =~ ^[0-9]+$ && $VMID_MAX =~ ^[0-9]+$ && $VMID_MIN -ge 100 && $VMID_MAX -ge $VMID_MIN ]] ||
 		die "bad --vmid-range"
 	[[ -z $LXC_ID || $LXC_ID =~ ^[1-9][0-9]{2,8}$ ]] || die "bad --lxc-id"
@@ -323,7 +346,69 @@ parse_args() {
 	[[ -z $RESTORE_FILE || $RESTORE_FILE != -* ]] || die "bad --restore"
 }
 
+# check_extra_args checks the flags of slice 7 and fills EXTRA_NETS
+# (D-401, D-405, D-406). Names and tags go into pveum commands and into
+# plumb.env, so only plain characters pass.
+check_extra_args() {
+	local b v tag tags
+	if [[ $MODE != install ]] && { ((${#EXTRA_BRIDGE_ARGS[@]} + ${#EXTRA_VLAN_ARGS[@]} > 0)) ||
+		[[ -n $GUEST_BACKUP_STORAGE || $GUEST_BACKUP_CLEAR == 1 ]]; }; then
+		die "--extra-bridge, --extra-vlan and --guest-backup-* work only with an install or a repair run"
+	fi
+	for b in "${EXTRA_BRIDGE_ARGS[@]}"; do
+		[[ $b =~ ^[A-Za-z][A-Za-z0-9_.-]{0,14}$ ]] || die "bad --extra-bridge $b (a bridge name like vmbr1)"
+		[[ $b != "$BRIDGE" ]] || die "--extra-bridge $b is the bridge of the install (--bridge); it has its line already"
+		add_extra_net "$b"
+	done
+	for v in "${EXTRA_VLAN_ARGS[@]}"; do
+		[[ $v =~ ^([A-Za-z][A-Za-z0-9_.-]{0,14}):([0-9]+(,[0-9]+)*)$ ]] ||
+			die "bad --extra-vlan $v (BRIDGE:TAG[,TAG…], for example vmbr1:20,30)"
+		b=${BASH_REMATCH[1]}
+		IFS=, read -ra tags <<<"${BASH_REMATCH[2]}"
+		for tag in "${tags[@]}"; do
+			if ! [[ $tag =~ ^[1-9][0-9]{0,3}$ ]] || ((tag > 4094)); then
+				die "bad VLAN tag $tag in --extra-vlan $v (1 … 4094)"
+			fi
+			add_extra_net "$b/$tag"
+		done
+	done
+	[[ -z $GUEST_BACKUP_STORAGE || $GUEST_BACKUP_STORAGE =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die "bad --guest-backup-storage"
+	[[ $GUEST_BACKUP_CLEAR == 0 || -n $GUEST_BACKUP_STORAGE ]] || die "--guest-backup-clear works only with --guest-backup-storage ID"
+	return 0
+}
+
+# add_extra_net NET adds NET to EXTRA_NETS once.
+add_extra_net() {
+	local n
+	for n in "${EXTRA_NETS[@]}"; do
+		[[ $n != "$1" ]] || return 0
+	done
+	EXTRA_NETS+=("$1")
+}
+
 # --- checks ---
+
+# check_extra_bridges checks that each bridge of --extra-bridge and
+# --extra-vlan is a bridge of this node, and VLAN-aware for a tag (review L2
+# of #330; T-214: PVE fails a tagged NIC on a bridge without VLAN filtering).
+check_extra_bridges() {
+	((${#EXTRA_NETS[@]} > 0)) || return 0
+	local net rows bridges
+	rows=$(query pvesh get "/nodes/$NODE/network" --output-format json 2>/dev/null) ||
+		die "cannot read the network of node $NODE for --extra-bridge/--extra-vlan. Nothing was changed."
+	# "iface type vlan_aware" per bridge; an OVS bridge carries tags.
+	# shellcheck disable=SC2016 # perl code
+	bridges=$(json_rows 'for my $e (@$d) { my $t = $e->{type} // ""; next unless $t eq "bridge" || $t eq "OVSBridge";
+		print "$e->{iface} ", ($t eq "OVSBridge" || ($e->{bridge_vlan_aware} // 0) ? 1 : 0), "\n" }' <<<"$rows") ||
+		die "cannot read the network of node $NODE for --extra-bridge/--extra-vlan. Nothing was changed."
+	for net in "${EXTRA_NETS[@]}"; do
+		grep -q "^${net%/*} " <<<"$bridges" ||
+			die "bridge ${net%/*} (--extra-bridge/--extra-vlan) is not a bridge of node $NODE. Nothing was changed."
+		if [[ $net == */* ]] && ! grep -qx "${net%/*} 1" <<<"$bridges"; then
+			die "bridge ${net%/*} is not VLAN-aware, so a NIC with tag ${net#*/} fails (--extra-vlan). Set \"VLAN aware\" on the bridge, or use --extra-bridge. Nothing was changed."
+		fi
+	done
+}
 
 check_host() {
 	if [[ $DRY_RUN != 1 && ${PLUMB_INSTALL_ASSUME_ROOT:-0} != 1 && $EUID -ne 0 ]]; then
@@ -363,7 +448,11 @@ json_has() { grep -Eq "\"$1\" *: *\"$2\""; }
 # the disk gate) checks Sys.Audit on the fixed path / (PVE/API2/Disks/
 # LVMThin.pm), so no narrower path works. Propagate 0: it does not reach
 # /nodes, /vms or /storage (D-240).
-ROLE_NAMES=(PlumbGuests PlumbDisk PlumbImages PlumbSnippets PlumbBridge PlumbNode PlumbAudit)
+# PlumbBridge has one more line per --extra-bridge and --extra-vlan tag
+# (D-401); PlumbGuestBackupVM and PlumbGuestBackup have their lines only with
+# --guest-backup-storage (D-405). A run makes only the roles that its lines
+# use; --remove deletes every role of this list.
+ROLE_NAMES=(PlumbGuests PlumbDisk PlumbImages PlumbSnippets PlumbBridge PlumbNode PlumbAudit PlumbGuestBackupVM PlumbGuestBackup)
 declare -A ROLE_PRIVS=(
 	[PlumbGuests]="VM.Allocate VM.Audit VM.Clone VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.PowerMgmt Pool.Audit"
 	[PlumbDisk]="Datastore.AllocateSpace Datastore.Audit"
@@ -372,6 +461,8 @@ declare -A ROLE_PRIVS=(
 	[PlumbBridge]="SDN.Use"
 	[PlumbNode]="Sys.AccessNetwork"
 	[PlumbAudit]="Sys.Audit"
+	[PlumbGuestBackupVM]="VM.Backup"
+	[PlumbGuestBackup]="Datastore.AllocateSpace Datastore.Audit"
 )
 
 role_path() {
@@ -383,20 +474,45 @@ role_path() {
 	PlumbBridge) echo "/sdn/zones/localnetwork/$BRIDGE" ;;
 	PlumbNode) echo "/nodes/$NODE" ;;
 	PlumbAudit) echo "/" ;;
+	PlumbGuestBackupVM) echo "/pool/$POOL" ;;
+	PlumbGuestBackup) echo "/storage/$GUEST_BACKUP_STORAGE" ;;
 	esac
 }
 
-# role_propagate: only the pool ACL is inherited (pool members).
+# role_propagate: only the pool ACLs are inherited (pool members).
 role_propagate() {
-	if [[ $1 == PlumbGuests ]]; then echo 1; else echo 0; fi
+	case $1 in
+	PlumbGuests | PlumbGuestBackupVM) echo 1 ;;
+	*) echo 0 ;;
+	esac
+}
+
+# acl_plan prints the planned ACL lines, "path role propagate" each: one
+# per base role, one PlumbBridge line per extra bridge and per bridge/tag
+# (propagate 0: a line on a bridge never gives its tags, D-401), and the
+# two guest backup lines (D-405, M1 of #321).
+acl_plan() {
+	local role net
+	for role in "${ROLE_NAMES[@]}"; do
+		case $role in PlumbGuestBackupVM | PlumbGuestBackup) continue ;; esac
+		echo "$(role_path "$role") $role $(role_propagate "$role")"
+	done
+	for net in "${EXTRA_NETS[@]}"; do
+		echo "/sdn/zones/localnetwork/$net PlumbBridge 0"
+	done
+	if [[ -n $GUEST_BACKUP_STORAGE ]]; then
+		for role in PlumbGuestBackupVM PlumbGuestBackup; do
+			echo "$(role_path "$role") $role $(role_propagate "$role")"
+		done
+	fi
 }
 
 print_rights() {
 	say "Plumb gets exactly these rights (token ${PVE_USER}!${TOKEN_NAME}, privilege separation):"
-	local role
-	for role in "${ROLE_NAMES[@]}"; do
-		printf '  %-38s %-14s %s\n' "$(role_path "$role")" "$role" "${ROLE_PRIVS[$role]}"
-	done
+	local path role propagate
+	while read -r path role propagate; do
+		printf '  %-38s %-18s %s\n' "$path" "$role" "${ROLE_PRIVS[$role]}"
+	done <<<"$(acl_plan)"
 	say "Sys.Audit on / is not inherited (propagate 0). It reads the thin-pool metadata use for the disk gate. It also lets"
 	say "Plumb read, never write, cluster-wide (D-240):"
 	say "  - the task list of all users, root included (no task logs);"
@@ -410,6 +526,17 @@ print_rights() {
 	say "It gets no Sys.Modify, no Sys.Audit on /nodes or any other path, no Permissions.Modify, Pool.Allocate, console"
 	say "or guest-agent right, and no other ACL."
 	say "The Plumb LXC is not in pool $POOL, so Plumb cannot change itself or foreign guests."
+	if ((${#EXTRA_NETS[@]} > 0)); then
+		say "Each PlumbBridge line is one bridge (untagged NICs) or one bridge/VLAN tag; none is inherited, so a"
+		say "line on a bridge does not give its tags (D-401). Guest NICs may use only these."
+	fi
+	if [[ -n $GUEST_BACKUP_STORAGE ]]; then
+		say "VM.Backup on /pool/$POOL (inherited by the pool guests) and the storage line on $GUEST_BACKUP_STORAGE are for guest"
+		say "backups (D-405). With them the token itself can back up, restore over (overwrite) and delete the backups"
+		say "of every guest in pool $POOL directly at the Proxmox API; Plumb's human-only rules hold only inside Plumb."
+		say "A guest backup holds the whole guest disk: the agent credential, the secret values of its desired state,"
+		say "the SSH host keys and the app data (D-406)."
+	fi
 }
 
 # --- the vendor snippet (D-025, D-082) ---
@@ -731,16 +858,11 @@ stray_acls() {
 # stray_of ACLS prints the entries of ACLS (acl_entries lines) that are
 # not in the plan.
 stray_of() {
-	local path ugid role type propagate planned r
+	local path ugid role type propagate planned
+	planned=$(acl_plan | awk '{ print $1, $2 }')
 	while read -r path ugid role type propagate; do
 		[[ -n $path ]] || continue
-		planned=0
-		for r in "${ROLE_NAMES[@]}"; do
-			if [[ $path == "$(role_path "$r")" && $role == "$r" ]]; then
-				planned=1
-			fi
-		done
-		[[ $planned == 1 ]] || printf '%s %s %s %s\n' "$path" "$ugid" "$role" "$type"
+		grep -qxF "$path $role" <<<"$planned" || printf '%s %s %s %s\n' "$path" "$ugid" "$role" "$type"
 	done <<<"$1"
 }
 
@@ -756,17 +878,6 @@ check_user_groups() {
 	[[ -z $groups ]] || die "user $PVE_USER is in the groups \"$groups\"; their ACLs would add rights to Plumb (D-081). Remove the user from them. Nothing was changed."
 }
 
-remove_stray_acls() {
-	local path ugid role type
-	while read -r path ugid role type; do
-		[[ -n $path ]] || continue
-		if [[ $type == token ]]; then
-			run pveum acl delete "$path" --tokens "$ugid" --roles "$role"
-		else
-			run pveum acl delete "$path" --users "$ugid" --roles "$role"
-		fi
-	done <<<"$STRAY_ACLS"
-}
 
 # check_role fails when a role does not have exactly its planned rights
 # (host item 6: --privs must replace, not append).
@@ -793,7 +904,7 @@ ensure_pool_user_roles() {
 	fi
 	local roles role
 	roles=$(query pveum role list --output-format json)
-	for role in "${ROLE_NAMES[@]}"; do
+	for role in $(acl_plan | awk '!seen[$2]++ { print $2 }'); do
 		if json_has roleid "$role" <<<"$roles"; then
 			# An exact role is kept, so a repair run lists only what is missing.
 			role_exact "$role" || run pveum role modify "$role" --privs "${ROLE_PRIVS[$role]// /,}" # replaces: exactly these
@@ -815,22 +926,52 @@ ensure_pool_user_roles() {
 # lines are not listed before the token exists. So the list is read again
 # now, and its stray entries replace the ones of the preview.
 ensure_acls() {
-	local role acls new_token=0
+	local acls new_token=0 path ugid role type propagate i steps=()
 	[[ -n $TOKEN_SECRET ]] && new_token=1
 	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER"
 	STRAY_ACLS=$(stray_of "$acls")
-	for role in "${ROLE_NAMES[@]}"; do
-		local propagate path
-		propagate=$(role_propagate "$role")
-		path=$(role_path "$role")
+	# Narrow first (review M2 of #330): the old lines go before the new
+	# ones come, so a run that stops half way leaves fewer rights, not more.
+	while read -r path ugid role type; do
+		[[ -n $path ]] && steps+=("remove $path $ugid $role $type")
+	done <<<"$STRAY_ACLS"
+	while read -r path role propagate <&3; do
 		# An ACL that exists as planned is kept (repair run).
 		grep -qxF "$path $PVE_USER $role user $propagate" <<<"$acls" ||
-			run pveum acl modify "$path" --users "$PVE_USER" --roles "$role" --propagate "$propagate"
+			steps+=("add $path $PVE_USER $role user $propagate")
 		if [[ $new_token == 1 ]] || ! grep -qxF "$path $PVE_USER!$TOKEN_NAME $role token $propagate" <<<"$acls"; then
-			run pveum acl modify "$path" --tokens "$PVE_USER!$TOKEN_NAME" --roles "$role" --propagate "$propagate"
+			steps+=("add $path $PVE_USER!$TOKEN_NAME $role token $propagate")
 		fi
+	done 3<<<"$(acl_plan)"
+	for ((i = 0; i < ${#steps[@]}; i++)); do
+		# shellcheck disable=SC2086 # one word per field: checked names
+		acl_step ${steps[i]} || acl_failed "${steps[@]:i}"
 	done
-	remove_stray_acls
+}
+
+# acl_step OP PATH UGID ROLE TYPE [PROPAGATE] removes or adds one ACL line.
+acl_step() {
+	local flag=--users
+	[[ $5 == token ]] && flag=--tokens
+	if [[ $1 == remove ]]; then
+		run pveum acl delete "$2" "$flag" "$3" --roles "$4"
+	else
+		run pveum acl modify "$2" "$flag" "$3" --roles "$4" --propagate "$6"
+	fi
+}
+
+# acl_failed STEP… stops the run after a failed ACL step. It names the step
+# and every step of this run that is not done, so the person knows which
+# rights the token still has or still lacks (review M2 of #330).
+acl_failed() {
+	{
+		echo "install.sh: the ACL step \"$1\" failed (see the pveum error above)."
+		echo "These ACL steps of this run are not done; every other line is as planned:"
+		printf '  %s\n' "$@"
+		echo "A \"remove\" line above still gives its rights to Plumb; an \"add\" line is a right that Plumb lacks."
+		echo "Run the same install.sh command again (a repair run)."
+	} >&2
+	exit 1
 }
 
 # remove_token deletes the ACLs of the Plumb token, then the token. PVE
@@ -1244,6 +1385,7 @@ PLUMB_PVE_NAMESERVER=$NAMESERVER
 PLUMB_PVE_SEARCHDOMAIN=$SEARCHDOMAIN
 PLUMB_HOSTS=$ip,$LXC_HOSTNAME
 $(env_backup_lines)
+$(env_slice7_lines)
 EOF
 	if ! (push_checked "$tmp" /etc/plumb/plumb.env 0600); then
 		rm -f "$tmp"
@@ -1303,7 +1445,7 @@ setup_lxc() {
 	else
 		add_env_dns
 		# shellcheck disable=SC2046 # one word per line: names, numbers, times, a UUID
-		set_env_lines $(env_backup_lines)
+		set_env_lines $(env_backup_lines) $(env_slice7_lines)
 	fi
 	new_tmp tmp
 	printf '%s\n' "$UNIT" >"$tmp"
@@ -1526,6 +1668,104 @@ set_env_lines() {
 # env_backup_lines are the plumb.env lines of the backup in serve (D-302).
 env_backup_lines() {
 	printf '%s\n' "PLUMB_INSTALL_ID=$INSTALL_ID" "PLUMB_BACKUP_TIME=$BACKUP_TIME" "PLUMB_BACKUP_KEEP=$BACKUP_KEEP"
+}
+
+# env_slice7_lines are the plumb.env lines of the extra networks and the
+# guest backups (D-401, D-405, D-406). Each run writes all three, so a
+# repair run without the flags clears them.
+env_slice7_lines() {
+	local IFS=,
+	printf '%s\n' "PLUMB_PVE_EXTRA_NETS=${EXTRA_NETS[*]}" "PLUMB_PVE_GUEST_BACKUP_STORAGE=$GUEST_BACKUP_STORAGE" \
+		"PLUMB_PVE_GUEST_BACKUP_CLEAR=$GUEST_BACKUP_CLEAR"
+}
+
+# --- guest backups (D-405, D-406, review M2 and L2 of #321) ---
+
+# check_guest_backup checks --guest-backup-storage before any change and
+# says how the backups are stored. It only reads.
+check_guest_backup() {
+	[[ -n $GUEST_BACKUP_STORAGE ]] || return 0
+	local s=$GUEST_BACKUP_STORAGE c type key
+	case $s in
+	"$DISK_STORAGE" | "$SNIPPET_STORAGE" | "$IMAGE_STORAGE")
+		die "--guest-backup-storage $s is a storage of Plumb itself; name a storage for guest backups only. Nothing was changed."
+		;;
+	esac
+	# Not the storage of the controller's own backup copies (D-289): the
+	# token could fill it, and the copies would stop (review L1 of #330).
+	local copy=${BACKUP_STORAGE:-$(state_get backup_storage)}
+	[[ $copy == none || $s != "$copy" ]] ||
+		die "--guest-backup-storage $s is the storage of Plumb's own backup copies (--backup-storage); use another one. Nothing was changed."
+	c=$(storage_content "$s") || die "storage $s (--guest-backup-storage) does not exist. Nothing was changed."
+	[[ ,$c, == *,backup,* ]] ||
+		die "storage $s has the content \"$c\" without \"backup\"; vzdump cannot write there. Add it (pvesm set $s --content $c,backup) or name another storage. Nothing was changed."
+	# AllocateSpace with VM.Config.Disk would let the token put guest disks
+	# there, outside the disk gate (review M1 of #330).
+	if [[ ,$c, == *,images,* || ,$c, == *,rootdir,* ]]; then
+		local rest
+		rest=$(awk -v RS=, 'NF && $1 != "images" && $1 != "rootdir" { print $1 }' <<<"$c" | paste -sd, -)
+		die "storage $s has the content \"$c\": the guest backup storage must hold only backups, no guest disks (images, rootdir). Fix: pvesm set $s --content $rest, or name another storage. Nothing was changed."
+	fi
+	# AllocateSpace on a storage with snippets would let cicustom point at
+	# any snippet there (D-081), like on the disk storage.
+	[[ ,$c, != *,snippets,* ]] ||
+		die "storage $s has the content \"snippets\": the token could point cicustom at any snippet there (D-081). Use a storage without snippets. Nothing was changed."
+	type=$(storage_field "$s" type) || type=""
+	key=$(storage_field "$s" encryption-key) || key=""
+	if [[ $type == pbs && -n $key ]]; then
+		say "Guest backups go to $s: a Proxmox Backup Server with client-side encryption."
+	elif [[ $GUEST_BACKUP_CLEAR == 1 ]]; then
+		say "WARNING: storage $s (type ${type:-unknown}) has no client-side encryption, and --guest-backup-clear is set:"
+		say "guest backups are stored IN CLEAR there, with every secret of the guest (D-406)."
+	else
+		say "NOTE: storage $s (type ${type:-unknown}) has no client-side encryption. Plumb refuses every guest backup"
+		say "there until a repair run with --guest-backup-clear says that backups in clear are wanted (D-406)."
+	fi
+	warn_foreign_backups
+}
+
+# check_second_backup_storage refuses an install where another storage with
+# a Plumb Datastore.AllocateSpace line has the content "backup": VM.Backup
+# would let the token write a vzdump there too, so "only the named storage"
+# would be no limit (D-405, M2 of #321). The controller shows the same at
+# run time (settings view, other_backup_storages).
+check_second_backup_storage() {
+	local path role propagate id c rest bad=()
+	while read -r path role propagate; do
+		[[ $path == /storage/* && " ${ROLE_PRIVS[$role]} " == *" Datastore.AllocateSpace "* ]] || continue
+		id=${path#/storage/}
+		[[ $id != "$GUEST_BACKUP_STORAGE" ]] || continue
+		c=$(storage_content "$id") || continue
+		[[ ,$c, == *,backup,* ]] || continue
+		rest=$(awk -v RS=, 'NF && $1 != "backup" { print $1 }' <<<"$c" | paste -sd, -)
+		bad+=("$id: pvesm set $id --content ${rest:-<other content>}")
+	done <<<"$(acl_plan)"
+	((${#bad[@]} == 0)) && return 0
+	say "These storages of Plumb have the content \"backup\". With VM.Backup the token could write guest backups there"
+	say "too, not only to $GUEST_BACKUP_STORAGE (D-405). Remove \"backup\" from their content:"
+	printf '  %s\n' "${bad[@]}"
+	die "another storage of Plumb has the content \"backup\". Nothing was changed."
+}
+
+# warn_foreign_backups warns about backups on the guest backup storage of
+# VMIDs in Plumb's range that do not carry this install's marker (L2 of
+# #321): Plumb shows them as "older guest" or "unmarked" and never deletes
+# or restores them, but a person could take them for Plumb's.
+warn_foreign_backups() {
+	local rows found
+	# shellcheck disable=SC2016 # perl code
+	if ! rows=$(query pvesh get "/nodes/$NODE/storage/$GUEST_BACKUP_STORAGE/content" --content backup --output-format json 2>/dev/null) ||
+		! found=$(json_rows 'for my $e (@$d) { my $v = $e->{vmid}; next unless defined $v && $v =~ /^\d+$/;
+			next if $v < $ARGV[0] || $v > $ARGV[1]; next if index($e->{notes} // "", "plumb:$ARGV[2]:") == 0;
+			print "  $e->{volid}\n" }' "$VMID_MIN" "$VMID_MAX" "$INSTALL_ID" <<<"$rows"); then
+		say "NOTE: cannot list the backups on $GUEST_BACKUP_STORAGE. Check by hand for backups of the VMIDs $VMID_MIN-$VMID_MAX."
+		return 0
+	fi
+	[[ -n $found ]] || return 0
+	say "WARNING: storage $GUEST_BACKUP_STORAGE holds backups of VMIDs in Plumb's range ($VMID_MIN-$VMID_MAX) that this install"
+	say "did not make. Plumb never deletes or restores them; a new guest on such a VMID shows them as \"older guest\"."
+	say "Remove them in Proxmox if they are not needed:"
+	printf '%s\n' "$found"
 }
 
 # --- off-host copy of the backups (D-289, D-304, D-312) ---
@@ -2045,6 +2285,9 @@ do_install() {
 		say "changes, no agent reaches Plumb any more. Use a static address: --lxc-ip CIDR --lxc-gw IP (D-179)."
 	fi
 	check_dns
+	check_extra_bridges
+	# Before check_storages, so its own text names the reason (M2 of #321).
+	[[ -z $GUEST_BACKUP_STORAGE ]] || check_second_backup_storage
 	check_storages
 	check_images
 	check_user_groups
@@ -2054,10 +2297,13 @@ do_install() {
 		say "It RESTORES the backup $RESTORE_FILE (install $H_INSTALL_ID, agents at $H_AGENT_URL) into a new LXC:"
 		say "plumb backup verify on this host, then plumb key restore and plumb restore in the LXC; each asks on this"
 		say "terminal. The restored Plumb changes nothing until you confirm in its UI that the old controller is off."
+		say "Give the --extra-bridge, --extra-vlan and --guest-backup-* flags of the old install again: a run without"
+		say "them gives no rights for those networks and turns guest backups off (D-401, D-405)."
 	elif [[ -z $own || $(lxc_state "$own") != ours ]] && pool_has_guests; then
 		die "pool $POOL holds guests or templates, and this host has no Plumb LXC: a plain install does not take them. Use --restore BACKUP (after --remove --keep-guests). Nothing was changed."
 	fi
 	ensure_install_id
+	check_guest_backup
 	check_copy_setting
 	check_key_preflight
 	# The id that ensure_lxc will use when it creates the LXC.
