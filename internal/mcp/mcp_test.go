@@ -143,6 +143,7 @@ func TestToolsCallTheAPI(t *testing.T) {
 	}{
 		{"list_targets", nil, "GET /api/v1/targets"},
 		{"get_target", map[string]any{"name": "web1"}, "GET /api/v1/targets/web1"},
+		{"get_target", map[string]any{"name": "web.lab-1"}, "GET /api/v1/targets/web.lab-1"},
 		{"list_issues", map[string]any{"target": "web1", "status": "open"}, "GET /api/v1/issues?status=open&target=web1"},
 		{"get_issue", map[string]any{"id": 7}, "GET /api/v1/issues/7"},
 		{"list_plans", map[string]any{"status": "pending", "limit": 5}, "GET /api/v1/plans?limit=5&status=pending"},
@@ -190,6 +191,8 @@ func TestInputsChecked(t *testing.T) {
 	}{
 		{"get_target", map[string]any{"name": "../tokens"}},
 		{"get_target", map[string]any{"name": "web1?x=1"}},
+		{"get_target", map[string]any{"name": "a/b"}},
+		{"get_target", map[string]any{"name": ".hidden"}},
 		{"get_issue", map[string]any{"id": 0}},
 		{"get_issue", map[string]any{"id": -3}},
 		{"list_issues", map[string]any{"status": "all"}},
@@ -270,10 +273,50 @@ func TestEventsSince(t *testing.T) {
 		t.Fatalf("call %s", f.last())
 	}
 	var r struct {
-		Data struct{ Events []Event }
+		Data eventsPage
 	}
-	if err := json.Unmarshal([]byte(text), &r); err != nil || len(r.Data.Events) != 2 || r.Data.Events[1].Seq != 6 || r.Data.Events[0].Type != "issue.opened" {
+	if err := json.Unmarshal([]byte(text), &r); err != nil || len(r.Data.Events) != 2 || r.Data.Events[1].Seq != 6 ||
+		r.Data.Events[0].Type != "issue.opened" || r.Data.Cut || r.Data.Next != 6 {
 		t.Fatalf("events %s (%v)", text, err)
+	}
+}
+
+// events_since is cut like every other result (review n1 of #280): one
+// event too big keeps seq and type without data; many events stop at
+// MaxResult with cut and the next cursor.
+func TestCutEvents(t *testing.T) {
+	big := json.RawMessage(`"` + strings.Repeat("x", maxEventData+10) + `"`)
+	mid := json.RawMessage(`"` + strings.Repeat("y", maxEventData-10) + `"`)
+	var evs []Event
+	evs = append(evs, Event{Seq: 10, Type: "a", Data: big})
+	for i := int64(11); i < 30; i++ {
+		evs = append(evs, Event{Seq: i, Type: "b", Data: mid})
+	}
+	p := cutEvents(evs, 9)
+	b, _ := json.Marshal(p)
+	if len(b) > MaxResult {
+		t.Fatalf("result %d bytes > %d", len(b), MaxResult)
+	}
+	if !p.Cut || p.Next == 9 || p.Next != p.Events[len(p.Events)-1].Seq {
+		t.Fatalf("cut=%v next=%d last=%d", p.Cut, p.Next, p.Events[len(p.Events)-1].Seq)
+	}
+	if !p.Events[0].DataCut || string(p.Events[0].Data) != "null" || p.Events[0].Seq != 10 {
+		t.Fatalf("big event %+v", p.Events[0].Seq)
+	}
+	// Data that JSON escapes (<, >, &) grows when marshalled; the result
+	// still fits.
+	esc := json.RawMessage(`"` + strings.Repeat("<", maxEventData-10) + `"`)
+	var many []Event
+	for i := int64(1); i <= 20; i++ {
+		many = append(many, Event{Seq: i, Type: "c", Data: esc})
+	}
+	page := cutEvents(many, 0)
+	res, _ := json.Marshal(result{Status: 200, Data: mustJSON(page)})
+	if len(res) > MaxResult || !page.Cut || page.Next != page.Events[len(page.Events)-1].Seq {
+		t.Fatalf("escaped data: %d bytes, cut=%v", len(res), page.Cut)
+	}
+	if q := cutEvents(nil, 42); q.Cut || q.Next != 42 || len(q.Events) != 0 {
+		t.Fatalf("empty %+v", q)
 	}
 }
 

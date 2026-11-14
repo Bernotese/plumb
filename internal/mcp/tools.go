@@ -44,7 +44,9 @@ const (
 	maxEvents = 100
 )
 
-var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+// nameRE is the API's document name (openapi Name): lower case letters,
+// digits, "-" and ".", never "/" (review n2 of #280).
+var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$`)
 
 // Inputs. Field comments become the JSON schema descriptions.
 type (
@@ -269,7 +271,7 @@ func register(s *mcp.Server, c *Client) {
 			if err != nil {
 				return nil, nil, err
 			}
-			b, err := json.Marshal(map[string]any{"events": evs})
+			b, err := json.Marshal(cutEvents(evs, in.Since))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -347,7 +349,7 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 func checkName(s string) error {
 	if !nameRE.MatchString(s) {
-		return errors.New("name must be lower case letters, digits and -, 1 … 63 characters")
+		return errors.New("name must be lower case letters, digits, - and ., 1 … 63 characters")
 	}
 	return nil
 }
@@ -393,4 +395,69 @@ func page(in pageInput) (url.Values, error) {
 		q.Set("cursor", in.Cursor)
 	}
 	return q, nil
+}
+
+// eventsPage is the data of events_since. Cut: more events (or more data)
+// came than one result holds; ask again with since = Next.
+type eventsPage struct {
+	Events []eventOut `json:"events"`
+	Cut    bool       `json:"cut"`
+	Next   int64      `json:"next"`
+}
+
+type eventOut struct {
+	Seq  int64           `json:"seq"`
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+	// DataCut: the data of this one event was larger than maxEventData
+	// and is left out; get_plan / get_issue show the object.
+	DataCut bool `json:"data_cut,omitempty"`
+}
+
+// maxEventData bounds the data of one event in a result.
+const maxEventData = MaxResult / 8
+
+// cutEvents keeps the events in order while their JSON fits in MaxResult
+// (with room for the wrapper), like every other tool result (D-364,
+// review n1 of #280). Next is the last kept seq, or since when none.
+func cutEvents(evs []Event, since int64) eventsPage {
+	page := eventsPage{Events: []eventOut{}, Next: since}
+	size := 64
+	for _, e := range evs {
+		o := eventOut{Seq: e.Seq, Type: e.Type, Data: e.Data}
+		if len(o.Data) > maxEventData {
+			o.Data, o.DataCut = json.RawMessage("null"), true
+		}
+		n := len(o.Data) + len(o.Type) + 64
+		if size+n > MaxResult-1024 {
+			page.Cut = true
+			break
+		}
+		size += n
+		page.Events = append(page.Events, o)
+		page.Next = e.Seq
+	}
+	// The estimate does not know JSON escapes (json.Marshal writes "<" as
+	// six bytes): measure, and drop events from the end until it fits.
+	for len(page.Events) > 0 {
+		b, err := json.Marshal(result{Status: 200, Data: mustJSON(page)})
+		if err == nil && len(b) <= MaxResult {
+			break
+		}
+		page.Events = page.Events[:len(page.Events)-1]
+		page.Cut = true
+		page.Next = since
+		if n := len(page.Events); n > 0 {
+			page.Next = page.Events[n-1].Seq
+		}
+	}
+	return page
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("null")
+	}
+	return b
 }
