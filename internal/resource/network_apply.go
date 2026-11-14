@@ -333,14 +333,19 @@ func (n *network) netplanView(ctx context.Context, root string) (map[string]npVi
 }
 
 // mainKey returns the key of the single ethernets entry that holds the
-// main address, or for a DHCP NIC the entry of that NIC (D-348).
-func mainKey(view map[string]npView, dev string, main netip.Addr) (string, error) {
+// main address, or for a DHCP NIC the entry of that NIC (D-348). An entry
+// names the NIC by its key, set-name, match.name or match.macaddress: on a
+// stock Ubuntu VM the first boot can keep the kernel name (ens18) while
+// cloud-init's entry is eth0 with a MAC match and set-name (D-192, T-158
+// F3). mac is the live MAC of dev; it is only compared, never written.
+func mainKey(view map[string]npView, dev, mac string, main netip.Addr) (string, error) {
 	var keys []string
 	for k, v := range view {
 		has := slices.ContainsFunc(v.addrs(), func(p netip.Prefix) bool { return p.Addr() == main })
 		name, _ := v.Match["name"].(string)
-		dhcp := (v.DHCP4 || v.DHCP6) && (k == dev || v.SetName == dev || name == dev)
-		if has || dhcp {
+		vmac, _ := v.Match["macaddress"].(string)
+		nic := k == dev || v.SetName == dev || name == dev || (mac != "" && strings.EqualFold(vmac, mac))
+		if has || ((v.DHCP4 || v.DHCP6) && nic) {
 			keys = append(keys, k)
 		}
 	}
@@ -348,6 +353,21 @@ func mainKey(view map[string]npView, dev string, main netip.Addr) (string, error
 		return "", fmt.Errorf("netplan has %d entries for the main NIC %s, want exactly one", len(keys), dev)
 	}
 	return keys[0], nil
+}
+
+// liveMAC returns the MAC of dev (ip -j link show), lower case.
+func (n *network) liveMAC(ctx context.Context, dev string) (string, error) {
+	out, err := n.run(ctx, "ip", "-j", "link", "show", "dev", dev)
+	if err != nil {
+		return "", fmt.Errorf("ip link: %w", err)
+	}
+	var links []struct {
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal(out, &links); err != nil || len(links) != 1 {
+		return "", fmt.Errorf("ip link: no single link %s", dev)
+	}
+	return strings.ToLower(links[0].Address), nil
 }
 
 // --- Observe and Diff ---
@@ -645,7 +665,11 @@ func (n *network) Prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	key, err := mainKey(view, dev, main)
+	mac, err := n.liveMAC(ctx, dev)
+	if err != nil {
+		return err
+	}
+	key, err := mainKey(view, dev, mac, main)
 	if err != nil {
 		return err
 	}
