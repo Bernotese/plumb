@@ -4,7 +4,8 @@
   // Proxmox connection. No secret is in the answer: the token shows only
   // its user part (`<user>@<realm>`).
   import { tick } from "svelte";
-  import type { ChangeSettings, PlumbApi, Settings } from "../lib/client";
+  import type { ChangeSettings, PlumbApi, RepairKeyView, Settings } from "../lib/client";
+  import { href } from "../lib/router";
   import { describedBy, pointerErrors } from "../lib/formErrors";
   import { liveSnapshot } from "../lib/live";
   import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
@@ -105,6 +106,27 @@
     await send(b);
   }
 
+  // --- Repair key (D-382, T-194): rotate, then revoke the previous key ---
+  let keyBusy = $state(false);
+  let keyError = $state<unknown>(null);
+  let confirmRevoke = $state(false);
+  const repairKey = $derived<RepairKeyView | undefined>(settings?.repair_key ?? undefined);
+  async function rotate(revokeOld: boolean) {
+    keyBusy = true;
+    keyError = null;
+    try {
+      const k = await api.rotateRepairKey(revokeOld);
+      if (settings) settings = { ...settings, repair_key: k };
+      confirmRevoke = false;
+      await tick();
+      document.getElementById("general-key-title")?.focus();
+    } catch (err) {
+      keyError = err;
+    } finally {
+      keyBusy = false;
+    }
+  }
+
   /** `null` removes the stored value: the install value counts again. */
   const reset = (field: "time" | "keep") => send({ [field]: null });
 
@@ -197,6 +219,82 @@
     </form>
   </section>
 
+  {#if repairKey}
+    <section class="card" aria-labelledby="general-key-title" id="general-key">
+      <h2 id="general-key-title" tabindex="-1">Repair key</h2>
+      <p class="muted">
+        Plumb repairs a dead agent over SSH with this key (only from Plumb's own address, only the
+        fixed install). Plumb never shows the private key.
+      </p>
+      <dl class="facts">
+        <dt>Current key</dt>
+        <dd class="mono wrap" id="key-current">{repairKey.fingerprint}</dd>
+        <dt>Made</dt>
+        <dd>{formatTime(repairKey.created_at)}</dd>
+        {#if repairKey.previous}
+          <dt>Previous key</dt>
+          <dd class="mono wrap" id="key-previous">{repairKey.previous.fingerprint}</dd>
+        {/if}
+      </dl>
+      {#if repairKey.previous}
+        {#if repairKey.previous.targets.length}
+          <p id="key-old-targets">
+            Still on the previous key ({repairKey.previous.targets.length}):
+            {#each repairKey.previous.targets as t, i (t)}{i ? ", " : ""}<a
+                href={href({ name: "target-agent", target: t })}>{t}</a
+              >{/each}. Online agents get the new key at once; an offline agent gets it when it is
+            back.
+          </p>
+        {:else}
+          <p id="key-old-targets">Every agent has the new key.</p>
+        {/if}
+        <ProblemBox error={keyError} />
+        {#if confirmRevoke}
+          <div class="confirm" role="group" aria-labelledby="revoke-q">
+            <p id="revoke-q">
+              <strong>Revoke the previous key?</strong>
+              {repairKey.previous.targets.length
+                ? `${repairKey.previous.targets.join(", ")} then ${repairKey.previous.targets.length === 1 ? "has" : "have"} no repair over SSH until the agent confirms the new key.`
+                : "No agent needs it any more."}
+            </p>
+            <div class="row">
+              <button
+                class="btn danger"
+                type="button"
+                id="revoke-confirm"
+                disabled={keyBusy}
+                onclick={() => rotate(true)}>Revoke</button
+              >
+              <button class="btn" type="button" onclick={() => (confirmRevoke = false)}
+                >Cancel</button
+              >
+            </div>
+          </div>
+        {:else}
+          <button
+            class="btn danger"
+            type="button"
+            disabled={keyBusy || restored.mode}
+            onclick={() => (confirmRevoke = true)}>Revoke the previous key…</button
+          >
+        {/if}
+      {:else}
+        <ProblemBox error={keyError} />
+        <button
+          class="btn"
+          type="button"
+          id="key-rotate"
+          disabled={keyBusy || restored.mode}
+          onclick={() => rotate(false)}>Make a new repair key</button
+        >
+        <p class="muted">
+          The old key stays valid until you revoke it. Online agents write the new line next to the
+          old one at once; an offline agent when it is back.
+        </p>
+      {/if}
+    </section>
+  {/if}
+
   <section class="card" aria-labelledby="general-proxmox-title" id="general-proxmox">
     <h2 id="general-proxmox-title">Proxmox</h2>
     {#if px === null}
@@ -286,6 +384,13 @@
   }
   .wrap {
     overflow-wrap: anywhere;
+  }
+  .confirm {
+    border-left: 4px solid var(--color-danger);
+    padding-left: var(--space-3);
+  }
+  .confirm p {
+    margin: 0 0 var(--space-2);
   }
   .acl {
     width: 100%;

@@ -38,6 +38,13 @@ export type RefreshResult = { plan: Plan } | { unchanged: PinRefresh };
 /** Controller settings (D-361): the backup schedule and the Proxmox view. */
 export type Settings = S["Settings"];
 export type ChangeSettings = S["ChangeSettingsRequest"];
+/** Slice 6 part B (ARCHITECTURE §19): repair, install command, adoption. */
+export type RepairRequest = S["RepairRequest"];
+export type InstallCommand = S["InstallCommand"];
+export type AdoptRequest = S["AdoptRequest"];
+export type UnmanagedGuest = S["UnmanagedGuest"];
+export type RepairKeyView = S["RepairKeyView"];
+export type RepairState = S["RepairState"];
 
 export interface PlumbApi {
   session(): Promise<Session>;
@@ -109,6 +116,16 @@ export interface PlumbApi {
   revokeToken(id: string): Promise<void>;
   /** Enables a token that a restore disabled (D-303, human session). */
   enableToken(id: string): Promise<Token>;
+  /** Proposes an SSH repair of a dead agent (D-372, D-385): a human-only Plan. */
+  repairTarget(name: string, req?: RepairRequest): Promise<Plan>;
+  /** A one-time install command for the guest (D-387, admin session); shown once. */
+  createInstallCommand(name: string): Promise<InstallCommand>;
+  /** Guests of the pool that no Target or Image holds (D-373). */
+  listUnmanagedGuests(): Promise<UnmanagedGuest[]>;
+  /** Proposes to adopt a guest of the pool as the new Target `name` (D-386). */
+  adoptTarget(name: string, req: AdoptRequest): Promise<Plan>;
+  /** A new repair key, or `revokeOld` the previous one (D-382, admin session). */
+  rotateRepairKey(revokeOld?: boolean): Promise<RepairKeyView>;
   /** The backup schedule with its sources and the Proxmox view (D-361). */
   getSettings(): Promise<Settings>;
   /** Changes the backup schedule; `null` goes back to the install value (human admin). */
