@@ -83,10 +83,10 @@ func devAddrStable(demo bool) time.Duration {
 func demoDocs() []state.Doc {
 	return []state.Doc{{Kind: state.KindTarget, Name: demoAddrTarget, Spec: json.RawMessage(`{"type":"vm","image":"ubuntu-26.04",` +
 		`"guest":{"cores":1,"memory":1024,"disk":10,"bridge":"vmbr0","ip":"192.0.2.20/24","gateway":"192.0.2.1"},` +
-		`"blocks":[{"use":"motd","params":{"text":"Hello from db1"}}]}`)},
+		`"blocks":[{"use":"motd","params":{"message":"Hello from db1"}}]}`)},
 		{Kind: state.KindTarget, Name: demoCleanTarget, Spec: json.RawMessage(`{"type":"vm","image":"ubuntu-26.04",` +
 			`"guest":{"cores":2,"memory":2048,"disk":16,"bridge":"vmbr0"},` +
-			`"blocks":[{"use":"motd","params":{"text":"Hello from app1"}}]}`)}}
+			`"blocks":[{"use":"motd","params":{"message":"Hello from app1"}}]}`)}}
 }
 
 func devDocs() []state.Doc {
@@ -98,8 +98,8 @@ func devDocs() []state.Doc {
 			`"url":"https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img",`+
 			`"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}`),
 		d(state.KindBlock, "motd", `{"title":"Message of the day","params":{"type":"object","properties":{`+
-			`"text":{"type":"string","title":"Text","default":"Managed by Plumb."}}},`+
-			`"resources":[{"file":{"path":"/etc/motd","content":"{{ .text }}\n","mode":"0644","owner":"root","group":"root"}}]}`),
+			`"message":{"type":"string","title":"Text","default":"Managed by Plumb."}}},`+
+			`"resources":[{"file":{"path":"/etc/motd","content":"{{ .message }}\n","mode":"0644","owner":"root","group":"root"}}]}`),
 		d(state.KindBlock, "nginx", `{"title":"Nginx","params":{"type":"object","properties":{`+
 			`"server_name":{"type":"string","title":"Server name","default":"_"}}},"resources":[`+
 			`{"package":{"name":"nginx"}},`+
@@ -122,7 +122,7 @@ func devDocs() []state.Doc {
 		}
 		docs = append(docs, d(state.KindTarget, t, `{"type":"vm","image":"ubuntu-26.04",`+
 			`"guest":{"cores":2,"memory":2048,"disk":20,"bridge":"vmbr0"},`+
-			`"blocks":[{"use":"motd","params":{"text":"Hello from `+t+`"}},{"use":"nginx","params":{"server_name":"`+t+`.lan"}}`+site+`]}`))
+			`"blocks":[{"use":"motd","params":{"message":"Hello from `+t+`"}},{"use":"nginx","params":{"server_name":"`+t+`.lan"}}`+site+`]}`))
 	}
 	return docs
 }
