@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
@@ -71,12 +70,17 @@ func AcceptRefused(resource string, changes []wire.Change) error {
 			return ErrAcceptImage
 		case resource == wire.GuestConfigID && containerAttrs[c.Attr]:
 			return ErrAcceptOutside
-		case resource == wire.GuestConfigID && driver.NICIndex(c.Attr) > 0:
+		case resource == wire.GuestConfigID && nicAttrs[c.Attr]:
 			return ErrAcceptNIC
 		}
 	}
 	return nil
 }
+
+// nicAttrs are the guest:config attributes of the more NICs
+// (driver.AttrNIC(1) … AttrNIC(3), T-219); this package does not import
+// the driver (ARCHITECTURE §2).
+var nicAttrs = map[string]bool{"nic1": true, "nic2": true, "nic3": true}
 
 // ErrAcceptNIC is returned for accept of a more NIC (nic1 … nic3, D-418):
 // the bridge, tag and MAC of a hand change are not taken into the
