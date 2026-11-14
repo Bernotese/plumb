@@ -358,7 +358,7 @@ func TestFirewallIsAgentPath(t *testing.T) {
 			t.Errorf("%s is not an agent unit", u)
 		}
 	}
-	if !slices.Equal(wire.SafeApplyTypes, []string{"firewall"}) {
+	if !slices.Contains(wire.SafeApplyTypes, "firewall") { // D-349 added network
 		t.Errorf("SafeApplyTypes = %v", wire.SafeApplyTypes)
 	}
 	typ, _ := Lookup("firewall")

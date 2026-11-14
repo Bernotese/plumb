@@ -196,6 +196,9 @@ type Config struct {
 	// Agent is the agent that this controller serves (T-092). A zero
 	// SHA256: no agent binary in this build; no update is proposed.
 	Agent AgentBuild
+	// ReservedAddrs are the controller and node addresses that no network
+	// resource may take (D-348; HostAddrs). nil: none (tests).
+	ReservedAddrs ReservedFunc
 	// Restore is restored mode (D-303); nil: never restored.
 	Restore *RestoreMode
 }

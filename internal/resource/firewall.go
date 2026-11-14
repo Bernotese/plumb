@@ -27,17 +27,11 @@ const (
 	// FirewallUnit loads the boot file before the network comes up.
 	FirewallUnit     = "plumb-agent-firewall.service"
 	firewallUnitPath = unitDir + FirewallUnit
-	// FirewallRollback is the transient timer of a safe apply (review F1
-	// of T-111): it loads the boot file when the agent dies in the window
-	// and does not come back. Unit names: <name>.timer, <name>.service.
+	// FirewallRollback is the rollback timer of the firewall
+	// (RollbackUnit("firewall")): it loads the boot file.
 	FirewallRollback = "plumb-agent-firewall-rollback"
 	nftPath          = "/usr/sbin/nft"
 )
-
-// firewallRollbackAfter is the delay of the rollback timer in seconds:
-// after the window of 90 s, so a living agent always restores or commits
-// first. A var only for the guest tests (firewall_guest.go).
-var firewallRollbackAfter = wire.SafeApplySeconds + 30
 
 // firewallTable is the only nftables table that the agent reads or changes.
 const firewallTable = "inet plumb"
@@ -585,14 +579,7 @@ func (f *firewall) Prepare(ctx context.Context) error {
 	if err := installFirewallUnit(ctx, f.env); err != nil {
 		return err
 	}
-	disarmRollback(ctx, f.env) // a stale timer of an earlier agent
-	_, err = f.env.Run.Run(ctx, "systemd-run", "--unit="+FirewallRollback, "--description=Plumb firewall rollback",
-		"--on-active="+strconv.Itoa(firewallRollbackAfter), "--timer-property=AccuracySec=1s",
-		nftPath, "-f", FirewallBootFile)
-	if err != nil {
-		return fmt.Errorf("arm the rollback timer: %w", err)
-	}
-	return nil
+	return armRollback(ctx, f.env, "firewall", "Plumb firewall rollback", nftPath, "-f", FirewallBootFile)
 }
 
 // installFirewallUnit writes and enables plumb-agent-firewall.service when it
@@ -615,18 +602,11 @@ func installFirewallUnit(ctx context.Context, env Env) error {
 	return err
 }
 
-// disarmRollback stops the rollback timer. A timer that is not loaded is
-// no error.
-func disarmRollback(ctx context.Context, env Env) {
-	_, _ = env.Run.Run(ctx, "systemctl", "stop", FirewallRollback+".timer")
-	_, _ = env.Run.Run(ctx, "systemctl", "reset-failed", FirewallRollback+".timer", FirewallRollback+".service")
-}
-
 // Commit makes the live table the confirmed one: the boot file gets the
 // desired script and the listing that nft prints now. state absent removes
 // the boot file and disables the unit.
 func (f *firewall) Commit(ctx context.Context) error {
-	disarmRollback(ctx, f.env)
+	disarmRollback(ctx, f.env, "firewall")
 	if f.want.State == wire.StateAbsent {
 		if _, err := f.env.Run.Run(ctx, "systemctl", "disable", FirewallUnit); err != nil {
 			return err
@@ -661,7 +641,7 @@ func restoreFirewall(ctx context.Context, env Env) error {
 	if err != nil {
 		return fmt.Errorf("restore the confirmed rules: %w", err)
 	}
-	disarmRollback(ctx, env)
+	disarmRollback(ctx, env, "firewall")
 	return nil
 }
 
@@ -694,28 +674,4 @@ func Summary(r wire.Resource) []string {
 		policy = "policy accept: other input is accepted"
 	}
 	return []string{ssh, policy}
-}
-
-// SafeApplier is a resource of wire.SafeApplyTypes (D-293, D-300). The
-// agent calls Prepare, then Apply (live only), then after the controller
-// round trip Commit, or Restore when the round trip did not come.
-type SafeApplier interface {
-	Resource
-	// Prepare makes sure that Restore, the boot and the rollback timer
-	// bring back the confirmed state. It changes nothing live.
-	Prepare(ctx context.Context) error
-	// Commit makes the live state the confirmed one.
-	Commit(ctx context.Context) error
-	// Restore puts the confirmed state back live.
-	Restore(ctx context.Context) error
-}
-
-// Restore puts the confirmed state of a safe-apply type back, without a
-// desired resource: the agent does it at start when it finds the marker.
-func Restore(ctx context.Context, env Env, typ string) error {
-	switch typ {
-	case "firewall":
-		return restoreFirewall(ctx, env)
-	}
-	return fmt.Errorf("no safe apply for type %q", typ)
 }

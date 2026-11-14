@@ -253,6 +253,10 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if err := e.checkSecretsPresent(ctx, next, names, in.Imported); err != nil {
 		return store.Plan{}, err
 	}
+	// Addresses of the network resource (D-348).
+	if err := e.checkNetworks(ctx, next, names); err != nil {
+		return store.Plan{}, err
+	}
 	// The gate before the planning observe (D-259, D-268).
 	if gateOrigin(in.Origin) {
 		if err := e.checkGate(ctx, next, names); err != nil {
