@@ -33,3 +33,19 @@ func TestCheckRepairWatchQAKeyType(t *testing.T) {
 		}
 	}
 }
+
+// TestRepairLineQAGolden (Q1 of #305): the whole authorized_keys line,
+// character for character. Any change of the forced command or of the
+// options is then a reviewed diff of this text.
+func TestRepairLineQAGolden(t *testing.T) {
+	k := RepairKey{ID: "a1b2c3", PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGolden"}
+	got := RepairLine(k, []string{"192.0.2.10", "2001:db8::10"})
+	want := `restrict,from="192.0.2.10,2001:db8::10",command="` +
+		`umask 077; d=/run/plumb-repair; rm -rf $d; mkdir -m 700 $d && head -c 67108864 | ` +
+		`tar -x -f - -C $d --no-same-owner --no-same-permissions install.sh plumb-agent plumb-agent.sha256 ca.pem enroll.json && ` +
+		`cd $d && sha256sum -c --status plumb-agent.sha256 && sh ./install.sh; r=$?; cd /; rm -rf $d; exit $r` +
+		`" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGolden plumb-repair-a1b2c3`
+	if got != want {
+		t.Fatalf("line:\n%s\nwant:\n%s", got, want)
+	}
+}
