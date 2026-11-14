@@ -49,6 +49,9 @@ type serveFlags struct {
 	hosts       []string
 	backupTime  string // daily, UTC "HH:MM" (D-302)
 	backupKeep  int
+	// backupTimeSrc and backupKeepSrc: backup.SourceEnv when the flag or
+	// the env names the value, else backup.SourceDefault (D-361).
+	backupTimeSrc, backupKeepSrc string
 }
 
 // errUsage marks a flag error: exit code 2.
@@ -72,6 +75,21 @@ func parseServe(args []string, stderr io.Writer) (serveFlags, error) {
 	if err := fs.Parse(args); err != nil {
 		return f, errUsage
 	}
+	f.backupTimeSrc, f.backupKeepSrc = backup.SourceDefault, backup.SourceDefault
+	if os.Getenv("PLUMB_BACKUP_TIME") != "" {
+		f.backupTimeSrc = backup.SourceEnv
+	}
+	if os.Getenv("PLUMB_BACKUP_KEEP") != "" {
+		f.backupKeepSrc = backup.SourceEnv
+	}
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
+		case "backup-time":
+			f.backupTimeSrc = backup.SourceEnv
+		case "backup-keep":
+			f.backupKeepSrc = backup.SourceEnv
+		}
+	})
 	if _, _, err := backup.ParseTime(f.backupTime); err != nil {
 		return f, err
 	}
@@ -335,13 +353,20 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	}
 	// Backups (T-112, D-302): the header names this install (D-304).
 	backups, err := backup.New(ctx, backup.Config{Store: st, Events: events, Key: key, DataDir: f.data,
-		Time: f.backupTime, Keep: f.backupKeep, PlumbVersion: version, InstallID: os.Getenv("PLUMB_INSTALL_ID"),
+		Time: f.backupTime, Keep: f.backupKeep, TimeSource: f.backupTimeSrc, KeepSource: f.backupKeepSrc, PlumbVersion: version, InstallID: os.Getenv("PLUMB_INSTALL_ID"),
 		Node: os.Getenv("PLUMB_PVE_NODE"), Pool: os.Getenv("PLUMB_PVE_POOL"), AgentURL: agentURL(f.hosts, f.agentListen), Logger: log, Serve: true})
 	if err != nil {
 		return err
 	}
 	defer backups.Wait() // after the background wait, before the store closes
-	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Secrets: secrets, Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
+	// The read-only Proxmox view of GET /settings (D-361): the raw
+	// driver, it sends only reads.
+	var pveView func(context.Context) *api.ProxmoxView
+	if pd, ok := rawDrv.(*proxmox.Driver); ok {
+		viewer := proxmox.NewViewer(pd, proxmox.TokenUser(os.Getenv("PLUMB_PVE_TOKEN_ID")))
+		pveView = func(ctx context.Context) *api.ProxmoxView { return proxmoxView(viewer.View(ctx)) }
+	}
+	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Proxmox: pveView, Secrets: secrets, Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
 
 	errc := make(chan error, 2) // one send each: agent listener, API listener
 	goBG(func() { errc <- lk.Serve(ctx, f.agentListen) })
@@ -535,6 +560,34 @@ func agentURL(hosts []string, listen string) string {
 		host = hosts[0]
 	}
 	return "https://" + net.JoinHostPort(host, port)
+}
+
+// proxmoxView maps the driver's view to the API view; an empty value is
+// null. The backup storage is not known to the controller (the copy timer
+// runs on the host), so it is null.
+func proxmoxView(v proxmox.View) *api.ProxmoxView {
+	opt := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}
+	out := &api.ProxmoxView{Node: opt(v.Node), Pool: opt(v.Pool), Version: opt(v.Version), TokenUser: opt(v.TokenUser),
+		ACL: v.ACL, ACLError: v.ACLError, ACLLines: make([]api.ACLLineView, 0, len(v.ACLLines))}
+	out.Storages.Images, out.Storages.Snippets = opt(v.ImageStorage), opt(v.SnippetStorage)
+	out.API.Host, out.API.TLSSHA256 = opt(v.APIHost), opt(v.TLSSHA256)
+	if v.APIPort > 0 {
+		port := v.APIPort
+		out.API.Port = &port
+	}
+	if !v.LastOK.IsZero() {
+		t := v.LastOK.UTC()
+		out.LastOKAt = &t
+	}
+	for _, l := range v.ACLLines {
+		out.ACLLines = append(out.ACLLines, api.ACLLineView{Path: l.Path, Role: l.Role, OK: l.OK})
+	}
+	return out
 }
 
 // envOr returns the environment value of name, or def when it is empty.

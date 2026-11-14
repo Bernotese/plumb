@@ -37,6 +37,9 @@ type Config struct {
 	// Backups writes and lists the backups (T-112). nil: the backup
 	// routes answer 503.
 	Backups *backup.Service
+	// Proxmox returns the read-only Proxmox view of GET /settings (D-361).
+	// nil: the controller runs without Proxmox (serve --dev).
+	Proxmox func(context.Context) *ProxmoxView
 	// Version is the Plumb version, for the export header.
 	Version string
 	// Secrets is the encrypted secret store (required).
@@ -240,6 +243,9 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/users", admin, s.createUser)
 	route("PATCH /api/v1/users/{name}", admin, s.changeUser)
 	route("POST /api/v1/users/{name}/password", admin, s.resetUserPassword)
+
+	route("GET /api/v1/settings", read, s.getSettings)
+	route("PATCH /api/v1/settings", admin, s.changeSettings)
 
 	route("GET /api/v1/backups", read, s.listBackups)
 	route("POST /api/v1/backups", apply, s.createBackup)
