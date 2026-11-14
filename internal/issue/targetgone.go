@@ -65,8 +65,13 @@ func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, 
 		s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": "gone", "reason": reason})
 		n++
 	}
+	// The Issues that were resolved before the delete (F1 of #324).
+	k, err := s.st.MarkIssuesTargetDeleted(ctx, target)
+	if err != nil {
+		return n, err
+	}
 	m, err := s.st.ForgetTargetMarks(ctx, target)
-	return n + m, err
+	return n + k + m, err
 }
 
 // planRunning reports whether the Run of a Plan is running.

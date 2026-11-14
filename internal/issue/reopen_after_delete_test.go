@@ -49,7 +49,19 @@ func TestNoReopenAfterTargetDelete(t *testing.T) {
 	}
 	// A new Target of the name reports the same drift: a new Issue.
 	drift()
-	if next := e.openIssue("web1", wire.GuestAddressID); next.ID == first.ID {
+	second := e.openIssue("web1", wire.GuestAddressID)
+	if second.ID == first.ID {
 		t.Fatalf("Issue %d of the deleted Target was opened again", first.ID)
+	}
+
+	// F1 of #324: an Issue that went away by itself just before the
+	// delete is marked too; the same drift after it opens a new Issue.
+	gone()
+	if err := e.iss.TargetDeleted(e.ctx, "web1", "the Target was deleted"); err != nil {
+		t.Fatal(err)
+	}
+	drift()
+	if third := e.openIssue("web1", wire.GuestAddressID); third.ID == second.ID || third.ID == first.ID {
+		t.Fatalf("an Issue resolved before the delete was opened again (%d)", third.ID)
 	}
 }

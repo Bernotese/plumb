@@ -198,6 +198,19 @@ func (s *Store) ResolveIssueTargetDeleted(ctx context.Context, id int64) error {
 	return nil
 }
 
+// MarkIssuesTargetDeleted marks the already resolved Issues of a deleted
+// Target, so that ReopenGoneIssue never opens one of them again (F1 of
+// #324: an Issue that went "gone" by itself shortly before the delete).
+// It returns how many it marked.
+func (s *Store) MarkIssuesTargetDeleted(ctx context.Context, target string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE issue SET target_deleted = 1 WHERE target = ? AND status = 'resolved' AND target_deleted = 0`, target)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ReopenGoneIssue opens the newest Issue of a target and resource again
 // when it was resolved as "gone" at or after since (and not by the delete of
 // its Target, T-227 row 31), and no other Issue of

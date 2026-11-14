@@ -10,3 +10,10 @@
 --   reused VMID or name gets new Issues.
 
 ALTER TABLE issue ADD COLUMN target_deleted INTEGER NOT NULL DEFAULT 0 CHECK (target_deleted IN (0, 1));
+
+-- Targets deleted before this upgrade (review low of #324): every
+-- resolved Issue of a name that the head revision does not hold is marked.
+UPDATE issue SET target_deleted = 1
+WHERE status = 'resolved'
+  AND target NOT IN (SELECT name FROM revision_doc
+                     WHERE kind = 'Target' AND revision_id = (SELECT MAX(id) FROM revision));
