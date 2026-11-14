@@ -22,7 +22,13 @@
     failed: "danger",
     refused: "danger",
     skipped: "muted",
+    warning: "warn",
   };
+  // D-396: a Run with warning steps never reads as a clean success.
+  const runLabel = (r: { status: string; warnings?: number }) =>
+    r.status === "succeeded" && (r.warnings ?? 0) > 0
+      ? `succeeded, ${r.warnings} warning${r.warnings === 1 ? "" : "s"}`
+      : r.status;
 
   $effect(() => {
     // The snapshot follows the stream without gaps (live.ts): it is loaded
@@ -62,7 +68,12 @@
   <div class="card spread">
     <div>
       <span class="sr-only">Run status:</span>
-      <Badge tone={tone[run.status] ?? "muted"} label={run.status} />
+      <Badge
+        tone={run.status === "succeeded" && run.warnings > 0
+          ? "warn"
+          : (tone[run.status] ?? "muted")}
+        label={runLabel(run)}
+      />
       <span class="muted"
         >Started {formatTime(run.started_at)}{run.finished_at
           ? `, ended ${formatTime(run.finished_at)}`

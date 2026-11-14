@@ -99,7 +99,12 @@
             <th scope="row"><a href={href({ name: "run", id: r.id })}>Run {r.id}</a></th>
             <td data-label="Status">
               <div>
-                <Badge tone={tone[r.status]} label={r.status} />
+                <Badge
+                  tone={r.status === "succeeded" && r.warnings > 0 ? "warn" : tone[r.status]}
+                  label={r.status === "succeeded" && r.warnings > 0
+                    ? `succeeded, ${r.warnings} warning${r.warnings === 1 ? "" : "s"}`
+                    : r.status}
+                />
                 {#if r.waits_for_restart > 0}<span class="sub"
                     >{r.waits_for_restart} wait{r.waits_for_restart === 1 ? "s" : ""} for a restart</span
                   >{/if}

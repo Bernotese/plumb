@@ -26,6 +26,9 @@ func (l *Link) NewRepairToken(ctx context.Context, target string) (RepairToken, 
 	if target == "" {
 		return RepairToken{}, errors.New("link: token needs a target")
 	}
+	if err := l.checkTokenParked(ctx, target); err != nil {
+		return RepairToken{}, err
+	}
 	t := RepairToken{Token: secret(32), Expires: l.now().Add(TokenTTL)}
 	t.hash = hashSecret(t.Token)
 	if err := l.cfg.Store.PutRepairToken(ctx, target, t.hash, t.Expires); err != nil {

@@ -227,7 +227,11 @@ func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *
 	if err := e.st.FinishRun(fin, run.ID, status, waits); err != nil {
 		e.log.Error("finish run", "run", run.ID, "err", err)
 	}
-	e.emit(fin, "run.finished", subject, "system", map[string]any{"plan": p.ID, "status": status, "waits_for_restart": waits})
+	data := map[string]any{"plan": p.ID, "status": status, "waits_for_restart": waits}
+	if r, err := e.st.GetRun(fin, run.ID); err == nil && r.Warnings > 0 {
+		data["warnings"] = r.Warnings // D-396: no clean success
+	}
+	e.emit(fin, "run.finished", subject, "system", data)
 	if e.cfg.OnPlanDone != nil {
 		e.cfg.OnPlanDone(fin, p.ID, status == "succeeded")
 	}
@@ -423,6 +427,8 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 			s.set(ctx, wire.GuestConfigID, wire.StatusFailed, res.changes, err.Error())
 		case res.grow > 0 || res.stop:
 			open = true // ends after the root grow or the stop (D-299)
+		case res.warning:
+			s.set(ctx, wire.GuestConfigID, wire.StatusWarning, res.changes, res.output)
 		default:
 			s.set(ctx, wire.GuestConfigID, wire.StatusApplied, res.changes, res.output)
 		}
@@ -649,6 +655,9 @@ type guestResult struct {
 	// stop: the Run stops the guest after its agent steps (D-299). The
 	// step stays running until then.
 	stop bool
+	// warning: the step was done but left something for a person (D-396);
+	// it ends `warning`, and the Run lists it.
+	warning bool
 }
 
 // guestStep does the driver part of a target. It returns the changes it made.
@@ -699,8 +708,8 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		return res, nil
 
 	case "unbind":
-		out, err := e.unbindGuest(ctx, tp.Target)
-		res.output = out
+		out, left, err := e.unbindGuest(ctx, tp.Target, tp.Adopted)
+		res.output, res.warning = out, left
 		return res, err
 
 	case "create":

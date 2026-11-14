@@ -154,6 +154,28 @@
               {/if}
             </td>
             <td data-label="Action">
+              {#if g.agent_left}
+                <p class="warn" id="agent-left-{g.vmid}">
+                  The Plumb agent of a deleted Target is still in this guest, with the repair key
+                  line. Plumb removes it when the agent comes back; or remove it by hand and then
+                  forget it.
+                </p>
+                {#if can("forgetAgent")}
+                  <button
+                    class="btn"
+                    type="button"
+                    aria-label="Forget the agent left in {g.name} ({g.vmid})"
+                    onclick={async () => {
+                      try {
+                        await api.forgetAgent(g.vmid);
+                        void load();
+                      } catch (err) {
+                        loadError = err;
+                      }
+                    }}>Forget the agent</button
+                  >
+                {/if}
+              {/if}
               {#if g.adoptable && can("adoptTarget")}
                 <button
                   class="btn"

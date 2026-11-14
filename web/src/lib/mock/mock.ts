@@ -898,6 +898,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       fingerprint: "SHA256:b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2w",
       created_at: "2026-10-01T08:00:00Z",
       targets: ["worker1"],
+      left_behind: [],
     },
   };
   settings.repair_key = repairKey;
@@ -1704,6 +1705,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       revision: head,
       status: "running",
       waits_for_restart: 0,
+      warnings: 0,
       started_at: now(),
       finished_at: null,
       targets: [],
@@ -2272,6 +2274,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         revision: head,
         status: "running",
         waits_for_restart: 0,
+        warnings: 0,
         started_at: now(),
         finished_at: null,
         targets: p.targets.map((t) => ({
@@ -2853,6 +2856,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       need("listUnmanagedGuests");
       return structuredClone(unmanaged);
     },
+    async forgetAgent(vmid) {
+      need("forgetAgent");
+      const g = unmanaged.find((x) => x.vmid === vmid);
+      if (!g || !g.agent_left)
+        throw problem("not-found", "Not found", 404, `Guest ${vmid} has no agent left.`);
+      g.agent_left = false;
+    },
     async adoptTarget(name, req) {
       need("adoptTarget");
       writable();
@@ -2928,6 +2938,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           targets: [...targets.values()]
             .filter((t) => t.status.repair && t.status.repair.state !== "unknown")
             .map((t) => t.document.name),
+          left_behind: [],
         };
         repairKey.fingerprint = `SHA256:${"n".repeat(43)}`;
         repairKey.created_at = now();

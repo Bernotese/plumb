@@ -403,31 +403,111 @@ const unbindTimeout = 2 * time.Minute
 // the credential is revoked, the binding goes. The guest is never touched
 // in Proxmox. An offline or old agent is named in the output with what a
 // person runs in the guest.
-func (e *Engine) unbindGuest(ctx context.Context, target string) (string, error) {
-	out := "the agent removed itself and the repair key lines; the guest stays in Proxmox"
-	if !e.cfg.Agents.Online(target) {
-		out = textUnbindByHand
-	} else if rep, err := e.command(ctx, target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil); err != nil || rep.Error != "" {
-		msg := rep.Error
-		if err != nil {
-			msg = err.Error()
+func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.Adopted) (string, bool, error) {
+	ag, aerr := e.st.AgentByTarget(ctx, target)
+	if errors.Is(aerr, store.ErrNotFound) {
+		// No agent ever enrolled: nothing of Plumb is in the guest.
+		if err := e.st.DeleteBinding(ctx, state.KindTarget, target); err != nil {
+			return "", false, err
 		}
-		out = "the agent could not remove itself (" + clipText(msg, 300) + "). " + textUnbindByHand
+		e.targetDeleted(ctx, target)
+		return "no agent was installed; the guest stays in Proxmox", false, e.SyncAdopted(ctx)
 	}
-	if err := e.cfg.Agents.Revoke(ctx, target); err != nil {
-		return out, err
+	if aerr != nil {
+		return "", false, aerr
+	}
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		return "", false, err
+	}
+	why := ""
+	if !e.cfg.Agents.Online(target) {
+		why = "the agent is offline"
+	} else if rep, err := e.command(ctx, target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil); err != nil || rep.Error != "" {
+		why = rep.Error
+		if err != nil {
+			why = err.Error()
+		}
+		why = "the agent could not remove itself (" + clipText(why, 300) + ")"
+	}
+	left := why != ""
+	if left {
+		// D-396: the credential stays, parked: the agent can take unbind
+		// at its next contact and do nothing else.
+		node := ""
+		if adopted != nil {
+			node = adopted.Node
+		}
+		if err := e.st.Park(ctx, store.Parked{Target: target, AgentID: ag.ID, GuestRef: b.Ref, Node: node, Since: e.cfg.Now().UTC()}); err != nil {
+			return "", false, err
+		}
+	} else if err := e.cfg.Agents.Revoke(ctx, target); err != nil {
+		return "", false, err
 	}
 	if err := e.st.DeleteBinding(ctx, state.KindTarget, target); err != nil {
-		return out, err
+		return "", false, err
 	}
 	e.targetDeleted(ctx, target)
-	return out, e.SyncAdopted(ctx)
+	if err := e.SyncAdopted(ctx); err != nil {
+		return "", left, err
+	}
+	if left {
+		return fmt.Sprintf(textAgentLeft, b.Ref, why), true, nil
+	}
+	return "the agent removed itself and the repair key lines; the guest stays in Proxmox", false, nil
 }
 
-// textUnbindByHand: what a person runs as root in the guest.
-const textUnbindByHand = "Remove the agent by hand as root in the guest: " +
-	"systemctl disable --now plumb-agent.service; rm -rf /etc/plumb-agent /var/lib/plumb-agent /usr/local/bin/plumb-agent /etc/systemd/system/plumb-agent*; " +
-	"and delete the lines ending in plumb-repair-<id> from /root/.ssh/authorized_keys. Its credential is revoked already."
+// textAgentLeft: the warning of an unbind that was not confirmed (D-396).
+const textAgentLeft = "The guest %s still has the Plumb agent and the repair key line: %s. " +
+	"Plumb sends unbind again when the agent comes back (it can do nothing else). " +
+	"Or remove it by hand as root in the guest: systemctl disable --now plumb-agent.service; " +
+	"rm -rf /etc/plumb-agent /var/lib/plumb-agent /usr/local/bin/plumb-agent /etc/systemd/system/plumb-agent*; " +
+	"delete the lines ending in plumb-repair-<id> from /root/.ssh/authorized_keys; then forget the agent in the list of free guests."
+
+// RetryUnbinds sends unbind to every parked agent that is online (D-396).
+// A confirmed result revokes its credential and ends the park. The guest
+// poll calls it.
+func (e *Engine) RetryUnbinds(ctx context.Context) error {
+	parked, err := e.st.ParkedTargets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range parked {
+		if !e.cfg.Agents.Online(p.Target) {
+			continue
+		}
+		rep, err := e.command(ctx, p.Target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil)
+		if err != nil || rep.Error != "" {
+			continue // tried again at the next poll
+		}
+		if err := e.endPark(ctx, p, "system", "agent.unbound"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ForgetAgent ends the park of a guest's agent without its unbind: the
+// credential is revoked; what is in the guest stays for a person (D-396).
+// Admin session only (the API route).
+func (e *Engine) ForgetAgent(ctx context.Context, ref, actor string) error {
+	p, err := e.st.ParkedByRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+	return e.endPark(ctx, p, actor, "agent.forgotten")
+}
+
+func (e *Engine) endPark(ctx context.Context, p store.Parked, actor, event string) error {
+	if err := e.cfg.Agents.Revoke(ctx, p.Target); err != nil {
+		return err
+	}
+	if err := e.st.Unpark(ctx, p.Target); err != nil {
+		return err
+	}
+	e.emit(ctx, event, "target:"+p.Target, actor, map[string]any{"guest": p.GuestRef})
+	return nil
+}
 
 func clipText(s string, n int) string {
 	if len(s) <= n {

@@ -205,6 +205,9 @@ type PreviousKey struct {
 	Fingerprint string    `json:"fingerprint"`
 	CreatedAt   time.Time `json:"created_at"`
 	Targets     []string  `json:"targets"`
+	// LeftBehind are the guests of deleted adopted Targets whose agent was
+	// not unbound (D-396): their repair line may still hold this key.
+	LeftBehind []string `json:"left_behind"`
 }
 
 // View returns the public view of the repair keys; nil without a key.
@@ -219,7 +222,11 @@ func (s *Service) View(ctx context.Context) (*KeyView, error) {
 		if err != nil {
 			return nil, err
 		}
-		v.Previous = &PreviousKey{Fingerprint: keys[1].Fingerprint, CreatedAt: keys[1].CreatedAt, Targets: targets}
+		left, err := s.leftBehind(ctx)
+		if err != nil {
+			return nil, err
+		}
+		v.Previous = &PreviousKey{Fingerprint: keys[1].Fingerprint, CreatedAt: keys[1].CreatedAt, Targets: targets, LeftBehind: left}
 	}
 	return v, nil
 }
@@ -231,14 +238,41 @@ func (s *Service) notConfirmed(ctx context.Context, id string) ([]string, error)
 	if err != nil {
 		return nil, err
 	}
+	// Only Targets that hold a guest now (review F7 of T-192): the report
+	// of a deleted Target stays in the store, but it is no Target.
+	binds, err := s.cfg.Store.Bindings(ctx, "Target")
+	if err != nil {
+		return nil, err
+	}
+	bound := map[string]bool{}
+	for _, b := range binds {
+		bound[b.Name] = true
+	}
 	out := []string{}
 	for t, raw := range reports {
+		if !bound[t] {
+			continue
+		}
 		r, ok := parseReport(raw)
 		if !ok || !contains(r.Lines, id) {
 			out = append(out, t)
 		}
 	}
 	sort.Strings(out)
+	return out, nil
+}
+
+// leftBehind lists the guests ("<target> (VMID <ref>)") whose agent is
+// parked after an unconfirmed unbind (D-396).
+func (s *Service) leftBehind(ctx context.Context) ([]string, error) {
+	parked, err := s.cfg.Store.ParkedTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, p := range parked {
+		out = append(out, fmt.Sprintf("%s (VMID %s)", p.Target, p.GuestRef))
+	}
 	return out, nil
 }
 
