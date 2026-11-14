@@ -127,9 +127,12 @@ func (a *Agent) tryOneShot(ctx context.Context) bool {
 	}
 	a.oneShot = nil
 	if _, err := a.state.enrolled(resp.Credential, resp.Build); err != nil {
-		// The controller replaced the credential; the old one is refused
-		// from now on. Keep the new one in memory at least.
-		a.log.Error("store the credential of the one-shot enrollment", "err", err)
+		// A credential only in memory is lost at the next restart: fail
+		// the enrollment and keep the old credential (review n1 of #295).
+		// The controller refuses the old one now, so the agent enrolls
+		// again from its token source, as after any 401.
+		a.log.Error("could not store the credential of the one-shot enrollment; keeping the old credential", "err", err)
+		return false
 	}
 	a.credMu.Lock()
 	a.cred = resp.Credential

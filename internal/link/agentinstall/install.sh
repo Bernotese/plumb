@@ -18,6 +18,17 @@ unit=/etc/systemd/system/plumb-agent.service
 
 die() { echo "plumb-agent-install: $*" >&2; exit 1; }
 
+# The one-shot token file belongs to this script until the agent restart
+# succeeded: on every failure before that, it goes (review F1 of #295).
+tmp=
+token_owned=
+cleanup() {
+  rm -f "$etc/.enroll.token.new" /usr/local/bin/.plumb-agent.new "$etc/.agent.json.new"
+  if [ -n "$tmp" ]; then rm -f "$tmp"; fi
+  if [ -n "$token_owned" ]; then rm -f "$etc/enroll.token"; fi
+}
+trap cleanup EXIT
+
 # check_url accepts https://<host>:<port> with no quote, space or path.
 check_url() {
   case $1 in
@@ -46,6 +57,7 @@ if [ -z "${PLUMB_URL:-}" ]; then
   chmod 0644 "$etc/.ca.pem.new"
   mv -f "$etc/.ca.pem.new" "$etc/ca.pem"
   # printf is a shell builtin: the token is in no argument list.
+  token_owned=1
   rm -f "$etc/.enroll.token.new"
   printf '%s\n' "$token" >"$etc/.enroll.token.new"
   chmod 0600 "$etc/.enroll.token.new"
@@ -56,6 +68,7 @@ if [ -z "${PLUMB_URL:-}" ]; then
 else
   # install command mode
   url=$PLUMB_URL
+  token_owned=1 # the command wrote it for this run only
   check_url "$url"
   [ -s "$etc/ca.pem" ] || die "$etc/ca.pem is missing"
   [ -s "$etc/enroll.token" ] || die "$etc/enroll.token is missing"
@@ -63,7 +76,6 @@ else
   chmod 0644 "$etc/ca.pem"
   chmod 0600 "$etc/enroll.token"
   tmp=$(mktemp)
-  trap 'rm -f "$tmp" /usr/local/bin/.plumb-agent.new' EXIT
   # Only the Plumb CA is trusted: --capath points at a dir with no hashed
   # CA names (as the first-boot script, review S1 of T-076).
   curl -fsS --proto =https --connect-timeout 10 --max-time 300 --cacert "$etc/ca.pem" --capath "$etc" \
@@ -72,22 +84,25 @@ else
   mv -f /usr/local/bin/.plumb-agent.new "$bin"
 fi
 
-# agent.json: the URL and the CA of this controller. A token_env of the
-# old file stays (an LXC gets its re-enrollment token that way, D-231);
-# a VM keeps the default token source (SMBIOS serial), so a later
-# re-enrollment works as before. The one-shot token needs no entry.
-tokenenv=
+# agent.json: the URL and the CA of this controller. The other keys of
+# the old file stay (review n2 of #295): token_env (an LXC gets its
+# re-enrollment token that way, D-231), token_file, state_dir and
+# full_check; a VM without them keeps the default token source (SMBIOS
+# serial), so a later re-enrollment works as before. The one-shot token
+# needs no entry.
+keep=
 if [ -f "$etc/agent.json" ]; then
-  tokenenv=$(sed -n 's/^.*"token_env":"\([A-Za-z_][A-Za-z0-9_]*\)".*$/\1/p' "$etc/agent.json" | head -n 1)
+  for k in token_env token_file state_dir full_check; do
+    v=$(sed -n "s/^.*\"$k\"[[:space:]]*:[[:space:]]*\"\([A-Za-z0-9_./-]*\)\".*\$/\1/p" "$etc/agent.json" | head -n 1)
+    if [ -n "$v" ]; then keep="$keep,\"$k\":\"$v\""; fi
+  done
 fi
 ca=$(awk '{ sub(/\r$/, ""); printf "%s\\n", $0 }' "$etc/ca.pem")
 case $ca in
   *[\"]*) die "ca.pem holds a quote" ;;
 esac
 {
-  printf '{"url":"%s","ca":"%s"' "$url" "$ca"
-  if [ -n "$tokenenv" ]; then printf ',"token_env":"%s"' "$tokenenv"; fi
-  printf '}\n'
+  printf '{"url":"%s","ca":"%s"%s}\n' "$url" "$ca" "$keep"
 } >"$etc/.agent.json.new"
 chmod 0644 "$etc/.agent.json.new"
 mv -f "$etc/.agent.json.new" "$etc/agent.json"
@@ -113,4 +128,5 @@ systemctl unmask plumb-agent.service
 systemctl daemon-reload
 systemctl enable plumb-agent.service
 systemctl restart plumb-agent.service
+token_owned= # the agent owns the file now: it reads and deletes it (D-390)
 echo "plumb-agent-install: the agent is installed and restarted"

@@ -123,6 +123,9 @@ func sandbox(t *testing.T, s string) (string, string, []string) {
 	log := filepath.Join(root, "calls.log")
 	for _, tool := range []string{"systemctl", "curl"} {
 		body := "#!/bin/sh\necho \"" + tool + " $*\" >>" + log + "\n"
+		if tool == "systemctl" { // FAKE_FAIL=restart fails "systemctl restart"
+			body += "if [ \"${FAKE_FAIL:-}\" = \"$1\" ]; then exit 1; fi\n"
+		}
 		if tool == "curl" { // write the "binary" to the -o file
 			body += "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then echo fetched >\"$2\"; fi; shift; done\n"
 		}
@@ -160,9 +163,10 @@ func TestRepairForcedCommandInstalls(t *testing.T) {
 	old := script
 	script = []byte(s)
 	defer func() { script = old }()
-	// An LXC agent.json keeps its token_env.
+	// An LXC agent.json keeps its token_env and the other keys of the
+	// agent config (review n2 of #295).
 	if err := os.WriteFile(filepath.Join(root, "etc/plumb-agent/agent.json"),
-		[]byte(`{"url":"https://old:1","ca":"x","token_env":"PLUMB_ENROLL_TOKEN"}`+"\n"), 0o644); err != nil {
+		[]byte(`{"url":"https://old:1","ca":"x","token_env":"PLUMB_ENROLL_TOKEN", "state_dir": "/srv/plumb-state","full_check":"5m0s"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	in := testBundle()
@@ -193,12 +197,15 @@ func TestRepairForcedCommandInstalls(t *testing.T) {
 		t.Fatal("modes")
 	}
 	var cfg struct {
-		URL      string `json:"url"`
-		CA       string `json:"ca"`
-		TokenEnv string `json:"token_env"`
+		URL       string `json:"url"`
+		CA        string `json:"ca"`
+		TokenEnv  string `json:"token_env"`
+		StateDir  string `json:"state_dir"`
+		FullCheck string `json:"full_check"`
 	}
 	b, _ := os.ReadFile(filepath.Join(etc, "agent.json"))
-	if err := json.Unmarshal(b, &cfg); err != nil || cfg.URL != in.URL || cfg.CA != testCA || cfg.TokenEnv != "PLUMB_ENROLL_TOKEN" {
+	if err := json.Unmarshal(b, &cfg); err != nil || cfg.URL != in.URL || cfg.CA != testCA || cfg.TokenEnv != "PLUMB_ENROLL_TOKEN" ||
+		cfg.StateDir != "/srv/plumb-state" || cfg.FullCheck != "5m0s" {
 		t.Fatalf("agent.json %s: %v", b, err)
 	}
 	if strings.Contains(string(b), "token_file") || strings.Contains(string(b), in.Token) {
@@ -280,5 +287,47 @@ func TestInstallScriptRefusesBadURL(t *testing.T) {
 		if err := cmd.Run(); err == nil {
 			t.Errorf("%q passed", u)
 		}
+	}
+}
+
+// TestInstallScriptFailureRemovesToken (review F1 of #295): when the
+// script fails after the token file was written (here: the restart), the
+// file goes; in both modes.
+func TestInstallScriptFailureRemovesToken(t *testing.T) {
+	need(t, "tar", "sha256sum", "head", "awk", "sed", "mktemp")
+	for _, mode := range []string{"repair", "install-command"} {
+		t.Run(mode, func(t *testing.T) {
+			s, root, env := sandbox(t, string(script))
+			etc := filepath.Join(root, "etc/plumb-agent")
+			env = append(env, "FAKE_FAIL=restart")
+			var cmd *exec.Cmd
+			if mode == "repair" {
+				old := script
+				script = []byte(s)
+				defer func() { script = old }()
+				var buf bytes.Buffer
+				if err := WriteBundle(&buf, testBundle()); err != nil {
+					t.Fatal(err)
+				}
+				cmd = exec.Command("sh", "-c", strings.ReplaceAll(wire.RepairForcedCommand, "/run/plumb-repair", filepath.Join(root, "run")))
+				cmd.Stdin = &buf
+			} else {
+				os.WriteFile(filepath.Join(etc, "ca.pem"), []byte(testCA), 0o600)
+				os.WriteFile(filepath.Join(etc, "enroll.token"), []byte("tok\n"), 0o600)
+				cmd = exec.Command("sh", "-c", s)
+				cmd.Dir = t.TempDir()
+				env = append(env, "PLUMB_URL=https://192.0.2.10:8444")
+			}
+			cmd.Env = env
+			if out, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("a failed restart passed:\n%s", out)
+			}
+			if !strings.Contains(calls(t, root), "systemctl restart") {
+				t.Fatal("the script stopped before the restart")
+			}
+			if _, err := os.Stat(filepath.Join(etc, "enroll.token")); !os.IsNotExist(err) {
+				t.Fatalf("enroll.token stays after a failure: %v", err)
+			}
+		})
 	}
 }

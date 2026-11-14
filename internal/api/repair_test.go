@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -128,6 +129,7 @@ func bundleToken(t *testing.T, b []byte) string {
 
 type repairEnv struct {
 	*env
+	logs   *lockedBuf
 	tr     *fakeTransport
 	agents *offAgents
 	offset atomic.Int64
@@ -136,7 +138,9 @@ type repairEnv struct {
 }
 
 func newRepairEnv(t *testing.T) *repairEnv {
-	r := &repairEnv{tr: &fakeTransport{mode: "ok"}}
+	r := &repairEnv{tr: &fakeTransport{mode: "ok"}, logs: &lockedBuf{}}
+	envLog = slog.New(slog.NewTextHandler(r.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	defer func() { envLog = quiet }()
 	r.env = newEnv(t, false, func(c *plan.Config) {
 		tokens := c.Agents.(plan.RepairTokens) // the link
 		r.agents = &offAgents{Agents: c.Agents}
@@ -151,6 +155,57 @@ func newRepairEnv(t *testing.T) *repairEnv {
 	r.seedAgent(r.adm, slice3Caps())
 	r.old = r.agents0()
 	return r
+}
+
+// lockedBuf is a log sink for several goroutines.
+type lockedBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+// noToken greps the Run, the Plan, every event, every API answer and the
+// controller log for the bundle token (review T1 of #295): 0 hits.
+func (r *repairEnv) noToken(planID, runID int64) {
+	r.t.Helper()
+	if len(r.tr.bundles) == 0 {
+		return
+	}
+	tok := bundleToken(r.t, r.tr.bundles[len(r.tr.bundles)-1])
+	for _, path := range []string{"/api/v1/runs/" + itoa(runID), "/api/v1/plans/" + itoa(planID)} {
+		if code, body := r.adm.do("GET", path, nil); code != 200 || strings.Contains(string(body), tok) {
+			r.t.Fatalf("%s: %d, token in it: %v", path, code, strings.Contains(string(body), tok))
+		}
+	}
+	evs, err := r.st.EventsAfter(r.ctx, 0, 100000)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	for _, e := range evs {
+		if strings.Contains(string(e.Data), tok) || strings.Contains(e.Subject, tok) {
+			r.t.Fatalf("event %s holds the token", e.Type)
+		}
+	}
+	r.mu.Lock()
+	for _, b := range r.seen {
+		if bytes.Contains(b, []byte(tok)) {
+			r.mu.Unlock()
+			r.t.Fatal("an API answer holds the token")
+		}
+	}
+	r.mu.Unlock()
+	if strings.Contains(r.logs.String(), tok) {
+		r.t.Fatal("the controller log holds the token")
+	}
+	if !strings.Contains(r.logs.String(), "level=") {
+		r.t.Fatal("the log capture is empty")
+	}
 }
 
 func (r *repairEnv) agents0() *linktest.Agent { return r.env.agents["web1"] }
@@ -270,6 +325,7 @@ func TestRepairSuccessSwapsCredential(t *testing.T) {
 	if code := r.oldCode(); code != 401 {
 		t.Fatalf("old credential after the repair: %d, want 401", code)
 	}
+	r.noToken(p.ID, run)
 	if code := r.tr.newAgent.SendHello(r.ctx); code != 204 {
 		t.Fatalf("new credential: %d", code)
 	}
@@ -301,6 +357,7 @@ func TestRepairFailedKeepsCredential(t *testing.T) {
 			if code := r.oldCode(); code != 204 {
 				t.Fatalf("old credential after a failed repair: %d, want 204", code)
 			}
+			r.noToken(p.ID, run)
 			if mode == "refuse" {
 				if len(r.tr.bundles) != 0 || !strings.Contains(s.Output, "nothing was sent") {
 					t.Fatalf("refuse: bundle built or output %q", s.Output)

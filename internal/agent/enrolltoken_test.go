@@ -260,3 +260,30 @@ func testCAPEM(t *testing.T) string {
 	}
 	return string(l.CA().CertPEM)
 }
+
+// A credential that cannot be stored is not used (review n1 of #295):
+// the enrollment fails and the old credential stays in memory.
+func TestOneShotTokenStoreFailureKeepsCredential(t *testing.T) {
+	e := newOneShotEnv(t)
+	rt, err := e.ctl.NewRepairToken(context.Background(), "web1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := newClient(Config{URL: e.srv.URL, CA: string(e.ctl.CA().CertPEM)}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{client: c, cred: "old.cred", log: slog.New(slog.NewTextHandler(e.log, nil)),
+		state:   stateDir{dir: filepath.Join(notDir, "state")}, // a file as parent: every write fails
+		oneShot: &oneShot{token: rt.Token, at: time.Now()}}
+	if a.tryOneShot(context.Background()) || a.credential() != "old.cred" || a.oneShot != nil {
+		t.Fatalf("store failure: cred %q, one-shot %v", a.credential(), a.oneShot)
+	}
+	if strings.Contains(e.log.String(), rt.Token) {
+		t.Fatal("the log holds the token")
+	}
+}
