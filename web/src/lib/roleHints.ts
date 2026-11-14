@@ -52,6 +52,7 @@ export const ROLE_HINTS: Record<Role, RoleHint> = {
       "changeSettings",
       "createInstallCommand",
       "rotateRepairKey",
+      "forgetAgent",
     ],
   },
 };

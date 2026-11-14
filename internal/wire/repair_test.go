@@ -77,10 +77,19 @@ func TestRepairReportLimits(t *testing.T) {
 		"bad key":       {SSHD: good.SSHD, HostKeys: []string{"MD5:aa"}},
 		"bad line":      {SSHD: good.SSHD, Lines: []string{"../x"}},
 		"control chars": {SSHD: good.SSHD, Lines: []string{"a\n"}},
+		// T-207: a type only for a listed key, only of the list.
+		"type of an unlisted key": {SSHD: good.SSHD, HostKeys: []string{fp}, HostKeyTypes: map[string]string{"SHA256:" + strings.Repeat("B", 43): "ssh-ed25519"}},
+		"unknown type":            {SSHD: good.SSHD, HostKeys: []string{fp}, HostKeyTypes: map[string]string{fp: "ssh-dss"}},
+		"text as type":            {SSHD: good.SSHD, HostKeys: []string{fp}, HostKeyTypes: map[string]string{fp: "ssh-ed25519\n"}},
 	} {
 		if CheckRepairReport(&r) == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	typed := good
+	typed.HostKeyTypes = map[string]string{fp: "ssh-ed25519"}
+	if err := CheckRepairReport(&typed); err != nil {
+		t.Fatalf("typed: %v", err)
 	}
 	if CheckRepairReport(nil) == nil {
 		t.Error("nil accepted")

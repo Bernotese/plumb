@@ -297,9 +297,10 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	eng, err = plan.New(plan.Config{
 		Restore: restore,
 		Store:   st, Events: events, Agents: lk, Driver: drv, Secrets: secrets, Logger: log,
-		OnDrift:    func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
-		OnPlanDone: func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
-		AddrStable: devAddrStable(f.devDemo), DiskLimitPercent: limit,
+		OnDrift:         func(ctx context.Context, target string, rep wire.Report) error { return iss.Intake(ctx, target, rep) },
+		OnTargetDeleted: func(ctx context.Context, target, reason string) error { return iss.TargetDeleted(ctx, target, reason) },
+		OnPlanDone:      func(ctx context.Context, id int64, ok bool) { iss.PlanDone(ctx, id, ok) },
+		AddrStable:      devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
 		// The transport comes with T-191; without it a repair is not ready.
 		Repair: repairConfig(ctx, log, rep, lk, agentURL(f.hosts, f.agentListen)),
@@ -572,8 +573,8 @@ func agentURL(hosts []string, listen string) string {
 }
 
 // proxmoxView maps the driver's view to the API view; an empty value is
-// null. The backup storage is not known to the controller (the copy timer
-// runs on the host), so it is null.
+// null. The backup storage is not in the driver's view (the copy timer
+// runs on the host): the API fills it from the copy status (T-208).
 func proxmoxView(v proxmox.View) *api.ProxmoxView {
 	opt := func(s string) *string {
 		if s == "" {

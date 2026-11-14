@@ -239,6 +239,9 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
       (await call<{ items: UnmanagedGuest[] }>("GET", "/guests/unmanaged")).items,
     adoptTarget: (name, req) =>
       call<Plan>("POST", `/targets/${encodeURIComponent(name)}/adopt`, req),
+    forgetAgent: async (vmid) => {
+      await call<undefined>("POST", `/guests/unmanaged/${vmid}/forget-agent`);
+    },
     rotateRepairKey: (revokeOld) =>
       call<RepairKeyView>(
         "POST",

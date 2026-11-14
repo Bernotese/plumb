@@ -175,6 +175,12 @@ const TargetDeletedReason = "the Target was deleted"
 // binding and the guest stays in unknown_guests. An error is only
 // logged: the delete is done.
 func (e *Engine) targetDeleted(ctx context.Context, target string) {
+	// Every open Issue and mark of the Target ends (T-209 sweep).
+	if e.cfg.OnTargetDeleted != nil {
+		if err := e.cfg.OnTargetDeleted(ctx, target, TargetDeletedReason); err != nil {
+			e.log.Warn("end the Issues of a deleted Target", "target", target, "err", err)
+		}
+	}
 	if !e.cfg.Restore.Restored() {
 		return
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // T-195 (T-191 part), mutant T7: after a host key refusal the Run stops.
@@ -39,8 +40,17 @@ func TestRepairQAHostKeyErrorStopsDialling(t *testing.T) {
 	if !errors.Is(err, ErrHostKey) || sent {
 		t.Fatalf("err %v sent %v", err, sent)
 	}
-	if len(dialed) != 1 {
-		t.Fatalf("dialled after the host key refusal: %v", dialed)
+	// The report has no key types (an agent before T-207), so the session
+	// tries each host key type on the same address (T-207); it never
+	// dials the next address.
+	// At most one dial per host key type (review of #310).
+	if len(dialed) == 0 || len(dialed) > len(wire.HostKeyTypeList) {
+		t.Fatalf("dials: %v", dialed)
+	}
+	for _, a := range dialed {
+		if !strings.HasPrefix(a, "192.0.2.50:") {
+			t.Fatalf("dialled after the host key refusal: %v", dialed)
+		}
 	}
 	if len(f.stdin) != 0 {
 		t.Fatal("bytes reached the guest")

@@ -41,6 +41,10 @@ type Delivery struct {
 	Target  string
 	AgentID string
 	Report  wire.Report
+	// CommandType is the type of the command of a result or progress
+	// report: link sent that command id to this target's agent (T-210).
+	// Empty for other reports.
+	CommandType wire.CommandType
 }
 
 // Config configures a Link.
@@ -257,6 +261,9 @@ func hashSecret(s string) string {
 func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string, expires time.Time, err error) {
 	if target == "" {
 		return "", time.Time{}, errors.New("link: token needs a target")
+	}
+	if err := l.checkTokenParked(ctx, target); err != nil {
+		return "", time.Time{}, err
 	}
 	token = secret(32)
 	expires = l.now().Add(TokenTTL)
@@ -505,6 +512,11 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	parked, err := l.parkedAgent(r.Context(), agent)
+	if err != nil {
+		storeUnavailable(w)
+		return
+	}
 	timer := time.NewTimer(time.Duration(wait) * time.Second)
 	defer timer.Stop()
 	for {
@@ -516,6 +528,10 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ts.lastPoll = now
+		if parked {
+			// D-396: a parked agent gets unbind and nothing else.
+			ts.queue = slices.DeleteFunc(ts.queue, func(c wire.Command) bool { return c.Type != wire.CommandUnbind })
+		}
 		if len(ts.queue) > 0 {
 			cmd := ts.queue[0]
 			ts.queue = ts.queue[1:]
@@ -586,8 +602,16 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 		default:
 			return "", fmt.Errorf("link: update needs a wire.UpdateBody, got %T", body)
 		}
+	case wire.CommandUnbind:
+		// The agent of a deleted adopted Target removes itself (D-388).
+		if build {
+			return "", fmt.Errorf("link: no unbind for the build guest %q", target)
+		}
 	default:
 		return "", fmt.Errorf("link: unknown command type %q", typ)
+	}
+	if err := l.checkSendParked(target, typ); err != nil {
+		return "", err
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -642,6 +666,30 @@ func (l *Link) Taken(target, id string) bool {
 	}
 	_, taken := ts.outstanding[id]
 	return taken
+}
+
+// Queued reports whether a command of typ waits in the queue of target
+// (sent, not yet taken by a poll). A queued unbind stays until the agent
+// polls it or the target is revoked (T-210).
+func (l *Link) Queued(target string, typ wire.CommandType) bool {
+	return l.QueuedCount(target, typ) > 0
+}
+
+// QueuedCount is the number of queued commands of typ for target.
+func (l *Link) QueuedCount(target string, typ wire.CommandType) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ts, ok := l.targets[target]
+	if !ok {
+		return 0
+	}
+	n := 0
+	for _, c := range ts.queue {
+		if c.Type == typ {
+			n++
+		}
+	}
+	return n
 }
 
 // Online reports whether the target polled in the last 90 seconds.
@@ -700,6 +748,10 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateReport(rep, strings.HasPrefix(agent.Target, wire.BuildLinkPrefix)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// D-396: a parked agent only sends the result of its unbind.
+	if l.parkedReport(w, r, agent, rep) {
 		return
 	}
 	if rep.Type == wire.ReportConfirm {
@@ -825,7 +877,7 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if l.cfg.OnReport != nil {
-		if err := l.cfg.OnReport(r.Context(), Delivery{Target: agent.Target, AgentID: agent.ID, Report: rep}); err != nil {
+		if err := l.cfg.OnReport(r.Context(), Delivery{Target: agent.Target, AgentID: agent.ID, Report: rep, CommandType: cmdType}); err != nil {
 			if errors.Is(err, ErrTooOften) {
 				w.Header().Set("Retry-After", "30")
 				writeError(w, http.StatusTooManyRequests, "address list changed too often")

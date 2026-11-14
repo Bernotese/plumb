@@ -23,6 +23,11 @@ describe("adopt a guest of the pool", () => {
     expect(rows()[0]).toMatch(/wiki.*9123.*VM.*adoptable/);
     expect(text(el("#guest-9124-state"))).toContain("it is a privileged container");
     expect(text(el("#guest-9124-state"))).toContain("the disks do not fit a Target");
+    // T-210 (F11): a parked agent is a reason, in words, not the raw code.
+    expect(text(el("#guest-9124-state"))).toContain(
+      "the Plumb agent of a deleted Target is still in it",
+    );
+    expect(text(el("#guest-9124-state"))).not.toContain("agent-left");
     expect(button("Adopt wiki (9123)")).toBeDefined();
     expect(button("Adopt old-db (9124)")).toBeUndefined();
   });

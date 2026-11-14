@@ -98,6 +98,9 @@ func fixtureNginx(t *testing.T, preinstalled bool) (*httptest.Server, string, st
 		OnDrift: func(ctx context.Context, target string, rep wire.Report) error {
 			return issues.Intake(ctx, target, rep)
 		},
+		OnTargetDeleted: func(ctx context.Context, target, reason string) error {
+			return issues.TargetDeleted(ctx, target, reason)
+		},
 		OnPlanDone:    func(ctx context.Context, id int64, ok bool) { issues.PlanDone(ctx, id, ok) },
 		EnrollTimeout: 10 * time.Second, ObserveTimeout: 5 * time.Second, ApplyTimeout: 5 * time.Second,
 	})

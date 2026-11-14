@@ -48,9 +48,9 @@ func TestMigrationsCreateSliceTables(t *testing.T) {
 	// The exact list of ARCHITECTURE §3, plus the secret store of
 	// migration 0003 (D-087).
 	want := []string{
-		"agent", "api_token", "backup_run", "binding", "doc", "enroll_token", "event", "foreign_guest", "guest_host_key", "guest_value", "guest_value_flag", "ignored_drift", "image_schedule", "image_version", "issue", "issue_comment", "issue_ignore",
+		"agent", "api_token", "backup_run", "binding", "binding_seq", "doc", "enroll_token", "event", "foreign_guest", "guest_host_key", "guest_value", "guest_value_flag", "ignored_drift", "image_schedule", "image_version", "issue", "issue_comment", "issue_ignore",
 		"key_check", "plan", "plan_guest_data", "repair_key", "repair_report", "restore_state", "revision", "revision_doc", "run", "run_step", "secret", "secret_counter",
-		"session", "setting", "user",
+		"session", "setting", "unbind_pending", "user",
 	}
 	rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {

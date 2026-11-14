@@ -97,24 +97,115 @@ func (s *Service) Send(ctx context.Context, rs plan.RepairSend) (int, bool, erro
 	if err != nil {
 		return 0, false, err
 	}
+	types := hostKeyTypesToTry(pins, rs.AcceptHostKey, st.HostKeyTypes)
+	if len(types) == 0 {
+		return 0, false, ErrHostKey // no pin and nothing accepted
+	}
 	var lastErr error
 	for _, a := range addrs {
-		exit, sent, err := s.session(ctx, net.JoinHostPort(a, strconv.Itoa(*st.Port)), signer, pins, shared, rs, guest)
-		if err == nil || sent || errors.Is(err, ErrHostKey) {
-			return exit, sent, err
+		addr := net.JoinHostPort(a, strconv.Itoa(*st.Port))
+		var keyErr error
+		for _, typ := range types {
+			exit, sent, err := s.session(ctx, addr, signer, pins, shared, rs, guest, hostKeyAlgorithms(typ))
+			var se *sharedKeyError
+			switch {
+			case err == nil || sent || errors.As(err, &se):
+				return exit, sent, err
+			case errors.Is(err, errConnect):
+				lastErr = err
+			case errors.Is(err, ErrHostKey):
+				// The key of this type is not pinned: try the next type.
+				keyErr = err
+				continue
+			case isNoHostKeyType(err):
+				// The guest has no key of this type: like a key that is
+				// not pinned, unless another type matches.
+				keyErr = ErrHostKey
+				continue
+			default:
+				// Another handshake error: try the next type.
+				lastErr = err
+				continue
+			}
+			break // connect failed: next address
 		}
-		lastErr = err
+		if keyErr != nil {
+			return 0, false, keyErr
+		}
 	}
 	return 0, false, lastErr
 }
 
+// isNoHostKeyType reports a handshake that failed because the guest has
+// no host key of the offered algorithms.
+func isNoHostKeyType(err error) bool {
+	var ne *ssh.AlgorithmNegotiationError
+	return errors.As(err, &ne) && ne.What == "host key"
+}
+
+// errConnect marks a failed TCP connect: the next address, not the next
+// host key type.
+var errConnect = errors.New("connect")
+
+// sharedKeyError: the guest showed a host key that is pinned for another
+// Target. It stops the Run at once (review S3 of #298).
+type sharedKeyError struct{ err error }
+
+func (e *sharedKeyError) Error() string { return e.err.Error() }
+func (e *sharedKeyError) Unwrap() error { return e.err }
+
+// hostKeyTypesToTry are the host key types that a session may offer, in
+// the order of wire.HostKeyTypeList (T-207): the types of the pinned keys
+// and of the accepted one, so the key the guest shows is one of those.
+// A key of unknown type (reported by an agent before T-207) means every
+// type; the callback still checks each key against the pins.
+func hostKeyTypesToTry(pins []string, accept string, types map[string]string) []string {
+	keys := append([]string{}, pins...)
+	if accept != "" {
+		keys = append(keys, accept)
+	}
+	want := map[string]bool{}
+	for _, fp := range keys {
+		typ := types[fp]
+		if !wire.ValidHostKeyType(typ) {
+			return wire.HostKeyTypeList
+		}
+		want[typ] = true
+	}
+	out := []string{}
+	for _, typ := range wire.HostKeyTypeList {
+		if want[typ] {
+			out = append(out, typ)
+		}
+	}
+	return out
+}
+
+// hostKeyAlgorithms are the SSH host key algorithms of a key type.
+func hostKeyAlgorithms(typ string) []string {
+	switch typ {
+	case "ssh-ed25519":
+		return []string{ssh.KeyAlgoED25519}
+	case "ecdsa-sha2-nistp256":
+		return []string{ssh.KeyAlgoECDSA256}
+	case "ecdsa-sha2-nistp384":
+		return []string{ssh.KeyAlgoECDSA384}
+	case "ecdsa-sha2-nistp521":
+		return []string{ssh.KeyAlgoECDSA521}
+	case "ssh-rsa":
+		return []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
+	}
+	return nil
+}
+
 // session runs one SSH session on addr.
-func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, pins []string, shared map[string]string, rs plan.RepairSend, guest string) (int, bool, error) {
+// algos are the host key algorithms it offers (T-207).
+func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, pins []string, shared map[string]string, rs plan.RepairSend, guest string, algos []string) (int, bool, error) {
 	dctx, cancel := context.WithTimeout(ctx, s.cfg.ConnectTimeout)
 	conn, err := s.cfg.Dial(dctx, addr)
 	cancel()
 	if err != nil {
-		return 0, false, fmt.Errorf("repair: connect %s: %w", addr, err)
+		return 0, false, fmt.Errorf("repair: %w %s: %w", errConnect, addr, err)
 	}
 	defer conn.Close()
 	// The handshake (with the banner and the version line of the guest) is
@@ -132,7 +223,7 @@ func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, p
 			if other, ok := shared[fp]; ok {
 				// The same host key is pinned for another Target: this may
 				// be that guest (review S3 of #298).
-				hostKeyErr = fmt.Errorf("%w: the host key %s is pinned for Target %s too", ErrHostKey, fp, other)
+				hostKeyErr = &sharedKeyError{fmt.Errorf("%w: the host key %s is pinned for Target %s too", ErrHostKey, fp, other)}
 				return hostKeyErr
 			}
 			if contains(pins, fp) {
@@ -145,8 +236,9 @@ func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, p
 			hostKeyErr = ErrHostKey
 			return ErrHostKey
 		},
-		BannerCallback: func(string) error { return nil }, // guest text: never shown or logged
-		Timeout:        s.cfg.ConnectTimeout,
+		BannerCallback:    func(string) error { return nil }, // guest text: never shown or logged
+		Timeout:           s.cfg.ConnectTimeout,
+		HostKeyAlgorithms: algos,
 	}
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
@@ -202,6 +294,15 @@ func (s *Service) session(ctx context.Context, addr string, signer ssh.Signer, p
 
 // CheckAcceptHostKey implements plan.HostKeyChecker (review S3 of #298).
 func (s *Service) CheckAcceptHostKey(ctx context.Context, target, fp string) error {
+	// Only a key that this Target's agent reported and that is not pinned
+	// yet (T-207): never a fingerprint from elsewhere.
+	st, err := s.Status(ctx, target)
+	if err != nil {
+		return err
+	}
+	if st == nil || !contains(st.HostKeysSeen, fp) {
+		return fmt.Errorf("the agent of %s never reported the host key %s as new; accept only a key of host_keys_seen", target, fp)
+	}
 	owners, err := s.cfg.Store.HostKeyOwners(ctx, []string{fp}, target)
 	if err != nil {
 		return err

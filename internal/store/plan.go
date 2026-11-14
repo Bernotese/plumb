@@ -51,6 +51,9 @@ type Run struct {
 	// WaitsForRestart is the number of changes that the steps recorded
 	// with waits_for_restart (D-195). Set by FinishRun.
 	WaitsForRestart int
+	// Warnings is the number of steps that ended `warning` (D-396): the
+	// Run succeeded, but left something for a person. Set by FinishRun.
+	Warnings int
 }
 
 // Step is one resource of one target in a Run.
@@ -311,8 +314,8 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 	var started string
 	var finished sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, plan_id, revision_id, status, started_at, finished_at, waits_for_restart FROM run WHERE id = ?`, id).
-		Scan(&r.ID, &r.PlanID, &r.RevisionID, &r.Status, &started, &finished, &r.WaitsForRestart)
+		`SELECT id, plan_id, revision_id, status, started_at, finished_at, waits_for_restart, warnings FROM run WHERE id = ?`, id).
+		Scan(&r.ID, &r.PlanID, &r.RevisionID, &r.Status, &started, &finished, &r.WaitsForRestart, &r.Warnings)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, ErrNotFound
 	}
@@ -329,7 +332,9 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 // FinishRun sets the final status of a Run and the number of its
 // changes that wait for a restart (D-195).
 func (s *Store) FinishRun(ctx context.Context, id int64, status string, waits int) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE run SET status = ?, finished_at = ?, waits_for_restart = ? WHERE id = ? AND status = 'running'`,
+	_, err := s.db.ExecContext(ctx, `UPDATE run SET status = ?, finished_at = ?, waits_for_restart = ?,
+		warnings = (SELECT count(*) FROM run_step WHERE run_id = ?4 AND status = 'warning')
+		WHERE id = ?4 AND status = 'running'`,
 		status, s.now(), waits, id)
 	return err
 }
@@ -411,7 +416,19 @@ type Binding struct {
 	// pending. It is stored as the entry RootGrowAttr of the waiting
 	// column (no migration) and is never in Waiting.
 	RootGrow int
+	// Gen is the generation of the binding (T-209): new for a new binding
+	// and for a new ref, never reused. Set by the store; PutBinding
+	// ignores it.
+	Gen int64
 }
+
+// GuestKey is the identity of the guest of one binding generation
+// ("<ref>@<gen>"): host key pins and repair reports belong to it (T-209).
+func (b Binding) GuestKey() string { return fmt.Sprintf("%s@%d", b.Ref, b.Gen) }
+
+// liveGuestSQL is true for a guest_host_key or repair_report row (alias
+// r) whose binding generation is the current one.
+const liveGuestSQL = `EXISTS (SELECT 1 FROM binding b WHERE b.kind = 'Target' AND b.name = r.target AND r.guest_id = b.ref || '@' || b.gen)`
 
 // RootGrowAttr is the waiting entry that holds Binding.RootGrow.
 const RootGrowAttr = "root_fs"
@@ -436,10 +453,42 @@ func (s *Store) PutBinding(ctx context.Context, b Binding) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO binding (kind, name, ref, digest, waiting, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (kind, name) DO UPDATE SET ref = excluded.ref, digest = excluded.digest, waiting = excluded.waiting, updated_at = excluded.updated_at`,
-		b.Kind, b.Name, b.Ref, b.Digest, waiting, s.now())
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		// A new binding, or a new guest under the name, gets a new
+		// generation, and the pins and the report of the old one go
+		// (T-209). The same ref keeps it (a digest or waiting update).
+		var oldRef string
+		var gen int64
+		err := tx.QueryRowContext(ctx, `SELECT ref, gen FROM binding WHERE kind = ? AND name = ?`, b.Kind, b.Name).Scan(&oldRef, &gen)
+		switch {
+		case errors.Is(err, sql.ErrNoRows) || (err == nil && oldRef != b.Ref):
+			if err := tx.QueryRowContext(ctx, `UPDATE binding_seq SET next = next + 1 WHERE id = 1 RETURNING next - 1`).Scan(&gen); err != nil {
+				return err
+			}
+			if b.Kind == "Target" {
+				if err := dropGuestRows(ctx, tx, b.Name); err != nil {
+					return err
+				}
+			}
+		case err != nil:
+			return err
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO binding (kind, name, ref, digest, waiting, updated_at, gen) VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (kind, name) DO UPDATE SET ref = excluded.ref, digest = excluded.digest, waiting = excluded.waiting,
+			   updated_at = excluded.updated_at, gen = excluded.gen`,
+			b.Kind, b.Name, b.Ref, b.Digest, waiting, s.now(), gen)
+		return err
+	})
+}
+
+// dropGuestRows removes the host key pins and the repair report of a
+// Target name (T-209): they belong to a binding that ends.
+func dropGuestRows(ctx context.Context, tx *sql.Tx, target string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM guest_host_key WHERE target = ?`, target); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM repair_report WHERE target = ?`, target)
 	return err
 }
 
@@ -477,8 +526,8 @@ func scanWaiting(raw string, b *Binding) error {
 func (s *Store) GetBinding(ctx context.Context, kind, name string) (Binding, error) {
 	b := Binding{Kind: kind, Name: name}
 	var waiting string
-	err := s.db.QueryRowContext(ctx, `SELECT ref, digest, waiting FROM binding WHERE kind = ? AND name = ?`, kind, name).
-		Scan(&b.Ref, &b.Digest, &waiting)
+	err := s.db.QueryRowContext(ctx, `SELECT ref, digest, waiting, gen FROM binding WHERE kind = ? AND name = ?`, kind, name).
+		Scan(&b.Ref, &b.Digest, &waiting, &b.Gen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Binding{}, ErrNotFound
 	}
@@ -497,15 +546,18 @@ func (s *Store) DeleteBinding(ctx context.Context, kind, name string) error {
 		if kind != "Target" {
 			return nil
 		}
-		// A foreign mark belongs to the binding (D-322).
-		_, err := tx.ExecContext(ctx, `DELETE FROM foreign_guest WHERE target = ?`, name)
-		return err
+		// A foreign mark belongs to the binding (D-322), and so do the
+		// host key pins and the repair report (T-209).
+		if _, err := tx.ExecContext(ctx, `DELETE FROM foreign_guest WHERE target = ?`, name); err != nil {
+			return err
+		}
+		return dropGuestRows(ctx, tx, name)
 	})
 }
 
 // Bindings returns all bindings of a kind, ordered by name.
 func (s *Store) Bindings(ctx context.Context, kind string) ([]Binding, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, ref, digest, waiting FROM binding WHERE kind = ? ORDER BY name`, kind)
+	rows, err := s.db.QueryContext(ctx, `SELECT name, ref, digest, waiting, gen FROM binding WHERE kind = ? ORDER BY name`, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +566,7 @@ func (s *Store) Bindings(ctx context.Context, kind string) ([]Binding, error) {
 	for rows.Next() {
 		b := Binding{Kind: kind}
 		var waiting string
-		if err := rows.Scan(&b.Name, &b.Ref, &b.Digest, &waiting); err != nil {
+		if err := rows.Scan(&b.Name, &b.Ref, &b.Digest, &waiting, &b.Gen); err != nil {
 			return nil, err
 		}
 		if err := scanWaiting(waiting, &b); err != nil {

@@ -58,6 +58,7 @@ export function buildRuns(): Run[] {
     started_at: start,
     finished_at: end,
     waits_for_restart: 0,
+    warnings: 0,
     targets: [],
     images,
   });
