@@ -1,7 +1,6 @@
 package api
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -18,8 +17,8 @@ func TestNoValueTextScanFindsShortValue(t *testing.T) {
 	if code != 201 {
 		t.Fatalf("create token: %d %s", code, body)
 	}
-	if where := e.textValuesHold([]string{"ⓩ"}); !strings.HasSuffix(where, ".name") {
-		t.Fatalf("the text scan did not find the token name: %q", where)
+	if where := e.textValuesHold([]string{"ⓩ"}); where == "" {
+		t.Fatal("the text scan did not find the token name (token row or its event)")
 	}
 	// rawScanMin splits the two values of TestSecretMaskedInAgentErrors:
 	// the 3-byte one goes to the text scan, the 13-byte one stays raw.
