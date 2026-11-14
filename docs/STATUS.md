@@ -66,14 +66,14 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-148 slice 5 C4: copy rule for guest-reported values (D-331, migration 0018) | pl-backend | merged (PR #248), D-352, D-353. The red race job was real: writer starvation by back-to-back write txs (fixed, measured in CI) |
 | T-163 copy rule: write load of hostile guests | pl-codex-fix | merged (PR #256). Open for slice 6: per-agent rate limit for drift reports |
 | T-150 slice 5 C6: generic safe apply + resource `network` | pl-backend | merged (PR #249), D-354 … D-357. CI guest test in both cloud VMs: 6 steps incl. forced rollback and timer restore without the agent |
-| T-164 `network`: low review notes of #249 + review of the late route-wait fix | pl-backend | in work |
-| T-152 slice 5 C8: signed checksums | pl-architect (implementer) | part A merged (PR #247); part B: PR #255, review fix P1 done, push after #249 |
+| T-164 `network`: review notes of #249 + boot unit `plumb-agent-network.service` (D-358) | pl-backend | PR #261, review passed, waits for CI |
+| T-152 slice 5 C8: signed checksums | pl-architect (implementer) | merged: part A (PR #247), part B (PR #255, migration 0019); small follow-up PR (dead future-signature check) in work |
 | T-154 slice 5 C9b: web (catalogue, users page, role-aware buttons, Image `verify`) | pl-frontend | merged (PR #252); "Refresh base" tested on the mock only until T-152 part B |
 | T-157 slice 5 C12: QA | pl-codex-qa | part 1 merged (PR #251), part 2 merged (PR #257: copy rule 17/17 mutants killed); open: `internal/trust` + network rollback audits |
 | T-161 dev demo: `motd` matches the starter catalogue | pl-codex-fix | merged (PR #253) |
 | T-162 agent link: store error gives 503 + retry, not 401 (an agent drops its credential on 401) | pl-codex-fix | merged (PR #254) |
-| T-151 slice 5 C7: resource `group` | pl-codex-fix | in work |
-| T-156 slice 5 C11: starter Block `network` | pl-frontend | in work |
+| T-151 slice 5 C7: resource `group` | pl-codex-fix | PR #258, review passed, waits for CI |
+| T-156 slice 5 C11: starter Block `network` | pl-frontend | PR #259, review passed, waits for CI |
 | Slice 5, not started yet: T-158 C13 host acceptance, T-159 C14 README | – | waits for its dependencies (plan T-138) |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
