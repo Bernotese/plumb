@@ -26,7 +26,7 @@ func (r *rollbackQARunner) Run(_ context.Context, name string, args ...string) (
 func TestNetworkRollbackQA(t *testing.T) {
 	for _, previous := range []string{"", "confirmed network\n"} {
 		t.Run(previous, func(t *testing.T) {
-			root := t.TempDir()
+			root := guestRoot(t)
 			run := &rollbackQARunner{fail: true}
 			env := NewEnv(root, run)
 			env.StateDir = t.TempDir()
