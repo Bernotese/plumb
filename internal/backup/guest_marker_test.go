@@ -111,7 +111,8 @@ func TestClassifyAndRetention(t *testing.T) {
 }
 
 func TestVolumeIDStable(t *testing.T) {
-	if VolumeID("a") != VolumeID("a") || VolumeID("a") == VolumeID("b") {
+	a1, a2, b := VolumeID("a"), VolumeID("a"), VolumeID("b")
+	if a1 != a2 || a1 == b {
 		t.Fatal("unstable id")
 	}
 }
