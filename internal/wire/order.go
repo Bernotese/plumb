@@ -110,6 +110,25 @@ func Order(list []Resource) ([][]Edge, error) {
 		last[r.Block] = i
 	}
 	for i, r := range list {
+		// Only present groups are prerequisites. Removal keeps the explicit order.
+		if r.Type == "user" && r.Attrs[AttrState] != StateAbsent {
+			var names []string
+			switch v := r.Attrs["groups"].(type) {
+			case []string:
+				names = v
+			case []any:
+				for _, n := range v {
+					if name, ok := n.(string); ok {
+						names = append(names, name)
+					}
+				}
+			}
+			for _, name := range names {
+				if to, ok := byID[ID("group", name)]; ok && list[to].Attrs[AttrState] != StateAbsent {
+					add(i, to, EdgeAfter)
+				}
+			}
+		}
 		if r.Type == "service" {
 			for _, id := range RestartOn(r) {
 				if to, ok := byID[id]; ok && to != i {

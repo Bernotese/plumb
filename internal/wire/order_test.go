@@ -276,3 +276,36 @@ func TestResourceAfterJSON(t *testing.T) {
 		t.Errorf("after round trip: %s → %#v", b, back.After)
 	}
 }
+
+func TestUserGroupOrder(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		for _, state := range []string{StatePresent, StateAbsent} {
+			u, g := res("user:person", "user"), res("group:team", "group")
+			u.Attrs["groups"] = []any{"team", "unmanaged"}
+			if native {
+				u.Attrs["groups"] = []string{"team", "unmanaged"}
+			}
+			g.Attrs[AttrState] = state
+			edges, err := Order([]Resource{u, g})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if state == StateAbsent {
+				want = 0
+			}
+			if len(edges[0]) != want || len(edges[1]) != 0 {
+				t.Fatalf("state %s edges: %+v", state, edges)
+			}
+			if want == 1 && (edges[0][0].To != 1 || edges[0][0].Kind != EdgeAfter) {
+				t.Fatal(edges)
+			}
+			// Explicit after duplicates the inferred edge; it must not create a cycle.
+			u.After = []string{g.ID}
+			edges, err = Order([]Resource{g, u})
+			if err != nil || len(edges[1]) != 1 {
+				t.Fatalf("explicit: %+v %v", edges, err)
+			}
+		}
+	}
+}
