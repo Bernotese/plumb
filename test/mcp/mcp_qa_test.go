@@ -13,9 +13,16 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	plumbmcp "github.com/Bernotese/plumb/internal/mcp"
 )
+
+// archTools is the tool table of ARCHITECTURE §18 (D-364), copied by hand:
+// the test compares the server with the document, not with ToolNames.
+var archTools = []string{
+	"list_targets", "get_target", "list_issues", "get_issue", "list_plans", "get_plan",
+	"list_runs", "get_run", "list_revisions", "diff_revision",
+	"list_blocks", "get_block", "list_images", "get_image", "list_catalog",
+	"events_since", "propose", "resolve_issue", "reenroll", "drop_plan", "comment_issue",
+}
 
 // tierToken makes an API token of tier with the dev login session.
 func tierToken(t *testing.T, base, login, tier string) string {
@@ -56,7 +63,7 @@ func TestQAToolSetPerTier(t *testing.T) {
 	bin := plumbBinary(t)
 	base, login := devServer(t, bin)
 	waitSeed(t, base, login)
-	want := slices.Clone(plumbmcp.ToolNames)
+	want := slices.Clone(archTools)
 	slices.Sort(want)
 	for _, tier := range []string{"read", "plan", "apply"} {
 		t.Run(tier, func(t *testing.T) {

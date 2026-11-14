@@ -5,11 +5,40 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// archTools is the tool table of ARCHITECTURE §18 (D-364), copied by hand:
+// the test compares the server with the document, not with ToolNames.
+var archTools = []string{
+	"list_targets", "get_target", "list_issues", "get_issue", "list_plans", "get_plan",
+	"list_runs", "get_run", "list_revisions", "diff_revision",
+	"list_blocks", "get_block", "list_images", "get_image", "list_catalog",
+	"events_since", "propose", "resolve_issue", "reenroll", "drop_plan", "comment_issue",
+}
+
+// The server's tool set is exactly the documented one.
+func TestQAToolNamesMatchArchitecture(t *testing.T) {
+	cs := session(t, newFakeAPI(t, okJSON(`{}`)))
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, tl := range res.Tools {
+		got = append(got, tl.Name)
+	}
+	want := slices.Clone(archTools)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("tools %v, want the ARCHITECTURE §18 list %v", got, want)
+	}
+}
 
 // validArgs are arguments that pass the input checks of each tool, so the
 // call reaches the API (T-186 QA).
@@ -57,7 +86,7 @@ func TestQATokenNeverInToolOutput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFakeAPI(t, h)
 			cs := session(t, f)
-			for _, tool := range ToolNames {
+			for _, tool := range archTools {
 				res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: validArgs[tool]})
 				text := ""
 				if err != nil {
@@ -78,8 +107,8 @@ func TestQATokenNeverInToolOutput(t *testing.T) {
 			f.mu.Lock()
 			n := len(f.calls)
 			f.mu.Unlock()
-			if n != len(ToolNames) {
-				t.Fatalf("%d API calls for %d tools: %v", n, len(ToolNames), f.calls)
+			if n != len(archTools) {
+				t.Fatalf("%d API calls for %d tools: %v", n, len(archTools), f.calls)
 			}
 		})
 	}

@@ -21,7 +21,7 @@ import (
 
 // The environment of this test binary (T-186): a foreign CA in the system
 // trust (SSL_CERT_FILE; Go reads it at the first use of the system pool,
-// so init sets it). plumb mcp must trust only its pinned CA (D-364).
+// so TestMain sets it). plumb mcp must trust only its pinned CA (D-364).
 var foreignCA *testCA
 
 type testCA struct {
@@ -50,7 +50,9 @@ func (ca *testCA) serverCert() tls.Certificate {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-func init() {
+// TestMain puts a foreign CA into the system trust of this test binary
+// before any test runs, and removes its temp dir at the end.
+func TestMain(m *testing.M) {
 	foreignCA = newCA("foreign")
 	dir, err := os.MkdirTemp("", "mcp-qa-")
 	if err != nil {
@@ -62,6 +64,9 @@ func init() {
 	}
 	os.Setenv("SSL_CERT_FILE", f)
 	os.Setenv("SSL_CERT_DIR", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func tlsServer(t *testing.T, ca *testCA) *httptest.Server {
