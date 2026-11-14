@@ -13,6 +13,7 @@ Slice 6 part A, child card **A12** of T-172. Second opinion on part A by tests.
 ## Acceptance criteria
 - [ ] Everything row A12 of the plan lists; touch only the files that row gives you. If you need another file, ask `pl-lead` first.
 - [ ] The list of row A12. Plus from the review of #277: a test that ENOBUFS on the netlink socket triggers a check, and a test of the port-0 (kernel-only) filter that runs in CI without a netlink send (both mutants survived).
+- [ ] From the review of #281: a case with a non-sensitive report on a writeOnly (secret) parameter → Accept to that parameter is refused (two guards survived mutants).
 - [ ] Commit before each mutant; count build failures; small PRs; log `docs/tasks/T-186.log.md`.
 - [ ] A card that adds an API operation updates `web/src/lib/roleHints.ts`, the tier test and the contract marks in the same PR. A new resource type or attribute gets the opaque/guest-value classification test (D-359).
 - [ ] No new token right. New decisions only with numbers from `pl-lead`, in `docs/decisions/T-186.md`.
