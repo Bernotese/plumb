@@ -133,6 +133,9 @@ type planView struct {
 	Warnings     []string         `json:"warnings"`
 	// Images: builds and removals (D-199); missing means none.
 	Images []imagePlanView `json:"images,omitempty"`
+	// Pins: the pin changes of a pin_refresh Plan (D-335); missing for
+	// other origins.
+	Pins []pinRefreshView `json:"pins,omitempty"`
 	// The copy rule (D-331, D-352); missing means none.
 	GuestDataIssues  []int64               `json:"guest_data_issues,omitempty"`
 	GuestDataMatches []plan.GuestDataMatch `json:"guest_data_matches,omitempty"`
@@ -144,10 +147,14 @@ func (s *Server) planView(ctx context.Context, p store.Plan) (planView, error) {
 		ApprovedBy: nullString(p.ApprovedBy), ApprovedAt: utc(p.ApprovedAt), HumanOnly: append([]string{}, p.HumanOnly...), Targets: []targetPlanView{}, Warnings: []string{}}
 	// Warnings of the origin, for example the secrets an import wrote (D-095).
 	var prop struct {
-		Notes []string `json:"notes"`
+		Notes []string          `json:"notes"`
+		Pins  []plan.PinRefresh `json:"pins"`
 	}
 	if json.Unmarshal(p.Proposal, &prop) == nil {
 		v.Warnings = append(v.Warnings, prop.Notes...)
+		for _, pin := range prop.Pins { // D-335; only RefreshPin stores them
+			v.Pins = append(v.Pins, viewPin(pin))
+		}
 	}
 	if run, err := s.st.RunOfPlan(ctx, p.ID); err == nil {
 		v.RunID, v.Revision = &run.ID, &run.RevisionID

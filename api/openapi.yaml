@@ -554,7 +554,6 @@ paths:
     post:
       tags: [images]
       operationId: refreshImagePin
-      x-plumb-planned: T-152
       summary: Propose the newest checksum of the base image from its source
       description: |
         For an Image with `verify` (D-335): the server fetches the checksum list of the source,

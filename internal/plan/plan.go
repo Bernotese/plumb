@@ -63,6 +63,10 @@ type Proposal struct {
 	// AgentSHA256 is the served agent binary of an agent_update Plan
 	// (T-092): a discarded Plan stops system proposals of that binary.
 	AgentSHA256 string `json:"agent_sha256,omitempty"`
+	// Pins are the pin changes of a pin_refresh Plan (D-335). Only
+	// RefreshPin sets them; the API builds a client proposal from its own
+	// fields, so no client can.
+	Pins []PinRefresh `json:"pins,omitempty"`
 }
 
 // Input is a request to plan.
@@ -196,6 +200,9 @@ type Config struct {
 	// Agent is the agent that this controller serves (T-092). A zero
 	// SHA256: no agent binary in this build; no update is proposed.
 	Agent AgentBuild
+	// Pins resolves the newest pin of a base image (D-335); nil: the real
+	// vendor lists (trust.Client).
+	Pins PinSource
 	// ReservedAddrs are the controller and node addresses that no network
 	// resource may take (D-348; HostAddrs). nil: none (tests).
 	ReservedAddrs ReservedFunc
