@@ -1,11 +1,10 @@
 // @vitest-environment happy-dom
 // T-118: one-time password for another user (D-321): a button per locked
-// user in the restore card, a typed name in Settings → Users.
+// user in the restore card.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockApi } from "../lib/mock/mock";
 import Backups from "./Backups.svelte";
-import Settings from "./Settings.svelte";
-import { button, el, reset, show, text, type, until } from "./testkit";
+import { button, el, reset, show, text, until } from "./testkit";
 
 afterEach(reset);
 const api = (restored = false) => createMockApi({ signedIn: true, stepDelayMs: 0, restored });
@@ -69,43 +68,4 @@ describe("one-time password in the restore card", () => {
   });
 });
 
-describe("one-time password in Settings → Users", () => {
-  it("takes a typed name; the own user and an unknown user show the server problem", async () => {
-    const a = api();
-    const spy = vi.spyOn(a, "resetUserPassword");
-    const session = await a.session();
-    show(Settings, { api: a, session, tab: "users" });
-    await until(() => document.querySelector("#users-otp-name"));
-    expect(text()).toContain("Plumb makes the password and shows it once");
-
-    // An empty name: a field error, nothing sent.
-    button("Give a one-time password")?.click();
-    await until(() => document.querySelector("#users-otp-error"));
-    expect(text(el("#users-otp-error"))).toBe("Enter the user name.");
-    expect(document.activeElement).toBe(el("#users-otp-name"));
-
-    for (const [name, msg] of [
-      ["admin", "Change your own password"],
-      ["nobody", "User nobody does not exist."],
-    ] as const) {
-      type("#users-otp-name", name);
-      button("Give a one-time password")?.click();
-      await until(() => button("Make a one-time password"));
-      button("Make a one-time password")?.click();
-      await until(() => text().includes(msg));
-      expect(document.querySelector("#users-otp-value")).toBeNull();
-    }
-
-    type("#users-otp-name", "bob");
-    button("Give a one-time password")?.click();
-    await until(() => button("Make a one-time password"));
-    button("Make a one-time password")?.click();
-    await until(() => document.querySelector("#users-otp-value"));
-    expect(spy).toHaveBeenLastCalledWith("bob");
-    expect(text(el("#users-otp-title"))).toBe('One-time password for "bob"');
-    button("Done, I copied it")?.click();
-    await until(() => document.activeElement?.id === "users-otp-name");
-    expect(document.querySelector("#users-otp-value")).toBeNull();
-    expect((el("#users-otp-name") as HTMLInputElement).value).toBe("");
-  });
-});
+// Settings → Users (the user list, T-154): users.test.ts.

@@ -1,5 +1,6 @@
 // The calls the UI makes. T-006 runs against the mock (mock/mock.ts);
 // T-014 adds the HTTP implementation of the same interface.
+import type { components } from "./api.gen";
 import type {
   BlockView,
   ImageView,
@@ -27,6 +28,14 @@ import type {
   RestoreState,
 } from "./types";
 
+type S = components["schemas"];
+export type CatalogBlock = S["CatalogBlock"];
+export type User = S["User"];
+export type UserRole = S["Role"];
+export type PinRefresh = S["PinRefresh"];
+/** The answer of `POST /images/{name}/refresh`: a Plan, or the pin is current. */
+export type RefreshResult = { plan: Plan } | { unchanged: PinRefresh };
+
 export interface PlumbApi {
   session(): Promise<Session>;
   login(username: string, password: string): Promise<Session>;
@@ -36,7 +45,14 @@ export interface PlumbApi {
   getImage(name: string): Promise<ImageView>;
   /** Plans a manual build of a built Image (origin `build`, T-062). 422 for a stock Image. */
   buildImage(name: string, reason?: string): Promise<Plan>;
+  /**
+   * Fetches the newest pin of an Image with `verify` (D-335): a Plan of origin `pin_refresh`
+   * when it differs, else `unchanged`. 422 without `verify`, 502 `pin-source-failed`.
+   */
+  refreshImagePin(name: string): Promise<RefreshResult>;
   listBlocks(): Promise<BlockView[]>;
+  /** The starter Blocks of this binary, compared with the head (D-328). */
+  listCatalogBlocks(): Promise<CatalogBlock[]>;
   getBlock(name: string): Promise<BlockView>;
   listTargets(): Promise<TargetView[]>;
   getTarget(name: string): Promise<TargetView>;
@@ -103,6 +119,12 @@ export interface PlumbApi {
    * answer holds it once; the caller must not keep it.
    */
   resetUserPassword(name: string): Promise<OneTimePassword>;
+  /** Human users, sorted by name, disabled ones included (D-330, admin session). */
+  listUsers(): Promise<User[]>;
+  /** Makes a user; the answer holds its one-time password once. 409 `user-exists`. */
+  createUser(name: string, role: UserRole): Promise<OneTimePassword>;
+  /** Changes role or disabled; 409 `own-user` or `last-admin`. */
+  changeUser(name: string, change: { role?: UserRole; disabled?: boolean }): Promise<User>;
   /** Secret metadata, sorted by name. No value ever comes back. */
   listSecrets(): Promise<SecretInfo[]>;
   putSecret(name: string, value: string): Promise<SecretInfo>;

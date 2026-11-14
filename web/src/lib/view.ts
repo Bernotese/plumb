@@ -263,6 +263,12 @@ export function humanOnlyReasons(plan: Plan): string[] {
       );
       continue;
     }
+    if (reason === "unverified-pin") {
+      out.push(
+        "Its new image checksum is not proven by a newer signature: the source has no signature, the signature is not newer than the last one, this is the first refresh, or the image used this checksum before.",
+      );
+      continue;
+    }
     if (reason === "image-recipe") {
       out.push(
         "It makes, changes or deletes the recipe of a built image, or makes a container image or changes its address or checksum.",

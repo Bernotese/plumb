@@ -3,6 +3,7 @@
   import type { PlumbApi } from "../lib/client";
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
+  import { can } from "../lib/session.svelte";
   import type { PageOf, Plan } from "../lib/types";
   import { formatTime, type Tone } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
@@ -162,7 +163,7 @@
             <td data-label="Author" class="mono">{p.author}</td>
             <td data-label="Created" class="nowrap">{formatTime(p.created_at)}</td>
             <td data-label="Action">
-              {#if p.status !== "pending"}
+              {#if p.status !== "pending" || !can("discardPlan")}
                 <span class="muted">–</span>
               {:else if dropping === p.id}
                 <div class="confirm" role="group" aria-label="Drop plan {p.id}?">
