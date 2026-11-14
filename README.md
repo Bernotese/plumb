@@ -160,7 +160,8 @@ full list of rights.
    <br>*One Target: its address, its Image and its guest settings.*
 
 7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
-   each step. The Plan shows two things:
+   each step. A Run can end as "succeeded, N warnings": then read the steps marked `warning`. The
+   Plan shows two things:
    - **Document changes:** what changes in your Images, Blocks, Targets and rules, as a diff. Secret
      values are never shown, only the names of the secrets.
    - **Targets:** each change on each guest, with its old value, new value and risk. A change to a
@@ -272,8 +273,10 @@ leaves the guest as it was.
   address. The agent page says "ready" or why not. In the `ssh-hardening` Block, the
   `permit_root_login` values `prohibit-password` (the default) and `forced-commands-only` both allow
   the repair; `no` turns it off.
-- Plumb pins the SSH host keys that the agent reported. A changed host key shows in red; the repair
-  connects only to a pinned key, unless you accept the new key in the repair Plan.
+- Plumb pins the SSH host keys that the agent reported, and the repair connects only to a pinned
+  key. A new host key shows in red. When no pinned key is left (the guest got new host keys), the
+  repair is off until you accept one of the new keys in the repair Plan; check it on the guest
+  first, for example with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
 - **Settings → General** shows the repair key. "Make a new repair key" makes a new one; the old key
   stays valid until you revoke it.
 - Without a repair over SSH (a container without SSH, a guest that never had the line, an adopted
@@ -304,6 +307,11 @@ first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a 
   and its disks stay in Proxmox. Only when you first allow it with a separate plan ("Allow Plumb to
   delete the guest", it sets `delete_guest`) does deleting the Target delete the Proxmox guest and its
   disks. Both need a person.
+- When the agent does not answer during the delete, the Run ends as "succeeded, 1 warning" and the
+  agent stays in the guest with its repair key line. The guest then shows under **Adopt a guest**
+  as not adoptable ("the Plumb agent of a deleted Target is still in it"). Plumb removes the agent
+  when it comes back. Or remove it by hand (the warning step names the commands) and choose
+  "Forget the agent…" (admin).
 
 ![Adopt a guest: the free guests of the pool, one adoptable and one with its reasons, and the wizard with the warnings in red](docs/screenshots/readme-adopt.png)
 <br>*Adopt a guest: the warnings come before the plan.*
@@ -333,8 +341,9 @@ templates. Delete them through Plumb first.
 ### What a backup holds
 
 Plumb backs up its whole state every day at 03:00 UTC and keeps the last 7 backups (installer
-options `--backup-time` and `--backup-keep`). **Settings → Backups** shows them, and "Back up now"
-makes one at once.
+options `--backup-time` and `--backup-keep`, or **Settings → General**). **Settings → Backups**
+shows them, and "Back up now" makes one at once. A file that Plumb cannot read is listed as
+unreadable: give it to the user `plumb` in the container.
 
 ![Settings, Backups tab: daily at 03:00 UTC, keep 7, the last run, the off-host copy state and the list of backup files](docs/screenshots/readme-backups.png)
 <br>*Settings → Backups: the schedule, the last run, the off-host copy and the backups.*
