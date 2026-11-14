@@ -64,6 +64,9 @@ type Options struct {
 	// DefaultUnitDir), SelfExe the running binary that BinarySHA256 hashes
 	// (default /proc/self/exe).
 	ConfigPath, BinaryPath, UnitDir, SelfExe string
+	// RepairTokenFile is the one-shot token file (D-390); default
+	// wire.RepairTokenFile under Root.
+	RepairTokenFile string
 
 	// ConfirmWindow is the time of a safe apply for its round trip
 	// (D-300); default wire.SafeApplySeconds. Tests shorten it.
@@ -121,6 +124,8 @@ type Agent struct {
 	sealedCmd string // id of a seal that ended without a failed step (under mu)
 	// sealedContainer: that seal was of a container (D-253; under mu).
 	sealedContainer bool
+
+	oneShot *oneShot // the one-shot enrollment token (D-390); Run goroutine only
 }
 
 // New builds an agent. It reads the stored credential and desired list.
@@ -230,6 +235,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// restores before anything else and sends the result of that apply
 	// (D-300).
 	restored := a.restoreAtStart(ctx)
+	a.oneShot = a.takeOneShot()
 	w, err := newWatcher()
 	if err != nil {
 		return fmt.Errorf("inotify: %w", err)
@@ -253,6 +259,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		if a.restartCmd != "" && (pending == nil || time.Now().After(a.restartBy)) {
 			a.log.Info("agent binary updated; exiting for the restart")
 			return ErrRestart
+		}
+		if a.tryOneShot(ctx) {
+			connected = false // a new credential says hello
 		}
 		if a.credential() == "" {
 			if err := a.enroll(ctx); err != nil {
