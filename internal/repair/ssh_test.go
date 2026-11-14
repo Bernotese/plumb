@@ -633,7 +633,7 @@ func TestRepairKeyViewForgottenUntilRevoke(t *testing.T) {
 		t.Fatalf("rotate: %+v %v", v.Previous, err)
 	}
 	// The new key does not free it; the revoke of the old one does.
-	if v, err = e.s.Rotate(e.ctx, true, "user:admin"); err != nil {
+	if _, err = e.s.Rotate(e.ctx, true, "user:admin"); err != nil {
 		t.Fatal(err)
 	}
 	rows, _ := e.st.LeftBehind(e.ctx)
