@@ -3,6 +3,7 @@
   // is no delete: a disabled user keeps its name. A one-time password is
   // shown once and lives only in this component; it is gone when the page
   // or the tab changes.
+  import { ROLE_HINTS } from "../lib/roleHints";
   import { tick } from "svelte";
   import { ApiError } from "../lib/api";
   import type { PlumbApi, User, UserRole } from "../lib/client";
@@ -16,12 +17,8 @@
   let { api, session }: { api: PlumbApi; session: Session } = $props();
 
   const ROLES: UserRole[] = ["read", "plan", "apply", "admin"];
-  const roleText: Record<UserRole, string> = {
-    read: "Sees everything. Changes nothing.",
-    plan: "Also proposes changes (plans), comments on issues, drops plans.",
-    apply: "Also approves plans up to the risk disruptive, and ignores drift once.",
-    admin: "Everything: destructive plans, users, API tokens, secrets, backups, import.",
-  };
+  // The hints are checked against the contract (lib/roleHints.test.ts).
+  const roleText = (r: UserRole) => ROLE_HINTS[r].text;
 
   let users = $state<User[] | null>(null);
   let error = $state<unknown>(null);
@@ -275,7 +272,7 @@
                       >
                         {#each ROLES as r (r)}<option value={r}>{r}</option>{/each}
                       </select>
-                      <p class="muted small">{roleText[a.role]}</p>
+                      <p class="muted small">{roleText(a.role)}</p>
                     {/if}
                     <p class="small">{consequence(a, u)}</p>
                     <div class="row">
@@ -373,7 +370,7 @@
       <select id="user-role" bind:value={role} aria-describedby="user-role-hint">
         {#each ROLES as r (r)}<option value={r}>{r}</option>{/each}
       </select>
-      <span class="hint" id="user-role-hint">{roleText[role]}</span>
+      <span class="hint" id="user-role-hint">{roleText(role)}</span>
     </div>
   </div>
   <ProblemBox error={createErrs["/name"] ? null : createError} />
