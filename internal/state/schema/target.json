@@ -127,7 +127,7 @@
             "nics": {
               "type": "array",
               "maxItems": 3,
-              "description": "Slice 7 (D-399 … D-404): more NICs after NIC 0 (bridge, ip, gateway above). Each NIC N (1 … 3) gets a MAC that Plumb chooses (02:… from the install id, the Target and N, D-400). The bridge, and the bridge with the tag, must be named at install (--extra-bridge, --extra-vlan): else 422 network-not-allowed (D-401). Adding or removing a NIC, and a bridge or tag change, is disruptive (D-402). The address: an LXC through Proxmox, a VM through the agent's network resource matched by MAC (D-403). Not on an adopted Target (422 nics-not-adoptable, D-404). At most one gateway over NIC 0 and these. Until T-219 the server refuses this field (planned).",
+              "description": "More network cards after the first one (bridge, ip and gateway above), at most 3. Plumb chooses their MAC addresses. Each bridge, and each bridge with a VLAN tag, must be named when Plumb is installed. Adding, removing or moving a card is disruptive. Not for an adopted Target. At most one gateway in total. Planned: refused until slice 7 serves it (T-219).",
               "items": {
                 "type": "object",
                 "required": [
@@ -202,7 +202,7 @@
             "keep"
           ],
           "additionalProperties": false,
-          "description": "Slice 7 (D-405 … D-408): guest backups by Plumb (vzdump) to the one guest backup storage of the install, never a document field. Backups are controller jobs, not Plans (risk reversible). Missing: no Plumb backups. Until T-221 the server refuses this field (planned).",
+          "description": "Backups of the guest by Plumb, to the one backup storage named at install. A backup does not change the guest. Missing: no backups by Plumb. Planned: refused until slice 7 serves it (T-221).",
           "properties": {
             "schedule": {
               "enum": [
