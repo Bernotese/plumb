@@ -310,8 +310,13 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	}
 	if recipe, err := imagesHumanOnly(base, next); err != nil {
 		return store.Plan{}, err
-	} else if recipe {
+	} else if recipe && !verifiedPinOnly(base, in) {
+		// A verified pin_refresh is the one exception to image-recipe
+		// (D-335); every other pin_refresh is unverified-pin below.
 		humanOnly = append(humanOnly, HumanOnlyImageRecipe)
+	}
+	if in.Origin == OriginPinRefresh && !verifiedPinOnly(base, in) {
+		humanOnly = append(humanOnly, HumanOnlyUnverifiedPin)
 	}
 	if slices.Contains(binding, true) {
 		humanOnly = append(humanOnly, HumanOnlySecretBinding)

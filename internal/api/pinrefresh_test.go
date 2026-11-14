@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -91,6 +92,15 @@ func TestRefreshPinStockImage(t *testing.T) {
 	pin := prop.Pins[0]
 	if pin.Old != old || pin.New != newer || pin.LastSignedAt != nil || pin.Verified() || pin.UsedBefore {
 		t.Fatalf("pin %+v", pin)
+	}
+	if !slices.Contains(p.HumanOnly, plan.HumanOnlyUnverifiedPin) {
+		t.Fatalf("first refresh not human-only: %v", p.HumanOnly)
+	}
+	if !strings.Contains(string(body), `"pins":[{`) || !strings.Contains(string(body), `"last_signed_at":null`) {
+		t.Fatalf("plan view without pins: %s", body)
+	}
+	if code, b := e.token(TierApply, "disruptive").do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 403 || problemType(b) != "human-required" {
+		t.Fatalf("apply token approves a first refresh: %d %s", code, b)
 	}
 	want, _ := json.Marshal(map[string]any{"type": "vm", "url": ubuntuURL, "sha256": newer, "verify": map[string]any{"source": "ubuntu-cloud"}})
 	var a, b any
@@ -231,4 +241,83 @@ func TestPinVerified(t *testing.T) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// D-335, D-346: after a person accepted one refresh, a newer signed list
+// for a built Image is approved by system at the slot; its recipe change
+// is the build (no scheduled build with the old pin). The same refresh by
+// the API has no image-recipe reason, so an apply token may approve it.
+func TestScheduledRefreshBySystem(t *testing.T) {
+	pins := &fakePins{}
+	c := &clock{}
+	c.set("2026-11-11 10:00")
+	e := newEnv(t, false, withBuilds, c.opt(), pins.opt())
+	e.buildAgents(nil)
+	adm := e.admin()
+	docs := scheduledImage(`{"every":"day","at":"03:00"}`)
+	docs[1] = doc(state.KindImage, "web", `{"type":"vm","url":"`+ubuntuURL+`","sha256":"`+builtSHA+
+		`","verify":{"source":"ubuntu-cloud"},"build":{"blocks":[{"use":"banner"}],"guest":{"disk":10,"bridge":"vmbr0"}},"schedule":{"every":"day","at":"03:00"}}`)
+	e.runPlanAnyStatus(adm, map[string]any{"reason": "image", "put": docs})
+	e.tick()
+
+	// The first refresh: a person approves it (no stored signature time).
+	t1 := time.Date(2026, 11, 11, 4, 0, 0, 0, time.UTC)
+	pins.set(strings.Repeat("b", 64), t1)
+	code, body := adm.do("POST", "/api/v1/images/web/refresh", nil)
+	var first pinPlan
+	json.Unmarshal(body, &first)
+	if code != 201 || !slices.Contains(first.HumanOnly, plan.HumanOnlyUnverifiedPin) || !slices.Contains(first.HumanOnly, plan.HumanOnlyImageRecipe) {
+		t.Fatalf("first refresh: %d %s", code, body)
+	}
+	if code, b := adm.do("POST", "/api/v1/plans/"+itoa(first.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve first: %d %s", code, b)
+	}
+	e.eng.Wait()
+
+	// A newer signed list with a new pin: verified. Through the API it has
+	// no human-only reason.
+	pins.set(strings.Repeat("c", 64), t1.Add(24*time.Hour))
+	code, body = adm.do("POST", "/api/v1/images/web/refresh", nil)
+	var second pinPlan
+	json.Unmarshal(body, &second)
+	if code != 201 || len(second.HumanOnly) != 0 {
+		t.Fatalf("verified refresh: %d %s", code, body)
+	}
+	if code, b := adm.do("DELETE", "/api/v1/plans/"+itoa(second.ID), nil); code != 204 {
+		t.Fatalf("drop: %d %s", code, b)
+	}
+
+	// At the slot: system approves the refresh, which builds; no
+	// scheduled build Plan with the old pin.
+	before := len(e.schedulePlans())
+	c.set("2026-11-12 03:01")
+	e.tick()
+	if n := len(e.schedulePlans()); n != before {
+		t.Fatalf("a scheduled build with the old pin ran too: %d → %d", before, n)
+	}
+	approved, err := e.st.ApprovedPlans(e.ctx, plan.OriginPinRefresh)
+	if err != nil || len(approved) != 2 || approved[1].ApprovedBy != plan.PrincipalSystem {
+		t.Fatalf("system refresh: %d %v %+v", len(approved), err, approved)
+	}
+	if !strings.Contains(string(approved[1].Images), `"build"`) {
+		t.Fatalf("the system refresh holds no build: %s", approved[1].Images)
+	}
+	_, img := e.headImage("web")
+	if !strings.Contains(img, strings.Repeat("c", 64)) {
+		t.Fatalf("head pin: %s", img)
+	}
+}
+
+// headImage returns the head revision and the Image document text.
+func (e *env) headImage(name string) (int64, string) {
+	e.t.Helper()
+	head, err := e.st.Head(e.ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	row, err := e.st.RevisionDoc(e.ctx, head.ID, state.KindImage, name)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return head.ID, string(row.Body)
 }

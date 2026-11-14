@@ -15,6 +15,11 @@ const (
 	// guest can report valid-looking values, so a person must see them
 	// (D-323). Set from the origin, which only the server sets.
 	HumanOnlyAcceptGuestData = "accept-guest-data"
+	// HumanOnlyUnverifiedPin: a pin_refresh Plan from a list without a
+	// signature, with a signature that is not strictly newer than the last
+	// accepted one (also the first refresh), or to a pin this Image used
+	// before (D-335).
+	HumanOnlyUnverifiedPin = "unverified-pin"
 )
 
 // humanOnlyReasons computes Plan.human_only from the content of the

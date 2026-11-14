@@ -293,3 +293,32 @@ func onlyPinDiffers(base []byte, put state.Doc, pin PinRefresh) bool {
 	jb, _ := json.Marshal(b)
 	return string(ja) == string(jb)
 }
+
+// verifiedPinOnly reports whether a Plan input is a pin_refresh whose
+// every pin change is verified and whose documents differ from the base
+// only in those pins (D-335). Only RefreshPin makes such an input; the
+// check reads the content anyway.
+func verifiedPinOnly(base *state.Set, in Input) bool {
+	p := in.Proposal
+	if in.Origin != OriginPinRefresh || len(p.Pins) == 0 || len(p.Pins) != len(p.Put) ||
+		len(p.Delete) > 0 || len(p.Targets) > 0 || len(p.Reenroll) > 0 {
+		return false
+	}
+	old := map[string]state.Doc{}
+	for _, d := range base.Docs() {
+		if d.Kind == state.KindImage {
+			old[d.Name] = d
+		}
+	}
+	for i, pin := range p.Pins {
+		prev, ok := old[pin.Image]
+		if !pin.Verified() || !ok || p.Put[i].Kind != state.KindImage || p.Put[i].Name != pin.Image {
+			return false
+		}
+		body, err := json.Marshal(prev)
+		if err != nil || !onlyPinDiffers(body, p.Put[i], pin) {
+			return false
+		}
+	}
+	return true
+}
