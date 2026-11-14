@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -182,21 +183,44 @@ func (e *Engine) adoptBind(ctx context.Context, req AdoptRequest) error {
 		return err
 	}
 	ref := driver.GuestID(strconv.Itoa(req.VMID))
+	a, aerr := e.adopter()
+	if aerr != nil {
+		return aerr
+	}
 	adoptMu.Lock()
 	defer adoptMu.Unlock()
-	if err := e.syncAdoptedLocked(ctx, map[driver.GuestID]string{ref: req.Target}); err != nil {
+	before, err := adoptedRefsFn(e, ctx)
+	if err != nil {
 		return err
 	}
+	with := maps.Clone(before)
+	with[ref] = req.Target
+	a.SetAdopted(with)
 	st, err := e.cfg.Driver.Observe(ctx, ref)
 	if err == nil {
 		err = e.st.PutBinding(ctx, store.Binding{Kind: state.KindTarget, Name: req.Target, Ref: string(ref), Digest: pollKey(st)})
 	}
-	// After a failure the extra ref goes again: only bound Targets count.
-	if serr := e.syncAdoptedLocked(ctx, nil); err == nil {
+	// After the bind the set is read again. When that read fails, the set
+	// falls back to what is known: the extra ref stays only when the bind
+	// worked (review L2 of #299).
+	refs, serr := adoptedRefsFn(e, ctx)
+	switch {
+	case serr == nil:
+		a.SetAdopted(refs)
+	case err == nil:
+		a.SetAdopted(with)
+	default:
+		a.SetAdopted(before)
+	}
+	if err == nil {
 		err = serr
 	}
 	return err
 }
+
+// adoptedRefsFn reads the adopted refs; tests replace it to make a read
+// fail.
+var adoptedRefsFn = (*Engine).adoptedRefs
 
 // adoptMu serializes the whole-set updates of SetAdopted.
 var adoptMu sync.Mutex
@@ -216,13 +240,26 @@ func (e *Engine) syncAdoptedLocked(ctx context.Context, extra map[driver.GuestID
 	if err != nil {
 		return nil // no adoption in this driver: nothing to tell
 	}
-	_, set, err := e.base(ctx)
+	refs, err := adoptedRefsFn(e, ctx)
 	if err != nil {
 		return err
 	}
+	for ref, name := range extra {
+		refs[ref] = name
+	}
+	a.SetAdopted(refs)
+	return nil
+}
+
+// adoptedRefs are the guests of the bound adopted Targets of the head.
+func (e *Engine) adoptedRefs(ctx context.Context) (map[driver.GuestID]string, error) {
+	_, set, err := e.base(ctx)
+	if err != nil {
+		return nil, err
+	}
 	binds, err := e.st.Bindings(ctx, state.KindTarget)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	refs := map[driver.GuestID]string{}
 	for _, b := range binds {
@@ -232,11 +269,7 @@ func (e *Engine) syncAdoptedLocked(ctx context.Context, extra map[driver.GuestID
 		}
 		refs[driver.GuestID(b.Ref)] = b.Name
 	}
-	for ref, name := range extra {
-		refs[ref] = name
-	}
-	a.SetAdopted(refs)
-	return nil
+	return refs, nil
 }
 
 // ErrAdoptedTarget: a re-enrollment of an adopted Target (D-392).
