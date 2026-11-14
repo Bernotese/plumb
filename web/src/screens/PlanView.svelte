@@ -4,10 +4,11 @@
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import { can, canApprove, me, roleOf } from "../lib/session.svelte";
-  import type { Plan } from "../lib/types";
+  import type { DocumentChange, Plan } from "../lib/types";
   import { formatTime, humanOnlyReasons } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ChangeTable from "../ui/ChangeTable.svelte";
+  import DocDiff from "../ui/DocDiff.svelte";
   import ImagePlanPart from "../ui/ImagePlanPart.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
@@ -70,6 +71,24 @@
       );
     }
   });
+  // T-168 (host finding F1 of T-158): the document changes that the
+  // approval commits, so that no Plan is approved blind. A long list shows
+  // the first diffs and the rest on request; an entry past the server bound
+  // (T-170) has no text.
+  const FIRST_DOCS = 20;
+  let allDocs = $state(false);
+  const docs = $derived(plan?.documents);
+  const docCount = $derived({
+    added: docs?.filter((c) => c.op === "added").length ?? 0,
+    changed: docs?.filter((c) => c.op === "changed").length ?? 0,
+    removed: docs?.filter((c) => c.op === "removed").length ?? 0,
+  });
+  const shownDocs = $derived(docs && !allDocs ? docs.slice(0, FIRST_DOCS) : (docs ?? []));
+  const noText = (c: DocumentChange) =>
+    (c.op !== "added" && c.before === null) || (c.op !== "removed" && c.after === null);
+  const opLabel = { added: "Added", changed: "Changed", removed: "Removed" } as const;
+  const opTone = { added: "ok", changed: "info", removed: "danger" } as const;
+
   const builds = $derived((plan?.images ?? []).filter((i) => i.build).length);
 
   const count = $derived(
@@ -191,6 +210,50 @@
   {#each plan.warnings as w, i (i)}
     <p class="banner warn">{w}</p>
   {/each}
+
+  <section class="docs" aria-labelledby="docs-title">
+    <h2 id="docs-title">Document changes</h2>
+    {#if docs === undefined}
+      <p class="muted" id="docs-missing">
+        This server does not list the document changes of a plan. Update Plumb to see them before
+        you approve.
+      </p>
+    {:else if docs.length === 0}
+      <p class="muted" id="docs-none">
+        {plan.status === "approved" ? "This plan changed" : "This plan changes"} no document.
+      </p>
+    {:else}
+      <p id="docs-count">
+        {plan.status === "approved" ? "The approval committed" : "Approving commits"}
+        {docCount.added} added, {docCount.changed} changed, {docCount.removed} removed document{docs.length ===
+        1
+          ? ""
+          : "s"}{plan.base_revision !== null ? ` (base: revision ${plan.base_revision})` : ""}.
+        Secret values are never shown, only the names of the secrets.
+      </p>
+      {#if plan.documents_truncated}
+        <p class="banner warn" id="docs-truncated" role="note">
+          This plan changes too much text to show here. Some documents are listed by name only.
+        </p>
+      {/if}
+      {#each shownDocs as c, i (`${c.kind}/${c.name}`)}
+        {#if noText(c)}
+          <p class="card doc-name" id="pdoc-{i}">
+            <Badge tone={opTone[c.op]} label={opLabel[c.op]} />
+            <span class="mono">{c.kind} {c.name}</span>
+            <span class="muted">(too large to show here)</span>
+          </p>
+        {:else}
+          <DocDiff change={c} id="pdoc-{i}" />
+        {/if}
+      {/each}
+      {#if !allDocs && docs.length > FIRST_DOCS}
+        <button class="btn" type="button" id="docs-all" onclick={() => (allDocs = true)}
+          >Show the other {docs.length - FIRST_DOCS} documents</button
+        >
+      {/if}
+    {/if}
+  </section>
 
   {#each plan.pins ?? [] as pin, pi (pin.image)}
     <section class="card pin" aria-labelledby="pin-{pi}">
@@ -387,6 +450,15 @@
 {/if}
 
 <style>
+  .docs {
+    margin-bottom: var(--space-4);
+  }
+  .doc-name {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+  }
   .pin h2 {
     margin-top: 0;
   }
