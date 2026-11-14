@@ -24,7 +24,9 @@ func junkValues(from, n int) []GuestValue {
 // holds exactly across a chunk boundary, and a known row only moves.
 func TestRecordGuestValuesChunks(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
+	fresh := filepath.Join(t.TempDir(), "plumb.db")
+	copyMigratedTemplate(t, fresh) // T-227 row 30
+	s, err := Open(ctx, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,9 @@ func TestRecordGuestValuesChunks(t *testing.T) {
 // under -race; now about 50 ms.
 func TestRecordGuestValuesYields(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
+	fresh := filepath.Join(t.TempDir(), "plumb.db")
+	copyMigratedTemplate(t, fresh) // T-227 row 30
+	s, err := Open(ctx, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +124,9 @@ func TestRecordGuestValuesYields(t *testing.T) {
 // SQLite write lock: BEGIN IMMEDIATE would block until that lock is freed.
 func TestRecordGuestValuesCapReadOnly(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
+	fresh := filepath.Join(t.TempDir(), "plumb.db")
+	copyMigratedTemplate(t, fresh) // T-227 row 30
+	s, err := Open(ctx, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}

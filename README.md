@@ -160,7 +160,8 @@ full list of rights.
    <br>*One Target: its address, its Image and its guest settings.*
 
 7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
-   each step. The Plan shows two things:
+   each step. A Run can end as "succeeded, N warnings": then read the steps marked `warning`. The
+   Plan shows two things:
    - **Document changes:** what changes in your Images, Blocks, Targets and rules, as a diff. Secret
      values are never shown, only the names of the secrets.
    - **Targets:** each change on each guest, with its old value, new value and risk. A change to a
@@ -179,11 +180,64 @@ full list of rights.
    "Ignore". A Plan that accepts a value from the guest needs a person: an API token cannot approve
    it. The same holds for every Plan that takes a value that a guest reported into the desired
    state, also when you type it yourself: only a person can approve it.
+   - **Accept into a parameter:** when the changed value comes from one Block parameter, Accept
+     writes the guest value into that parameter of this Target ("Accept into parameter message of
+     motd"). The Block itself does not change. When no parameter fits, Accept keeps the value as a
+     raw resource of this Target, and the Issue says why.
+   - A Plan that removes the `firewall` of a Target always needs a person, because it opens every
+     port at once.
 
    ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
    <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
 
-In **Settings** you make API tokens, store secrets, and export or import the whole state.
+In **Settings** you make API tokens, store secrets, and export or import the whole state. Under
+**Settings → General** an admin changes the backup time and the number of backups to keep; a value
+set there wins over the value of the install, and "Use the install value again" goes back. The same
+tab shows the Proxmox connection (node, pool, storages, version, the token's user and its rights)
+and the repair key. It never shows a secret.
+
+![Settings, General tab: the backup schedule with the source of each value, and the read-only Proxmox view with the rights of the install](docs/screenshots/readme-settings-general.png)
+<br>*Settings → General: the backup schedule and the Proxmox connection.*
+
+### AI clients (MCP)
+
+`plumb mcp` lets an AI client (for example Claude) read Plumb and propose changes, through the
+Model Context Protocol over stdio. It uses the public API with an API token.
+
+1. In **Settings → API tokens**, make a token with the tier **plan**. Plumb shows it once. Save it
+   in a file that only you can read: `chmod 600 ~/.config/plumb/token`.
+2. Copy the CA of Plumb, on the Proxmox host:
+   `pct pull <plumb-vmid> /var/lib/plumb/link/ca.crt ~/.config/plumb/ca.crt`.
+3. Add Plumb to the client's MCP configuration:
+
+   ```json
+   {
+     "mcpServers": {
+       "plumb": {
+         "command": "plumb",
+         "args": ["mcp", "--url", "https://<plumb-address>:8443",
+                  "--token-file", "/home/<you>/.config/plumb/token",
+                  "--ca", "/home/<you>/.config/plumb/ca.crt"]
+       }
+     }
+   }
+   ```
+
+What the client **can** do (and nothing else):
+
+- read Targets, Issues (with the difference and the comments), Plans (with their changes and
+  documents), Runs, revisions and their difference, Blocks, Images, the starter catalogue, and the
+  events since a given point;
+- propose a change of Targets, Blocks or Images (a Plan);
+- Revert or Accept an Issue (a Plan), re-enroll a Target (a Plan), and drop a Plan;
+- comment on an Issue.
+
+What it can **never** do: approve a Plan, ignore drift (once or by rule), or touch secrets,
+tokens, users, settings, backups, restore, export or import; nor update an agent or build or refresh
+an Image. You approve every Plan in the web UI; the Plan shows the client's reason below the
+changes, marked "written by API token". A Plan that takes a value a guest reported, or that removes
+a firewall, needs a person in any case. A token may make 30 Plans and 30 comments per minute; above
+that Plumb refuses the call and says how long to wait.
 
 ### Users and roles
 
@@ -215,6 +269,63 @@ Agents in the guests update through a Plan: Plumb proposes it, you approve it.
 - An agent that does not reach Plumb within 5 minutes after the update goes back to its old
   version by itself.
 
+### Repair a dead agent
+
+When the agent of a running guest is offline, the agent page offers **Propose repair**. Plumb
+refuses it during the first 10 minutes, because an agent may only be cut off for a short time. Only
+a person can approve the repair Plan. After the approval, Plumb connects to the guest over SSH with
+its own repair key and installs the agent again; nothing else runs in the guest. A failed repair
+leaves the guest as it was.
+
+- The agent writes a key line for root that allows only this install, and only from Plumb's
+  address. The agent page says "ready" or why not. In the `ssh-hardening` Block, the
+  `permit_root_login` values `prohibit-password` (the default) and `forced-commands-only` both allow
+  the repair; `no` turns it off.
+- Plumb pins the SSH host keys that the agent reported, and the repair connects only to a pinned
+  key. A new host key shows as a warning. When no pinned key is left (the guest got new host keys), the
+  repair is off until you accept one of the new keys in the repair Plan; check it on the guest
+  first, for example with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
+- **Settings → General** shows the repair key. "Make a new repair key" makes a new one; the old key
+  stays valid until you revoke it.
+- Without a repair over SSH (a container without SSH, a guest that never had the line, an adopted
+  guest), an admin makes an **install command** on the agent page: one root command for the guest,
+  valid once for 15 minutes. It holds a one-time token, so treat it as a secret; Plumb shows it only
+  once. **It needs `curl` in the guest**; a stock Debian LXC has none. Install it first
+  (`apt-get install -y curl`). Every error line of the command and of the install script starts
+  with `plumb-install:`. Without `curl`, or when the download fails or is cut, the command stops
+  with one such line, installs nothing and leaves no file; you can run the same command again.
+
+![Agent page of web3: repair over SSH is ready, the pinned host key, and the button Propose repair](docs/screenshots/readme-repair.png)
+<br>*A dead agent: Plumb can install it again over SSH, after a person approves the plan.*
+
+### Adopt a guest
+
+Plumb can take over a guest that you made yourself. Move the guest into the Proxmox pool `plumb`
+first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a guest**.
+
+- The list shows each free guest of the pool, and why a guest cannot be adopted (for example more
+  than one disk, a VLAN tag, a privileged container).
+- The new Target has the Proxmox name of the guest; rename the guest in Proxmox to change it.
+- Adopting is a Plan that only a person can approve. Plumb writes nothing to Proxmox for it.
+- The guest is **not sealed**: its SSH host keys, machine-id and root users stay as they are.
+  Plumb never keeps or shows its password, SSH keys, description or container environment.
+- Install the agent with the install command on the agent page (it needs `curl` in the guest; see
+  "Repair a dead agent").
+- **Delete:** deleting an adopted Target lets the guest go: Plumb removes its agent, and the guest
+  and its disks stay in Proxmox. Only when you first allow it with a separate plan ("Allow Plumb to
+  delete the guest", it sets `delete_guest`) does deleting the Target delete the Proxmox guest and its
+  disks. Both need a person.
+- When the agent does not answer during the delete, the Run ends as "succeeded, 1 warning" and the
+  agent stays in the guest with its repair key line. The guest then shows under **Adopt a guest**
+  as not adoptable ("the Plumb agent of a deleted Target is still in it"). Plumb removes the agent
+  when it comes back. Or remove it by hand (the warning step names the commands) and choose
+  "Forget the agent…" (admin).
+
+![Adopt a guest: the free guests of the pool, one adoptable and one with its reasons, and the wizard with the warnings in red](docs/screenshots/readme-adopt.png)
+<br>*Adopt a guest: the warnings come before the plan.*
+
+### Guests made before the agent self-update
+
 **Guests made before the agent self-update existed** need one root command per guest, once:
 
 ```sh
@@ -227,14 +338,6 @@ systemctl stop plumb-agent.service && /usr/local/sbin/plumb-agent-install
 After it, the Target page shows the new agent version. A guest without
 `/usr/local/sbin/plumb-agent-install` must be made again.
 
-**The install command** (Target page → Agent → Make an install command) installs the agent by
-hand in a guest that Plumb cannot repair over SSH, for example an adopted guest. Run it once as
-root within 15 minutes. **It needs `curl` in the guest**; a stock Debian LXC has none. Install
-it first (`apt-get install -y curl`). Every error line of the command and of the install script
-starts with `plumb-install:`. Without `curl`, or when the download fails or is cut, the command
-stops with one such line, installs nothing and leaves no file; you can run the same command
-again.
-
 An update never changes a stored Block. If your `nginx` or `nginx-site` Block answers 403, replace
 its `index index.html;` line with `index index.html index.htm index.nginx-debian.html;`.
 
@@ -246,8 +349,9 @@ templates. Delete them through Plumb first.
 ### What a backup holds
 
 Plumb backs up its whole state every day at 03:00 UTC and keeps the last 7 backups (installer
-options `--backup-time` and `--backup-keep`). **Settings → Backups** shows them, and "Back up now"
-makes one at once.
+options `--backup-time` and `--backup-keep`, or **Settings → General**). **Settings → Backups**
+shows them, and "Back up now" makes one at once. A file that Plumb cannot read is listed as
+unreadable: give it to the user `plumb` in the container.
 
 ![Settings, Backups tab: daily at 03:00 UTC, keep 7, the last run, the off-host copy state and the list of backup files](docs/screenshots/readme-backups.png)
 <br>*Settings → Backups: the schedule, the last run, the off-host copy and the backups.*
@@ -339,8 +443,9 @@ Keep the recovery key in any case.
 - A restored Plumb needs the same address as before.
 - A guest has one network card. The `network` Block adds addresses and routes on it; more cards
   come later.
-- A live change by hand with `ip` or `nft` in a guest is seen at the full check every 15 minutes,
-  not at once. A change of a file that Plumb writes, such as its netplan file, is seen at once.
+- A change by hand with `ip` or `nft` in a guest that uses the `network` or `firewall` Block is seen
+  within seconds. When the agent cannot watch it live, its agent page says so, and the change is
+  seen at the full check every 15 minutes.
 - The first signed refresh of an Image needs a person: an API token cannot approve it.
 - Debian does not sign its cloud image checksums. Every new checksum of a Debian Image needs a
   person.

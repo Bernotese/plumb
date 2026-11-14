@@ -15,6 +15,7 @@ import (
 func openTemp(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "plumb.db")
+	copyMigratedTemplate(t, path) // T-227 row 30; Open still checks the version
 	s, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
