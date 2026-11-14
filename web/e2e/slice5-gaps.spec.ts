@@ -164,7 +164,9 @@ test("issue comment and filter by target", async ({ page }) => {
   await page.locator("#issue-target").selectOption(issue.target);
   await expect(page).toHaveURL(new RegExp(`#/issues\\?target=${issue.target}$`));
   const cells = page.locator("tbody tr td:first-of-type");
+  // Wait until the filtered list is shown: no row of another Target (T-197).
   await expect(cells.first()).toHaveText(issue.target);
+  await expect(cells.filter({ hasNotText: issue.target })).toHaveCount(0);
   for (const t of await cells.allTextContents()) expect(t).toBe(issue.target);
 });
 

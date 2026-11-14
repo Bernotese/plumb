@@ -11,18 +11,19 @@ test("blocks: edit motd as YAML, checked in the browser and the server", async (
   await page.getByRole("link", { name: "motd", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Block motd" })).toBeVisible();
 
-  // The Targets that use motd.
-  const users = (
-    await page
-      .locator("section", { has: page.getByRole("heading", { name: "Used by" }) })
-      .locator("li:has-text('Target') a")
-      .allTextContents()
-  ).sort();
+  // The Targets that use motd. allTextContents() does not wait: wait for
+  // the list first (T-197; the h1 renders before the data).
+  const userLinks = page
+    .locator("section", { has: page.getByRole("heading", { name: "Used by" }) })
+    .locator("li:has-text('Target') a");
+  await expect(userLinks.first()).toBeVisible();
+  const users = (await userLinks.allTextContents()).sort();
   expect(users.length).toBeGreaterThan(0);
 
   await page.getByRole("link", { name: "Edit", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Edit block motd" })).toBeVisible();
   const editor = page.getByRole("textbox", { name: "Block (YAML)" });
+  await expect(editor).toHaveValue(/name: motd/);
   const original = await editor.inputValue();
   expect(original).toContain("name: motd");
 
@@ -54,9 +55,10 @@ test("blocks: edit motd as YAML, checked in the browser and the server", async (
   await editor.fill(original.replace(/mode: "?0644"?/, 'mode: "0640"'));
   await page.getByRole("button", { name: "Show the plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
-  const planned = (
-    await page.getByRole("heading", { level: 2, name: /^Target / }).allTextContents()
-  )
+  // The h1 "Plan N" renders before getPlan returns (T-197): wait for the Targets.
+  const targetHeadings = page.getByRole("heading", { level: 2, name: /^Target / });
+  await expect(targetHeadings).toHaveCount(users.length);
+  const planned = (await targetHeadings.allTextContents())
     .map((t) => t.replace(/^Target\s+/, "").trim())
     .sort();
   expect(planned).toEqual(users);
