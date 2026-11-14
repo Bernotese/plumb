@@ -134,6 +134,9 @@ type targetStatus struct {
 	Repair *plan.RepairStatus `json:"repair"`
 	// Adopted: the Target holds a guest a person made (D-386).
 	Adopted bool `json:"adopted,omitempty"`
+	// NotAdopted: adopted, but no guest is bound: its adopt Run was
+	// refused (D-395). Adopt again, or delete the Target.
+	NotAdopted bool `json:"not_adopted,omitempty"`
 }
 
 type agentRevertView struct {
@@ -250,6 +253,7 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 	if err := s.headRaw(ctx, name, func(set *state.Set, _ map[string]state.Source) { _, st.Adopted = set.AdoptedOf(name) }); err != nil {
 		return st, err
 	}
+	st.NotAdopted = st.Adopted && live.GuestID == ""
 	st.Waiting = []waitingView{}
 	for _, w := range live.Waiting {
 		st.Waiting = append(st.Waiting, waitingView{Attr: w.Attr, From: w.From, To: w.To, Since: w.Since.UTC()})
