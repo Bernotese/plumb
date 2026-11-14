@@ -42,6 +42,15 @@ type ProxmoxView struct {
 	// backup storage.
 	ExtraNets   []ExtraNetView   `json:"extra_nets"`
 	GuestBackup *GuestBackupView `json:"guest_backup"`
+	// ACLExtra are rights of the token beyond the lines of the install
+	// (review L4 of #330): path and role only.
+	ACLExtra []ACLExtraView `json:"acl_extra"`
+}
+
+// ACLExtraView is a right of the token that the install does not name.
+type ACLExtraView struct {
+	Path string `json:"path"`
+	Role string `json:"role"`
 }
 
 // ACLLineView is one ACL line of the install.
@@ -64,11 +73,12 @@ type GuestBackupView struct {
 	Storage             string   `json:"storage"`
 	State               string   `json:"state"`
 	OtherBackupStorages []string `json:"other_backup_storages"`
+	DiskContent         []string `json:"disk_content"`
 }
 
 // noProxmox is the view of a controller without Proxmox (serve --dev).
 func noProxmox() *ProxmoxView {
-	return &ProxmoxView{ACL: "unknown", ACLError: "This controller runs without Proxmox (dev mode).", ACLLines: []ACLLineView{}, ExtraNets: []ExtraNetView{}}
+	return &ProxmoxView{ACL: "unknown", ACLError: "This controller runs without Proxmox (dev mode).", ACLLines: []ACLLineView{}, ExtraNets: []ExtraNetView{}, ACLExtra: []ACLExtraView{}}
 }
 
 type settingsView struct {
@@ -106,8 +116,16 @@ func (s *Server) settingsOf(ctx context.Context, p *principal) settingsView {
 		if v.Proxmox.ExtraNets == nil {
 			v.Proxmox.ExtraNets = []ExtraNetView{}
 		}
-		if g := v.Proxmox.GuestBackup; g != nil && g.OtherBackupStorages == nil {
-			g.OtherBackupStorages = []string{}
+		if v.Proxmox.ACLExtra == nil {
+			v.Proxmox.ACLExtra = []ACLExtraView{}
+		}
+		if g := v.Proxmox.GuestBackup; g != nil {
+			if g.OtherBackupStorages == nil {
+				g.OtherBackupStorages = []string{}
+			}
+			if g.DiskContent == nil {
+				g.DiskContent = []string{}
+			}
 		}
 		// The backup storage is known only from the status file of the
 		// host copy timer (T-208, host finding F1): null before its first

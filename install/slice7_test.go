@@ -328,6 +328,25 @@ func TestSlice7Refusals(t *testing.T) {
 			h.setContent("plumb-snippets", "snippets,backup")
 		}, []string{"--guest-backup-storage", "bk"}, "another storage of Plumb has the content \"backup\""},
 		{"remove with flags", nil, []string{"--remove", "--extra-bridge", "vmbr9"}, "work only with an install or a repair run"},
+		// Review M1 of #330: no guest disks on the backup storage.
+		{"images content", func(h *host) { h.addStorage("bk", "dir", "images,rootdir,backup,iso", "") }, []string{"--guest-backup-storage", "bk"},
+			"the guest backup storage must hold only backups, no guest disks (images, rootdir). Fix: pvesm set bk --content backup,iso,"},
+		{"rootdir content", func(h *host) { h.addStorage("bk", "dir", "backup,rootdir", "") }, []string{"--guest-backup-storage", "bk"},
+			"the guest backup storage must hold only backups"},
+		// Review L1 of #330: not the storage of Plumb's own backup copies.
+		{"copy storage", func(h *host) { h.addStorage("bk", "dir", "backup", "") }, []string{"--guest-backup-storage", "bk", "--backup-storage", "bk"},
+			"is the storage of Plumb's own backup copies"},
+		{"copy storage from the state", func(h *host) {
+			h.addStorage("bk", "dir", "backup", "")
+			os.MkdirAll(filepath.Dir(h.stateF), 0o700)
+			os.WriteFile(h.stateF, []byte("backup_storage=bk\n"), 0o600)
+		}, []string{"--guest-backup-storage", "bk"}, "is the storage of Plumb's own backup copies"},
+		// Review L2 of #330: the bridge exists, and is VLAN-aware for a tag.
+		{"unknown bridge", nil, []string{"--extra-bridge", "vmbr7"}, "bridge vmbr7 (--extra-bridge/--extra-vlan) is not a bridge of node pve1"},
+		{"not a bridge", nil, []string{"--extra-bridge", "eno1"}, "bridge eno1 (--extra-bridge/--extra-vlan) is not a bridge of node pve1"},
+		{"tag on a plain bridge", nil, []string{"--extra-vlan", "vmbr1:20"}, "bridge vmbr1 is not VLAN-aware, so a NIC with tag 20 fails"},
+		{"network unreadable", func(h *host) { os.WriteFile(filepath.Join(h.state, "network"), []byte("not json"), 0o644) },
+			[]string{"--extra-bridge", "vmbr9"}, "cannot read the network of node pve1"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -421,5 +440,68 @@ func TestSlice7ForeignBackups(t *testing.T) {
 	code, out, _ = h.run(append(root, "FAKE_CONTENT_FAIL=1"), "--dry-run", "--plumb-binary", h.plumb, "--guest-backup-storage", "bk")
 	if code != 0 || !strings.Contains(out, "NOTE: cannot list the backups on bk") {
 		t.Errorf("list fails: %d\n%s", code, out)
+	}
+}
+
+// Review L2 of #330: a plain bridge works untagged, an OVS bridge with a tag.
+func TestSlice7BridgeKinds(t *testing.T) {
+	t.Parallel()
+	h := newHost(t)
+	os.WriteFile(filepath.Join(h.state, "network"), []byte(`[{"iface":"vmbr0","type":"bridge"},{"iface":"vmbr1","type":"bridge"},{"iface":"ovs0","type":"OVSBridge"}]`), 0o644)
+	if code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--extra-bridge", "vmbr1", "--extra-vlan", "ovs0:30"); code != 0 {
+		t.Errorf("exit %d\n%s\n%s", code, out, errOut)
+	}
+}
+
+// Review M2 of #330: the old lines go first; a failed ACL step names
+// itself and every step that is not done, and the run stops.
+func TestSlice7ACLFailureHalfWay(t *testing.T) {
+	t.Parallel()
+	h := newHost(t)
+	root := h.installed()
+	h.addStorage("plumb-backup", "dir", "backup", "")
+	if code, out, errOut := h.run(root, append([]string{"--yes", "--plumb-binary", h.plumb}, slice7Flags...)...); code != 0 {
+		t.Fatalf("repair with flags: %d\n%s\n%s", code, out, errOut)
+	}
+	// A repair run that drops the backup storage and adds a tag, and whose
+	// second new line fails: every old line is gone already.
+	h.resetCalls()
+	code, out, errOut := h.run(append(root, "FAKE_FAIL=pveum acl modify /sdn/zones/localnetwork/vmbr9/30 --tokens"),
+		"--yes", "--plumb-binary", h.plumb, "--extra-vlan", "vmbr9:20,30", "--extra-bridge", "vmbr9")
+	if code == 0 {
+		t.Fatalf("a failed ACL step: exit 0\n%s", out)
+	}
+	for _, w := range []string{
+		`install.sh: the ACL step "add /sdn/zones/localnetwork/vmbr9/30 plumb@pve!plumb PlumbBridge token 0" failed`,
+		"These ACL steps of this run are not done; every other line is as planned:\n  add /sdn/zones/localnetwork/vmbr9/30 plumb@pve!plumb PlumbBridge token 0\nA \"remove\" line",
+		"Run the same install.sh command again (a repair run).",
+	} {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("stderr without %q:\n%s", w, errOut)
+		}
+	}
+	acl, _ := os.ReadFile(filepath.Join(h.state, "acl"))
+	if strings.Contains(string(acl), "PlumbGuestBackup") {
+		t.Errorf("old backup lines stay after the failed run:\n%s", acl)
+	}
+	// The removes ran before the first add.
+	calls := h.calls()
+	lastDelete, firstModify := -1, -1
+	for i, c := range calls {
+		if strings.HasPrefix(c, "pveum acl delete") {
+			lastDelete = i
+		}
+		if strings.HasPrefix(c, "pveum acl modify") && firstModify < 0 {
+			firstModify = i
+		}
+	}
+	if lastDelete < 0 || firstModify < 0 || lastDelete > firstModify {
+		t.Errorf("deletes after adds (last delete %d, first add %d):\n%s", lastDelete, firstModify, strings.Join(calls, "\n"))
+	}
+	// A failure of a remove step lists the remove and the adds after it.
+	h.resetCalls()
+	code, _, errOut = h.run(append(root, "FAKE_FAIL=pveum acl delete /sdn/zones/localnetwork/vmbr9/30 --users"), "--yes", "--plumb-binary", h.plumb)
+	if code == 0 || !strings.Contains(errOut, "  remove /sdn/zones/localnetwork/vmbr9/30 plumb@pve PlumbBridge user\n") {
+		t.Errorf("a failed remove: %d\n%s", code, errOut)
 	}
 }

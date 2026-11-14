@@ -388,6 +388,28 @@ add_extra_net() {
 
 # --- checks ---
 
+# check_extra_bridges checks that each bridge of --extra-bridge and
+# --extra-vlan is a bridge of this node, and VLAN-aware for a tag (review L2
+# of #330; T-214: PVE fails a tagged NIC on a bridge without VLAN filtering).
+check_extra_bridges() {
+	((${#EXTRA_NETS[@]} > 0)) || return 0
+	local net rows bridges
+	rows=$(query pvesh get "/nodes/$NODE/network" --output-format json 2>/dev/null) ||
+		die "cannot read the network of node $NODE for --extra-bridge/--extra-vlan. Nothing was changed."
+	# "iface type vlan_aware" per bridge; an OVS bridge carries tags.
+	# shellcheck disable=SC2016 # perl code
+	bridges=$(json_rows 'for my $e (@$d) { my $t = $e->{type} // ""; next unless $t eq "bridge" || $t eq "OVSBridge";
+		print "$e->{iface} ", ($t eq "OVSBridge" || ($e->{bridge_vlan_aware} // 0) ? 1 : 0), "\n" }' <<<"$rows") ||
+		die "cannot read the network of node $NODE for --extra-bridge/--extra-vlan. Nothing was changed."
+	for net in "${EXTRA_NETS[@]}"; do
+		grep -q "^${net%/*} " <<<"$bridges" ||
+			die "bridge ${net%/*} (--extra-bridge/--extra-vlan) is not a bridge of node $NODE. Nothing was changed."
+		if [[ $net == */* ]] && ! grep -qx "${net%/*} 1" <<<"$bridges"; then
+			die "bridge ${net%/*} is not VLAN-aware, so a NIC with tag ${net#*/} fails (--extra-vlan). Set \"VLAN aware\" on the bridge, or use --extra-bridge. Nothing was changed."
+		fi
+	done
+}
+
 check_host() {
 	if [[ $DRY_RUN != 1 && ${PLUMB_INSTALL_ASSUME_ROOT:-0} != 1 && $EUID -ne 0 ]]; then
 		die "run as root on the Proxmox host (or use --dry-run)"
@@ -856,17 +878,6 @@ check_user_groups() {
 	[[ -z $groups ]] || die "user $PVE_USER is in the groups \"$groups\"; their ACLs would add rights to Plumb (D-081). Remove the user from them. Nothing was changed."
 }
 
-remove_stray_acls() {
-	local path ugid role type
-	while read -r path ugid role type; do
-		[[ -n $path ]] || continue
-		if [[ $type == token ]]; then
-			run pveum acl delete "$path" --tokens "$ugid" --roles "$role"
-		else
-			run pveum acl delete "$path" --users "$ugid" --roles "$role"
-		fi
-	done <<<"$STRAY_ACLS"
-}
 
 # check_role fails when a role does not have exactly its planned rights
 # (host item 6: --privs must replace, not append).
@@ -915,19 +926,52 @@ ensure_pool_user_roles() {
 # lines are not listed before the token exists. So the list is read again
 # now, and its stray entries replace the ones of the preview.
 ensure_acls() {
-	local role acls new_token=0 propagate path
+	local acls new_token=0 path ugid role type propagate i steps=()
 	[[ -n $TOKEN_SECRET ]] && new_token=1
 	acls=$(acl_entries) || die "cannot read the ACLs of $PVE_USER"
 	STRAY_ACLS=$(stray_of "$acls")
+	# Narrow first (review M2 of #330): the old lines go before the new
+	# ones come, so a run that stops half way leaves fewer rights, not more.
+	while read -r path ugid role type; do
+		[[ -n $path ]] && steps+=("remove $path $ugid $role $type")
+	done <<<"$STRAY_ACLS"
 	while read -r path role propagate <&3; do
 		# An ACL that exists as planned is kept (repair run).
 		grep -qxF "$path $PVE_USER $role user $propagate" <<<"$acls" ||
-			run pveum acl modify "$path" --users "$PVE_USER" --roles "$role" --propagate "$propagate"
+			steps+=("add $path $PVE_USER $role user $propagate")
 		if [[ $new_token == 1 ]] || ! grep -qxF "$path $PVE_USER!$TOKEN_NAME $role token $propagate" <<<"$acls"; then
-			run pveum acl modify "$path" --tokens "$PVE_USER!$TOKEN_NAME" --roles "$role" --propagate "$propagate"
+			steps+=("add $path $PVE_USER!$TOKEN_NAME $role token $propagate")
 		fi
 	done 3<<<"$(acl_plan)"
-	remove_stray_acls
+	for ((i = 0; i < ${#steps[@]}; i++)); do
+		# shellcheck disable=SC2086 # one word per field: checked names
+		acl_step ${steps[i]} || acl_failed "${steps[@]:i}"
+	done
+}
+
+# acl_step OP PATH UGID ROLE TYPE [PROPAGATE] removes or adds one ACL line.
+acl_step() {
+	local flag=--users
+	[[ $5 == token ]] && flag=--tokens
+	if [[ $1 == remove ]]; then
+		run pveum acl delete "$2" "$flag" "$3" --roles "$4"
+	else
+		run pveum acl modify "$2" "$flag" "$3" --roles "$4" --propagate "$6"
+	fi
+}
+
+# acl_failed STEP… stops the run after a failed ACL step. It names the step
+# and every step of this run that is not done, so the person knows which
+# rights the token still has or still lacks (review M2 of #330).
+acl_failed() {
+	{
+		echo "install.sh: the ACL step \"$1\" failed (see the pveum error above)."
+		echo "These ACL steps of this run are not done; every other line is as planned:"
+		printf '  %s\n' "$@"
+		echo "A \"remove\" line above still gives its rights to Plumb; an \"add\" line is a right that Plumb lacks."
+		echo "Run the same install.sh command again (a repair run)."
+	} >&2
+	exit 1
 }
 
 # remove_token deletes the ACLs of the Plumb token, then the token. PVE
@@ -1647,9 +1691,21 @@ check_guest_backup() {
 		die "--guest-backup-storage $s is a storage of Plumb itself; name a storage for guest backups only. Nothing was changed."
 		;;
 	esac
+	# Not the storage of the controller's own backup copies (D-289): the
+	# token could fill it, and the copies would stop (review L1 of #330).
+	local copy=${BACKUP_STORAGE:-$(state_get backup_storage)}
+	[[ $copy == none || $s != "$copy" ]] ||
+		die "--guest-backup-storage $s is the storage of Plumb's own backup copies (--backup-storage); use another one. Nothing was changed."
 	c=$(storage_content "$s") || die "storage $s (--guest-backup-storage) does not exist. Nothing was changed."
 	[[ ,$c, == *,backup,* ]] ||
 		die "storage $s has the content \"$c\" without \"backup\"; vzdump cannot write there. Add it (pvesm set $s --content $c,backup) or name another storage. Nothing was changed."
+	# AllocateSpace with VM.Config.Disk would let the token put guest disks
+	# there, outside the disk gate (review M1 of #330).
+	if [[ ,$c, == *,images,* || ,$c, == *,rootdir,* ]]; then
+		local rest
+		rest=$(awk -v RS=, 'NF && $1 != "images" && $1 != "rootdir" { print $1 }' <<<"$c" | paste -sd, -)
+		die "storage $s has the content \"$c\": the guest backup storage must hold only backups, no guest disks (images, rootdir). Fix: pvesm set $s --content $rest, or name another storage. Nothing was changed."
+	fi
 	# AllocateSpace on a storage with snippets would let cicustom point at
 	# any snippet there (D-081), like on the disk storage.
 	[[ ,$c, != *,snippets,* ]] ||
@@ -2229,6 +2285,7 @@ do_install() {
 		say "changes, no agent reaches Plumb any more. Use a static address: --lxc-ip CIDR --lxc-gw IP (D-179)."
 	fi
 	check_dns
+	check_extra_bridges
 	# Before check_storages, so its own text names the reason (M2 of #321).
 	[[ -z $GUEST_BACKUP_STORAGE ]] || check_second_backup_storage
 	check_storages
@@ -2240,6 +2297,8 @@ do_install() {
 		say "It RESTORES the backup $RESTORE_FILE (install $H_INSTALL_ID, agents at $H_AGENT_URL) into a new LXC:"
 		say "plumb backup verify on this host, then plumb key restore and plumb restore in the LXC; each asks on this"
 		say "terminal. The restored Plumb changes nothing until you confirm in its UI that the old controller is off."
+		say "Give the --extra-bridge, --extra-vlan and --guest-backup-* flags of the old install again: a run without"
+		say "them gives no rights for those networks and turns guest backups off (D-401, D-405)."
 	elif [[ -z $own || $(lxc_state "$own") != ours ]] && pool_has_guests; then
 		die "pool $POOL holds guests or templates, and this host has no Plumb LXC: a plain install does not take them. Use --restore BACKUP (after --remove --keep-guests). Nothing was changed."
 	fi

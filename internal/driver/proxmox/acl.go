@@ -109,6 +109,9 @@ type View struct {
 	// plumb.env; Others in GuestBackup needs the reads.
 	ExtraNets   []ExtraNet
 	GuestBackup *GuestBackupView
+	// ACLExtra are watched rights that the token holds beyond the planned
+	// lines (aclExtra); empty when ACL is ACLUnknown.
+	ACLExtra []ACLLine
 }
 
 // TokenUser returns the user part (user@realm) of a token id
@@ -171,6 +174,7 @@ func (v *Viewer) View(ctx context.Context) View {
 		if err = v.d.c.Get(ctx, "/access/permissions", nil, &perms); err == nil {
 			v.lastOK = v.now()
 			out.ACL, out.ACLLines = checkACL(cfg, v.extras, perms)
+			out.ACLExtra = aclExtra(installLines(cfg, v.extras), perms)
 			// The storage configs only with a guest backup storage: the
 			// encryption state and the second-storage check (M2 of #321).
 			if v.extras.GuestBackupStorage != "" {
@@ -182,7 +186,7 @@ func (v *Viewer) View(ctx context.Context) View {
 		}
 	}
 	if err != nil {
-		out.ACL, out.ACLError, out.ACLLines = ACLUnknown, aclReason(err), []ACLLine{}
+		out.ACL, out.ACLError, out.ACLLines, out.ACLExtra = ACLUnknown, aclReason(err), []ACLLine{}, []ACLLine{}
 		// Without the reads the state comes from the install alone, and
 		// the other storages are not known: the ACL state says why.
 		out.GuestBackup = guestBackupView(v.extras, nil, nil)
@@ -199,10 +203,12 @@ func (v *Viewer) View(ctx context.Context) View {
 func (v *Viewer) copyCached() View {
 	out := v.cached
 	out.ACLLines = append([]ACLLine{}, v.cached.ACLLines...)
+	out.ACLExtra = append([]ACLLine{}, v.cached.ACLExtra...)
 	out.ExtraNets = append([]ExtraNet(nil), v.cached.ExtraNets...)
 	if g := v.cached.GuestBackup; g != nil {
 		c := *g
 		c.Others = append([]string{}, g.Others...)
+		c.DiskContent = append([]string{}, g.DiskContent...)
 		out.GuestBackup = &c
 	}
 	return out
