@@ -62,7 +62,10 @@ func (s *Server) listUnmanagedGuests(w http.ResponseWriter, r *http.Request, _ *
 			v.Warnings = []string{}
 		}
 		if _, err := s.st.ParkedByRef(r.Context(), string(u.ID)); err == nil {
-			v.AgentLeft = true
+			// An adopt gives 409 agent-left while the agent is parked: the
+			// list says so (T-210, host finding F11).
+			v.AgentLeft, v.Adoptable = true, false
+			v.Reasons = append(append([]string{}, v.Reasons...), "agent-left")
 		} else if !errors.Is(err, store.ErrNotFound) {
 			s.fail(w, err)
 			return

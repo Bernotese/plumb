@@ -1339,7 +1339,7 @@ paths:
                     power: stopped
                     digest: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
                     adoptable: false
-                    reasons: [privileged, disk-layout]
+                    reasons: [privileged, disk-layout, agent-left]
                     warnings: [not-sealed]
                     guest: { cores: 1, memory: 512, disk: 8, bridge: vmbr0 }
                     present: { cipassword: false, sshkeys: true, description: false, env: true }
@@ -4911,7 +4911,9 @@ components:
             disk storage of the install), `nic-layout` (not exactly one NIC `net0`), `bridge` (a
             bridge without an ACL line of the install), `vlan` (a tag), `privileged` (a privileged
             LXC), `host-device` (`devN`, `usbN`, `hostpciN`), `template`, `name` (not a valid
-            document name; rename it in Proxmox).
+            document name; rename it in Proxmox), `agent-left` (the agent of a deleted adopted
+            Target is parked in this guest, `agent_left`; the adopt gives 409 `agent-left` until
+            its unbind is confirmed or an admin forgets it, D-396).
           items: { type: string }
         warnings:
           type: array

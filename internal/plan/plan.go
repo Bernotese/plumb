@@ -159,6 +159,9 @@ type Agents interface {
 	// Taken reports whether the agent of a target took the command id at
 	// a poll and sent no result for it yet (T-102).
 	Taken(target, id string) bool
+	// Queued reports whether a command of typ waits in the target's queue
+	// (sent, not yet polled), T-210.
+	Queued(target string, typ wire.CommandType) bool
 	NewEnrollToken(ctx context.Context, target string) (string, time.Time, error)
 	// Revoke removes the agent and the enrollment token of a target.
 	Revoke(ctx context.Context, target string) error
@@ -186,7 +189,10 @@ type Config struct {
 	ObserveTimeout time.Duration
 	EnrollTimeout  time.Duration
 	ApplyTimeout   time.Duration
-	Logger         *slog.Logger
+	// UnbindTimeout bounds the unbind command of an adopted Target's agent
+	// (D-388). Default 2 min.
+	UnbindTimeout time.Duration
+	Logger        *slog.Logger
 	// Now returns the time for the address list and its check (D-212,
 	// D-215). Default time.Now.
 	Now func() time.Time
@@ -233,6 +239,13 @@ type Config struct {
 type Engine struct {
 	cfg Config
 	st  *store.Store
+	// parkMu orders the park write of a delete Run and a late unbind
+	// result (T-210 M1): either order ends the park. lateOK holds a
+	// confirmed late unbind that found no park yet: target → agent id and
+	// when. beforePark is a test hook between the wait and the park.
+	parkMu     sync.Mutex
+	lateOK     map[string]lateUnbindOK
+	beforePark func()
 	// restore is what the engine keeps of a restore (D-303).
 	restore restoreState
 	log     *slog.Logger
@@ -314,6 +327,9 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if cfg.ApplyTimeout == 0 {
 		cfg.ApplyTimeout = 15 * time.Minute
+	}
+	if cfg.UnbindTimeout == 0 {
+		cfg.UnbindTimeout = unbindTimeout
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -452,6 +468,13 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 			case ch <- d.Report:
 			default: // the waiter does not read; drop it
 			}
+			return nil
+		}
+		if d.Report.Type == wire.ReportResult && d.CommandType == wire.CommandUnbind {
+			// The result of an unbind whose waiter is gone, for example the
+			// first unbind of the delete Run, run by the agent after it
+			// came back: it ends the park too (T-210, host finding F12).
+			return e.lateUnbind(ctx, d)
 		}
 		return nil // a report without a waiter (it timed out) is dropped
 	case wire.ReportRepair:

@@ -17,4 +17,10 @@ F11 (minor): `/guests/unmanaged` shows `adoptable: true` while the guest is park
 - [ ] Tests for the host sequence (stop agent → delete → park → agent back → queued unbind runs → park ends). `make lint test`; PR to `main`; report. Proven on the host in T-192.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+branch `pl-reviewer/T-210-park-late-unbind` · tests: `make lint test` → pass · mutants 7/7 killed
+- Cause (F12): the engine dropped every result without a waiter; the Run's unbind waited in the link queue after its timeout, the agent ran it later, and its result was dropped, so only a retry's result could end the park.
+- Fix: link passes the command type of a result (`Delivery.CommandType`, from its own outstanding ids). A result of an `unbind` without a waiter goes to `lateUnbind`, which ends the park only for the parked agent id of that target and only on success (revoke, which also empties the queue; unpark; `agent.unbound`). A forged command id (the link refuses it), another agent id, another command type, a failed unbind or another target end nothing (tests).
+- No double unbind (choice): `RetryUnbinds` sends no unbind while one is **queued** for the target (`link.Queued`); the agent takes that one at its next poll. A taken unbind without a result does not block a retry (the agent may have stopped in the middle; unbind is idempotent).
+- F11: `/guests/unmanaged` gives `adoptable: false` with the reason `agent-left` while parked (contract text).
+- `plan.Config.UnbindTimeout` (default 2 min) for the test.
+- Review M1 of #313: both orders end the park. The park write of the delete Run and the late result take one engine mutex; a confirmed late result that finds no park is remembered for that target and agent id (at most two unbind waits old), and the Run then ends as a confirmed unbind (no park, no warning, credential revoked). Tests for both orders and for another agent id; L1/n1: the web text for `agent-left` and the contract example.

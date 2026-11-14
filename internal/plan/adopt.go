@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/link/agentinstall"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -484,7 +485,7 @@ func adoptPlans(reqs []AdoptRequest, plans []TargetPlan, inBase map[string]bool)
 	return notes, nil
 }
 
-// unbindTimeout bounds the unbind command of the agent.
+// unbindTimeout is the default of Config.UnbindTimeout.
 const unbindTimeout = 2 * time.Minute
 
 // unbindGuest is the Run step of the delete of an adopted Target that
@@ -516,12 +517,25 @@ func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.
 	why := ""
 	if !e.cfg.Agents.Online(target) {
 		why = "the agent is offline"
-	} else if rep, err := e.command(ctx, target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil); err != nil || rep.Error != "" {
+	} else if rep, err := e.command(ctx, target, wire.CommandUnbind, struct{}{}, e.cfg.UnbindTimeout, nil); err != nil || rep.Error != "" {
 		why = rep.Error
 		if err != nil {
 			why = err.Error()
 		}
 		why = "the agent could not remove itself (" + clipText(why, 300) + ")"
+	}
+	if why != "" && e.beforePark != nil {
+		e.beforePark()
+	}
+	// T-210 M1: the park and a late unbind result take the same mutex. A
+	// confirmed result that came after the wait but before this point
+	// ends the delete as a confirmed unbind; one that comes after the
+	// park ends the park (lateUnbind).
+	e.parkMu.Lock()
+	defer e.parkMu.Unlock()
+	late := why != "" && e.takeLateOK(target, ag.ID)
+	if late {
+		why = ""
 	}
 	left := why != ""
 	if left {
@@ -555,6 +569,9 @@ func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.
 	if left {
 		return fmt.Sprintf(textAgentLeft, b.Ref, why), true, nil
 	}
+	if late {
+		return "the agent removed itself and the repair key lines (its answer came after the wait); the guest stays in Proxmox", false, nil
+	}
 	return "the agent removed itself and the repair key lines; the guest stays in Proxmox", false, nil
 }
 
@@ -577,18 +594,102 @@ func (e *Engine) RetryUnbinds(ctx context.Context) error {
 		if !e.cfg.Agents.Online(p.Target) {
 			continue
 		}
-		rep, err := e.command(ctx, p.Target, wire.CommandUnbind, struct{}{}, unbindTimeout, nil)
+		// No second unbind while one waits in the queue (the first of the
+		// delete Run, or an earlier retry): the agent gets that one at its
+		// next poll, and its result ends the park through lateUnbind
+		// (T-210). A taken unbind without a result does not block a retry:
+		// the agent may have stopped in the middle; unbind is idempotent.
+		if e.cfg.Agents.Queued(p.Target, wire.CommandUnbind) {
+			continue
+		}
+		rep, err := e.command(ctx, p.Target, wire.CommandUnbind, struct{}{}, e.cfg.UnbindTimeout, nil)
 		if err != nil || rep.Error != "" {
 			continue // tried again at the next poll
 		}
-		if err := e.revokeParked(ctx, p); err != nil {
+		if err := e.endParkIfStill(ctx, p); err != nil {
 			return err
 		}
-		if err := e.st.Unpark(ctx, p.Target); err != nil {
-			return err
-		}
-		e.emit(ctx, "agent.unbound", "target:"+p.Target, "system", map[string]any{"guest": p.GuestRef})
 	}
+	return nil
+}
+
+// lateUnbind takes the result of an unbind command whose waiter is gone
+// (T-210). It ends the park only when every one of these holds: the
+// command was an unbind that link sent to this target's agent (link
+// delivers results only of its own outstanding command ids, with their
+// type), the reporting agent is the parked agent of the target (an agent
+// id check, so no agent can end the park of another), and the agent
+// reports success. Otherwise nothing changes; a failed unbind stays
+// parked for the retry.
+func (e *Engine) lateUnbind(ctx context.Context, d link.Delivery) error {
+	if d.Report.Error != "" {
+		e.log.Info("a late unbind failed; the agent stays parked", "target", d.Target)
+		return nil
+	}
+	e.parkMu.Lock()
+	defer e.parkMu.Unlock()
+	parked, err := e.st.ParkedTargets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range parked {
+		if p.Target == d.Target && p.AgentID == d.AgentID {
+			return e.endUnbindPark(ctx, p)
+		}
+	}
+	// No park yet: the delete Run may be between its wait and its park
+	// write (T-210 M1). It reads this under parkMu before it parks.
+	if e.lateOK == nil {
+		e.lateOK = map[string]lateUnbindOK{}
+	}
+	e.lateOK[d.Target] = lateUnbindOK{agentID: d.AgentID, at: e.cfg.Now()}
+	return nil
+}
+
+// endParkIfStill ends the park of p under parkMu, unless a late result
+// ended it meanwhile (one agent.unbound per park).
+func (e *Engine) endParkIfStill(ctx context.Context, p store.Parked) error {
+	e.parkMu.Lock()
+	defer e.parkMu.Unlock()
+	still, err := e.st.IsParked(ctx, p.Target, p.AgentID)
+	if err != nil || !still {
+		return err
+	}
+	return e.endUnbindPark(ctx, p)
+}
+
+// SetBeforeParkHook sets a function that a delete Run calls after its
+// unbind wait failed and before it decides on the park (tests of the
+// order of T-210 M1 only; nil clears).
+func (e *Engine) SetBeforeParkHook(f func()) { e.beforePark = f }
+
+// lateUnbindOK is a confirmed unbind that came without a waiter and
+// before any park of its agent.
+type lateUnbindOK struct {
+	agentID string
+	at      time.Time
+}
+
+// takeLateOK reports, and forgets, a confirmed late unbind of agentID on
+// target that is young enough to belong to this delete (two unbind
+// waits). Caller holds parkMu.
+func (e *Engine) takeLateOK(target, agentID string) bool {
+	ok, found := e.lateOK[target]
+	delete(e.lateOK, target)
+	return found && ok.agentID == agentID && e.cfg.Now().Sub(ok.at) <= 2*e.cfg.UnbindTimeout
+}
+
+// endUnbindPark ends a park after a confirmed unbind: the credential is
+// revoked (which also empties the target's command queue), the row goes,
+// event agent.unbound.
+func (e *Engine) endUnbindPark(ctx context.Context, p store.Parked) error {
+	if err := e.revokeParked(ctx, p); err != nil {
+		return err
+	}
+	if err := e.st.Unpark(ctx, p.Target); err != nil {
+		return err
+	}
+	e.emit(ctx, "agent.unbound", "target:"+p.Target, "system", map[string]any{"guest": p.GuestRef})
 	return nil
 }
 
