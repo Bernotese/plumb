@@ -82,10 +82,10 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-159 slice 5 C14: README (users, catalogue, `network`, `group`, signed images, Plan document changes; 4 new pictures) | pl-frontend | merged (PR #270) |
 | T-171 users page: role hints from the contract | pl-frontend | merged (PR #271) |
 | T-172 plan of slice 6: part A (no user answer), part B (SSH repair, adoption; waits for U1/U2) | pl-architect, check: pl-reviewer | merged (PR #272), D-360 … D-376. Cards T-173 … T-196 |
-| Slice 6 part A, merged: T-173 A1 contract (PR #276), T-177 A4b nested forms + YAML mode (PR #278), T-181 A7 live drift of ip/nft (PR #277), T-183 A9 MAC checks (PR #273), T-184 A10 F5 proof in CI (PR #275), T-185 A11 leftovers (PR #274) | – | done |
-| Slice 6 part A, in work: T-174 A2 settings server (pl-backend), T-175 A3 Accept to a parameter (pl-architect), T-178 A5 MCP server (pl-reviewer builds), T-182 A8 `firewall-off` (pl-codex-fix), T-196 A15 form writes only non-defaults (pl-frontend), T-197 e2e race fix (PR #279) | – | in work |
-| Slice 6 part A, waiting: T-176 A4a web, T-179 A6a token rate limit, T-180 A6b drift report limit, T-186 A12 QA, T-187 A13 host acceptance, T-188 A14 README | – | waits for its dependencies |
-| Slice 6 part B: T-189 … T-195 (SSH repair, adoption) | – | **waits for the user: U1, U2** |
+| Slice 6 part A, merged: T-173 A1 contract (PR #276), T-175 A3 Accept to a Block parameter (PR #281), T-177 A4b nested forms + YAML mode (PR #278), T-178 A5 MCP server `plumb mcp` (PR #280), T-181 A7 live drift of ip/nft (PR #277), T-183 A9 MAC checks (PR #273), T-184 A10 F5 proof in CI (PR #275), T-185 A11 leftovers (PR #274), T-196 A15 form writes only non-defaults (PR #283), T-197 e2e race (PR #279), T-199 flaky netwatch test (PR #284) | – | done |
+| Slice 6 part A, in work: T-174 A2 settings server (PR #282, review passed, one fix to push), T-180 A6b drift report limit (pl-backend, PR next), T-182 A8 `firewall-off` (pl-codex-fix), T-176 A4a web (pl-frontend), T-200 firewall test diagnostics (pl-backend) | – | in work |
+| Slice 6 part A, waiting: T-179 A6a token rate limit (after T-174), T-198 backup keep range (after T-174), T-186 A12 QA, T-187 A13 host acceptance, T-188 A14 README | – | waits for its dependencies |
+| Slice 6 part B (user answered 2026-11-14: U1 (a) → D-377, U2 (a) → D-378): T-189 B1 contract, T-190 B2 repair core, T-191 B3a SSH transport, T-193 B4 adoption, T-194 B5 web, T-195 B6 QA, T-192→B7 host acceptance; B3b (guest agent) is not built | pl-architect starts T-189 | in work |
 | T-169 `group`: the Plan of a create shows the gid (host finding F4) | pl-codex-fix | merged (PR #266) |
 | T-166 copy rule: opaque guest reports (`firewall.table`, `network.file`, `apt_repository.sources`, `sysctl.file`) and file/unit lines (host finding F2) | pl-architect (implementer) | merged (PR #264), D-359; step 4 is repeated on the host |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
@@ -158,7 +158,12 @@ Order with the test host: real-host part of T-015 on the running install → `--
 ## Dev VM notes
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
+## Open technical points (pl-lead watches)
+- 2026-11-14 05:36–09:23 UTC: the herdr server was down (killed from outside). Work in flight was local only; no host run was active. pl-lead checked worktrees, PRs and the host after the restart.
+- `TestGuestFirewall` failed once in the VM job (PR #281, 2026-11-14): port 8080 not reachable although the table accepts it. Not reproduced, cause unknown, not proven test-only. T-200 adds a dump for the next failure. Read every red VM job before a rerun.
+
 ## Open for the user
+- Answered 2026-11-14: U1 … U5 (D-377 … D-381). Still to ask when it is time: U6 release steps, U7 repair run of the user's own install for the new ACL lines of slice 7.
 - **Working rule D-326 (user, 2026-11-13):** no release until all of BRIEF §5/§6 is done; the team plans and builds slice after slice on its own and sends short notes. The user is asked only for: new token rights or ACLs, public steps, anything outside `pve-dev`, changes to the user's own installation.
 - First release: **rests** (D-326). The workflow of T-124 is ready and stays unused.
 - Slice 4, user question 1: a real install needs the name of the backup storage from the user (`--backup-storage`). For the test host pl-lead proposes one (T-122).

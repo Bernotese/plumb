@@ -19,6 +19,8 @@
     readonlyHint = "Cannot change after create.",
     api,
     notes = {},
+    pinned = [],
+    onfollow,
   }: {
     fields: Field[];
     values: Values;
@@ -30,6 +32,12 @@
     api?: PlumbApi;
     /** Extra warnings per field name, shown under the field (for example D-192). */
     notes?: Record<string, string>;
+    /**
+     * D-376: fields stored with the Block default ("fixed to the current
+     * default"); `onfollow` lets the person follow the default again.
+     */
+    pinned?: readonly string[];
+    onfollow?: (name: string) => void;
   } = $props();
 
   const fid = (f: Field) => `${prefix}-${f.name}`;
@@ -58,6 +66,7 @@
     if (f.description || ro(f) || f.kind === "secret" || f.kind === "yaml")
       ids.push(`${fid(f)}-hint`);
     if (notes[f.name]) ids.push(`${fid(f)}-note`);
+    if (pinned.includes(f.name)) ids.push(`${fid(f)}-pin`);
     if (errors[f.name]) ids.push(`${fid(f)}-error`);
     return ids.length ? ids.join(" ") : undefined;
   }
@@ -220,6 +229,17 @@
       {#if notes[f.name]}
         <span class="hint note" id="{fid(f)}-note">{notes[f.name]}</span>
       {/if}
+      {#if pinned.includes(f.name)}
+        <span class="hint pin" id="{fid(f)}-pin"
+          >Fixed to the current default: a new default of the Block does not reach this Target.
+          {#if onfollow && !ro(f)}<button
+              type="button"
+              class="link"
+              id="{fid(f)}-follow"
+              onclick={() => onfollow(f.name)}>Follow the Block default</button
+            >{/if}</span
+        >
+      {/if}
       {#if errors[f.name]}
         <span class="error" id="{fid(f)}-error">{errors[f.name]}</span>
       {/if}
@@ -228,6 +248,19 @@
 </div>
 
 <style>
+  .link {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .link:focus-visible {
+    outline: 2px solid var(--color-accent);
+  }
   .nested {
     border: 1px solid var(--color-border);
     border-radius: var(--radius);

@@ -5,6 +5,7 @@
 package issue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -328,7 +329,8 @@ func (s *Service) attachCovered(ctx context.Context, target string, primary int6
 }
 
 // acceptDoc returns the Target document with the observed values of the
-// drift as overrides of the resource.
+// drift as Block parameters when a proven mapping exists (D-362), else as
+// overrides of the resource (raw mode, D-296).
 func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire.Change) (state.Doc, error) {
 	head, err := s.st.Head(ctx)
 	if err != nil {
@@ -343,8 +345,27 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 		Name string         `json:"name"`
 		Spec map[string]any `json:"spec"`
 	}
-	if err := json.Unmarshal(row.Body, &doc); err != nil {
+	if err := decodeNumbers(row.Body, &doc); err != nil {
 		return state.Doc{}, err
+	}
+	if err := AcceptRefused(iss.Resource, changes); err != nil {
+		return state.Doc{}, err
+	}
+	// Block parameters first; raw mode only when no parameter fits
+	// (D-362, BRIEF §5.8). The mapping is computed again on the head.
+	set, err := state.Load(ctx, s.st, head.ID)
+	if err != nil {
+		return state.Doc{}, err
+	}
+	if m := AcceptMode(set, iss.Target, iss.Resource, changes, true); m.Mode == state.AcceptParam {
+		if err := setParams(doc.Spec, m.Params); err != nil {
+			return state.Doc{}, err
+		}
+		spec, err := json.Marshal(doc.Spec)
+		if err != nil {
+			return state.Doc{}, err
+		}
+		return state.Doc{Kind: doc.Kind, Name: doc.Name, Spec: spec}, nil
 	}
 	overrides, _ := doc.Spec["overrides"].(map[string]any)
 	if overrides == nil {
@@ -353,9 +374,6 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 	attrs, _ := overrides[iss.Resource].(map[string]any)
 	if attrs == nil {
 		attrs = map[string]any{}
-	}
-	if err := AcceptRefused(iss.Resource, changes); err != nil {
-		return state.Doc{}, err
 	}
 	for _, c := range changes {
 		if c.Attr == wire.AttrRestart {
@@ -444,4 +462,12 @@ func (s *Service) waitingNote(ctx context.Context, iss store.Issue, data map[str
 		return data
 	}
 	return data
+}
+
+// decodeNumbers decodes JSON with numbers as json.Number, so a document
+// that goes back into a proposal keeps its numbers exactly.
+func decodeNumbers(raw []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	return dec.Decode(v)
 }
