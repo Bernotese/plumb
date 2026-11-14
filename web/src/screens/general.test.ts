@@ -18,7 +18,7 @@ describe("Settings → General", () => {
   it("says that a time moved earlier can skip one day (#282 n1)", async () => {
     show(General, { api: adminApi() });
     await until(() => document.querySelector("#g-time-hint"));
-    expect(text(el("#g-time-hint"))).toContain("can skip one backup day");
+    expect(text(el("#g-time-hint"))).toContain("the next backup runs tomorrow: today has none");
   });
 
   it("shows the schedule with its source and the Proxmox view, no secret", async () => {

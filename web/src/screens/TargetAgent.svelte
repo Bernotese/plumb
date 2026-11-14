@@ -236,9 +236,9 @@
           one-time enrollment token. Run it once as root in the guest. Plumb does not show it again.
         </p>
         <p class="muted" id="install-command-history">
-          The shell keeps a pasted command in root's history. Start it with a space (bash on Debian
-          and Ubuntu then does not keep it), or run <code>history -c</code> after it. After a failed try,
-          the token stays valid until the time above.
+          The shell keeps a pasted command, with the token, in root's history. Run
+          <code>unset HISTFILE</code> before you paste it, or <code>history -c</code> after it. After
+          a failed try, the token stays valid until the time above.
         </p>
         <pre class="mono command" id="install-command-text">{command.command}</pre>
         <div class="row">

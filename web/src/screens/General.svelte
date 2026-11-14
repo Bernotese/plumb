@@ -167,8 +167,8 @@
             aria-describedby={describedBy("g-time", errors["time"])}
           />
           <span class="hint" id="g-time-hint"
-            >HH:MM, 24 hours. Now: {SOURCE[settings.backup.source.time]}. A time moved earlier than
-            the current one can skip one backup day: a slot before the change does not run.</span
+            >HH:MM, 24 hours. Now: {SOURCE[settings.backup.source.time]}. If you move the time to
+            one that has already passed today, the next backup runs tomorrow: today has none.</span
           >
           {#if errors["time"]}<span class="error" id="g-time-error">{errors["time"]}</span>{/if}
           {#if settings.backup.source.time === "setting"}<button
