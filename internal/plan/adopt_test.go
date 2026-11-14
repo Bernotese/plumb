@@ -365,3 +365,43 @@ func adoptNotes(t *testing.T, p store.Plan) []string {
 	}
 	return prop.Notes
 }
+
+// Review L2 of #299: when the read after the bind fails, the extra ref
+// stays only if the bind worked.
+func TestAdoptBindSecondReadFails(t *testing.T) {
+	for _, bindFails := range []bool{true, false} {
+		a := newAdoptEnv(t)
+		id, u := a.person("wiki")
+		req := AdoptRequest{Target: "wiki", Node: "pve", VMID: vmidOf(t, id), Digest: u.Digest}
+		d, _ := a.e.AdoptDoc(a.ctx, req)
+		set, _ := state.Validate([]state.Doc{d})
+		rows, _ := state.Rows(set)
+		if _, err := a.st.CommitRevision(a.ctx, store.NewRevision{Author: "user:qa", Docs: rows}); err != nil {
+			t.Fatal(err)
+		}
+		if bindFails {
+			a.drv.Fail(fake.OpObserve, errors.New("observe failed"))
+		}
+		calls := 0
+		orig := adoptedRefsFn
+		adoptedRefsFn = func(e *Engine, ctx context.Context) (map[driver.GuestID]string, error) {
+			calls++
+			if calls == 2 {
+				return nil, errors.New("store read failed")
+			}
+			return orig(e, ctx)
+		}
+		err := a.e.adoptBind(a.ctx, req)
+		adoptedRefsFn = orig
+		if err == nil || calls != 2 {
+			t.Fatalf("bindFails=%v: err %v, %d reads", bindFails, err, calls)
+		}
+		got := a.drv.Adopted()
+		if bindFails && len(got) != 0 {
+			t.Fatalf("a failed bind kept the ref: %v", got)
+		}
+		if !bindFails && got[id] != "wiki" {
+			t.Fatalf("a good bind lost its ref: %v", got)
+		}
+	}
+}

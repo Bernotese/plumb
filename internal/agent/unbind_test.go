@@ -69,3 +69,32 @@ func TestUnbind(t *testing.T) {
 		t.Fatalf("calls %v", rr.calls)
 	}
 }
+
+// Review L1 of #299: a 401 on the result of the unbind (the Run revoked
+// the agent, the result got lost) still finishes the unbind; a 401 on
+// another result does nothing here.
+func TestUnbindRefused(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "var/lib/plumb-agent")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rr := &recRunner{}
+	a := &Agent{opt: Options{Root: root, Runner: rr}, cfg: Config{StateDir: state}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	a.unbindID = "c7"
+	if a.unbindRefused(context.Background(), "c6") {
+		t.Fatal("another command finished the unbind")
+	}
+	if _, err := os.Stat(state); err != nil || len(rr.calls) != 0 {
+		t.Fatalf("state %v calls %v", err, rr.calls)
+	}
+	if !a.unbindRefused(context.Background(), "c7") {
+		t.Fatal("the unbind result's 401 did not finish the unbind")
+	}
+	if _, err := os.Stat(state); err == nil {
+		t.Fatal("the state stays")
+	}
+	if len(rr.calls) != 1 || rr.calls[0] != "systemctl --no-block stop plumb-agent.service" {
+		t.Fatalf("calls %v", rr.calls)
+	}
+}
