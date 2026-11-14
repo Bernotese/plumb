@@ -73,6 +73,11 @@ type Config struct {
 	// OnReport receives every report after validation and wire.Redact.
 	// An error makes the agent retry the report later (503).
 	OnReport func(ctx context.Context, d Delivery) error
+	// DriftEvery and DriftBurst set the per-agent limit of drift reports
+	// (D-366): one report per DriftEvery, burst DriftBurst. Zero: the
+	// defaults DefaultDriftEvery and DefaultDriftBurst.
+	DriftEvery time.Duration
+	DriftBurst int
 	// Now returns the time. Default time.Now.
 	Now func() time.Time
 	// Logger. Default slog.Default().
@@ -91,6 +96,7 @@ type Link struct {
 	// authFail limits failed credential checks per client, so bad
 	// bearers cannot make the controller do unbounded work.
 	authFail *limiter
+	drift    *driftLimiter // drift reports per agent (D-366)
 
 	mu      sync.Mutex
 	targets map[string]*targetState
@@ -157,6 +163,7 @@ func New(cfg Config) (*Link, error) {
 		enroll: newLimiter(cfg.Now, 6*time.Second, 10, 100),
 		// 20 failures per client, then one per 3 s.
 		authFail: newLimiter(cfg.Now, 3*time.Second, 20, 200),
+		drift:    newDriftLimiter(cfg.Now, cfg.DriftEvery, cfg.DriftBurst),
 		targets:  map[string]*targetState{},
 	}, nil
 }
@@ -673,6 +680,22 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusBadRequest, "bad report")
 		return
+	}
+	// D-366: drift reports per agent, before any check, store read or
+	// store write. The type needs the body: a peek at "type" scans the
+	// whole body like the decode does, and must never read another type
+	// than the decode, so the limit comes right after the decode. Only
+	// drift counts; results and confirms of a Run are never limited.
+	if rep.Type == wire.ReportDrift {
+		if ok, retry, event := l.drift.take(agent.ID); !ok {
+			if event {
+				l.log.Warn("drift reports over the limit; agent told to wait", "target", agent.Target)
+				l.emit(r.Context(), "agent.rate_limited", agent.Target, "agent:"+agent.Target, map[string]any{})
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(int(retry/time.Second)))
+			writeError(w, http.StatusTooManyRequests, "too many drift reports")
+			return
+		}
 	}
 	if err := validateReport(rep, strings.HasPrefix(agent.Target, wire.BuildLinkPrefix)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
