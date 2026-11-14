@@ -613,3 +613,48 @@ func TestRepairKeyViewDeletedAndLeftBehind(t *testing.T) {
 		t.Fatalf("previous.left_behind %v", v.Previous.LeftBehind)
 	}
 }
+
+// Review U2 of #309: a forgotten guest stays in previous.left_behind
+// until every key it may hold a line of is revoked.
+func TestRepairKeyViewForgottenUntilRevoke(t *testing.T) {
+	e := newEnv(t)
+	old := e.currentID()
+	if err := e.st.Park(e.ctx, store.Parked{Target: "wiki", AgentID: "ag", GuestRef: "150", Since: e.now, KeyIDs: []string{old}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.Forget(e.ctx, "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := e.st.IsParkedTarget(e.ctx, "wiki"); ok {
+		t.Fatal("a forgotten agent is still parked")
+	}
+	v, err := e.s.Rotate(e.ctx, false, "user:admin")
+	if err != nil || strings.Join(v.Previous.LeftBehind, ",") != "wiki (VMID 150, agent forgotten)" {
+		t.Fatalf("rotate: %+v %v", v.Previous, err)
+	}
+	// The new key does not free it; the revoke of the old one does.
+	if v, err = e.s.Rotate(e.ctx, true, "user:admin"); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := e.st.LeftBehind(e.ctx)
+	if len(rows) != 0 {
+		t.Fatalf("forgotten row after the revoke of its key: %+v", rows)
+	}
+}
+
+// A forgotten row that still holds a valid key stays after a revoke.
+func TestRepairKeyForgottenWithValidKeyStays(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.s.Rotate(e.ctx, false, "user:admin"); err != nil {
+		t.Fatal(err)
+	}
+	cur := e.currentID()
+	e.st.Park(e.ctx, store.Parked{Target: "wiki", AgentID: "ag", GuestRef: "150", Since: e.now, KeyIDs: []string{cur}})
+	e.st.Forget(e.ctx, "wiki")
+	if _, err := e.s.Rotate(e.ctx, true, "user:admin"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := e.st.LeftBehind(e.ctx); len(rows) != 1 {
+		t.Fatalf("rows %+v", rows)
+	}
+}

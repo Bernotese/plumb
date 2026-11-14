@@ -206,8 +206,20 @@ func TestForgetAgent(t *testing.T) {
 	if code, body := adm.do("POST", "/api/v1/targets/wiki/adopt", map[string]any{"node": "pve", "vmid": vmid2, "digest": d2, "reason": "same name"}); code != 409 || !strings.Contains(string(body), "agent-left") {
 		t.Fatalf("adopt under the parked name: %d %s", code, body)
 	}
+	seq, _ := e.st.LastEventSeq(e.ctx)
 	if code, body := adm.do("POST", path, nil); code != 204 {
 		t.Fatalf("forget: %d %s", code, body)
+	}
+	// Review U2 of #309: the event says what may stay in the guest.
+	evs, _ := e.st.EventsAfter(e.ctx, seq, 50)
+	var forgot string
+	for _, ev := range evs {
+		if ev.Type == "agent.forgotten" {
+			forgot = string(ev.Data)
+		}
+	}
+	if !strings.Contains(forgot, `"repair_key_lines":[`) || !strings.Contains(forgot, "plumb-repair-") {
+		t.Fatalf("agent.forgotten %s", forgot)
 	}
 	if e.agentLeft(adm, vmid) {
 		t.Fatal("agent_left after forget")
@@ -217,5 +229,30 @@ func TestForgetAgent(t *testing.T) {
 	}
 	if code, _ := adm.do("POST", path, nil); code != 404 {
 		t.Fatalf("second forget: %d", code)
+	}
+}
+
+// Review U1 of #309: another guest cannot be adopted under the name of a
+// parked agent; the answer is 409 agent-left and no Plan is made.
+func TestAdoptOtherGuestUnderParkedName(t *testing.T) {
+	e := newEnv(t, true, withInstall)
+	adm := e.admin()
+	_, a := e.adoptWithAgent(adm, "wiki")
+	a.FailUnbind("disk full")
+	e.deleteTarget(adm, "wiki")
+	plans := func() int {
+		_, body := adm.do("GET", "/api/v1/plans?limit=100", nil)
+		var l struct{ Items []json.RawMessage }
+		json.Unmarshal(body, &l)
+		return len(l.Items)
+	}
+	before := plans()
+	vmidB, digestB := e.person("wiki") // guest B, same name
+	code, body := adm.do("POST", "/api/v1/targets/wiki/adopt", map[string]any{"node": "pve", "vmid": vmidB, "digest": digestB, "reason": "B"})
+	if code != 409 || !strings.Contains(string(body), "agent-left") {
+		t.Fatalf("adopt guest B under the parked name: %d %s", code, body)
+	}
+	if n := plans(); n != before {
+		t.Fatalf("a Plan was made: %d → %d", before, n)
 	}
 }

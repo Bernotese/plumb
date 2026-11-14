@@ -263,15 +263,20 @@ func (s *Service) notConfirmed(ctx context.Context, id string) ([]string, error)
 }
 
 // leftBehind lists the guests ("<target> (VMID <ref>)") whose agent is
-// parked after an unconfirmed unbind (D-396).
+// parked after an unconfirmed unbind (D-396), and the forgotten ones
+// ("…, agent forgotten") that may still hold a line (review U2 of #309).
 func (s *Service) leftBehind(ctx context.Context) ([]string, error) {
-	parked, err := s.cfg.Store.ParkedTargets(ctx)
+	rows, err := s.cfg.Store.LeftBehind(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := []string{}
-	for _, p := range parked {
-		out = append(out, fmt.Sprintf("%s (VMID %s)", p.Target, p.GuestRef))
+	for _, p := range rows {
+		if p.Forgotten {
+			out = append(out, fmt.Sprintf("%s (VMID %s, agent forgotten)", p.Target, p.GuestRef))
+		} else {
+			out = append(out, fmt.Sprintf("%s (VMID %s)", p.Target, p.GuestRef))
+		}
 	}
 	return out, nil
 }
@@ -290,6 +295,19 @@ func (s *Service) Rotate(ctx context.Context, revokeOld bool, actor string) (*Ke
 		}
 		if !ok {
 			return nil, store.ErrNothingToRevoke
+		}
+		// A forgotten guest whose lines hold only revoked keys lets nobody
+		// in any more (review U2 of #309).
+		keys, err := s.cfg.Store.RepairKeys(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var valid []string
+		for _, k := range keys {
+			valid = append(valid, k.ID)
+		}
+		if err := s.cfg.Store.DropForgotten(ctx, valid); err != nil {
+			return nil, err
 		}
 		s.emit(ctx, "repair_key.rotated", actor, map[string]any{"revoke_old": true,
 			"fingerprint": before.Fingerprint, "revoked": before.Previous.Fingerprint})

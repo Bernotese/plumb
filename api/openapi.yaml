@@ -1358,9 +1358,12 @@ paths:
       description: |
         Human admin session only (D-396). Ends the park of the agent of a deleted adopted Target
         whose unbind was not confirmed: its credential is revoked, and Plumb no longer sends it
-        unbind. What is in the guest (the agent, the repair key line) stays for a person to remove
-        (the Run step named the commands). 404 when the guest has no parked agent. Event
-        `agent.forgotten`.
+        unbind. What is in the guest (the agent, the `plumb-repair-` line of the repair keys valid
+        at the park) stays for a person to remove; the UI shows the commands before the forget.
+        The guest stays in `RepairKeyView.previous.left_behind` ("…, agent forgotten") until none of
+        those keys is valid (review U2 of #309). 404 when the guest has no parked agent. Event
+        `agent.forgotten` with `guest`, `repair_key_lines` (the fingerprints of the keys whose line
+        may still be in the guest) and `note` (what to remove by hand).
       security:
         - session: []
       responses:
@@ -4945,7 +4948,7 @@ components:
               items: { $ref: "#/components/schemas/Name" }
             left_behind:
               type: array
-              description: Guests of deleted adopted Targets whose agent was not unbound (D-396), as "<target> (VMID <n>)". Their repair line may still hold the previous key.
+              description: Guests of deleted adopted Targets whose agent was not unbound (D-396), as "<target> (VMID <n>)", and those whose agent an admin forgot, as "<target> (VMID <n>, agent forgotten)". Their repair line may still hold a valid key; a forgotten guest leaves the list when none of the keys valid at its park is valid any more.
               items: { type: string }
     RepairState:
       type: [object, "null"]

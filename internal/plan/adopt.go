@@ -530,7 +530,15 @@ func (e *Engine) unbindGuest(ctx context.Context, target string, adopted *state.
 		if adopted != nil {
 			node = adopted.Node
 		}
-		if err := e.st.Park(ctx, store.Parked{Target: target, AgentID: ag.ID, GuestRef: b.Ref, Node: node, Since: e.cfg.Now().UTC()}); err != nil {
+		keys, err := e.st.RepairKeys(ctx)
+		if err != nil {
+			return "", false, err
+		}
+		var ids []string
+		for _, k := range keys {
+			ids = append(ids, k.ID)
+		}
+		if err := e.st.Park(ctx, store.Parked{Target: target, AgentID: ag.ID, GuestRef: b.Ref, Node: node, Since: e.cfg.Now().UTC(), KeyIDs: ids}); err != nil {
 			return "", false, err
 		}
 	} else if err := e.cfg.Agents.Revoke(ctx, target); err != nil {
@@ -572,23 +580,55 @@ func (e *Engine) RetryUnbinds(ctx context.Context) error {
 		if err != nil || rep.Error != "" {
 			continue // tried again at the next poll
 		}
-		if err := e.endPark(ctx, p, "system", "agent.unbound"); err != nil {
+		if err := e.revokeParked(ctx, p); err != nil {
 			return err
 		}
+		if err := e.st.Unpark(ctx, p.Target); err != nil {
+			return err
+		}
+		e.emit(ctx, "agent.unbound", "target:"+p.Target, "system", map[string]any{"guest": p.GuestRef})
 	}
 	return nil
 }
 
 // ForgetAgent ends the park of a guest's agent without its unbind: the
 // credential is revoked; what is in the guest stays for a person (D-396).
-// Admin session only (the API route).
+// The row stays as forgotten: the guest may still hold the repair lines of
+// the keys valid at the park, so the rotate view lists it until none of
+// them is valid, and the event names their fingerprints (review U2 of
+// #309). Admin session only (the API route).
 func (e *Engine) ForgetAgent(ctx context.Context, ref, actor string) error {
 	p, err := e.st.ParkedByRef(ctx, ref)
 	if err != nil {
 		return err
 	}
-	return e.endPark(ctx, p, actor, "agent.forgotten")
+	if err := e.revokeParked(ctx, p); err != nil {
+		return err
+	}
+	if err := e.st.Forget(ctx, p.Target); err != nil {
+		return err
+	}
+	keys, err := e.st.RepairKeys(ctx)
+	if err != nil {
+		return err
+	}
+	fps := []string{}
+	for _, k := range keys {
+		if slices.Contains(p.KeyIDs, k.ID) {
+			fps = append(fps, k.Fingerprint)
+		}
+	}
+	e.emit(ctx, "agent.forgotten", "target:"+p.Target, actor, map[string]any{"guest": p.GuestRef,
+		"repair_key_lines": fps, "note": TextForgotten})
+	return nil
 }
+
+// TextForgotten: what may stay in a guest after forget-agent (review U2
+// of #309). The UI shows the same sentence before the forget.
+const TextForgotten = "The guest may still hold the Plumb agent and a plumb-repair- line in /root/.ssh/authorized_keys that lets this controller's repair key in. " +
+	"Remove them by hand as root: delete the lines ending in plumb-repair-<id>; systemctl disable --now plumb-agent.service; " +
+	"rm -rf /etc/plumb-agent /var/lib/plumb-agent /usr/local/bin/plumb-agent /etc/systemd/system/plumb-agent*. " +
+	"The repair key view lists the guest until the key of that line is revoked."
 
 // checkAgentLeft refuses a Target name or a guest ref with a parked agent.
 func (e *Engine) checkAgentLeft(ctx context.Context, target, ref string) error {
@@ -608,7 +648,8 @@ func (e *Engine) checkAgentLeft(ctx context.Context, target, ref string) error {
 	return nil
 }
 
-func (e *Engine) endPark(ctx context.Context, p store.Parked, actor, event string) error {
+// revokeParked revokes the parked agent's credential.
+func (e *Engine) revokeParked(ctx context.Context, p store.Parked) error {
 	// Only the parked agent: no other agent can enroll under the name while
 	// the park lasts (the link makes no token), but check it anyway.
 	ag, err := e.st.AgentByTarget(ctx, p.Target)
@@ -620,10 +661,6 @@ func (e *Engine) endPark(ctx context.Context, p store.Parked, actor, event strin
 	case err != nil && !errors.Is(err, store.ErrNotFound):
 		return err
 	}
-	if err := e.st.Unpark(ctx, p.Target); err != nil {
-		return err
-	}
-	e.emit(ctx, event, "target:"+p.Target, actor, map[string]any{"guest": p.GuestRef})
 	return nil
 }
 
