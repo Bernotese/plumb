@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,7 +47,10 @@ func (r f5Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func TestF5SignedPinSchedule(t *testing.T) {
 	ctx := context.Background()
+	// list is read by the server goroutine and set by the test (#275 l1).
+	var listMu sync.Mutex
 	list := "old"
+	setList := func(v string) { listMu.Lock(); list = v; listMu.Unlock() }
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "SHA512SUMS") {
 			_, _ = w.Write([]byte(strings.Repeat("e", 128) + "  f5.img\n"))
@@ -56,11 +60,14 @@ func TestF5SignedPinSchedule(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, ".gpg") {
 			suffix += ".gpg"
 		}
-		if list == "unsigned" && strings.HasSuffix(r.URL.Path, ".gpg") {
+		listMu.Lock()
+		cur := list
+		listMu.Unlock()
+		if cur == "unsigned" && strings.HasSuffix(r.URL.Path, ".gpg") {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		fixture := list
+		fixture := cur
 		if fixture == "unsigned" {
 			fixture = "new"
 		}
@@ -130,7 +137,7 @@ func TestF5SignedPinSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.Wait()
-	list = "new"
+	setList("new")
 	tick()
 	approved, err := st.ApprovedPlans(ctx, OriginPinRefresh)
 	if err != nil || len(approved) != 2 {
@@ -171,7 +178,7 @@ func TestF5SignedPinSchedule(t *testing.T) {
 		}
 	}
 	// Missing signature fails closed: it cannot create any refresh Plan.
-	list = "unsigned"
+	setList("unsigned")
 	tick()
 	if ps, err := st.PendingPlans(ctx, OriginPinRefresh); err != nil || len(ps) != 0 {
 		t.Fatalf("unsigned refresh: %+v %v", ps, err)

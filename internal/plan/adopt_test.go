@@ -436,6 +436,7 @@ func TestAdoptStaleHostSequence(t *testing.T) {
 		t.Fatalf("binding: %v", err)
 	}
 	before := writes()
+	staleRev, _, _ := a.e.base(a.ctx)
 
 	// An unrelated Plan that touches the stale Target (named, or its
 	// document changed by a token) plans and runs nothing for it.
@@ -476,6 +477,27 @@ func TestAdoptStaleHostSequence(t *testing.T) {
 		if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("%s bound the stale Target", in.Reason)
 		}
+	}
+	// A rollback to the revision of the stale Target (#306 low): it has
+	// no Adopt, so it plans nothing for the guest and binds nothing.
+	p, err = a.e.Rollback(a.ctx, staleRev, "rollback", "user:admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rtps []TargetPlan
+	json.Unmarshal(p.Changes, &rtps)
+	if len(rtps) != 1 || !rtps[0].NotAdopted || rtps[0].Guest != "" || len(rtps[0].Resources) != 0 {
+		t.Fatalf("rollback: %s", p.Changes)
+	}
+	if _, err := a.e.Approve(a.ctx, p.ID, "user:admin", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.e.Wait()
+	if run := a.lastRun(t); run.Status != "succeeded" {
+		t.Fatalf("rollback run %s", run.Status)
+	}
+	if _, err := a.st.GetBinding(a.ctx, state.KindTarget, "wiki"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("the rollback bound the stale Target")
 	}
 	if writes() != before {
 		t.Fatalf("Plans for the stale Target wrote to the hypervisor: %d", writes()-before)
