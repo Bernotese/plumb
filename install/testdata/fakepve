@@ -219,6 +219,21 @@ pvesh)
 			exit 1
 		fi
 		;;
+	/nodes/*/network)
+		# The node network: network holds the JSON list; by default vmbr0
+		# and the VLAN-aware vmbr9 (C8) and a plain vmbr1.
+		[[ ${FAKE_NETWORK_FAIL:-0} == 1 ]] && exit 1
+		if [[ -e $st/network ]]; then cat "$st/network"; else
+			echo '[{"iface":"vmbr0","type":"bridge"},{"iface":"vmbr9","type":"bridge","bridge_vlan_aware":1},{"iface":"vmbr1","type":"bridge"},{"iface":"eno1","type":"eth"}]'
+		fi
+		;;
+	/nodes/*/storage/*/content)
+		# The backup volumes of a storage: backups.ID holds the JSON list.
+		id=${2#/nodes/*/storage/}
+		id=${id%/content}
+		[[ ${FAKE_CONTENT_FAIL:-0} == 1 ]] && exit 1
+		if [[ -e $st/backups.$id ]]; then cat "$st/backups.$id"; else echo '[]'; fi
+		;;
 	/cluster/nextid) echo 105 ;;
 	/pools)
 		[[ ${FAKE_POOLS_FAIL:-0} == 1 ]] && exit 1

@@ -37,6 +37,20 @@ type ProxmoxView struct {
 	ACL       string        `json:"acl"`
 	ACLError  string        `json:"acl_error"`
 	ACLLines  []ACLLineView `json:"acl_lines"`
+	// ExtraNets and GuestBackup are the install settings of slice 7
+	// (D-401, D-405, D-406, T-218). GuestBackup is null without a guest
+	// backup storage.
+	ExtraNets   []ExtraNetView   `json:"extra_nets"`
+	GuestBackup *GuestBackupView `json:"guest_backup"`
+	// ACLExtra are rights of the token beyond the lines of the install
+	// (review L4 of #330): path and role only.
+	ACLExtra []ACLExtraView `json:"acl_extra"`
+}
+
+// ACLExtraView is a right of the token that the install does not name.
+type ACLExtraView struct {
+	Path string `json:"path"`
+	Role string `json:"role"`
 }
 
 // ACLLineView is one ACL line of the install.
@@ -46,9 +60,25 @@ type ACLLineView struct {
 	OK   bool   `json:"ok"`
 }
 
+// ExtraNetView is one extra bridge (tag null) or bridge/tag of the install.
+type ExtraNetView struct {
+	Bridge string `json:"bridge"`
+	Tag    *int   `json:"tag"`
+}
+
+// GuestBackupView is the guest backup storage of the install: its state
+// (pbs-key, stated-clear, clear-refused) and the other storages on which
+// the token could write a vzdump (M2 of #321; must be empty).
+type GuestBackupView struct {
+	Storage             string   `json:"storage"`
+	State               string   `json:"state"`
+	OtherBackupStorages []string `json:"other_backup_storages"`
+	DiskContent         []string `json:"disk_content"`
+}
+
 // noProxmox is the view of a controller without Proxmox (serve --dev).
 func noProxmox() *ProxmoxView {
-	return &ProxmoxView{ACL: "unknown", ACLError: "This controller runs without Proxmox (dev mode).", ACLLines: []ACLLineView{}}
+	return &ProxmoxView{ACL: "unknown", ACLError: "This controller runs without Proxmox (dev mode).", ACLLines: []ACLLineView{}, ExtraNets: []ExtraNetView{}, ACLExtra: []ACLExtraView{}}
 }
 
 type settingsView struct {
@@ -82,6 +112,20 @@ func (s *Server) settingsOf(ctx context.Context, p *principal) settingsView {
 		}
 		if v.Proxmox.ACLLines == nil {
 			v.Proxmox.ACLLines = []ACLLineView{}
+		}
+		if v.Proxmox.ExtraNets == nil {
+			v.Proxmox.ExtraNets = []ExtraNetView{}
+		}
+		if v.Proxmox.ACLExtra == nil {
+			v.Proxmox.ACLExtra = []ACLExtraView{}
+		}
+		if g := v.Proxmox.GuestBackup; g != nil {
+			if g.OtherBackupStorages == nil {
+				g.OtherBackupStorages = []string{}
+			}
+			if g.DiskContent == nil {
+				g.DiskContent = []string{}
+			}
 		}
 		// The backup storage is known only from the status file of the
 		// host copy timer (T-208, host finding F1): null before its first

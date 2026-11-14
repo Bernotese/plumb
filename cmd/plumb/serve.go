@@ -202,6 +202,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		return err
 	}
 	var drv driver.Driver
+	var extras proxmox.InstallExtras // slice 7 install settings (D-401, D-405)
 	switch f.driver {
 	case "fake":
 		drv = fake.New()
@@ -210,6 +211,9 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		}
 	default:
 		// Before anything touches the data directory (D-183).
+		if extras, err = proxmox.InstallExtrasFromEnv(os.Getenv); err != nil {
+			return configErr("%v", err)
+		}
 		d, err := proxmoxDriver(ctx, os.Getenv, log)
 		if err != nil {
 			return err
@@ -393,7 +397,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	// driver, it sends only reads.
 	var pveView func(context.Context) *api.ProxmoxView
 	if pd, ok := rawDrv.(*proxmox.Driver); ok {
-		viewer := proxmox.NewViewer(pd, proxmox.TokenUser(os.Getenv("PLUMB_PVE_TOKEN_ID")))
+		viewer := proxmox.NewViewer(pd, proxmox.TokenUser(os.Getenv("PLUMB_PVE_TOKEN_ID")), extras)
 		pveView = func(ctx context.Context) *api.ProxmoxView { return proxmoxView(viewer.View(ctx)) }
 	}
 	srv := api.New(api.Config{Store: st, Events: events, Plans: eng, Issues: iss, Backups: backups, Proxmox: pveView, Secrets: secrets, RepairKeys: repairKeys(rep), Version: version, UI: ui, Dev: f.dev, DevLoginToken: devToken, Logger: log})
@@ -616,6 +620,23 @@ func proxmoxView(v proxmox.View) *api.ProxmoxView {
 	}
 	for _, l := range v.ACLLines {
 		out.ACLLines = append(out.ACLLines, api.ACLLineView{Path: l.Path, Role: l.Role, OK: l.OK})
+	}
+	out.ExtraNets = make([]api.ExtraNetView, 0, len(v.ExtraNets))
+	for _, n := range v.ExtraNets {
+		e := api.ExtraNetView{Bridge: n.Bridge}
+		if n.Tag != 0 {
+			tag := n.Tag
+			e.Tag = &tag
+		}
+		out.ExtraNets = append(out.ExtraNets, e)
+	}
+	if g := v.GuestBackup; g != nil {
+		out.GuestBackup = &api.GuestBackupView{Storage: g.Storage, State: g.State, OtherBackupStorages: append([]string{}, g.Others...),
+			DiskContent: append([]string{}, g.DiskContent...)}
+	}
+	out.ACLExtra = make([]api.ACLExtraView, 0, len(v.ACLExtra))
+	for _, l := range v.ACLExtra {
+		out.ACLExtra = append(out.ACLExtra, api.ACLExtraView{Path: l.Path, Role: l.Role})
 	}
 	return out
 }
