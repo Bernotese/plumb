@@ -276,9 +276,13 @@ leaves the guest as it was.
   connects only to a pinned key, unless you accept the new key in the repair Plan.
 - **Settings → General** shows the repair key. "Make a new repair key" makes a new one; the old key
   stays valid until you revoke it.
-- Without a repair over SSH (a container without SSH, a guest that never had the line), an admin
-  makes an **install command** on the agent page: one root command for the guest, valid once for 15
-  minutes. It holds a one-time token, so treat it as a secret; Plumb shows it only once.
+- Without a repair over SSH (a container without SSH, a guest that never had the line, an adopted
+  guest), an admin makes an **install command** on the agent page: one root command for the guest,
+  valid once for 15 minutes. It holds a one-time token, so treat it as a secret; Plumb shows it only
+  once. **It needs `curl` in the guest**; a stock Debian LXC has none. Install it first
+  (`apt-get install -y curl`). Every error line of the command and of the install script starts
+  with `plumb-install:`. Without `curl`, or when the download fails or is cut, the command stops
+  with one such line, installs nothing and leaves no file; you can run the same command again.
 
 ![Agent page of web3: repair over SSH is ready, the pinned host key, and the button Propose repair](docs/screenshots/readme-repair.png)
 <br>*A dead agent: Plumb can install it again over SSH, after a person approves the plan.*
@@ -294,7 +298,8 @@ first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a 
 - Adopting is a Plan that only a person can approve. Plumb writes nothing to Proxmox for it.
 - The guest is **not sealed**: its SSH host keys, machine-id and root users stay as they are.
   Plumb never reads its password, SSH keys, description or container environment.
-- Install the agent with the install command on the agent page.
+- Install the agent with the install command on the agent page (it needs `curl` in the guest; see
+  "Repair a dead agent").
 - **Delete:** deleting an adopted Target lets the guest go: Plumb removes its agent, and the guest
   and its disks stay in Proxmox. Only when you first allow it with a separate plan ("Allow Plumb to
   delete the guest", it sets `delete_guest`) does deleting the Target delete the Proxmox guest and its
@@ -316,14 +321,6 @@ systemctl stop plumb-agent.service && /usr/local/sbin/plumb-agent-install
 
 After it, the Target page shows the new agent version. A guest without
 `/usr/local/sbin/plumb-agent-install` must be made again.
-
-**The install command** (Target page → Agent → Make an install command) installs the agent by
-hand in a guest that Plumb cannot repair over SSH, for example an adopted guest. Run it once as
-root within 15 minutes. **It needs `curl` in the guest**; a stock Debian LXC has none. Install
-it first (`apt-get install -y curl`). Every error line of the command and of the install script
-starts with `plumb-install:`. Without `curl`, or when the download fails or is cut, the command
-stops with one such line, installs nothing and leaves no file; you can run the same command
-again.
 
 An update never changes a stored Block. If your `nginx` or `nginx-site` Block answers 403, replace
 its `index index.html;` line with `index index.html index.htm index.nginx-debian.html;`.
