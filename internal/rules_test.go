@@ -36,12 +36,13 @@ var mayImport = map[string][]string{
 	"wire":     {},
 	"backup":   {"secret", "event", "store"},
 	"trust":    {},
+	"mcp":      {},
 }
 
 // cmdMayImport lists what each binary may link. The agent binary must stay
 // small and must not contain controller code.
 var cmdMayImport = map[string][]string{
-	"plumb":       {"api", "plan", "issue", "state", "link", "driver", "secret", "event", "store", "resource", "wire", "backup"},
+	"plumb":       {"api", "plan", "issue", "state", "link", "driver", "secret", "event", "store", "resource", "wire", "backup", "mcp"},
 	"plumb-agent": {"agent", "resource", "wire"},
 }
 
@@ -53,8 +54,9 @@ var directDeps = []string{
 	"github.com/santhosh-tekuri/jsonschema/",
 	"golang.org/x/crypto",
 	"golang.org/x/sys",
-	"github.com/klauspost/compress",   // zstd decoder only, internal/driver/proxmox/ctpack (D-225)
-	"github.com/ProtonMail/go-crypto", // detached-signature verify only, internal/trust (D-336)
+	"github.com/klauspost/compress",          // zstd decoder only, internal/driver/proxmox/ctpack (D-225)
+	"github.com/ProtonMail/go-crypto",        // detached-signature verify only, internal/trust (D-336)
+	"github.com/modelcontextprotocol/go-sdk", // MCP stdio server only, internal/mcp (D-364)
 }
 
 // imports returns the import paths of all non-test Go files below dir,
