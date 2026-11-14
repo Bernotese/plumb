@@ -330,6 +330,12 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if in.Origin == OriginAccept {
 		humanOnly = append(humanOnly, HumanOnlyAcceptGuestData)
 	}
+	// Removing a firewall needs a person (D-368), whatever made the Plan.
+	if off, err := firewallOff(base, next, names); err != nil {
+		return store.Plan{}, err
+	} else if off {
+		humanOnly = append(humanOnly, HumanOnlyFirewallOff)
+	}
 	// The copy rule (D-331): values that a guest reported as drift.
 	guest, err := e.checkGuestData(ctx, base, next, names)
 	if err != nil {

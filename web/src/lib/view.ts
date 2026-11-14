@@ -275,6 +275,17 @@ export function humanOnlyReasons(plan: Plan): string[] {
       );
       continue;
     }
+    if (reason === "firewall-off") {
+      out.push(
+        "It turns off the firewall of a target (D-368): every port of that guest is open then.",
+      );
+      continue;
+    }
+    if (reason !== "secret-binding") {
+      // A reason this UI does not know yet: neutral, never another reason's text.
+      out.push(`Needs a person: ${reason}.`);
+      continue;
+    }
     // The targets that get a secret in a changed resource of this Plan.
     const given = plan.targets.filter(
       (t) =>
