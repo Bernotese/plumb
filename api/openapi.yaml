@@ -1139,8 +1139,8 @@ paths:
               example:
                 storage: { id: plumb-backup, state: stated-clear, free_pct: 62 }
                 items:
-                  - { id: 3f2a9c0d1e4b5a67, time: "2026-11-15T03:00:12Z", size: 812345678, kind: plumb, mode: snapshot }
-                  - { id: 9b1c2d3e4f5a6b7c, time: "2026-10-01T03:00:09Z", size: 790000000, kind: older-guest, mode: snapshot }
+                  - { id: 3f2a9c0d1e4b5a67, time: "2026-11-15T03:00:12Z", size: 812345678, kind: plumb, trigger: scheduled, mode: snapshot }
+                  - { id: 9b1c2d3e4f5a6b7c, time: "2026-10-01T03:00:09Z", size: 790000000, kind: older-guest, trigger: scheduled, mode: snapshot }
                 next_at: "2026-11-16T03:00:00Z"
                 last: { at: "2026-11-15T03:00:12Z", result: done, message: "" }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -1155,7 +1155,9 @@ paths:
       summary: Back up a Target's guest now
       description: |
         Slice 7 (D-408). Starts one guest backup job now: risk `reversible` (no Plan; the guest is not
-        changed). 409 `backup-running` (a job of this Target runs), 409 `backup-refused` (no storage, a
+        changed). A manual backup is marked as such (`trigger: manual`). Retention keeps at most 2
+        manual backups beside the `keep` scheduled ones and never deletes a scheduled backup because
+        of a manual one (review M1 of #325), so repeated calls cannot push out the good backups. 409 `backup-running` (a job of this Target runs), 409 `backup-refused` (no storage, a
         clear storage without `--guest-backup-clear`, less than 10 % free, or restored mode; the detail
         says which). Events `guest_backup.started`, then `done`, `failed` or `warning` in `done` (the
         marker could not be read back: the volume is `unmarked`, D-407).
@@ -1219,7 +1221,11 @@ paths:
         - then makes a re-enroll Plan (a Plumb-made Target) or shows the install command (an adopted
           Target).
 
-        The desired state is not rolled back: the next Run converges the guest to the head. There is
+        The desired state is not rolled back: the next Run converges the guest to the head. A restore
+        brings back what the guest held at the backup time, also access that a person removed later
+        (`authorized_keys` lines, passwords); the Plan says so (review L1 of #325). The Target keeps
+        its binding and its backup lineage; the Run drops the host key pins, and the next repair
+        report pins the keys again. There is
         no restore after the guest is gone: it would need a new right (D-411, a later user question).
         A person restores such a volume in Proxmox into pool `plumb` and adopts it. 409
         `restored-mode` in restored mode. The token itself can restore at the Proxmox API with the
@@ -5130,7 +5136,11 @@ components:
           properties:
             at: { $ref: "#/components/schemas/Time" }
             result: { type: string, enum: [running, done, warning, failed, refused] }
-            message: { type: string, maxLength: 1024 }
+            message:
+              type: string
+              maxLength: 1024
+              description: Plumb's own short text (the result and, on a failure, Plumb's reason). Never a raw Proxmox task log (review L2 of #325).
+
     GuestBackup:
       type: object
       additionalProperties: false
@@ -5142,7 +5152,7 @@ components:
           name or an older guest on this VMID. Only a person may delete it; never restored.
         - `unmarked`: no Plumb marker (a vzdump made by a person, or the notes failed). Never touched by
           Plumb.
-      required: [id, time, size, kind, mode]
+      required: [id, time, size, kind, trigger, mode]
       properties:
         id:
           type: string
@@ -5151,6 +5161,14 @@ components:
         time: { $ref: "#/components/schemas/Time" }
         size: { type: integer, minimum: 0 }
         kind: { type: string, enum: [plumb, older-guest, unmarked] }
+        trigger:
+          type: string
+          enum: [scheduled, manual, unknown]
+          description: |
+            From the marker (`…:m` for a manual backup, review M1 of #325): `scheduled` by the Target's
+            `backup` schedule, `manual` by "Back up now". `unknown` for a volume without a Plumb marker.
+            Retention keeps the newest `keep` scheduled volumes and, apart from them, at most 2 manual
+            ones (the oldest manual one goes first): a manual backup never pushes out a scheduled one.
         mode:
           type: string
           enum: [snapshot, stop, suspend, unknown]

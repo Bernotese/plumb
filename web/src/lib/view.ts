@@ -289,7 +289,7 @@ export function humanOnlyReasons(plan: Plan): string[] {
     }
     if (reason === "guest-restore") {
       out.push(
-        "It overwrites the guest with a backup (D-410): everything written after that backup is lost. The agent gets a new enrollment.",
+        "It overwrites the guest with a backup (D-410): everything written after that backup is lost, and access that was removed since (SSH keys, passwords) comes back. The agent gets a new enrollment.",
       );
       continue;
     }

@@ -231,7 +231,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 30,
-              "description": "Retention keeps this many of the Target's own (kind plumb) backups and deletes the oldest above it. It never touches another lineage or an unmarked volume (D-407)."
+              "description": "How many scheduled backups Plumb keeps; the oldest above it go. Beside them Plumb keeps at most 2 backups made by 'Back up now'. Lowering keep deletes backups: that Plan is destructive and says how many go. Removing the backup field stops the backups and deletes none."
             }
           },
           "if": {
