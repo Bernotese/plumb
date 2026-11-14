@@ -125,9 +125,21 @@ func TestRecordGuestValuesCapReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if over, err := s.RecordGuestValues(ctx, "full", junkValues(0, GuestValueCap)); err != nil || over {
-		t.Fatalf("fill: %v %v", over, err)
+	// Seed directly: pacing the setup tests write throughput rather than
+	// whether a capped report avoids a write transaction.
+	setup := time.Now()
+	_, err = s.db.ExecContext(ctx, `WITH RECURSIVE hashes(n) AS (
+		VALUES(0) UNION ALL SELECT n + 1 FROM hashes WHERE n + 1 < ?
+	) INSERT INTO guest_value (target, resource, attr, hash, first_seen, last_seen)
+	SELECT 'full', 'file:/junk', 'content', printf('%064x', n), ?, ? FROM hashes`,
+		GuestValueCap, s.now(), s.now())
+	if err != nil {
+		t.Fatal(err)
 	}
+	if count, err := s.GuestValueCount(ctx, "full"); err != nil || count != GuestValueCap {
+		t.Fatalf("seed count: %d, error %v", count, err)
+	}
+	t.Logf("seed cap: %v", time.Since(setup))
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +148,10 @@ func TestRecordGuestValuesCapReadOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	start := time.Now()
-	over, err := s.RecordGuestValues(ctx, "full", junkValues(GuestValueCap, GuestValueCap))
+	// One unseen hash is enough to require a write without the cap guard.
+	// Avoid timing 20 freshness queries under -race in this lock test.
+	over, err := s.RecordGuestValues(ctx, "full", junkValues(GuestValueCap, 1))
+	t.Logf("capped report under write lock: %v", time.Since(start))
 	if err != nil || !over {
 		t.Fatalf("capped report: overflow %v, error %v", over, err)
 	}
