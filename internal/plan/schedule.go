@@ -193,7 +193,15 @@ func (e *Engine) CheckSchedules(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
-		if err := e.scheduledBuild(ctx, name, slot); err != nil {
+		note := ""
+		if info.Verify != "" { // D-346: the newest signed base first
+			building, n := e.scheduledRefresh(ctx, name)
+			if building {
+				continue
+			}
+			note = n
+		}
+		if err := e.scheduledBuild(ctx, name, slot, note); err != nil {
 			e.log.Error("scheduled build", "image", name, "slot", slot, "err", err)
 		}
 	}
@@ -222,9 +230,12 @@ func (e *Engine) imageBusy(ctx context.Context, image string) (bool, error) {
 
 // scheduledBuild plans the build of a due slot as system and approves it
 // with the system rule.
-func (e *Engine) scheduledBuild(ctx context.Context, image string, slot time.Time) error {
-	p, err := e.ProposeBuild(ctx, image, store.TriggerSchedule,
-		fmt.Sprintf("scheduled build (slot %s)", slot.Format("2006-01-02 15:04 UTC")), PrincipalSystem)
+func (e *Engine) scheduledBuild(ctx context.Context, image string, slot time.Time, note string) error {
+	reason := fmt.Sprintf("scheduled build (slot %s)", slot.Format("2006-01-02 15:04 UTC"))
+	if note != "" {
+		reason += "; " + note
+	}
+	p, err := e.ProposeBuild(ctx, image, store.TriggerSchedule, reason, PrincipalSystem)
 	if err != nil {
 		return err
 	}

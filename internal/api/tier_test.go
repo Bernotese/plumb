@@ -23,6 +23,7 @@ var endpoints = []endpoint{
 	{"GET", "/api/v1/images", nil, TierRead, false},
 	{"GET", "/api/v1/images/ubuntu", nil, TierRead, false},
 	{"POST", "/api/v1/images/nope/build", nil, TierPlan, false},
+	{"POST", "/api/v1/images/nope/refresh", nil, TierPlan, false},
 	{"GET", "/api/v1/blocks", nil, TierRead, false},
 	{"GET", "/api/v1/blocks/motd", nil, TierRead, false},
 	{"GET", "/api/v1/catalog/blocks", nil, TierRead, false},
