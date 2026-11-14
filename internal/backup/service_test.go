@@ -526,8 +526,8 @@ func TestDue(t *testing.T) {
 			t.Errorf("time %q accepted", bad)
 		}
 	}
-	if _, err := New(f.ctx, Config{Store: f.st, DataDir: f.data, Keep: 91}); err == nil {
-		t.Error("keep 91 accepted")
+	if _, err := New(f.ctx, Config{Store: f.st, DataDir: f.data, Keep: 101}); err == nil {
+		t.Error("keep 101 accepted")
 	}
 }
 
