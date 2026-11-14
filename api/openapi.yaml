@@ -2584,7 +2584,9 @@ paths:
       description: |
         The backup schedule with the source of each value, and a read-only view of the Proxmox
         connection (D-361). No secret is in the answer: `token_user` is the user part of the
-        Proxmox token id (`<user>@<realm>`), never the token name or its secret.
+        Proxmox token id (`<user>@<realm>`), never the token name or its secret. `proxmox` is
+        given only to a human session (any role); for an API token it is `null`, so scripts and
+        MCP clients get the backup part only (pl-lead, review n2 of #276).
         `proxmox.acl` compares the effective permissions of the token
         (`GET /access/permissions` of Proxmox; every user and token may read its own) with the
         ACL lines of the install: `ok` all lines are there, `missing` one or more lines are not
@@ -4540,7 +4542,11 @@ components:
               properties:
                 time: { $ref: "#/components/schemas/SettingSource" }
                 keep: { $ref: "#/components/schemas/SettingSource" }
-        proxmox: { $ref: "#/components/schemas/ProxmoxView" }
+        proxmox:
+          description: The Proxmox view for a human session; `null` for an API token (D-361).
+          oneOf:
+            - $ref: "#/components/schemas/ProxmoxView"
+            - type: "null"
     ProxmoxView:
       type: object
       additionalProperties: false
