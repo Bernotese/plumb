@@ -75,6 +75,11 @@ type Driver struct {
 	idMu     sync.Mutex
 	reserved map[int]bool
 
+	// adopted: the guests of bound adopted Targets, VMID → Target name
+	// (D-386, SetAdopted). own() accepts them outside the VMID range.
+	adoptMu sync.Mutex
+	adopted map[int]string
+
 	// templates: the start check saw the content "vztmpl" on the image
 	// storage (D-229). Check sets it once, before serve uses the driver.
 	templates bool
@@ -247,7 +252,11 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 	if err != nil {
 		return 0, member{}, err
 	}
-	if id < d.cfg.VMIDMin || id > d.cfg.VMIDMax {
+	// An adopted guest may have any VMID (D-386); the engine names it, and
+	// the name check below proves at every call that it is still that guest
+	// (review of T-193 item 2).
+	adoptedName, adopted := d.adoptedName(id)
+	if !adopted && (id < d.cfg.VMIDMin || id > d.cfg.VMIDMax) {
 		return 0, member{}, fmt.Errorf("%w: VMID %d is outside %d–%d", ErrForeignGuest, id, d.cfg.VMIDMin, d.cfg.VMIDMax)
 	}
 	ms, err := d.guests(ctx)
@@ -267,7 +276,7 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 				if cfg["template"] == "1" {
 					m.Template = 1
 				}
-				return id, m, nil
+				return id, m, checkAdopted(id, m.Name, adoptedName, adopted)
 			}
 			cfg, err := d.config(ctx, id)
 			if err != nil {
@@ -278,7 +287,7 @@ func (d *Driver) own(ctx context.Context, s string) (int, member, error) {
 			if cfg["template"] == "1" {
 				m.Template = 1
 			}
-			return id, m, nil
+			return id, m, checkAdopted(id, m.Name, adoptedName, adopted)
 		}
 	}
 	// Not in the pool: either gone, or someone else's. The token can only
