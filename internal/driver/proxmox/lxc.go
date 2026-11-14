@@ -520,7 +520,9 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 		if err := scrub(d.c.MaybeTask(ctx, d.cfg.Node, "PUT", ctPath(d, id)+"/config", params), token); err != nil {
 			return tagRefusal(err, params)
 		}
-		if err := checkNICsApplied(ctx, params, func(ctx context.Context, current bool) (map[string]string, error) { return d.ctConfig(ctx, id, current) }); err != nil {
+		if err := checkNICsApplied(ctx, params, func(ctx context.Context, current bool) (map[string]string, error) {
+			return d.ctConfig(ctx, id, current)
+		}); err != nil {
 			return err
 		}
 	}

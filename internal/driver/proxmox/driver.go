@@ -1169,7 +1169,9 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 		if err := scrub(d.c.MaybeTask(ctx, d.cfg.Node, "POST", vmPath(d, id)+"/config", params), token); err != nil {
 			return tagRefusal(err, params)
 		}
-		if err := checkNICsApplied(ctx, params, func(ctx context.Context, current bool) (map[string]string, error) { return d.readConfig(ctx, id, current) }); err != nil {
+		if err := checkNICsApplied(ctx, params, func(ctx context.Context, current bool) (map[string]string, error) {
+			return d.readConfig(ctx, id, current)
+		}); err != nil {
 			return err
 		}
 	}
