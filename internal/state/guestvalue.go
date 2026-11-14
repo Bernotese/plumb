@@ -150,8 +150,11 @@ const MinLineChars = 8
 
 // GuestValueLines returns the lines of text v that text other does not
 // have, for an attribute marked x-plumb-lines (file.content, unit.content;
-// D-359, review O2 of #264): trimmed, at least MinLineChars non-space
-// characters, sorted, without duplicates. The bound MaxGuestElems counts
+// D-359, review O2 of #264): normalized (inner spaces and tabs collapsed to
+// one space, lower case; review W1 of #264), at least MinLineChars
+// non-space characters, sorted, without duplicates. Only verbatim or
+// normalized copies match: an edited, split or commented line does not
+// (the opaque-type rule is the fail-closed part). The bound MaxGuestElems counts
 // only these new lines, so a big unchanged file never overflows; over
 // reports more, and the caller fails closed. Every other attribute, and a
 // value that is not a string, gives nothing.
@@ -167,13 +170,13 @@ func GuestValueLines(typ, attr string, v, other any) (lines []string, over bool)
 	have := map[string]bool{}
 	if o, ok := other.(string); ok {
 		for l := range strings.SplitSeq(o, "\n") {
-			have[strings.TrimSpace(l)] = true
+			have[normLine(l)] = true
 		}
 	}
 	set := map[string]bool{}
 	for l := range strings.SplitSeq(text, "\n") {
-		l = strings.TrimSpace(l)
-		if have[l] || set[l] || len(strings.Join(strings.Fields(l), "")) < MinLineChars {
+		l = normLine(l)
+		if have[l] || set[l] || len(strings.ReplaceAll(l, " ", "")) < MinLineChars {
 			continue
 		}
 		if len(set) >= MaxGuestElems {
@@ -188,6 +191,10 @@ func GuestValueLines(typ, attr string, v, other any) (lines []string, over bool)
 	sort.Strings(lines)
 	return lines, over
 }
+
+// normLine is the compared form of a line: white space runs (spaces,
+// tabs, the \r of CRLF) collapsed to one space, trimmed, lower case.
+func normLine(l string) string { return strings.ToLower(strings.Join(strings.Fields(l), " ")) }
 
 // Scalar reports whether the copy rule compares value v of attr as a whole
 // in a type-wide check (D-359, review O1 of #264): enum and const values,

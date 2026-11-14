@@ -63,8 +63,8 @@ func TestGuestValueElemsBounded(t *testing.T) {
 // D-359, review O2 of #264: new lines of a text count, bounded on the new
 // lines only.
 func TestGuestValueLines(t *testing.T) {
-	got, over := GuestValueLines("file", "content", "keep me as is\n  PermitRootLogin yes \n}\nfi\nPermitRootLogin yes\n", "keep me as is\n")
-	if over || len(got) != 1 || got[0] != "PermitRootLogin yes" {
+	got, over := GuestValueLines("file", "content", "Keep  me as is\n  PermitRootLogin yes \n}\nfi\npermitrootlogin\tYES\r\n", "keep me as is\n")
+	if over || len(got) != 1 || got[0] != "permitrootlogin yes" {
 		t.Fatalf("lines %q over %v", got, over)
 	}
 	if got, _ := GuestValueLines("file", "path", "/etc/a-long-path\n", ""); got != nil {

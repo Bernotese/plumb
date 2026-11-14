@@ -194,14 +194,18 @@ func TestCopyRuleFileLines(t *testing.T) {
 		return []state.Doc{doc(state.KindBlock, "sshd", `{"resources":[{"file":{"path":"/etc/ssh/sshd_config.d/50-x.conf","content":`+jsonString(content)+`}}]}`),
 			doc(state.KindTarget, "web5", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},"blocks":[{"use":"sshd"}]}`)}
 	}
-	p := e.proposeDocs(e.token(TierPlan, ""), other("# managed\nPermitRootLogin yes\n")...)
-	want := plan.GuestDataMatch{IssueID: iss.ID, Target: "web5", Resource: "file:/etc/ssh/sshd_config.d/50-x.conf", Attr: "content", Element: "PermitRootLogin yes"}
-	if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) || !slices.Contains(p.Matches, want) {
-		t.Fatalf("copied line: %+v", p)
-	}
-	e.tokenRefused(p.ID)
-	if code, body := adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil); code >= 300 {
-		t.Fatalf("drop: %d %s", code, body)
+	// The same line, also with other spacing, a tab or another case
+	// (review W1 of #264).
+	for _, line := range []string{"PermitRootLogin yes", "PermitRootLogin  yes", "PermitRootLogin\tyes", "permitrootlogin YES"} {
+		p := e.proposeDocs(e.token(TierPlan, ""), other("# managed\n"+line+"\n")...)
+		want := plan.GuestDataMatch{IssueID: iss.ID, Target: "web5", Resource: "file:/etc/ssh/sshd_config.d/50-x.conf", Attr: "content", Element: "permitrootlogin yes"}
+		if !slices.Contains(p.HumanOnly, plan.HumanOnlyAcceptGuestData) || !slices.Contains(p.Matches, want) {
+			t.Fatalf("copied line %q: %+v", line, p)
+		}
+		e.tokenRefused(p.ID)
+		if code, body := adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil); code >= 300 {
+			t.Fatalf("drop: %d %s", code, body)
+		}
 	}
 	// "}" is too short and "hello" is too short as well: no match.
 	if q := e.proposeDocs(e.token(TierPlan, ""), other("hello\n}\nPermitRootLogin no\n")...); len(q.HumanOnly) != 0 {
