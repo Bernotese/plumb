@@ -167,7 +167,8 @@
             aria-describedby={describedBy("g-time", errors["time"])}
           />
           <span class="hint" id="g-time-hint"
-            >HH:MM, 24 hours. Now: {SOURCE[settings.backup.source.time]}.</span
+            >HH:MM, 24 hours. Now: {SOURCE[settings.backup.source.time]}. A time moved earlier than
+            the current one can skip one backup day: a slot before the change does not run.</span
           >
           {#if errors["time"]}<span class="error" id="g-time-error">{errors["time"]}</span>{/if}
           {#if settings.backup.source.time === "setting"}<button
@@ -236,6 +237,13 @@
           <dd class="mono wrap" id="key-previous">{repairKey.previous.fingerprint}</dd>
         {/if}
       </dl>
+      {#if repairKey.left_behind.length}
+        <p id="key-left-behind">
+          Left behind ({repairKey.left_behind.length}): {repairKey.left_behind.join(", ")}. These
+          guests are no longer Plumb's, but may still hold a repair line of a valid key. Remove the
+          <code>plumb-repair-</code> line in each guest, or make a new key and revoke the old one.
+        </p>
+      {/if}
       {#if repairKey.previous}
         {#if repairKey.previous.targets.length}
           <p id="key-old-targets">

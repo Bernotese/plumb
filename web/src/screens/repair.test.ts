@@ -122,6 +122,8 @@ describe("install command (D-387)", () => {
     const cmd = el("#install-command-text").textContent ?? "";
     expect(cmd).toContain("<<'PLUMB_TOKEN'");
     expect(text(el("#install-command"))).toContain("This command is a secret until");
+    // #307 n2: the pasted command lands in root's shell history.
+    expect(text(el("#install-command-history"))).toContain("Start it with a space");
     button("Done, I copied it")?.click();
     flushSync();
     expect(document.querySelector("#install-command-text")).toBeNull();
