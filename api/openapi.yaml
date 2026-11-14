@@ -1240,7 +1240,9 @@ paths:
         again before it binds the guest, and writes nothing to Proxmox. 409 `guest-changed`: the
         digest or the name differs from the request; 409 `not-adoptable`; 409 `guest-bound`: a
         Target or Image already holds the guest; 409 `document-exists`: a Target of that name
-        exists.
+        exists that is not a not-adopted Target of this guest (such a one is replaced, D-395); 409
+        `adopt-claimed`: the Plan would make two Targets claim one guest. A not-adopted Target of
+        the same guest under another name is removed by the same Plan.
       security:
         - session: []
         - token: [plan]
@@ -3650,6 +3652,14 @@ components:
         adopted:
           type: boolean
           description: The Target holds an adopted guest (D-386); its delete keeps the guest unless `spec.adopted.delete_guest` is true. Missing before T-193.
+        not_adopted:
+          type: boolean
+          description: |
+            D-395: the Target is adopted, but no guest is bound: its adopt Run was refused (the
+            guest changed between the Plan and the approval). Plans that touch it do nothing for it
+            (a note says so). Adopt the guest again (`POST /targets/{name}/adopt` under the guest's
+            Proxmox name replaces this Target; under a new name it removes this one in the same Plan),
+            or delete the Target (no Proxmox call). Missing on a controller before T-204.
         power: { type: string, enum: [running, stopped, unknown] }
         last_seen: { $ref: "#/components/schemas/NullableTime" }
         agent_version:

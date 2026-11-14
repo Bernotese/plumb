@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/link/agentinstall"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -167,11 +168,88 @@ func (e *Engine) ProposeAdopt(ctx context.Context, req AdoptRequest, author, rea
 	if err != nil {
 		return store.Plan{}, err
 	}
+	// D-395: a Target of the same name may exist only as a not-adopted
+	// Target of the same guest (the new document replaces it); other
+	// not-adopted Targets that claim this guest are removed by the same
+	// Plan, so one Target claims it.
+	_, base, err := e.base(ctx)
+	if err != nil {
+		return store.Plan{}, err
+	}
+	var drop []DocKey
+	for _, t := range base.Targets() {
+		a, adopted := base.AdoptedOf(t)
+		same := adopted && a.Node == req.Node && a.VMID == req.VMID
+		if t != req.Target && !same {
+			continue
+		}
+		if t == req.Target && !same {
+			return store.Plan{}, fmt.Errorf("%w: a Target %s exists", ErrDocumentExists, t)
+		}
+		// A Target of the same guest is not bound here: AdoptDoc refused a
+		// bound VMID already (guest-bound).
+		if t != req.Target {
+			drop = append(drop, DocKey{Kind: state.KindTarget, Name: t})
+		}
+	}
 	if reason == "" {
 		reason = fmt.Sprintf("adopt the guest %d on %s as Target %s", req.VMID, req.Node, req.Target)
 	}
 	return e.Propose(ctx, Input{Author: author, Reason: reason, Origin: OriginAdopt,
-		Proposal: Proposal{Put: []state.Doc{doc}, Adopt: []AdoptRequest{req}}})
+		// Targets: the same document as a stale one is no render change,
+		// so the adopted Target is named to be planned (D-395).
+		Proposal: Proposal{Put: []state.Doc{doc}, Delete: drop, Targets: []string{req.Target}, Adopt: []AdoptRequest{req}}})
+}
+
+// ErrDocumentExists: the adopt route found a Target of that name that is
+// not a not-adopted Target of the same guest.
+var ErrDocumentExists = errors.New("document-exists")
+
+// ErrAdoptClaimed: a Plan would make two Targets claim one guest (D-395).
+var ErrAdoptClaimed = errors.New("adopt-claimed")
+
+// adoptClaims refuses a Plan after which two Targets claim the same
+// adopted node and VMID (D-395 rule 1). A pair that the base has already
+// (made before this rule) is tolerated, so the head stays plannable and a
+// person can remove one of them.
+func adoptClaims(base, next *state.Set) error {
+	claims := func(s *state.Set) map[[2]string][]string {
+		out := map[[2]string][]string{}
+		for _, t := range s.Targets() {
+			if a, ok := s.AdoptedOf(t); ok {
+				k := [2]string{a.Node, strconv.Itoa(a.VMID)}
+				out[k] = append(out[k], t)
+			}
+		}
+		return out
+	}
+	old := claims(base)
+	for k, names := range claims(next) {
+		if len(names) < 2 {
+			continue
+		}
+		for _, n := range names {
+			if !slices.Contains(old[k], n) {
+				others := slices.DeleteFunc(slices.Clone(names), func(x string) bool { return x == n })
+				return &ProposalError{Target: n, Err: ErrAdoptClaimed,
+					Msg: fmt.Sprintf("guest %s on %s is claimed by Target %s already; one guest has one Target (D-395)", k[1], k[0], strings.Join(others, ", "))}
+			}
+		}
+	}
+	return nil
+}
+
+// notAdoptedIn are the adopted Targets of the base. A Plan that touches
+// one of them without binding it (no adopt request) plans nothing for it
+// when it has no binding (adoptPlans, D-395).
+func notAdoptedIn(base *state.Set) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range base.Targets() {
+		if _, ok := base.AdoptedOf(t); ok {
+			out[t] = true
+		}
+	}
+	return out
 }
 
 // adoptBind is the Run step of an adopt Plan: it reads the guest again
@@ -356,7 +434,7 @@ func adoptedGuestDelete(plans []TargetPlan) bool {
 // refuses an adopt without its request: a Target with spec.adopted is
 // bound only through the adopt route, which checked the guest (D-386).
 // It returns the notes in clear words for the Plan (D-388).
-func adoptPlans(reqs []AdoptRequest, plans []TargetPlan) ([]string, error) {
+func adoptPlans(reqs []AdoptRequest, plans []TargetPlan, inBase map[string]bool) ([]string, error) {
 	var notes []string
 	for i := range plans {
 		tp := &plans[i]
@@ -367,6 +445,14 @@ func adoptPlans(reqs []AdoptRequest, plans []TargetPlan) ([]string, error) {
 					r := reqs[j]
 					tp.Adopt = &r
 				}
+			}
+			if tp.Adopt == nil && inBase[tp.Target] {
+				// D-395: a not-adopted Target (its adopt Run was refused).
+				// Only a new adopt Plan binds it; this Plan does nothing
+				// for it, and says so.
+				tp.Guest, tp.Resources, tp.NotAdopted = "", []ResourceChange{}, true
+				notes = append(notes, fmt.Sprintf("Target %s is not adopted: its adopt Run did not bind the guest (it changed). This Plan does nothing for it; adopt the guest again or delete the Target (D-395).", tp.Target))
+				continue
 			}
 			if tp.Adopt == nil {
 				return nil, &ProposalError{Target: tp.Target, Err: ErrNotAdoptable,
@@ -451,9 +537,6 @@ var ErrInstallUnavailable = errors.New("plan: the install command needs the agen
 // only through a here document into a 0600 file (review R6 of #290).
 func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (string, time.Time, error) {
 	rc := e.repairConfig()
-	if strings.ContainsAny(rc.AgentURL, "' \n") {
-		return "", time.Time{}, ErrInstallUnavailable // never quote around a strange URL
-	}
 	if _, err := e.st.GetBinding(ctx, state.KindTarget, target); errors.Is(err, store.ErrNotFound) {
 		return "", time.Time{}, fmt.Errorf("%w: Target %s has no guest", ErrNoGuest, target)
 	} else if err != nil {
@@ -462,23 +545,19 @@ func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (stri
 	if rc.Tokens == nil || rc.AgentURL == "" || len(rc.CA) == 0 {
 		return "", time.Time{}, ErrInstallUnavailable
 	}
+	// The command refuses a URL or CA that could break its quoting
+	// (agentinstall.InstallCommand); ask before a token is made.
+	if _, err := agentinstall.InstallCommand(string(rc.CA), rc.AgentURL, "probe"); err != nil {
+		return "", time.Time{}, fmt.Errorf("%w: %v", ErrInstallUnavailable, err)
+	}
 	tok, err := rc.Tokens.NewRepairToken(ctx, target)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	e.emit(ctx, "target.install_command", "target:"+target, actor, map[string]any{"expires_at": tok.Expires.UTC()})
-	return installCommand(string(rc.CA), rc.AgentURL, tok.Token), tok.Expires, nil
-}
-
-// installCommand is the command text of D-387: the CA and the token by
-// here documents with quoted delimiters (no expansion), umask 077 for
-// 0600 files, then the install script from the agent listener with the CA.
-func installCommand(ca, agentURL, token string) string {
-	ca = strings.TrimRight(ca, "\n") + "\n"
-	return "umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n" + ca + "PLUMB_CA\n" +
-		"cat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n" + token + "\nPLUMB_TOKEN\n" +
-		// Only the Plumb CA: --capath to a dir without hashed names replaces
-		// the system CA store (review S1 of T-076, A2 of #299).
-		"curl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath /etc/plumb-agent --cacert /etc/plumb-agent/ca.pem '" +
-		agentURL + wire.PathInstallScript + "' | PLUMB_URL='" + agentURL + "' sh\n"
+	cmd, err := agentinstall.InstallCommand(string(rc.CA), rc.AgentURL, tok.Token)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return cmd, tok.Expires, nil
 }

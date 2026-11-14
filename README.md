@@ -317,6 +317,14 @@ systemctl stop plumb-agent.service && /usr/local/sbin/plumb-agent-install
 After it, the Target page shows the new agent version. A guest without
 `/usr/local/sbin/plumb-agent-install` must be made again.
 
+**The install command** (Target page → Agent → Make an install command) installs the agent by
+hand in a guest that Plumb cannot repair over SSH, for example an adopted guest. Run it once as
+root within 15 minutes. **It needs `curl` in the guest**; a stock Debian LXC has none. Install
+it first (`apt-get install -y curl`). Every error line of the command and of the install script
+starts with `plumb-install:`. Without `curl`, or when the download fails or is cut, the command
+stops with one such line, installs nothing and leaves no file; you can run the same command
+again.
+
 An update never changes a stored Block. If your `nginx` or `nginx-site` Block answers 403, replace
 its `index index.html;` line with `index index.html index.htm index.nginx-debian.html;`.
 
