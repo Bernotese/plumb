@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -212,8 +213,31 @@ func TestCopyRuleCapFailsClosed(t *testing.T) {
 	for i := range junk {
 		junk[i] = store.GuestValue{Resource: "file:/junk", Attr: "content", Hash: fmt.Sprintf("%064x", i)}
 	}
+	// The race job of #248: while the store writes the 10 000 values, a
+	// writer like an agent poll (TouchAgent) must get its turn well inside
+	// the busy timeout (5 s). The worst wait is logged as evidence.
+	var stop atomic.Bool
+	waits := make(chan time.Duration, 1)
+	go func() {
+		var worst time.Duration
+		for !stop.Load() {
+			start := time.Now()
+			_ = e.st.TouchAgent(e.ctx, "probe", time.Now())
+			worst = max(worst, time.Since(start))
+			time.Sleep(20 * time.Millisecond)
+		}
+		waits <- worst
+	}()
+	start := time.Now()
 	if _, err := e.st.RecordGuestValues(e.ctx, "web1", junk); err != nil {
 		t.Fatal(err)
+	}
+	took := time.Since(start)
+	stop.Store(true)
+	worst := <-waits
+	t.Logf("10 000 values stored in %v; worst TouchAgent wait meanwhile %v", took, worst)
+	if worst > 2*time.Second {
+		t.Errorf("a writer waited %v while the values were stored (busy timeout 5 s)", worst)
 	}
 	e.motd("flood-value") // past the cap: nothing stored, the Target is flagged
 	if n, err := e.st.GuestValueCount(e.ctx, "web1"); err != nil || n != store.GuestValueCap {

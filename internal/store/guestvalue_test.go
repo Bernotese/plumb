@@ -59,9 +59,10 @@ func TestRecordGuestValuesChunks(t *testing.T) {
 
 // The race job of #248: a guest that reports large lists again and again
 // must not starve the other writers of the store. An agent poll writes its
-// agent row (TouchAgent) and fails after the busy timeout (5 s). Before
-// the fix a writer of back-to-back chunks made TouchAgent wait 2.5 s here
-// and over 5 s under -race.
+// agent row (TouchAgent) and fails after the busy timeout (5 s). With the
+// code of e6f2f25 (back-to-back chunks of 500, every repeat written) the
+// same load made TouchAgent wait 1.6 to 2.8 s without -race, and over 5 s
+// under -race; now about 50 ms.
 func TestRecordGuestValuesYields(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "plumb.db"))
@@ -78,12 +79,12 @@ func TestRecordGuestValuesYields(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			for i := 0; !stop.Load(); i += 1000 {
+			for i := 0; !stop.Load(); i += 5000 {
 				from := i % GuestValueCap // repeats after the first round
 				if newValues {
 					from = i
 				}
-				if _, err := s.RecordGuestValues(ctx, "web1", junkValues(from, 1000)); err != nil {
+				if _, err := s.RecordGuestValues(ctx, "web1", junkValues(from, 5000)); err != nil {
 					t.Errorf("writer: %v", err)
 					return
 				}
