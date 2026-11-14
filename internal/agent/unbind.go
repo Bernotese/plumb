@@ -14,32 +14,37 @@ import (
 )
 
 // Unbind (D-388, ARCHITECTURE §19): the delete of an adopted Target keeps
-// the guest. The agent then removes Plumb's way in and itself: the repair
-// lines, its credential and state, its config, its units and its binaries.
-// What it applied stays as it is (files, packages, users), also the
-// firewall and network boot units and their files in /etc/plumb-agent: a
-// person removes them if wanted; they keep the guest as it was configured.
+// the guest. The agent removes Plumb's way in and itself: the repair lines,
+// every agent unit (also the firewall and network boot units: the delete
+// Plan that drops a firewall is human-only firewall-off, D-368), its
+// binaries and /etc/plumb-agent. What it applied elsewhere stays (files,
+// packages, users, the netplan file). The credential goes last, after the
+// controller took the result (finishUnbind), like seal.
 
-// unbindUnits are the units the agent disables and removes. The firewall
-// and network units stay (see above).
-var unbindUnits = []string{"plumb-agent.service", "plumb-agent-guard.timer", "plumb-agent-guard.service", "plumb-agent-install.service"}
+// unbindUnits are the units the agent disables and removes.
+var unbindUnits = []string{
+	"plumb-agent.service", "plumb-agent-install.service", "plumb-agent-guard.service", "plumb-agent-guard.timer",
+	"plumb-agent-firewall.service", "plumb-agent-firewall-rollback.service", "plumb-agent-firewall-rollback.timer",
+	"plumb-agent-network.service", "plumb-agent-network-rollback.service", "plumb-agent-network-rollback.timer",
+}
 
 // unbindFiles are removed (relative to the guest root).
 var unbindFiles = []string{
-	"/etc/plumb-agent/agent.json", "/etc/plumb-agent/ca.pem", "/etc/plumb-agent/enroll.token",
 	"/usr/local/bin/plumb-agent", "/usr/local/bin/plumb-agent.prev", "/usr/local/sbin/plumb-agent-install",
 }
 
-// unbind does the removal. It returns the first error, after it tried
-// every step; the caller exits the agent afterwards (its unit is gone, so
-// systemd does not start it again).
+// unbind does the removal up to the credential. It returns every error it
+// met after it tried every step; the result goes to the controller.
 func (a *Agent) unbind(ctx context.Context) error {
 	var errs []error
 	if err := removeRepairLines(filepath.Join(a.opt.Root, "root/.ssh/authorized_keys")); err != nil {
 		errs = append(errs, err)
 	}
-	args := append([]string{"disable"}, unbindUnits...)
+	args := append([]string{"disable"}, unbindUnits[1:]...) // the agent's own unit is stopped last
 	if _, err := a.opt.Runner.Run(ctx, "systemctl", args...); err != nil {
+		errs = append(errs, fmt.Errorf("systemctl disable: %w", err))
+	}
+	if _, err := a.opt.Runner.Run(ctx, "systemctl", "disable", unbindUnits[0]); err != nil {
 		errs = append(errs, fmt.Errorf("systemctl disable: %w", err))
 	}
 	for _, u := range unbindUnits {
@@ -48,15 +53,30 @@ func (a *Agent) unbind(ctx context.Context) error {
 	for _, f := range unbindFiles {
 		errs = append(errs, removeIfExists(filepath.Join(a.opt.Root, f)))
 	}
+	if err := os.RemoveAll(filepath.Join(a.opt.Root, "etc/plumb-agent")); err != nil {
+		errs = append(errs, err)
+	}
 	if _, err := a.opt.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 		errs = append(errs, fmt.Errorf("systemctl daemon-reload: %w", err))
 	}
-	// The credential last: until here a failed step can still be reported.
-	if err := os.RemoveAll(a.cfg.StateDir); err != nil {
-		errs = append(errs, err)
-	}
 	return errors.Join(errs...)
 }
+
+// finishUnbind runs after the controller took the result: it removes the
+// credential and the state, then stops the agent's own unit. The agent
+// then ends; systemd does not start it again (the unit is gone).
+func (a *Agent) finishUnbind(ctx context.Context) {
+	if err := os.RemoveAll(a.cfg.StateDir); err != nil {
+		a.log.Warn("unbind: remove the state", "err", err)
+	}
+	if _, err := a.opt.Runner.Run(ctx, "systemctl", "--no-block", "stop", unbindUnits[0]); err != nil {
+		a.log.Warn("unbind: stop the agent unit", "err", err)
+	}
+}
+
+// unboundBy reports whether the command id is an unbind that ended
+// (handle sets it).
+func (a *Agent) unboundBy(cmdID string) bool { return cmdID != "" && a.unbindID == cmdID }
 
 func removeIfExists(p string) error {
 	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
