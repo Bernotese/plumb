@@ -73,13 +73,13 @@ func TestClassifyAndRetention(t *testing.T) {
 	for i, v := range vols {
 		switch {
 		case i < 5:
-			rec[v.Volid] = Recorded{tLineage, TriggerScheduled}
+			rec[v.Volid] = recOf(v, tLineage, TriggerScheduled)
 		case i < 12:
-			rec[v.Volid] = Recorded{tLineage, TriggerManual}
+			rec[v.Volid] = recOf(v, tLineage, TriggerManual)
 		case i == 12:
-			rec[v.Volid] = Recorded{"fedcba9876543210", TriggerScheduled}
+			rec[v.Volid] = recOf(v, "fedcba9876543210", TriggerScheduled)
 		case i == 13:
-			rec[v.Volid] = Recorded{tLineage, TriggerScheduled} // another install's marker: never ours
+			rec[v.Volid] = recOf(v, tLineage, TriggerScheduled) // another install's marker: never ours
 		}
 	}
 	c := Classify(vols, tInstall, "db1", tLineage, rec)
@@ -141,15 +141,15 @@ func TestClassifyForgedMarkers(t *testing.T) {
 	for i := range 3 {
 		v := vol(i, own)
 		vols = append(vols, v)
-		rec[v.Volid] = Recorded{tLineage, TriggerScheduled}
+		rec[v.Volid] = recOf(v, tLineage, TriggerScheduled)
 	}
 	for i := 10; i < 13; i++ { // newer forgeries, not recorded
 		vols = append(vols, vol(i, own))
 	}
 	trig := vol(20, marker(t, Marker{tInstall, "db1", tLineage, true})) // marker says manual, record says scheduled
-	rec[trig.Volid] = Recorded{tLineage, TriggerScheduled}
+	rec[trig.Volid] = recOf(trig, tLineage, TriggerScheduled)
 	other := vol(21, marker(t, Marker{tInstall, "db2", tLineage, false})) // another Target's name, recorded here
-	rec[other.Volid] = Recorded{tLineage, TriggerScheduled}
+	rec[other.Volid] = recOf(other, tLineage, TriggerScheduled)
 	vols = append(vols, trig, other)
 	c := Classify(vols, tInstall, "db1", tLineage, rec)
 	plumb := 0
@@ -173,5 +173,35 @@ func TestVolumeIDStable(t *testing.T) {
 	a1, a2, b := VolumeID("a"), VolumeID("a"), VolumeID("b")
 	if a1 != a2 || a1 == b {
 		t.Fatal("unstable id")
+	}
+}
+
+// recOf is the record of v as a job writes it (size and ctime from the
+// read-back list).
+func recOf(v Volume, lineage, trigger string) Recorded {
+	return Recorded{Lineage: lineage, Trigger: trigger, Size: v.Size, CTime: v.Time.Unix()}
+}
+
+// F2 of #331: a recorded volume whose size or time changed (a replaced
+// archive) is not Plumb's; n2: notes changed to another lineage are not
+// Plumb's either.
+func TestClassifyReplacedContent(t *testing.T) {
+	own := marker(t, Marker{tInstall, "db1", tLineage, false})
+	v := vol(1, own)
+	v.Size = 100
+	rec := map[string]Recorded{v.Volid: recOf(v, tLineage, TriggerScheduled)}
+	if c := Classify([]Volume{v}, tInstall, "db1", tLineage, rec); c[0].Kind != KindPlumb {
+		t.Fatalf("control: %s", c[0].Kind)
+	}
+	bigger := v
+	bigger.Size = 101
+	later := v
+	later.Time = v.Time.Add(time.Second)
+	relined := v
+	relined.Notes = marker(t, Marker{tInstall, "db1", "fedcba9876543210", false})
+	for name, x := range map[string]Volume{"size": bigger, "time": later, "lineage": relined} {
+		if c := Classify([]Volume{x}, tInstall, "db1", tLineage, rec); c[0].Kind != KindUnmarked {
+			t.Errorf("%s changed: %s", name, c[0].Kind)
+		}
 	}
 }

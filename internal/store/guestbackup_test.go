@@ -51,7 +51,7 @@ func TestBackupLineage(t *testing.T) {
 	if _, err := s.StartGuestBackupRun(ctx, "db1", l2, "scheduled"); !errors.Is(err, ErrGuestBackupRunning) {
 		t.Fatalf("second running job: %v", err)
 	}
-	if err := s.FinishGuestBackupRun(ctx, id, "done", "pb:backup/x", "ok"); err != nil {
+	if err := s.FinishGuestBackupRun(ctx, id, "done", "pb:backup/x", 42, 1700000000, "ok"); err != nil {
 		t.Fatal(err)
 	}
 	if r, err := s.GuestBackupRunOfVolume(ctx, "db1", "pb:backup/x"); err != nil || r.Trigger != "manual" || r.Result != "done" {

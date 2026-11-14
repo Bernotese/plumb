@@ -25,6 +25,10 @@ const (
 // run row): its lineage and trigger (M1 of #331).
 type Recorded struct {
 	Lineage, Trigger string
+	// Size and CTime of the volume when the job read it back (F2 of
+	// #331): a replaced archive of another size or time is never Plumb's.
+	Size  int64
+	CTime int64 // Unix seconds
 }
 
 // Triggers (GuestBackup.trigger).
@@ -127,7 +131,8 @@ func Classify(vols []Volume, install, target, lineage string, recorded map[strin
 		c := Classified{Volume: v, ID: VolumeID(v.Volid), Kind: KindUnmarked, Trigger: TriggerUnknown}
 		m, ok := ParseMarker(v.Notes)
 		r, rec := recorded[v.Volid]
-		if ok && rec && m.Install == install && m.Target == target && m.Lineage == r.Lineage && m.Manual == (r.Trigger == TriggerManual) {
+		if ok && rec && m.Install == install && m.Target == target && m.Lineage == r.Lineage && m.Manual == (r.Trigger == TriggerManual) &&
+			v.Size == r.Size && v.Time.Unix() == r.CTime {
 			c.Trigger = r.Trigger
 			c.Kind = KindOlderGuest
 			if r.Lineage == lineage {
