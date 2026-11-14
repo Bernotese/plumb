@@ -33,6 +33,10 @@ type guestSealRunner struct {
 
 func (r *guestSealRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	line := strings.Join(append([]string{name}, args...), " ")
+	if strings.HasSuffix(name, "/sshd") && len(args) == 1 && args[0] == "-T" {
+		// The read of the repair report (D-384), not a seal step.
+		return (resource.ExecRunner{}).Run(ctx, name, args...)
+	}
 	r.mu.Lock()
 	r.calls = append(r.calls, line)
 	r.mu.Unlock()

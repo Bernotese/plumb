@@ -331,3 +331,32 @@ func TestInstallScriptFailureRemovesToken(t *testing.T) {
 		})
 	}
 }
+
+// TestInstallScriptTruncatedRunsNothing: a script that a broken download
+// cut at any line does nothing (the body runs only from the last line).
+func TestInstallScriptTruncatedRunsNothing(t *testing.T) {
+	need(t, "awk", "sed", "mktemp")
+	full, _, _ := sandbox(t, string(script))
+	lines := strings.SplitAfter(full, "\n")
+	for cut := 1; cut < len(lines)-1; cut++ {
+		part := strings.Join(lines[:cut], "")
+		if strings.TrimSpace(part) == strings.TrimSpace(full) {
+			continue
+		}
+		s, root, env := sandbox(t, string(script))
+		part = strings.Join(strings.SplitAfter(s, "\n")[:cut], "")
+		etc := filepath.Join(root, "etc/plumb-agent")
+		os.WriteFile(filepath.Join(etc, "ca.pem"), []byte(testCA), 0o600)
+		os.WriteFile(filepath.Join(etc, "enroll.token"), []byte("tok\n"), 0o600)
+		cmd := exec.Command("sh", "-c", part)
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(env, "PLUMB_URL=https://192.0.2.10:8444")
+		cmd.Run()
+		if c := calls(t, root); c != "" {
+			t.Fatalf("cut at line %d ran:\n%s", cut, c)
+		}
+		if _, err := os.Stat(filepath.Join(root, "usr/local/bin/plumb-agent")); err == nil {
+			t.Fatalf("cut at line %d installed the binary", cut)
+		}
+	}
+}

@@ -130,6 +130,8 @@ type targetStatus struct {
 	AgentUpdate   string           `json:"agent_update"`
 	AgentMissing  []string         `json:"agent_missing"`
 	AgentReverted *agentRevertView `json:"agent_reverted"`
+	// Repair is the SSH repair readiness (D-384, T-191); null without an agent.
+	Repair *plan.RepairStatus `json:"repair"`
 	// Adopted: the Target holds a guest a person made (D-386).
 	Adopted bool `json:"adopted,omitempty"`
 }
@@ -232,6 +234,9 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 		st.AgentVersion = &ag.Version
 	}
 	st.AgentUpdate, st.AgentMissing = ag.Update, ag.Missing
+	if st.Repair, err = s.cfg.Plans.RepairStatus(ctx, name); err != nil {
+		return st, err
+	}
 	if rv := ag.Reverted; rv != nil {
 		// A guest time that did not parse is the time of the hello (the
 		// schema needs a time).

@@ -37,12 +37,13 @@ var mayImport = map[string][]string{
 	"backup":   {"secret", "event", "store"},
 	"trust":    {},
 	"mcp":      {},
+	"repair":   {"plan", "store", "secret", "event"},
 }
 
 // cmdMayImport lists what each binary may link. The agent binary must stay
 // small and must not contain controller code.
 var cmdMayImport = map[string][]string{
-	"plumb":       {"api", "plan", "issue", "state", "link", "driver", "secret", "event", "store", "resource", "wire", "backup", "mcp"},
+	"plumb":       {"api", "plan", "issue", "state", "link", "driver", "secret", "event", "store", "resource", "wire", "backup", "mcp", "repair"},
 	"plumb-agent": {"agent", "resource", "wire"},
 }
 

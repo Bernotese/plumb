@@ -50,6 +50,7 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) wire.Report {
 		if err := a.setDesired(body.Resources); err != nil {
 			return fail(err)
 		}
+		a.takeRepairWatch(body.Repair) // D-383
 	case wire.CommandSeal:
 		var body wire.SealBody
 		if err := json.Unmarshal(cmd.Body, &body); err != nil {

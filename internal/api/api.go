@@ -44,6 +44,8 @@ type Config struct {
 	Version string
 	// Secrets is the encrypted secret store (required).
 	Secrets *secret.Store
+	// RepairKeys is the SSH repair key (T-191); nil: repair is off.
+	RepairKeys RepairKeys
 	// UI is the built web UI (index.html, assets/…). nil: no UI.
 	UI fs.FS
 	// Dev: plain HTTP. The session cookie has no Secure flag and the
@@ -177,8 +179,9 @@ type handlerFunc func(w http.ResponseWriter, r *http.Request, p *principal)
 // Handler returns the API and the UI.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	rates := newTokenRates(s.now) // per-token rate limit (D-365, tokenrate.go)
 	route := func(pattern string, a access, h handlerFunc) {
-		mux.Handle(pattern, s.guard(a, h))
+		mux.Handle(pattern, s.guard(a, rates.wrap(s, pattern, h)))
 	}
 	read, planTier, apply := access{tier: TierRead}, access{tier: TierPlan}, access{tier: TierApply}
 	// A session may call an operation when its role is at least the tier
@@ -252,6 +255,7 @@ func (s *Server) Handler() http.Handler {
 
 	route("GET /api/v1/settings", read, s.getSettings)
 	route("PATCH /api/v1/settings", admin, s.changeSettings)
+	route("POST /api/v1/settings/repair-key/rotate", admin, s.rotateRepairKey)
 
 	route("GET /api/v1/backups", read, s.listBackups)
 	route("POST /api/v1/backups", apply, s.createBackup)

@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +54,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "synchronous(NORMAL)")
 	q.Set("_txlock", "immediate")
-	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	db, err := sql.Open("sqlite", fileURI(path)+"?"+q.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
@@ -67,6 +68,31 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// fileURI returns the SQLite URI of the file at path (T-203). The driver
+// opens with SQLITE_OPEN_URI and splits its own options at the first
+// '?', so a raw '?' would move the pragmas into the file name, a '#' would
+// end it and '%XX' would be decoded. Every byte but the unreserved ones
+// and '/' is percent-encoded; SQLite decodes it back to the same name. An
+// absolute path gets an empty authority ("file:///…"), so a path that
+// starts with "//" is never read as a host.
+func fileURI(path string) string {
+	var b strings.Builder
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '-', c == '.', c == '_', c == '~', c == '/':
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	if strings.HasPrefix(path, "/") {
+		return "file://" + b.String()
+	}
+	return "file:" + b.String()
 }
 
 // Close closes the database.

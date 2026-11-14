@@ -13,12 +13,16 @@ import (
 // TestReportedAddrsCallers keeps D-216: the stored address list of a guest
 // is display data. Only the status view (Live, through reported) and the
 // address check read it. A new caller fails this test; it must not use the
-// list to authorize a call or as the target of a connection.
+// list to authorize a call or as the target of a connection. One
+// exception (D-385, review R5 of #290): a repair Run of a DHCP Target dials
+// a reported address, only inside a controller network (repair.dialAddrs),
+// and the pinned host key, not the address, authenticates the peer.
 func TestReportedAddrsCallers(t *testing.T) {
 	allowed := map[string]bool{
 		"internal/plan/addrs.go:reported":     true,
 		"internal/plan/addrs.go:checkAddress": true,
 		"internal/plan/guest.go:Live":         true,
+		"internal/plan/repair.go:repairAddrs": true,
 	}
 	root := "../.."
 	fset := token.NewFileSet()

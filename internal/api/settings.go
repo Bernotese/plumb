@@ -61,6 +61,8 @@ type settingsView struct {
 		} `json:"source"`
 	} `json:"backup"`
 	Proxmox *ProxmoxView `json:"proxmox"`
+	// RepairKey is the public repair key view (T-191); missing without one.
+	RepairKey json.RawMessage `json:"repair_key,omitempty"`
 }
 
 func (s *Server) settingsOf(ctx context.Context, p *principal) settingsView {
@@ -68,6 +70,7 @@ func (s *Server) settingsOf(ctx context.Context, p *principal) settingsView {
 	sc := s.cfg.Backups.ScheduleInfo()
 	v.Backup.Time, v.Backup.Keep = sc.Time, sc.Keep
 	v.Backup.Source.Time, v.Backup.Source.Keep = sc.TimeSource, sc.KeepSource
+	v.RepairKey = s.repairKeyView(ctx)
 	// Host data only for a person: scripts and MCP clients need none
 	// (review n2 of #276).
 	if p.human() {

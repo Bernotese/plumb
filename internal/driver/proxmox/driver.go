@@ -1021,7 +1021,7 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 	if name == "" {
 		name = m.Name
 	}
-	st := driver.GuestState{Spec: specOf(name, cfg), Digest: cfg["digest"], Power: driver.PowerStopped}
+	st := driver.GuestState{Spec: specOf(name, cfg), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
 	if p := specOf(name, next); !reflect.DeepEqual(p, st.Spec) {
 		st.Pending = &p
 	}

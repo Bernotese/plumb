@@ -10,34 +10,6 @@ import (
 	"testing"
 )
 
-// ARCH §19 (T-193 part): after unbind there is no plumb-repair- line, and
-// every other line stays byte for byte.
-func TestRemoveRepairLines(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "authorized_keys")
-	in := "ssh-ed25519 AAAAuser user@laptop\n" +
-		`restrict,from="192.0.2.5",command="umask 077; d=/run/plumb-repair" ssh-ed25519 AAAAk1 plumb-repair-1` + "\n" +
-		"# a comment plumb-repair-not-a-key\n" +
-		`restrict,from="192.0.2.5",command="x" ssh-ed25519 AAAAk2 plumb-repair-2` + "\n" +
-		"ssh-rsa AAAAother plumb-repairman\n"
-	if err := os.WriteFile(p, []byte(in), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := removeRepairLines(p); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := os.ReadFile(p)
-	want := "ssh-ed25519 AAAAuser user@laptop\n# a comment plumb-repair-not-a-key\nssh-rsa AAAAother plumb-repairman\n"
-	if string(got) != want {
-		t.Fatalf("got\n%s\nwant\n%s", got, want)
-	}
-	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %v", fi.Mode())
-	}
-	if err := removeRepairLines(filepath.Join(t.TempDir(), "none")); err != nil {
-		t.Fatalf("missing file: %v", err)
-	}
-}
-
 type recRunner struct{ calls []string }
 
 func (r *recRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {

@@ -22,3 +22,6 @@ Slice 6 part B, child card **B6** of T-172. Second opinion on part B by tests.
 
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
+
+## Follow-ups found by QA (pl-lead keeps this list; each gets a card or goes into a PR)
+- #300 n1: drop an unused repair token also when the repair succeeded another way (T-190 code) → pl-backend, small follow-up after #298.

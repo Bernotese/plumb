@@ -109,6 +109,11 @@ for image in images:debian/13 ubuntu:26.04; do
       inst env PLUMB_NETWORK_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestNetwork$'
       # T-181: live drift of ip/nft hand changes (D-367), as root (TestNetReadOnlyKernel needs it).
       inst env PLUMB_NETWATCH_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^(TestGuestNetwatch|TestNetReadOnlyKernel)$'
+      # T-191: the SSH repair with the real sshd (D-377), last: it changes
+      # the host keys and root's authorized_keys.
+      inst env DEBIAN_FRONTEND=noninteractive sh -c \
+        'apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=5 install -y -q --no-install-recommends openssh-server openssh-client' >/dev/null
+      inst env PLUMB_REPAIR_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestRepair$'
     fi
     lxc delete -f "$name"
   done
