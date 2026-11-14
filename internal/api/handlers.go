@@ -78,7 +78,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 			fe = append(fe, fieldError{Pointer: e.Path, Message: fmt.Sprintf("%s %q: %s", e.Kind, e.Name, e.Msg)})
 		}
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed",
-			Status: http.StatusUnprocessableEntity, Detail: "The documents are not valid.", Errors: fe})
+			Status: http.StatusUnprocessableEntity, Detail: "The documents are not valid.", Errors: uniqueFieldErrors(fe)})
 	case errors.As(err, &pe):
 		detail := pe.Msg
 		if pe.Target != "" {
@@ -530,7 +530,7 @@ func (s *Server) createPlan(w http.ResponseWriter, r *http.Request, p *principal
 			fe = append(fe, fieldError{Pointer: ptr, Message: fmt.Sprintf("%s %q: %s", e.Kind, e.Name, e.Msg)})
 		}
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed",
-			Status: http.StatusUnprocessableEntity, Detail: detail, Errors: fe, Secrets: missing})
+			Status: http.StatusUnprocessableEntity, Detail: detail, Errors: uniqueFieldErrors(fe), Secrets: missing})
 		return
 	}
 	if err != nil {
@@ -928,4 +928,19 @@ func (s *Server) commentIssue(w http.ResponseWriter, r *http.Request, p *princip
 		s.cfg.Events.Emit(r.Context(), "issue.updated", fmt.Sprintf("issue:%d", id), p.name, map[string]any{"comment": c.ID})
 	}
 	writeJSON(w, http.StatusCreated, commentView{ID: c.ID, Author: c.Author, Body: c.Body, CreatedAt: c.CreatedAt.UTC()})
+}
+
+// uniqueFieldErrors drops a field error that repeats an earlier one with
+// the same pointer and message: one schema rule can fail once per
+// attribute and map to the same text (T-208, host finding F3).
+func uniqueFieldErrors(fe []fieldError) []fieldError {
+	seen := make(map[fieldError]bool, len(fe))
+	out := fe[:0:0]
+	for _, e := range fe {
+		if !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	return out
 }
