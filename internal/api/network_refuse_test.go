@@ -56,8 +56,16 @@ func TestNetworkServerRefusals(t *testing.T) {
 			t.Errorf("%s: the error repeats the address: %s", c.addr, body)
 		}
 	}
-	if code, body := propose(vm("web1", "192.0.2.5/24", "192.0.2.70/24"), web2); code != 201 {
+	if code, body := propose(vm("web1", "192.0.2.5/24", "192.0.2.70/24"), web2); code != 201 || strings.Contains(body, "DHCP") {
 		t.Fatalf("a free address: %d %s", code, body)
+	}
+	// Point 4 of the review of #249 (D-356): a DHCP Target gets a display
+	// note, no refusal.
+	dhcp := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},`+
+		`"blocks":[{"use":"net","params":{"a":"192.0.2.70/24"}}]}`)
+	if code, body := propose(dhcp, web2); code != 201 ||
+		!strings.Contains(body, "Target web1 gets its main address by DHCP") {
+		t.Fatalf("DHCP note: %d %s", code, body)
 	}
 	// A new static main address that is an extra address of another Target.
 	if code, body := propose(vm("web1", "192.0.2.60/24", "192.0.2.70/24"), web2); code != 422 ||
@@ -81,7 +89,13 @@ func TestNetworkServerRefusals(t *testing.T) {
 
 func TestHostAddrs(t *testing.T) {
 	ctx := context.Background()
-	got, err := plan.HostAddrs([]string{"192.0.2.9", "::ffff:198.51.100.9"}, "https://203.0.113.4:8006")(ctx)
+	all, err := plan.HostAddrs([]string{"192.0.2.9", "::ffff:198.51.100.9"}, "https://203.0.113.4:8006")(ctx)
+	var got []state.ReservedAddr // without the gateways of this machine (T-164)
+	for _, r := range all {
+		if r.What != "the controller's gateway" {
+			got = append(got, r)
+		}
+	}
 	if err != nil || len(got) != 3 || got[1].Addr != netip.MustParseAddr("198.51.100.9") || got[2].What != "the Proxmox node address" {
 		t.Fatalf("literals: %+v %v", got, err)
 	}

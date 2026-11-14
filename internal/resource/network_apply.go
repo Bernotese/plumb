@@ -205,7 +205,11 @@ func fileAddrs(content string) []netip.Prefix {
 
 // mainLink returns the NIC and the source address of the route to the
 // controller: the path that the agent link uses.
-func (n *network) mainLink(ctx context.Context) (dev string, addr netip.Addr, err error) {
+//
+// wait bounds the wait for the route: Prepare waits routeWait; Observe
+// only observeRouteWait, so the drift loop never stalls long, but a gap of
+// a DHCP NIC after a netplan apply (about 25 ms in CI) is no error (T-164).
+func (n *network) mainLink(ctx context.Context, wait time.Duration) (dev string, addr netip.Addr, err error) {
 	host := n.env.Controller
 	if host == "" {
 		return "", addr, errors.New("the agent does not know the controller address")
@@ -218,7 +222,7 @@ func (n *network) mainLink(ctx context.Context) (dev string, addr netip.Addr, er
 		}
 		ip = ips[0].Unmap()
 	}
-	out, err := n.routeGet(ctx, ip)
+	out, err := n.routeGet(ctx, ip, wait)
 	if err != nil {
 		return "", addr, fmt.Errorf("route to the controller: %w", err)
 	}
@@ -241,14 +245,15 @@ func (n *network) mainLink(ctx context.Context) (dev string, addr netip.Addr, er
 // "Network is unreachable". The step waits for the route, bounded, instead
 // of failing at once.
 var (
-	routeWait  = 30 * time.Second
-	routeRetry = 500 * time.Millisecond
+	routeWait        = 30 * time.Second
+	observeRouteWait = 3 * time.Second
+	routeRetry       = 500 * time.Millisecond
 )
 
 // routeGet runs ip route get to ip, again every routeRetry until it
-// answers or routeWait (or ctx) ends.
-func (n *network) routeGet(ctx context.Context, ip netip.Addr) ([]byte, error) {
-	end := time.Now().Add(routeWait)
+// answers or wait (or ctx) ends.
+func (n *network) routeGet(ctx context.Context, ip netip.Addr, wait time.Duration) ([]byte, error) {
+	end := time.Now().Add(wait)
 	for {
 		out, err := n.run(ctx, "ip", "-j", "route", "get", ip.String())
 		if err == nil || time.Now().Add(routeRetry).After(end) {
@@ -427,7 +432,7 @@ func (n *network) Observe(ctx context.Context) (State, error) {
 	if n.a.State == wire.StateAbsent {
 		return st, nil
 	}
-	dev, _, err := n.mainLink(ctx)
+	dev, _, err := n.mainLink(ctx, observeRouteWait)
 	if err != nil {
 		return nil, err
 	}
@@ -632,7 +637,7 @@ func (n *network) Prepare(ctx context.Context) error {
 	if n.env.StateDir == "" {
 		return errors.New("network needs the agent state dir")
 	}
-	dev, main, err := n.mainLink(ctx)
+	dev, main, err := n.mainLink(ctx, routeWait)
 	if err != nil {
 		return err
 	}
@@ -686,14 +691,86 @@ func (n *network) Prepare(ctx context.Context) error {
 	if cur.exists {
 		prev = []byte(cur.content)
 	}
+	if err := installNetworkBootUnit(ctx, n.env); err != nil {
+		return err
+	}
 	if err := writeAtomic(confirmed, prev); err != nil {
 		return err
 	}
 	script, err := networkRollbackScript(n.env, n.a.Name)
+	if err == nil {
+		err = armRollback(ctx, n.env, "network", "Plumb network rollback", "/bin/sh", "-c", script)
+	}
+	if err != nil {
+		// Nothing half-armed stays (n4 of #249): a copy without a timer
+		// would make a later agent start or boot restore it.
+		_ = os.Remove(confirmed)
+		return err
+	}
+	return nil
+}
+
+// NetworkBootUnit puts back every unconfirmed network change at boot,
+// before systemd-networkd starts (n1 of #249): a reboot inside the window
+// with an agent that does not start keeps no unconfirmed file. A copy
+// exists only between Prepare and Commit or Restore, so the unit acts only
+// then; it is the same rule as the agent's restore at start (D-349), which
+// runs again afterwards (idempotent) and drops the copies.
+const NetworkBootUnit = "plumb-agent-network.service"
+
+var safeUnitPath = regexp.MustCompile(`^/[A-Za-z0-9/._-]+$`)
+
+// networkBootUnitContent is the unit for the state dir of env. In a unit
+// file "$" is written "$$".
+func networkBootUnitContent(env Env) (string, error) {
+	dir := filepath.Join(env.StateDir, networkConfirmedDir)
+	if !safeUnitPath.MatchString(dir) {
+		return "", errors.New("network: the agent state dir has characters that a unit cannot hold")
+	}
+	script := `for c in ` + dir + `/network-*.confirmed; do ` +
+		`[ -e "$$c" ] || continue; n=$${c##*/network-}; n=$${n%.confirmed}; f=` + netplanEtc + `/60-plumb-$$n.yaml; ` +
+		`if [ -s "$$c" ]; then install -m 600 "$$c" "$$f"; else rm -f "$$f"; fi; done; netplan generate`
+	return `# Managed by the Plumb agent. Do not edit.
+[Unit]
+Description=Plumb network: put back an unconfirmed network change
+DefaultDependencies=no
+After=local-fs.target
+Before=systemd-networkd.service network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+ConditionPathExistsGlob=` + dir + `/network-*.confirmed
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '` + script + `'
+
+[Install]
+WantedBy=sysinit.target
+`, nil
+}
+
+// installNetworkBootUnit writes and enables the boot unit when it differs.
+func installNetworkBootUnit(ctx context.Context, env Env) error {
+	want, err := networkBootUnitContent(env)
 	if err != nil {
 		return err
 	}
-	return armRollback(ctx, n.env, "network", "Plumb network rollback", "/bin/sh", "-c", script)
+	cur, err := readManaged(env.Root, unitDir+NetworkBootUnit)
+	if err != nil {
+		return err
+	}
+	if cur.exists && cur.content == want {
+		return nil
+	}
+	if err := writeManaged(env.Root, unitDir+NetworkBootUnit, []byte(want), 0o644); err != nil {
+		return err
+	}
+	if _, err := env.Run.Run(ctx, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	_, err = env.Run.Run(ctx, "systemctl", "enable", NetworkBootUnit)
+	return err
 }
 
 // networkRollbackScript puts the confirmed file back (or removes the file)

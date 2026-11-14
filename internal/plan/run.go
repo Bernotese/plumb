@@ -131,7 +131,7 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 		return store.Run{}, err
 	}
 	// Another Target may have taken an address since the Plan (D-348).
-	if err := e.checkNetworks(ctx, next, names); err != nil {
+	if _, err := e.checkNetworks(ctx, next, names); err != nil {
 		return store.Run{}, err
 	}
 	// The agents may have changed since the Plan (D-259, D-268).
