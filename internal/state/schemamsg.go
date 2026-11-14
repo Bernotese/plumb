@@ -28,19 +28,21 @@ var notPatterns = map[string]string{
 // ruleMessages are the messages of the other rules, by schema location
 // (relative to https://plumb.invalid/schema/) and keyword.
 var ruleMessages = map[string]string{
-	"resource/firewall.json#/allOf/0/then not":                                                                     "allow_no_ssh is true: ssh_port and ssh_sources must then be missing (there is no SSH rule)",
-	"resource/firewall.json#/allOf/1/then/propertyNames enum":                                                      "state is absent: only name and state are allowed, the other attributes must be missing",
-	"resource/user.json#/properties/ssh_keys/items pattern":                                                        "must be one public key line (type, key, optional comment), never a private key",
-	"resource/apt_repository.json#/properties/uris/items pattern":                                                  "must be an http or https URL without spaces",
-	"resource/apt_repository.json#/properties/key pattern":                                                         "must be exactly one ASCII-armored public key block",
-	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway required":                          "gateway needs a static ip: set ip too",
-	"doc/target.json#/properties/spec/oneOf/0 not":                                                                 "an adopted Target has no image: remove image or adopted (D-386)",
-	"doc/target.json#/properties/spec/oneOf/1 not":                                                                 "an adopted Target has no image: remove image or adopted (D-386)",
-	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway/properties/ip not":                 "gateway needs a static ip, not dhcp",
-	"doc/image.json#/properties/spec/properties/build/properties/guest/dependentSchemas/gateway required":          "gateway needs a static ip: set ip too",
-	"doc/image.json#/properties/spec/properties/build/properties/guest/dependentSchemas/gateway/properties/ip not": "gateway needs a static ip, not dhcp",
-	"doc/image.json#/properties/spec/properties/schedule/dependentSchemas/weekday/properties/every const":          "weekday needs every: week",
-	"doc/image.json#/properties/spec/properties/schedule/dependentSchemas/day/properties/every const":              "day needs every: month",
+	"resource/firewall.json#/allOf/0/then not":                                                                           "allow_no_ssh is true: ssh_port and ssh_sources must then be missing (there is no SSH rule)",
+	"resource/firewall.json#/allOf/1/then/propertyNames enum":                                                            "state is absent: only name and state are allowed, the other attributes must be missing",
+	"resource/user.json#/properties/ssh_keys/items pattern":                                                              "must be one public key line (type, key, optional comment), never a private key",
+	"resource/apt_repository.json#/properties/uris/items pattern":                                                        "must be an http or https URL without spaces",
+	"resource/apt_repository.json#/properties/key pattern":                                                               "must be exactly one ASCII-armored public key block",
+	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway required":                                "gateway needs a static ip: set ip too",
+	"doc/target.json#/properties/spec/oneOf/0 not":                                                                       "an adopted Target has no image: remove image or adopted (D-386)",
+	"doc/target.json#/properties/spec/oneOf/1 not":                                                                       "an adopted Target has no image: remove image or adopted (D-386)",
+	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway/properties/ip not":                       "gateway needs a static ip, not dhcp",
+	"doc/target.json#/properties/spec/properties/guest/properties/nics/items/dependentSchemas/gateway/properties/ip not": "gateway needs a static ip, not dhcp",
+	"doc/target.json#/properties/spec/properties/backup/else not":                                                        "weekday only with schedule weekly",
+	"doc/image.json#/properties/spec/properties/build/properties/guest/dependentSchemas/gateway required":                "gateway needs a static ip: set ip too",
+	"doc/image.json#/properties/spec/properties/build/properties/guest/dependentSchemas/gateway/properties/ip not":       "gateway needs a static ip, not dhcp",
+	"doc/image.json#/properties/spec/properties/schedule/dependentSchemas/weekday/properties/every const":                "weekday needs every: week",
+	"doc/image.json#/properties/spec/properties/schedule/dependentSchemas/day/properties/every const":                    "day needs every: month",
 }
 
 const schemaBase = "https://plumb.invalid/schema/"

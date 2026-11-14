@@ -485,3 +485,36 @@ The guest must be in the pool for every row: a guest outside it is invisible to 
 | the install token never on a command line (R6) | the command text has the token only inside the here document; the guest test checks `/proc/*/cmdline` and `environ` during the install |
 | the line goes on unbind and rotation | CI guest test: after `unbind` no `plumb-repair-` line; after a rotation both lines, after `revoke_old` only the new one |
 | first report size and schema limits | an oversized or malformed `repair` report → refused, nothing pinned |
+
+## 20. Slice 7: more NICs and VLAN tags, guest backups (D-398 … D-415)
+
+Plan: `docs/tasks/T-215-slice-7-plan.md`. Contract: T-217 (this section, `api/openapi.yaml`, `internal/state/schema/target.json`).
+
+**More NICs (D-399 … D-404).** `guest.bridge`/`ip`/`gateway` stay NIC 0. `guest.nics` holds up to 3 more NICs `{bridge, tag?, ip?, gateway?}`:
+- Plumb chooses the MAC of NIC N: `02:` + 5 bytes of SHA-256(install id ‖ Target ‖ N).
+- The server refuses a bridge, or a bridge/tag, that the install did not name, with 422 `network-not-allowed` (rights: one `SDN.Use` line per `/sdn/zones/localnetwork/<b>` or `/<b>/<T>`, propagate 0).
+- Adding or removing a NIC, and a bridge or tag change, is `disruptive`.
+- The address: an LXC gets it through Proxmox `netN`; a VM through the agent's `network` resource, matched by MAC (not cloud-init: a change of its data would run cloud-init again).
+- An adopted Target stays single-NIC (422 `nics-not-adoptable`).
+
+**Guest backups (D-405 … D-409).** The Target field `backup` sets the schedule and `keep` (1 … 30). The storage is the one named at install, never a document field.
+- **Jobs, not Plans:** backups are controller jobs (`reversible`). "Back up now" needs tier `apply`. Jobs wait in restored mode, and a job is refused below 10 % free space.
+- **Rights:** `PlumbGuestBackupVM` (`VM.Backup` on `/pool/plumb`) and `PlumbGuestBackup` (`Datastore.AllocateSpace` + `Datastore.Audit` on the storage), each its own ACL line.
+- **The token is a second path:** with these rights the token itself can back up, restore over and delete the backups of every pool guest directly at the Proxmox API. The user accepted this in U4. Plumb's human-only rules hold only inside Plumb.
+- **Encryption:** a storage is `pbs-key` (PBS with client-side encryption, read from `GET /storage`). Any other storage needs `--guest-backup-clear` at install; else every job is refused.
+- **Identity:** the notes marker `plumb:<install-id>:<target>:<lineage>`, with one lineage per Target (`guest_backup_lineage`, migration 0026, dropped with the binding). The marker is read back after each job; a volume without it is `unmarked` and the job ends `warning`. Only `kind: plumb` volumes (current lineage) are kept by retention, deleted or restored. `older-guest` volumes may only be deleted by a person; `unmarked` volumes are never touched. A volume of a VMID that left the pool is invisible to the token.
+- **Delete of one volume:** human admin session only.
+
+**Restore (D-410, D-411).** A restore is only over the same bound guest. It is a Plan of origin `restore`, risk `destructive`, human-only `guest-restore`. The Run:
+- checks the marker, the lineage, the binding and the name;
+- stops the guest;
+- revokes the credential before the guest starts;
+- restores;
+- then re-enrolls the agent (Plumb-made) or shows the install command (adopted).
+
+The desired state is not rolled back. A restore after the guest is gone needs `Datastore.Allocate`, a new right (a later user question). Until then a person restores in Proxmox into pool `plumb` and adopts the guest. The `plan.origin` CHECK gets `restore` in migration 0027 (C6).
+
+**Per-Target state (D-413 rule 2):**
+- `guest_backup_lineage` and `guest_backup_run` (0026) go in the `DeleteBinding` transaction (Target delete, unbind of an adopted Target). A new Target of the name, or on a reused VMID, starts a new lineage and sees old volumes as `older-guest`.
+- The Proxmox volumes stay after a delete (README: remove them in Proxmox).
+- Planned until its card: `guest.nics` (T-219) and `backup` (T-221) pass the schema but are refused by `state.Validate` (`plannedFields`), so no document holds a field that Plumb would ignore.

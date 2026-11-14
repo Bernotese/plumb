@@ -55,6 +55,9 @@ var tokenRateKinds = map[string]string{
 	"GET /api/v1/targets/{name}":               rateRead,
 	"POST /api/v1/targets/{name}/reenroll":     rateProposal,
 	"POST /api/v1/targets/{name}/repair":       rateProposal,
+	"POST /api/v1/targets/{name}/restore":      rateProposal, // T-222
+	"POST /api/v1/targets/{name}/backups":      rateProposal, // T-221
+	"GET /api/v1/targets/{name}/backups":       rateRead,     // T-221
 	"POST /api/v1/targets/{name}/adopt":        rateProposal,
 	"GET /api/v1/guests/unmanaged":             rateRead,
 	"POST /api/v1/targets/{name}/agent-update": rateProposal,

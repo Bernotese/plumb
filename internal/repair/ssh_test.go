@@ -734,3 +734,16 @@ func TestRepairPinsAfterReadopt(t *testing.T) {
 		t.Fatalf("pins of the reused name %v", pins)
 	}
 }
+
+// T-217 (ROADMAP row 32): the parked and forgotten guests show in the
+// view also when there is no previous key.
+func TestRepairKeyViewLeftBehindWithoutPrevious(t *testing.T) {
+	e := newEnv(t)
+	if err := e.st.Park(e.ctx, store.Parked{Target: "wiki", AgentID: "ag", GuestRef: "150", Since: e.now}); err != nil {
+		t.Fatal(err)
+	}
+	v, err := e.s.View(e.ctx)
+	if err != nil || v.Previous != nil || strings.Join(v.LeftBehind, ",") != "wiki (VMID 150)" {
+		t.Fatalf("view %+v %v", v, err)
+	}
+}
