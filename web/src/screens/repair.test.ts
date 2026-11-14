@@ -78,6 +78,28 @@ describe("repair over SSH", () => {
     expect(text(el("#repair-old-key"))).toContain("still holds the previous repair key");
   });
 
+  it("no repair line is not an old key", async () => {
+    const api = adminApi();
+    const t = await api.getTarget("web1");
+    api.getTarget = async () => ({
+      ...t,
+      status: {
+        ...t.status,
+        repair: {
+          state: "off",
+          reasons: ["no-line"],
+          port: null,
+          host_keys: [],
+          host_keys_seen: [],
+          key_confirmed: false,
+        },
+      },
+    });
+    show(TargetAgent, { api, name: "web1" });
+    await until(() => document.querySelector("#repair-reasons"));
+    expect(document.querySelector("#repair-old-key")).toBeNull();
+  });
+
   it("the Targets list marks a dead agent and an old repair key", async () => {
     show(Targets, { api: adminApi() });
     await until(() => rows().length >= 5);

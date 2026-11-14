@@ -122,7 +122,7 @@
                   id="repair-mark-{t.document.name}"
                   href={href({ name: "target-agent", target: t.document.name })}
                   >agent offline{t.status.repair?.state === "ready" ? " · repair possible" : ""}</a
-                >{:else if t.status.repair?.key_confirmed === false && t.status.repair.state !== "unknown"}<a
+                >{:else if t.status.repair?.key_confirmed === false && t.status.repair.state !== "unknown" && !t.status.repair.reasons.includes("no-line")}<a
                   class="ignored"
                   id="repair-mark-{t.document.name}"
                   href={href({ name: "target-agent", target: t.document.name })}>old repair key</a

@@ -42,6 +42,12 @@
   const repair = $derived(target?.status.repair ?? null);
   const repairTone = { ready: "ok", off: "warn", unknown: "muted" } as const;
   const repairLabel = { ready: "ready", off: "not possible", unknown: "unknown" } as const;
+  // The line holds only the previous key: not when there is no line at all.
+  const oldKey = $derived(
+    repair?.key_confirmed === false &&
+      repair.state !== "unknown" &&
+      !repair.reasons.includes("no-line"),
+  );
   const agentDown = $derived(target ? target.status.agent !== "online" : false);
   let repairReason = $state("");
   let acceptKey = $state("");
@@ -160,7 +166,7 @@
           {#each repair.reasons as r (r)}<li>{REPAIR_REASON[r] ?? r}</li>{/each}
         </ul>
       {/if}
-      {#if repair.key_confirmed === false && repair.state !== "unknown"}
+      {#if oldKey}
         <p class="warn" id="repair-old-key">
           The repair line of this guest still holds the previous repair key. The agent writes the
           new one at its next start.
