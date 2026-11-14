@@ -28,9 +28,11 @@ type Edge struct {
 
 // Reasons of an OrderError.
 const (
-	OrderDuplicate = "duplicate" // an id is in the list twice
-	OrderUnknown   = "unknown"   // an after id is not in the list
-	OrderCycle     = "cycle"     // resources wait for each other
+	OrderDuplicate   = "duplicate"    // an id is in the list twice
+	OrderUnknown     = "unknown"      // an after id is not in the list
+	OrderGroupFirst  = "group-first"  // same Block lists a user before its group
+	OrderGroupAbsent = "group-absent" // a present user needs an absent group
+	OrderCycle       = "cycle"        // resources wait for each other
 )
 
 // OrderError says why a resource list has no apply order.
@@ -38,7 +40,7 @@ type OrderError struct {
 	Reason string
 	// IDs: duplicate: the id. unknown: the resource and the after id it
 	// names. cycle: the resources of the cycle; each waits for the next
-	// one and the last waits for the first.
+	// one and the last waits for the first. Group errors name the user and group.
 	IDs []string
 	// Blocks are the Block uses of IDs, at the same index ("" for an
 	// unknown id).
@@ -48,6 +50,10 @@ type OrderError struct {
 func (e *OrderError) Error() string {
 	name := func(i int) string { return fmt.Sprintf("%s (use %q)", e.IDs[i], e.Blocks[i]) }
 	switch e.Reason {
+	case OrderGroupFirst:
+		return fmt.Sprintf("user %s needs group %s first: list the group before the user", strings.TrimPrefix(e.IDs[0], "user:"), strings.TrimPrefix(e.IDs[1], "group:"))
+	case OrderGroupAbsent:
+		return fmt.Sprintf("user %s needs group %s, but the managed group is absent", strings.TrimPrefix(e.IDs[0], "user:"), strings.TrimPrefix(e.IDs[1], "group:"))
 	case OrderDuplicate:
 		return fmt.Sprintf("resource %s is listed twice", e.IDs[0])
 	case OrderUnknown:
@@ -84,7 +90,8 @@ func (e *OrderError) Error() string {
 //
 // A pair of resources can have more than one edge, of different kinds.
 // Resources with no path between them have no order: they run in parallel.
-// The error is an *OrderError: a duplicate id, an unknown after id or a cycle.
+// The error is an *OrderError: a duplicate id, an unknown after id, a group
+// requirement that cannot apply, or a cycle.
 func Order(list []Resource) ([][]Edge, error) {
 	byID := make(map[string]int, len(list))
 	for i, r := range list {
@@ -110,7 +117,7 @@ func Order(list []Resource) ([][]Edge, error) {
 		last[r.Block] = i
 	}
 	for i, r := range list {
-		// Only present groups are prerequisites. Removal keeps the explicit order.
+		// Present users need present managed groups before them.
 		if r.Type == "user" && r.Attrs[AttrState] != StateAbsent {
 			var names []string
 			switch v := r.Attrs["groups"].(type) {
@@ -124,7 +131,16 @@ func Order(list []Resource) ([][]Edge, error) {
 				}
 			}
 			for _, name := range names {
-				if to, ok := byID[ID("group", name)]; ok && list[to].Attrs[AttrState] != StateAbsent {
+				if to, ok := byID[ID("group", name)]; ok {
+					reason := ""
+					if list[to].Attrs[AttrState] == StateAbsent {
+						reason = OrderGroupAbsent
+					} else if r.Block == list[to].Block && i < to {
+						reason = OrderGroupFirst
+					}
+					if reason != "" {
+						return nil, &OrderError{Reason: reason, IDs: []string{r.ID, list[to].ID}, Blocks: []string{r.Block, list[to].Block}}
+					}
 					add(i, to, EdgeAfter)
 				}
 			}

@@ -617,3 +617,18 @@ func TestTotalRenderBudget(t *testing.T) {
 		}
 	})
 }
+
+func TestGroupRequirementsAtSave(t *testing.T) {
+	const user = `{"user":{"name":"person","groups":["team"]}}`
+	const group = `{"group":{"name":"team"}}`
+	for _, tc := range []struct{ name, resources, message string }{
+		{"user before group", user + "," + group, "user person needs group team first: list the group before the user"},
+		{"absent group", `{"group":{"name":"team","state":"absent"}},` + user, "user person needs group team, but the managed group is absent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := doc(KindBlock, "accounts", `{"resources":[`+tc.resources+`]}`)
+			wantErr(t, fixture(b, target(`"blocks":[{"use":"accounts"}]`)), "/spec/blocks", tc.message)
+		})
+	}
+	renderT1(t, fixture(doc(KindBlock, "accounts", `{"resources":[`+group+","+user+`]}`), target(`"blocks":[{"use":"accounts"}]`)))
+}

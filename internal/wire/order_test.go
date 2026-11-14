@@ -287,6 +287,13 @@ func TestUserGroupOrder(t *testing.T) {
 			}
 			g.Attrs[AttrState] = state
 			edges, err := Order([]Resource{u, g})
+			if state == StateAbsent {
+				var oe *OrderError
+				if !errors.As(err, &oe) || oe.Reason != OrderGroupAbsent {
+					t.Fatalf("absent group: %v", err)
+				}
+				continue
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
