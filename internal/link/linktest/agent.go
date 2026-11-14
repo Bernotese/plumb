@@ -59,6 +59,23 @@ type Agent struct {
 	paused    bool                                           // Run does not poll (see Pause)
 	inPoll    bool                                           // a poll is in flight
 	pollDone  *sync.Cond                                     // signalled when a poll ends (lazy, on a.mu)
+	unbindErr string                                         // unbind fails with this error; "" = it works
+	unbound   bool                                           // the agent removed itself (unbind)
+}
+
+// FailUnbind makes the next unbind commands fail with msg; "" lets them
+// work again.
+func (a *Agent) FailUnbind(msg string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.unbindErr = msg
+}
+
+// Unbound reports whether the agent removed itself after an unbind.
+func (a *Agent) Unbound() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.unbound
 }
 
 // LoseUpdateResult makes the agent drop the result of the next update
@@ -508,6 +525,17 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) {
 		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Items: items})
 	case wire.CommandApply:
 		a.apply(ctx, cmd.ID, body)
+	case wire.CommandUnbind:
+		// Like the real agent (T-193): the result first, then it is gone.
+		a.mu.Lock()
+		msg := a.unbindErr
+		a.mu.Unlock()
+		a.report(ctx, wire.Report{Type: wire.ReportResult, CommandID: cmd.ID, Error: msg})
+		if msg == "" {
+			a.mu.Lock()
+			a.unbound, a.off = true, true
+			a.mu.Unlock()
+		}
 	}
 }
 

@@ -258,6 +258,9 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 	if target == "" {
 		return "", time.Time{}, errors.New("link: token needs a target")
 	}
+	if err := l.checkTokenParked(ctx, target); err != nil {
+		return "", time.Time{}, err
+	}
 	token = secret(32)
 	expires = l.now().Add(TokenTTL)
 	if err := l.cfg.Store.PutEnrollToken(ctx, target, hashSecret(token), expires); err != nil {
@@ -505,6 +508,11 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	parked, err := l.parkedAgent(r.Context(), agent)
+	if err != nil {
+		storeUnavailable(w)
+		return
+	}
 	timer := time.NewTimer(time.Duration(wait) * time.Second)
 	defer timer.Stop()
 	for {
@@ -516,6 +524,10 @@ func (l *Link) handlePoll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ts.lastPoll = now
+		if parked {
+			// D-396: a parked agent gets unbind and nothing else.
+			ts.queue = slices.DeleteFunc(ts.queue, func(c wire.Command) bool { return c.Type != wire.CommandUnbind })
+		}
 		if len(ts.queue) > 0 {
 			cmd := ts.queue[0]
 			ts.queue = ts.queue[1:]
@@ -586,8 +598,16 @@ func (l *Link) Send(target string, typ wire.CommandType, body any) (string, erro
 		default:
 			return "", fmt.Errorf("link: update needs a wire.UpdateBody, got %T", body)
 		}
+	case wire.CommandUnbind:
+		// The agent of a deleted adopted Target removes itself (D-388).
+		if build {
+			return "", fmt.Errorf("link: no unbind for the build guest %q", target)
+		}
 	default:
 		return "", fmt.Errorf("link: unknown command type %q", typ)
+	}
+	if err := l.checkSendParked(target, typ); err != nil {
+		return "", err
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -700,6 +720,10 @@ func (l *Link) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateReport(rep, strings.HasPrefix(agent.Target, wire.BuildLinkPrefix)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// D-396: a parked agent only sends the result of its unbind.
+	if l.parkedReport(w, r, agent, rep) {
 		return
 	}
 	if rep.Type == wire.ReportConfirm {

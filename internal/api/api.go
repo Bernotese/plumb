@@ -252,6 +252,7 @@ func (s *Server) Handler() http.Handler {
 	route("GET /api/v1/guests/unmanaged", read, s.listUnmanagedGuests)
 	route("POST /api/v1/targets/{name}/adopt", planTier, s.adoptTarget)
 	route("POST /api/v1/targets/{name}/install-command", admin, s.createInstallCommand)
+	route("POST /api/v1/guests/unmanaged/{vmid}/forget-agent", admin, s.forgetAgent)
 
 	route("GET /api/v1/settings", read, s.getSettings)
 	route("PATCH /api/v1/settings", admin, s.changeSettings)

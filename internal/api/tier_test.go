@@ -36,7 +36,8 @@ var endpoints = []endpoint{
 	{"POST", "/api/v1/targets/nope/repair", nil, TierPlan, false},
 	{"GET", "/api/v1/guests/unmanaged", nil, TierRead, false},
 	{"POST", "/api/v1/targets/nope/adopt", map[string]any{"node": "pve", "vmid": 1, "digest": "x"}, TierPlan, false}, // allowed → 400, no Plan
-	{"POST", "/api/v1/targets/nope/install-command", nil, TierAdmin, true},                                           // allowed → 404, no token
+	{"POST", "/api/v1/targets/nope/install-command", nil, TierAdmin, true},
+	{"POST", "/api/v1/guests/unmanaged/999999/forget-agent", nil, TierAdmin, true}, // allowed → 404, nothing parked                                           // allowed → 404, no token
 	{"GET", "/api/v1/plans", nil, TierRead, false},
 	{"POST", "/api/v1/plans", []byte(`{"bad":1}`), TierPlan, false},
 	{"GET", "/api/v1/plans/1", nil, TierRead, false},

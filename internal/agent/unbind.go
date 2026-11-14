@@ -36,12 +36,23 @@ func (a *Agent) unbind(ctx context.Context) error {
 	if err := removeRepairLines(a.opt.Root); err != nil { // repairline.go (T-191)
 		errs = append(errs, err)
 	}
-	args := append([]string{"disable"}, unbindUnits[1:]...) // the agent's own unit is stopped last
-	if _, err := a.opt.Runner.Run(ctx, "systemctl", args...); err != nil {
-		errs = append(errs, fmt.Errorf("systemctl disable: %w", err))
+	// systemctl disable fails on a unit file that does not exist, and a
+	// guest has only some of these units (T-205): only present ones.
+	var present []string
+	for _, u := range unbindUnits[1:] { // the agent's own unit is stopped last
+		if _, err := os.Lstat(filepath.Join(a.opt.Root, "etc/systemd/system", u)); err == nil {
+			present = append(present, u)
+		}
 	}
-	if _, err := a.opt.Runner.Run(ctx, "systemctl", "disable", unbindUnits[0]); err != nil {
-		errs = append(errs, fmt.Errorf("systemctl disable: %w", err))
+	if len(present) > 0 {
+		if _, err := a.opt.Runner.Run(ctx, "systemctl", append([]string{"disable"}, present...)...); err != nil {
+			errs = append(errs, fmt.Errorf("systemctl disable: %w", err))
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(a.opt.Root, "etc/systemd/system", unbindUnits[0])); err == nil {
+		if _, err := a.opt.Runner.Run(ctx, "systemctl", "disable", unbindUnits[0]); err != nil {
+			errs = append(errs, fmt.Errorf("systemctl disable: %w", err))
+		}
 	}
 	for _, u := range unbindUnits {
 		errs = append(errs, removeIfExists(filepath.Join(a.opt.Root, "etc/systemd/system", u)))

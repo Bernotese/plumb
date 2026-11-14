@@ -1208,7 +1208,8 @@ paths:
         document, never on a command line or into the environment of a process (review R6 of
         #290). The old credential ends only when the guest enrolls with the new token. The
         command holds no other secret; the UI says that it is a secret for 15 minutes. Event
-        `target.install_command` (no token).
+        `target.install_command` (no token). 409 `agent-left`: the name has the agent of a deleted
+        Target that still waits for unbind (D-396); it is forgotten first.
       security:
         - session: []
       responses:
@@ -1246,7 +1247,9 @@ paths:
         Target or Image already holds the guest; 409 `document-exists`: a Target of that name
         exists that is not a not-adopted Target of this guest (such a one is replaced, D-395); 409
         `adopt-claimed`: the Plan would make two Targets claim one guest. A not-adopted Target of
-        the same guest under another name is removed by the same Plan.
+        the same guest under another name is removed by the same Plan. 409 `agent-left`: the guest,
+        or the Target name, still has the agent of a deleted Target that waits for unbind (D-396,
+        `agent_left`); it is unbound or forgotten first.
       security:
         - session: []
         - token: [plan]
@@ -1328,6 +1331,7 @@ paths:
                     warnings: [not-sealed, no-cloud-init]
                     guest: { cores: 2, memory: 2048, disk: 20, bridge: vmbr0 }
                     present: { cipassword: false, sshkeys: false, description: true, env: false }
+                    agent_left: false
                   - node: pve
                     vmid: 9124
                     name: old-db
@@ -1339,10 +1343,39 @@ paths:
                     warnings: [not-sealed]
                     guest: { cores: 1, memory: 512, disk: 8, bridge: vmbr0 }
                     present: { cipassword: false, sshkeys: true, description: false, env: true }
+                    agent_left: true
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "502": { $ref: "#/components/responses/BadGateway" }
+
+  /guests/unmanaged/{vmid}/forget-agent:
+    parameters:
+      - name: vmid
+        in: path
+        required: true
+        schema: { type: integer, minimum: 100 }
+    post:
+      tags: [targets]
+      operationId: forgetAgent
+      summary: Forget the agent left in a guest
+      description: |
+        Human admin session only (D-396). Ends the park of the agent of a deleted adopted Target
+        whose unbind was not confirmed: its credential is revoked, and Plumb no longer sends it
+        unbind. What is in the guest (the agent, the `plumb-repair-` line of the repair keys valid
+        at the park) stays for a person to remove; the UI shows the commands before the forget.
+        The guest stays in `RepairKeyView.previous.left_behind` ("…, agent forgotten") until none of
+        those keys is valid (review U2 of #309). 404 when the guest has no parked agent. Event
+        `agent.forgotten` with `guest`, `repair_key_lines` (the fingerprints of the keys whose line
+        may still be in the guest) and `note` (what to remove by hand).
+      security:
+        - session: []
+      responses:
+        "204": { description: The agent is forgotten. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /targets/{name}/agent-update:
     parameters:
@@ -1640,6 +1673,7 @@ paths:
                 started_at: "2026-11-10T09:00:03Z"
                 finished_at: null
                 waits_for_restart: 0
+                warnings: 0
                 targets:
                   - target: web1
                     status: running
@@ -1689,6 +1723,7 @@ paths:
                     started_at: "2026-11-10T09:00:03Z"
                     finished_at: "2026-11-10T09:00:09Z"
                     waits_for_restart: 0
+                    warnings: 0
                     targets:
                       - target: web1
                         status: succeeded
@@ -1728,6 +1763,7 @@ paths:
                 started_at: "2026-11-10T09:30:03Z"
                 finished_at: "2026-11-10T09:30:41Z"
                 waits_for_restart: 0
+                warnings: 0
                 targets:
                   - target: web1
                     status: failed
@@ -2925,6 +2961,7 @@ paths:
                   fingerprint: "SHA256:b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2xka2V5b2w"
                   created_at: "2026-10-01T08:00:00Z"
                   targets: [db1, web2]
+                  left_behind: []
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -4202,13 +4239,15 @@ components:
       enum: [running, succeeded, failed]
     StepStatus:
       type: string
-      enum: [pending, running, unchanged, applied, failed, refused, skipped]
+      enum: [pending, running, unchanged, applied, failed, refused, skipped, warning]
       description: |
         `refused`: the difference is not in the approved Plan, or a change was above the approved
         risk; nothing of the resource was applied. `skipped`: not applied, because an earlier
         resource of the same Block use, or a resource that it comes after (`ResourcePlan.after`),
         did not end `unchanged` or `applied`, or because the apply ended first. `output` names the
-        cause (D-170).
+        cause (D-170). `warning`: the step was done, but it left something for a person;
+        `output` says what and how to fix it (D-396). The Run still succeeds, and its `warnings`
+        counts the step. Only the controller sets it; an agent never reports it.
         `failed` with an `output` that starts with "update the agent first": the Run start found
         that the Target's agent lacks a resource type or attribute (D-259); no command went to
         that Target. An agent can change between approval and start (a guest restored from an old
@@ -4217,7 +4256,7 @@ components:
       type: object
       additionalProperties: false
       description: A Run starts at approval. Who approved is on the Plan.
-      required: [id, plan_id, revision, status, started_at, finished_at, waits_for_restart, targets]
+      required: [id, plan_id, revision, status, started_at, finished_at, waits_for_restart, warnings, targets]
       properties:
         id: { $ref: "#/components/schemas/Id" }
         plan_id: { $ref: "#/components/schemas/Id" }
@@ -4232,6 +4271,14 @@ components:
             The number of changes that the steps of this Run recorded with `waits_for_restart`
             (D-195): written, but not active until the next stop and start of the VM. A Run can
             be `succeeded` with a number above 0. Set when the Run ends; 0 while it runs.
+        warnings:
+          type: integer
+          minimum: 0
+          description: |
+            The steps of this Run that ended `warning` (D-396): the Run succeeded, but it left
+            something for a person (for example an agent that is still in a guest that Plumb let
+            go). A client shows "succeeded, with warnings" when the number is above 0, never a plain
+            success. Set when the Run ends; 0 while it runs.
         targets:
           type: array
           items: { $ref: "#/components/schemas/TargetRun" }
@@ -4839,7 +4886,7 @@ components:
     UnmanagedGuest:
       type: object
       additionalProperties: false
-      required: [node, vmid, name, type, digest, adoptable, reasons, warnings, guest, present]
+      required: [node, vmid, name, type, digest, adoptable, reasons, warnings, guest, present, agent_left]
       properties:
         node: { type: string }
         vmid: { type: integer }
@@ -4868,6 +4915,13 @@ components:
         guest:
           type: object
           description: The Target `guest` fields that the adoption writes (cores, memory, disk, bridge, and ip/gateway/user when Proxmox has them).
+        agent_left:
+          type: boolean
+          description: |
+            D-396: the Plumb agent of a deleted adopted Target is still in this guest, with the repair
+            key line; its unbind was not confirmed. Plumb sends unbind when the agent comes back (it
+            can do nothing else), or an admin forgets it
+            (`POST /guests/unmanaged/{vmid}/forget-agent`) after removing it by hand.
         present:
           type: object
           additionalProperties: false
@@ -4888,14 +4942,18 @@ components:
         previous:
           type: [object, "null"]
           additionalProperties: false
-          required: [fingerprint, created_at, targets]
+          required: [fingerprint, created_at, targets, left_behind]
           properties:
             fingerprint: { type: string }
             created_at: { $ref: "#/components/schemas/Time" }
             targets:
               type: array
-              description: Targets whose line does not hold the current key yet (their agents did not confirm it).
+              description: Targets (with a guest) whose line does not hold the current key yet (their agents did not confirm it). A deleted Target is never listed here (review F7 of T-192).
               items: { $ref: "#/components/schemas/Name" }
+            left_behind:
+              type: array
+              description: Guests of deleted adopted Targets whose agent was not unbound (D-396), as "<target> (VMID <n>)", and those whose agent an admin forgot, as "<target> (VMID <n>, agent forgotten)". Their repair line may still hold a valid key; a forgotten guest leaves the list when none of the keys valid at its park is valid any more.
+              items: { type: string }
     RepairState:
       type: [object, "null"]
       additionalProperties: false
@@ -5053,6 +5111,8 @@ components:
             - repair_key.rotated
             - target.hostkeys
             - target.install_command
+            - agent.unbound
+            - agent.forgotten
         time: { $ref: "#/components/schemas/Time" }
         subject:
           type: string

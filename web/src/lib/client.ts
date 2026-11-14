@@ -124,6 +124,8 @@ export interface PlumbApi {
   listUnmanagedGuests(): Promise<UnmanagedGuest[]>;
   /** Proposes to adopt a guest of the pool as the new Target `name` (D-386). */
   adoptTarget(name: string, req: AdoptRequest): Promise<Plan>;
+  /** D-396: end the park of an agent left in a guest (admin). */
+  forgetAgent(vmid: number): Promise<void>;
   /** A new repair key, or `revokeOld` the previous one (D-382, admin session). */
   rotateRepairKey(revokeOld?: boolean): Promise<RepairKeyView>;
   /** The backup schedule with its sources and the Proxmox view (D-361). */
