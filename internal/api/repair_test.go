@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/link/linktest"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/resource"
@@ -81,6 +82,16 @@ func (f *fakeTransport) Send(ctx context.Context, s plan.RepairSend) (int, bool,
 		return 3, true, nil
 	case "silent": // exit 0, but the new agent never comes
 		return 0, true, nil
+	case "other": // exit 0, and the guest enrolls with another token
+		other, _, err := f.e.link.NewEnrollToken(f.e.ctx, s.Target)
+		if err != nil {
+			return 0, true, err
+		}
+		a := linktest.New(f.e.link.Handler(), func() (string, bool) { return other, true })
+		caps := wire.Capabilities{Commands: wire.AgentCommands(), Resources: resource.Capabilities()}
+		a.SetHello(wire.Hello{Capabilities: &caps})
+		go a.Run(f.e.ctx)
+		return 0, true, nil
 	}
 	// ok: the install script restarts the agent, which enrolls with the
 	// one-shot token of the bundle.
@@ -127,8 +138,20 @@ func bundleToken(t *testing.T, b []byte) string {
 	return e.Token
 }
 
+// countingTokens counts the drops of repair tokens.
+type countingTokens struct {
+	plan.RepairTokens
+	drops atomic.Int32
+}
+
+func (c *countingTokens) DropRepairToken(ctx context.Context, target string, t link.RepairToken) error {
+	c.drops.Add(1)
+	return c.RepairTokens.DropRepairToken(ctx, target, t)
+}
+
 type repairEnv struct {
 	*env
+	tokens *countingTokens
 	logs   *lockedBuf
 	tr     *fakeTransport
 	agents *offAgents
@@ -142,7 +165,8 @@ func newRepairEnv(t *testing.T) *repairEnv {
 	envLog = slog.New(slog.NewTextHandler(r.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	defer func() { envLog = quiet }()
 	r.env = newEnv(t, false, func(c *plan.Config) {
-		tokens := c.Agents.(plan.RepairTokens) // the link
+		r.tokens = &countingTokens{RepairTokens: c.Agents.(plan.RepairTokens)} // the link
+		tokens := r.tokens
 		r.agents = &offAgents{Agents: c.Agents}
 		c.Agents = r.agents
 		c.Now = func() time.Time { return time.Now().Add(time.Duration(r.offset.Load())) }
@@ -522,5 +546,33 @@ func TestRepairRequestNeverReachesBundle(t *testing.T) {
 	}
 	if len(r.tr.bundles) < 3 {
 		t.Fatalf("only %d bodies made a Plan", len(r.tr.bundles))
+	}
+}
+
+// TestRepairDropsTokenOnEveryEnd (review n1 of #300): every end of the
+// Run drops the repair token while it is unused, also a success through
+// another enrollment; after the Run the token never enrolls.
+func TestRepairDropsTokenOnEveryEnd(t *testing.T) {
+	for _, tc := range []struct{ mode, status string }{
+		{"ok", "succeeded"}, {"other", "succeeded"}, {"exit1", "failed"}, {"hang", "failed"}, {"silent", "failed"}, {"refuse", "failed"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			r := newRepairEnv(t)
+			r.tr.mode = tc.mode
+			r.cutOff()
+			p, _ := r.propose(r.adm, nil, 201)
+			status, _ := r.step(approve(t, r.adm, p.ID))
+			if status != tc.status {
+				t.Fatalf("run %s, want %s", status, tc.status)
+			}
+			if n := r.tokens.drops.Load(); n != 1 {
+				t.Fatalf("%d drops, want 1", n)
+			}
+			if len(r.tr.bundles) > 0 {
+				if code := r.enrollCode(bundleToken(t, r.tr.bundles[0])); code != 401 {
+					t.Fatalf("the repair token enrolls after the Run: %d", code)
+				}
+			}
+		})
 	}
 }
