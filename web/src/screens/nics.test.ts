@@ -126,6 +126,23 @@ describe("NIC list", () => {
     expect(doc().spec.guest.nics?.[1]).toEqual({ bridge: "vmbr5", tag: 40 });
   });
 
+  it("warns of network rights beyond the install, not of other extras (M2 of #330)", async () => {
+    const api = adminApi();
+    const get = api.getSettings.bind(api);
+    vi.spyOn(api, "getSettings").mockImplementation(async () => {
+      const s = await get();
+      (s.proxmox as unknown as Record<string, unknown>)["acl_extra"] = [
+        { path: "/sdn/zones/localnetwork/vmbr9", role: "PlumbBridge" },
+        { path: "/storage/old-backup", role: "PlumbGuestBackup" },
+      ];
+      return s;
+    });
+    await edit(api);
+    await until(() => document.querySelector("#nics-acl-extra"));
+    expect(text(el("#nics-acl-extra"))).toContain("/sdn/zones/localnetwork/vmbr9 (PlumbBridge)");
+    expect(text(el("#nics-acl-extra"))).not.toContain("old-backup");
+  });
+
   it("an adopted Target offers no card", async () => {
     const api = adminApi();
     const t = await api.getTarget("web1");

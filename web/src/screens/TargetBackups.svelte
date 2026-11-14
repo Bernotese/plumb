@@ -3,7 +3,13 @@
   // the storage and its encryption, the schedule, "back up now", the volumes
   // by kind, the delete of one volume (admin person) and the restore wizard.
   import { tick } from "svelte";
-  import type { GuestBackup, GuestBackupList, PlumbApi } from "../lib/client";
+  import {
+    settingsRisks,
+    type GuestBackup,
+    type GuestBackupList,
+    type PlumbApi,
+    type SettingsRisks,
+  } from "../lib/client";
   import { bytesText } from "../lib/images";
   import { liveSnapshot } from "../lib/live";
   import { go, href } from "../lib/router";
@@ -17,8 +23,9 @@
   let target = $state<TargetView | null>(null);
   let list = $state<GuestBackupList | null>(null);
   let error = $state<unknown>(null);
-  // M2 of #321: other storages the token could write a vzdump to (person only).
-  let otherStorages = $state<string[]>([]);
+  // M2 of #321, M1/M2 of #330: what the token could do beyond the install (person only).
+  let risks = $state<SettingsRisks | null>(null);
+  const otherStorages = $derived(risks?.otherStorages ?? []);
 
   $effect(() => {
     const live = liveSnapshot({
@@ -37,7 +44,7 @@
   });
   $effect(() => {
     api.getSettings().then(
-      (s) => (otherStorages = s.proxmox?.guest_backup?.other_backup_storages ?? []),
+      (s) => (risks = settingsRisks(s)),
       // Extra information; the page works without it.
       () => {},
     );
@@ -235,6 +242,30 @@
         <strong>The token can also write backups to {otherStorages.join(", ")}.</strong> Only one storage
         may take backups. Remove the content type "backup" there, or the Plumb rights on it.
       </p>
+    {/if}
+    {#if risks?.diskStorage}
+      <p class="banner danger" role="note" id="backup-disk-content">
+        <strong
+          >The backup storage {risks.diskStorage} also takes guest disks ({risks.diskContent.join(
+            ", ",
+          )}).</strong
+        >
+        The token could put guest disks there. Remove these content types from the storage (Datacenter
+        → Storage, or <code>pvesm set {risks.diskStorage} --content</code> with the list without them).
+      </p>
+    {/if}
+    {#if risks?.aclExtra.length}
+      <div class="banner danger" role="note" id="backup-acl-extra">
+        <p>
+          <strong>The token has rights beyond the install.</strong> Run the installer again with the same
+          flags (a repair run); it removes them.
+        </p>
+        <ul>
+          {#each risks.aclExtra as a (a.path + a.role)}<li>
+              <code>{a.path}</code> ({a.role})
+            </li>{/each}
+        </ul>
+      </div>
     {/if}
     <p class="muted" id="backup-token-power">
       The Proxmox API token of Plumb can itself back up, restore over and delete the backups of

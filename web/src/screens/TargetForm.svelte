@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import targetSchema from "../../../internal/state/schema/target.json";
-  import type { PlumbApi } from "../lib/client";
+  import { settingsRisks, type PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import { can, roleNote } from "../lib/session.svelte";
   import DeleteDocument from "../ui/DeleteDocument.svelte";
@@ -81,6 +81,8 @@
   let nicErrors = $state<Record<string, string>>({});
   /** The bridges and bridge/tag pairs the install named; null when not known (D-401). */
   let extraNets = $state<{ bridge: string; tag: number | null }[] | null>(null);
+  /** M2 of #330: network rights of the token beyond the install. */
+  let sdnExtra = $state<{ path: string; role: string }[]>([]);
   const extraBridges = $derived([...new Set((extraNets ?? []).map((n) => n.bridge))]);
   const tagsOf = (bridge: string) =>
     (extraNets ?? []).filter((n) => n.bridge === bridge).map((n) => n.tag);
@@ -207,7 +209,10 @@
   const nicHint = (i: number, f: string) => (nicErrors[`${i}/${f}`] ? `nic-${i}-${f}-error` : "");
   $effect(() => {
     api.getSettings().then(
-      (s) => (extraNets = s.proxmox?.extra_nets ?? null),
+      (s) => {
+        extraNets = s.proxmox?.extra_nets ?? null;
+        sdnExtra = settingsRisks(s).aclExtra.filter((a) => a.path.startsWith("/sdn/"));
+      },
       // Without the settings (a token, an older controller) the server checks the names.
       () => {},
     );
@@ -933,6 +938,19 @@
           bridge, and each bridge with a VLAN tag, must be named when Plumb is installed. Adding or removing
           a card, or changing its bridge or tag, is disruptive.
         </p>
+        {#if sdnExtra.length}
+          <div class="banner danger" role="note" id="nics-acl-extra">
+            <p>
+              <strong>The token may use networks the install did not name.</strong> Run the installer
+              again with the same flags (a repair run); it removes these rights.
+            </p>
+            <ul>
+              {#each sdnExtra as a (a.path + a.role)}<li>
+                  <code>{a.path}</code> ({a.role})
+                </li>{/each}
+            </ul>
+          </div>
+        {/if}
         {#if adopted}
           <p class="muted" id="nics-adopted">
             An adopted Target keeps the network cards that the guest has. Plumb adds none.

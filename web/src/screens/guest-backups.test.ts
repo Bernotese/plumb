@@ -51,6 +51,36 @@ describe("backups tab", () => {
     expect(document.querySelector("#backup-low-space")).not.toBeNull();
   });
 
+  it("warns of guest disk content and of rights beyond the install (M1/M2 of #330)", async () => {
+    const api = adminApi();
+    const get = api.getSettings.bind(api);
+    vi.spyOn(api, "getSettings").mockImplementation(async () => {
+      const s = await get();
+      const p = s.proxmox as unknown as Record<string, unknown> & {
+        guest_backup: Record<string, unknown>;
+      };
+      p["acl_extra"] = [{ path: "/storage/old-backup", role: "PlumbGuestBackup" }];
+      p.guest_backup["disk_content"] = ["images", "rootdir"];
+      return s;
+    });
+    await open(api);
+    await until(() => document.querySelector("#backup-acl-extra"));
+    expect(text(el("#backup-disk-content"))).toContain(
+      "The backup storage plumb-guest-backup also takes guest disks (images, rootdir).",
+    );
+    expect(text(el("#backup-disk-content"))).toContain("pvesm set plumb-guest-backup --content");
+    expect(text(el("#backup-acl-extra"))).toContain("/storage/old-backup (PlumbGuestBackup)");
+    expect(text(el("#backup-acl-extra"))).toContain("a repair run");
+  });
+
+  it("no such warning when the fields are missing (a controller before T-218)", async () => {
+    await open();
+    await new Promise((r) => setTimeout(r, 20));
+    flushSync();
+    expect(document.querySelector("#backup-disk-content")).toBeNull();
+    expect(document.querySelector("#backup-acl-extra")).toBeNull();
+  });
+
   it("without a storage, back up now is off", async () => {
     await open(withStorage(adminApi(), null));
     expect(document.querySelector("#backup-no-storage")).not.toBeNull();
