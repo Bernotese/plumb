@@ -505,3 +505,27 @@ func TestSlice7ACLFailureHalfWay(t *testing.T) {
 		t.Errorf("a failed remove: %d\n%s", code, errOut)
 	}
 }
+
+// Review n1 of #330: the bridge name is matched exactly; "." is no
+// pattern. The node has vmbrx9 (VLAN-aware), not vmbr.9.
+func TestSlice7BridgeExactName(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"--extra-bridge", "vmbr.9"}, {"--extra-vlan", "vmbr.9:20"}} {
+		h := newHost(t)
+		os.WriteFile(filepath.Join(h.state, "network"), []byte(`[{"iface":"vmbr0","type":"bridge"},{"iface":"vmbrx9","type":"bridge","bridge_vlan_aware":1}]`), 0o644)
+		code, out, errOut := h.run(nil, append([]string{"--dry-run", "--plumb-binary", h.plumb}, args...)...)
+		if code == 0 || !strings.Contains(errOut, "bridge vmbr.9 (--extra-bridge/--extra-vlan) is not a bridge of node pve1") {
+			t.Errorf("%v: exit %d\n%s\n%s", args, code, out, errOut)
+		}
+	}
+	// vmbr.9 that exists but is not VLAN-aware, next to a VLAN-aware vmbrx9.
+	h := newHost(t)
+	os.WriteFile(filepath.Join(h.state, "network"), []byte(`[{"iface":"vmbr0","type":"bridge"},{"iface":"vmbr.9","type":"bridge"},{"iface":"vmbrx9","type":"bridge","bridge_vlan_aware":1}]`), 0o644)
+	code, _, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--extra-vlan", "vmbr.9:20")
+	if code == 0 || !strings.Contains(errOut, "bridge vmbr.9 is not VLAN-aware") {
+		t.Errorf("plain vmbr.9 with a tag: exit %d\n%s", code, errOut)
+	}
+	if code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb, "--extra-bridge", "vmbr.9"); code != 0 {
+		t.Errorf("vmbr.9 untagged: exit %d\n%s\n%s", code, out, errOut)
+	}
+}
