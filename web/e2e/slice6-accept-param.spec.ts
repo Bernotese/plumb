@@ -6,8 +6,8 @@ import { startPlumb } from "./server.mjs";
 // T-175 (D-362) on the real API, with its own server: the motd Block renders
 // content from {{ .message }}, so Accept of the seeded hand edit on web2
 // sets the Block parameter of web2, not an override (raw mode stays for
-// templates without an inverse: slice4-raw.spec.ts). The button text is the
-// one of today; T-176 names the parameter in it.
+// templates without an inverse: slice4-raw.spec.ts). T-176: the button and
+// the help name the parameter and the Block use.
 test("accept into a Block parameter: no override, the parameter holds the guest text", async ({
   browser,
 }) => {
@@ -32,9 +32,12 @@ test("accept into a Block parameter: no override, the parameter holds the guest 
     expect(issue.raw).toBe(false);
     expect(issue.accept_params).toEqual([{ use: "motd", index: 0, param: "message" }]);
     await expect(page.locator("#raw-help")).toHaveCount(0);
+    await expect(page.locator("#param-help")).toContainText(
+      "Accept writes the guest value into the parameter message of this Target's use of the Block motd.",
+    );
 
     await page.getByLabel("Reason (optional)").fill("e2e: keep the hand edit in the parameter");
-    await page.getByRole("button", { name: /^Accept/ }).click();
+    await page.getByRole("button", { name: "Accept into parameter message of motd" }).click();
     await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
     await approveAndRun(page);
 

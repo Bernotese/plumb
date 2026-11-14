@@ -54,9 +54,10 @@ describe("History", () => {
     show(History, { api, pageSize: 2 });
     await until(() => rows().length === 2);
     expect(rows()[0]).toContain("Revision 7 (head)");
-    expect(rows()[0]).toContain("user:admin");
+    // D-128: the author of Plan 12 (a token), not its approver.
+    expect(rows()[0]).toContain("token:tok_claude");
     expect(rows()[0]).toContain("Add MOTD to web1.");
-    expect(rows()[1]).toContain("token:tok_ci");
+    expect(rows()[1]).toContain("user:admin"); // the author of Plan 11
     const plan = document.querySelector<HTMLAnchorElement>('tbody a[href="#/plans/12"]');
     expect(plan?.textContent).toBe("Plan 12");
     expect(document.querySelector('a[href="#/revisions/6"]')).not.toBeNull();

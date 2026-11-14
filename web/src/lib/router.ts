@@ -27,8 +27,9 @@ export type Route =
   | { name: "settings"; tab: SettingsTab }
   | { name: "not-found"; path: string };
 
-export type SettingsTab = "tokens" | "secrets" | "export" | "backups" | "users";
+export type SettingsTab = "general" | "tokens" | "secrets" | "export" | "backups" | "users";
 const TABS: readonly string[] = [
+  "general",
   "tokens",
   "secrets",
   "export",

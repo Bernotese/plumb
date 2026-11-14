@@ -4,6 +4,7 @@
   import { href } from "../lib/router";
   import type { PageOf, RevisionInfo } from "../lib/types";
   import { formatTime } from "../lib/view";
+  import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
   let { api, pageSize = 50 }: { api: PlumbApi; pageSize?: number } = $props();
@@ -97,7 +98,14 @@
             </th>
             <td class="nowrap" data-label="Time">{formatTime(r.created_at)}</td>
             <td class="mono" data-label="Author">{r.author}</td>
-            <td class="reason" data-label="Reason">{r.reason}</td>
+            <td class="reason" data-label="Reason"
+              >{#if r.author.startsWith("token:")}<span class="by-token"
+                  ><Badge tone="warn" label="by token" /><span class="sr-only">:&nbsp;</span><span
+                    class="line"
+                    title={r.reason}>{r.reason}</span
+                  ></span
+                >{:else}{r.reason}{/if}</td
+            >
             <td class="nowrap" data-label="Plan">
               {#if r.plan_id}
                 <a href={href({ name: "plan", id: r.plan_id })}>Plan {r.plan_id}</a>
@@ -121,6 +129,20 @@
 {/if}
 
 <style>
+  /* A token's reason (#272 F4, review of #291): marked and cut to one line. */
+  .by-token {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    min-width: 0;
+  }
+  .by-token .line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    max-width: 24rem;
+  }
   .flush {
     padding: 0;
     overflow: hidden;

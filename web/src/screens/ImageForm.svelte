@@ -15,9 +15,11 @@
   } from "../lib/images";
   import { go, href } from "../lib/router";
   import {
+    blockParams,
     fieldsOf,
     initialValues,
     mergeParams,
+    pinnedDefaults,
     validate,
     type Field,
     type Values,
@@ -90,6 +92,10 @@
     fields: Field[];
     values: Values;
     stored: Record<string, unknown>;
+    /** The stored use had a `params` key (an empty one is not added, D-376). */
+    hadParams: boolean;
+    /** Parameters the person set back to follow the Block default (D-376). */
+    followed: string[];
     errors: Record<string, string>;
   }
 
@@ -177,17 +183,27 @@
     return nextSlot(schedule, new Date());
   });
 
-  function makeUse(use: string, id = "", params: Record<string, unknown> = {}): Use {
+  function makeUse(use: string, id = "", params?: Record<string, unknown>): Use {
     const fields = fieldsOf(blockByName(use)?.document.spec.params);
     return {
       key: nextKey++,
       use,
       id,
       fields,
-      values: initialValues(fields, params),
-      stored: params,
+      values: initialValues(fields, params ?? {}),
+      stored: params ?? {},
+      hadParams: params !== undefined,
+      followed: [],
       errors: {},
     };
+  }
+
+  /** D-376: the person follows the Block default again for one parameter. */
+  function follow(u: Use, name: string) {
+    const f = u.fields.find((x) => x.name === name);
+    if (!f) return;
+    u.followed = [...u.followed, name];
+    u.values[name] = initialValues([f], {})[name] ?? "";
   }
 
   $effect(() => {
@@ -231,7 +247,7 @@
     verify = s.verify?.source ?? "";
     build = s.build !== undefined;
     upgrade = s.build?.upgrade ?? true;
-    uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
+    uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params));
     keep = s.retention?.keep ?? 3;
     every = s.schedule?.every ?? "none";
     weekday = s.schedule?.weekday ?? "sun";
@@ -346,11 +362,15 @@
     } as ImageSpec;
     if (build) {
       spec.build = {
-        blocks: uses.map((u) => ({
-          use: u.use,
-          ...(u.id.trim() ? { id: u.id.trim() } : {}),
-          params: mergeParams(u.stored, u.fields, u.values),
-        })),
+        blocks: uses.map((u) => {
+          // D-376 (as the Target form): only what the person set.
+          const params = blockParams(u.stored, u.fields, u.values, u.followed);
+          return {
+            use: u.use,
+            ...(u.id.trim() ? { id: u.id.trim() } : {}),
+            ...(Object.keys(params).length || u.hadParams ? { params } : {}),
+          };
+        }),
         upgrade,
         guest: mergeParams(
           (base.build?.guest ?? {}) as Record<string, unknown>,
@@ -757,6 +777,8 @@
                 bind:values={u.values}
                 errors={u.errors}
                 prefix="iuse-{u.key}"
+                pinned={pinnedDefaults(u.stored, u.fields, u.values, u.followed)}
+                onfollow={(n) => follow(u, n)}
               />
             {:else}
               <p class="muted">This Block has no parameters.</p>
