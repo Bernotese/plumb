@@ -47,6 +47,16 @@ func TestSweepDeletedTargets(t *testing.T) {
 	gone, _ := marks("gone1") // deleted before D-397: no binding, not in the head
 	live, _ := marks("web1")
 	headOnly, _ := marks("web2")
+	// bound-only: a binding but no head document (a delete Plan whose Run
+	// did not run yet). It exists.
+	if err := e.st.PutBinding(e.ctx, store.Binding{Kind: state.KindTarget, Name: "bound-only", Ref: "9300"}); err != nil {
+		t.Fatal(err)
+	}
+	boundOnly, _ := marks("bound-only")
+	// gone2: deleted, with only a record of dropped drift.
+	if err := e.st.RecordIgnored(e.ctx, "gone2", "file:/etc/c", "r1", []string{"content"}); err != nil {
+		t.Fatal(err)
+	}
 	// gone1 also flooded the copy rule: the flag and agent:values stay.
 	if err := e.st.FlagGuestValues(e.ctx, "gone1", time.Now().Add(24*time.Hour)); err != nil {
 		t.Fatal(err)
@@ -55,7 +65,7 @@ func TestSweepDeletedTargets(t *testing.T) {
 	seq, _ := e.st.LastEventSeq(e.ctx)
 
 	swept, err := e.iss.SweepDeletedTargets(e.ctx)
-	if err != nil || !slices.Equal(swept, []string{"gone1"}) {
+	if err != nil || !slices.Equal(swept, []string{"gone1", "gone2"}) {
 		t.Fatalf("swept %v %v", swept, err)
 	}
 	if iss, _ := e.st.GetIssue(e.ctx, gone.ID); iss.Status != "resolved" || iss.Resolution != "gone" || iss.ResolvedBy != "system" {
@@ -78,12 +88,15 @@ func TestSweepDeletedTargets(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("%d issue.resolved events, want 1", n)
 	}
-	for _, id := range []int64{live.ID, headOnly.ID, vals.ID} {
+	for _, id := range []int64{live.ID, headOnly.ID, boundOnly.ID, vals.ID} {
 		if iss, _ := e.st.GetIssue(e.ctx, id); iss.Status == "resolved" {
 			t.Errorf("Issue %d (%s %s) was resolved", id, iss.Target, iss.Resource)
 		}
 	}
-	for _, target := range []string{"gone1", "web1", "web2"} {
+	if dr, _ := e.st.IgnoredDriftOf(e.ctx, "gone2"); len(dr) != 0 {
+		t.Errorf("gone2 ignored drift %v", dr)
+	}
+	for _, target := range []string{"gone1", "web1", "web2", "bound-only"} {
 		ig, _ := e.st.IgnoredOnce(e.ctx, target, "file:/etc/a")
 		dr, _ := e.st.IgnoredDriftOf(e.ctx, target)
 		want := target != "gone1"
