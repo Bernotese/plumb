@@ -470,4 +470,3 @@ func (e *Engine) InstallCommand(ctx context.Context, target, actor string) (stri
 	e.emit(ctx, "target.install_command", "target:"+target, actor, map[string]any{"expires_at": tok.Expires.UTC()})
 	return agentinstall.InstallCommand(string(rc.CA), rc.AgentURL, tok.Token), tok.Expires, nil
 }
-
