@@ -84,6 +84,8 @@ type fakePVE struct {
 	perms         map[string]map[string]int
 	// hotplugFails: a netN write (N ≥ 1) on a running VM stays pending.
 	hotplugFails bool
+	// dropNICWrite: a netN write ends nowhere (neither running nor pending).
+	dropNICWrite bool
 	// storageConfigs: the answer of GET /storage (nil: 500).
 	storageConfigs []map[string]any
 	authFails      int    // requests refused with 401
@@ -723,6 +725,8 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 				continue
 			}
 			switch {
+			case f.dropNICWrite && nicUpdateKeys[k]:
+				// Proxmox answers OK but the NIC is in no view.
 			case vm.running && f.hotplugFails && nicUpdateKeys[k]:
 				// a failed hot-plug: Proxmox keeps the NIC pending (D-402)
 				if vm.pending == nil {

@@ -264,10 +264,13 @@ func checkUpdateNICs(params url.Values) error {
 // (for example a failed hot-plug, D-402). The next Plan converges.
 var errNICNotApplied = errors.New("proxmox: a NIC change is not applied")
 
-// checkNICsApplied reads the running config again after a write of NICs
-// and checks each written or deleted netN (D-402: a failed hot-plug ends
-// the Run with the config shown). read is the config read of the guest.
-func checkNICsApplied(ctx context.Context, params url.Values, read func(context.Context) (map[string]string, error)) error {
+// checkNICsApplied reads the config again after a write of NICs and checks
+// each written or deleted netN (D-402: a failed hot-plug ends the Run with
+// the config shown). read gives the running view (current=1) or the view
+// after the next stop and start. A value that Proxmox keeps pending (the
+// network hot-plug is off in the VM options) is no failure: it waits for
+// a restart, and the Plan lists it so (review L2 of #332).
+func checkNICsApplied(ctx context.Context, params url.Values, read func(ctx context.Context, current bool) (map[string]string, error)) error {
 	want := map[string]string{}
 	for k := range nicUpdateKeys {
 		if v := params.Get(k); v != "" {
@@ -284,9 +287,16 @@ func checkNICsApplied(ctx context.Context, params url.Values, read func(context.
 	if len(want) == 0 {
 		return nil
 	}
-	cfg, err := read(ctx)
+	cfg, err := read(ctx, true)
 	if err != nil {
 		return fmt.Errorf("proxmox: read the NICs back: %w", err)
+	}
+	var next map[string]string // read once, only when a NIC is not running
+	applied := func(cfg map[string]string, k, w string) bool {
+		if w == "" {
+			return cfg[k] == ""
+		}
+		return sameNIC(cfg[k], w)
 	}
 	var bad []string
 	for _, k := range []string{"net1", "net2", "net3"} {
@@ -295,6 +305,16 @@ func checkNICsApplied(ctx context.Context, params url.Values, read func(context.
 			continue
 		}
 		have := cfg[k]
+		if !applied(cfg, k, w) {
+			if next == nil {
+				if next, err = read(ctx, false); err != nil {
+					return fmt.Errorf("proxmox: read the NICs back: %w", err)
+				}
+			}
+			if applied(next, k, w) {
+				continue // waits for the next stop and start
+			}
+		}
 		switch {
 		case w == "" && have != "":
 			bad = append(bad, fmt.Sprintf("%s is still %q (removal not applied)", k, have))

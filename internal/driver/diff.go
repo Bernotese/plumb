@@ -152,7 +152,7 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 				risk = wire.RiskReversible
 			}
 			out = append(out, wire.Change{Attr: attr, From: p, To: d, Risk: risk, Pending: true})
-		case equal(p, d) && (IsColdStart(attr) || attr == AttrFeatures):
+		case equal(p, d) && (IsColdStart(attr) || attr == AttrFeatures || NICIndex(attr) > 0):
 			// waits for a restart: a state, not drift (D-195); a container
 			// takes its features at the next start (host C/D4)
 		default:
@@ -219,6 +219,17 @@ func WaitingGuest(desired GuestSpec, observed GuestState) []wire.Change {
 	}
 	add(AttrCores, have.Cores, next.Cores, desired.Cores)
 	add(AttrMemory, have.MemoryMB, next.MemoryMB, desired.MemoryMB)
+	// A NIC that Proxmox keeps pending (hot-plug of the network off in
+	// the VM options) waits for the next stop and start (T-219, review L2
+	// of #332): listed, never written again.
+	if !desired.Adopted {
+		for n := 1; n <= MaxNICs; n++ {
+			r, p, d := have.NICAt(n).Value(), next.NICAt(n).Value(), desired.NICAt(n).Value()
+			if !equal(r, d) && equal(p, d) {
+				out = append(out, wire.Change{Attr: AttrNIC(n), From: r, To: d, Risk: wire.RiskRead, WaitsForRestart: true})
+			}
+		}
+	}
 	return out
 }
 

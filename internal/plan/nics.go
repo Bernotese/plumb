@@ -62,6 +62,10 @@ func (e *Engine) docNICs(target string, r *state.Rendered) ([]driver.NIC, error)
 		return nil, &ProposalError{Target: target, Msg: "more NICs need the install id (PLUMB_INSTALL_ID) for their MAC addresses; run a repair run of install.sh"}
 	}
 	out := make([]driver.NIC, 0, len(list))
+	gateways := 0 // D-399: at most one over NIC 0 and guest.nics (one default route)
+	if g, _ := r.Guest.Attrs["gateway"].(string); g != "" {
+		gateways++
+	}
 	for i, item := range list {
 		m, _ := item.(map[string]any)
 		nic := driver.NIC{MAC: driver.NICMAC(e.cfg.InstallID, target, i+1)}
@@ -79,6 +83,11 @@ func (e *Engine) docNICs(target string, r *state.Rendered) ([]driver.NIC, error)
 		if r.Kind == wire.KindLXC {
 			nic.IP, _ = m["ip"].(string)
 			nic.Gateway, _ = m["gateway"].(string)
+		}
+		if g, _ := m["gateway"].(string); g != "" {
+			if gateways++; gateways > 1 {
+				return nil, &ProposalError{Target: target, Msg: fmt.Sprintf("NIC %d: a second gateway; at most one gateway over guest.gateway and guest.nics (D-399)", i+1)}
+			}
 		}
 		if !e.netAllowed(nic.Bridge, nic.Tag) {
 			return nil, notAllowed(target, i+1, nic)

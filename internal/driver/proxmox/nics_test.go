@@ -182,8 +182,11 @@ func TestNICChecks(t *testing.T) {
 	}
 }
 
-// D-402: a failed hot-plug ends the Update with the config shown.
-func TestVMNICHotplugFails(t *testing.T) {
+// Review L2 of #332: with the network hot-plug off, Proxmox keeps the NIC
+// pending. The Update is no failure; the NIC waits for a restart, the next
+// diff writes nothing again, and WaitingGuest lists it. A write that ends
+// in no view fails with the config shown (D-402).
+func TestVMNICHotplugOff(t *testing.T) {
 	f := newFakePVE(t)
 	d := f.driver(t)
 	d.SetExtraNets(testNets)
@@ -198,14 +201,27 @@ func TestVMNICHotplugFails(t *testing.T) {
 	f.hotplugFails = true
 	next := spec
 	next.NICs = []driver.NIC{{Bridge: "vmbr9", MAC: mac(1)}}
-	err = d.Update(ctx, id, nicChanges(t, d, next, id), nil)
-	if !errors.Is(err, errNICNotApplied) || !strings.Contains(err.Error(), `net1 is "missing"`) {
+	if err := d.Update(ctx, id, nicChanges(t, d, next, id), nil); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	// The next view shows the NIC pending: the next Plan converges.
 	st, _ := d.Observe(ctx, id)
 	if st.Pending == nil || len(st.Pending.NICs) != 1 || len(st.Spec.NICs) != 0 {
-		t.Errorf("state: %+v", st)
+		t.Fatalf("state: %+v", st)
+	}
+	if ch := nicChanges(t, d, next, id); len(ch) != 0 {
+		t.Errorf("the waiting NIC is written again: %+v", ch)
+	}
+	w := driver.WaitingGuest(next, st)
+	if len(w) != 1 || w[0].Attr != "nic1" || !w[0].WaitsForRestart || w[0].Risk != wire.RiskRead {
+		t.Errorf("waiting: %+v", w)
+	}
+
+	// A write that Proxmox takes into no view.
+	f.hotplugFails, f.dropNICWrite = false, true
+	next.NICs = append(next.NICs, driver.NIC{Bridge: "vmbr9", Tag: 20, MAC: mac(2)})
+	err = d.Update(ctx, id, nicChanges(t, d, next, id), nil)
+	if !errors.Is(err, errNICNotApplied) || !strings.Contains(err.Error(), `net2 is "missing"`) {
+		t.Fatalf("lost write: %v", err)
 	}
 }
 
