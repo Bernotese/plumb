@@ -136,6 +136,13 @@ type planView struct {
 	// Pins: the pin changes of a pin_refresh Plan (D-335); missing for
 	// other origins.
 	Pins []pinRefreshView `json:"pins,omitempty"`
+	// Documents: what an approval commits (T-170); only in the answers
+	// that return one Plan, missing in the list.
+	Documents          *[]plan.DocumentChange `json:"documents,omitempty"`
+	DocumentsTruncated bool                   `json:"documents_truncated,omitempty"`
+	// DocumentsUnavailable: the documents could not be computed (D1 of
+	// #267); the UI says "document changes not available".
+	DocumentsUnavailable bool `json:"documents_unavailable,omitempty"`
 	// The copy rule (D-331, D-352); missing means none.
 	GuestDataIssues  []int64               `json:"guest_data_issues,omitempty"`
 	GuestDataMatches []plan.GuestDataMatch `json:"guest_data_matches,omitempty"`

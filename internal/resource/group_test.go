@@ -3,6 +3,7 @@ package resource
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -65,5 +66,33 @@ func TestGroupGuards(t *testing.T) {
 				t.Fatalf("apply: err=%v calls=%d", err, calls)
 			}
 		})
+	}
+}
+
+func TestGroupCreateChanges(t *testing.T) {
+	for _, attrs := range []map[string]any{
+		{"name": "team"}, {"name": "team", "gid": 1500},
+		{"name": "team", "system": true}, {"name": "team", "gid": 1500, "system": false},
+	} {
+		rs, err := New(wire.Resource{ID: "group:team", Type: "group", Attrs: attrs}, NewEnv(guestRoot(t), groupRunner(func(context.Context, string, ...string) ([]byte, error) {
+			t.Fatal("create planning must not run a command")
+			return nil, nil
+		})))
+		if err != nil {
+			t.Fatal(err)
+		}
+		obs, err := rs.Observe(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []wire.Change{change(wire.AttrState, wire.StateAbsent, wire.StatePresent, wire.RiskReversible)}
+		for _, key := range []string{"gid", "system"} {
+			if value, set := attrs[key]; set {
+				want = append(want, change(key, nil, value, wire.RiskReversible))
+			}
+		}
+		if got := rs.Diff(obs); !reflect.DeepEqual(got, want) {
+			t.Fatalf("attrs=%v: changes=%+v, want=%+v", attrs, got, want)
+		}
 	}
 }

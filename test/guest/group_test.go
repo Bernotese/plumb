@@ -5,6 +5,7 @@ package guest_test
 import (
 	"context"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -19,8 +20,15 @@ func TestGroup(t *testing.T) {
 		_ = exec.Command("groupdel", "--", member).Run()
 		_ = exec.Command("groupdel", "--", name).Run()
 	})
-	r := rsrc("group", name, map[string]any{"gid": 48151})
-	converge(t, r)
+	r := rsrc("group", name, map[string]any{"gid": 48151, "system": false})
+	want := []wire.Change{
+		{Attr: "state", From: wire.StateAbsent, To: wire.StatePresent, Risk: wire.RiskReversible},
+		{Attr: "gid", To: 48151, Risk: wire.RiskReversible},
+		{Attr: "system", To: false, Risk: wire.RiskReversible},
+	}
+	if got := converge(t, r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("create changes: %+v, want %+v", got, want)
+	}
 	if got := sh(t, "getent", "group", name); !strings.Contains(got, ":48151:") {
 		t.Fatal(got)
 	}

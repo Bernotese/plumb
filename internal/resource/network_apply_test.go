@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -24,7 +25,9 @@ import (
 type fakeNet struct {
 	mu      sync.Mutex
 	root    string
-	main    string // main address, on eth0
+	main    string // main address, on dev
+	dev     string // live name of the main NIC (default eth0)
+	mac     string // its MAC (default the MAC of cloudInit)
 	calls   [][]string
 	applies int
 	failGet bool
@@ -73,7 +76,12 @@ func (f *fakeNet) Run(ctx context.Context, name string, args ...string) ([]byte,
 		if down {
 			return nil, &ExitError{Name: "ip", Code: 2, Stderr: "RTNETLINK answers: Network is unreachable"}
 		}
-		return json.Marshal([]map[string]string{{"dev": "eth0", "prefsrc": f.main}})
+		return json.Marshal([]map[string]string{{"dev": f.dev, "prefsrc": f.main}})
+	case name == "ip" && slices.Equal(args[:3], []string{"-j", "link", "show"}):
+		if args[len(args)-1] != f.dev {
+			return nil, &ExitError{Name: "ip", Code: 1, Stderr: "Device does not exist"}
+		}
+		return json.Marshal([]map[string]string{{"ifname": f.dev, "address": f.mac}})
 	case name == "ip" && slices.Equal(args[:2], []string{"-j", "addr"}):
 		var info []map[string]string
 		for _, a := range addrs {
@@ -156,7 +164,7 @@ func newNetEnv(t *testing.T) (Env, *fakeNet, *[]netip.Addr) {
 	if err := os.WriteFile(filepath.Join(root, "etc/netplan/50-cloud-init.yaml"), []byte(cloudInit), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeNet{root: root, main: "198.51.100.5"}
+	f := &fakeNet{root: root, main: "198.51.100.5", dev: "eth0", mac: "bc:24:11:00:00:01"}
 	env := NewEnv(root, f)
 	env.StateDir = t.TempDir()
 	env.Controller = "203.0.113.1"
@@ -508,5 +516,97 @@ func TestNetworkBootUnit(t *testing.T) {
 	script = strings.ReplaceAll(script[:strings.Index(script, "'")], "$$", "$")
 	if !strings.Contains(script, "for c in "+dir+"/network-*.confirmed") {
 		t.Fatalf("script: %s", script)
+	}
+}
+
+func TestMainKey(t *testing.T) {
+	main := netip.MustParseAddr("198.51.100.5")
+	const mac = "bc:24:11:00:00:01"
+	dhcp := func(key, setName, matchName, matchMAC string) map[string]npView {
+		v := npView{DHCP4: true, SetName: setName, Match: map[string]any{}}
+		if matchName != "" {
+			v.Match["name"] = matchName
+		}
+		if matchMAC != "" {
+			v.Match["macaddress"] = matchMAC
+		}
+		return map[string]npView{key: v}
+	}
+	for _, c := range []struct {
+		name string
+		view map[string]npView
+		dev  string
+		want string // key, or the error text
+	}{
+		{"static by address", map[string]npView{"lan": {Addresses: []any{"198.51.100.5/24"}}}, "ens18", "lan"},
+		{"key", dhcp("ens18", "", "", ""), "ens18", "ens18"},
+		{"set-name", dhcp("lan", "ens18", "", ""), "ens18", "lan"},
+		{"match.name", dhcp("lan", "", "ens18", ""), "ens18", "lan"},
+		// D-192 / T-158 F3: cloud-init named it eth0, the first boot kept ens18.
+		{"match.macaddress, other live name", dhcp("eth0", "eth0", "", mac), "ens18", "eth0"},
+		{"match.macaddress, upper case", dhcp("eth0", "eth0", "", "BC:24:11:00:00:01"), "ens18", "eth0"},
+		{"other MAC", dhcp("eth0", "eth0", "", "bc:24:11:00:00:02"), "ens18", "0 entries for the main NIC ens18"},
+		{"none", map[string]npView{}, "ens18", "0 entries for the main NIC ens18"},
+		{"two: by name and by MAC", func() map[string]npView {
+			v := dhcp("ens18", "", "", "")
+			maps.Copy(v, dhcp("eth0", "eth0", "", mac))
+			return v
+		}(), "ens18", "2 entries for the main NIC ens18"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := mainKey(c.view, c.dev, mac, main)
+			if err != nil {
+				got = err.Error()
+			}
+			if !strings.Contains(got, c.want) || (err == nil && got != c.want) {
+				t.Fatalf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+	// An empty MAC (never expected: Prepare reads it) matches no entry.
+	if _, err := mainKey(dhcp("eth0", "eth0", "", ""), "ens18", "", main); err == nil {
+		t.Fatal("an empty MAC matched an entry without a MAC")
+	}
+}
+
+// T-158 F3: a DHCP VM whose NIC kept the kernel name ens18 while
+// cloud-init's entry is eth0 with match.macaddress and set-name. The full
+// safe apply works without a reboot; the Plumb file names the entry key
+// and never copies the MAC (D-348).
+func TestNetworkMainNICByMAC(t *testing.T) {
+	ctx := context.Background()
+	env, f, _ := newNetEnv(t)
+	f.dev = "ens18"
+	ci := "network:\n  version: 2\n  ethernets:\n    eth0:\n      match:\n        macaddress: \"BC:24:11:00:00:01\"\n      set-name: \"eth0\"\n      dhcp4: true\n"
+	if err := os.WriteFile(filepath.Join(env.Root, "etc/netplan/50-cloud-init.yaml"), []byte(ci), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := netRes(t, env, cloneAttrs(extra))
+	ch := diffOf(t, n)
+	if err := n.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.count("ip", "-j", "link", "show", "dev", "ens18") != 1 {
+		t.Errorf("the MAC was not read from the live link: %v", f.calls)
+	}
+	if err := n.Apply(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(env.Root, NetworkFile("extra")))
+	if err != nil || !strings.Contains(string(b), "    eth0:\n") || strings.Contains(strings.ToLower(string(b)), "bc:24:11") {
+		t.Fatalf("file: %s %v", b, err)
+	}
+	if err := n.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same guest with another MAC on the link: no entry, a clear refusal.
+	env2, f2, _ := newNetEnv(t)
+	f2.dev, f2.mac = "ens18", "bc:24:11:00:00:09"
+	if err := os.WriteFile(filepath.Join(env2.Root, "etc/netplan/50-cloud-init.yaml"), []byte(ci), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := netRes(t, env2, cloneAttrs(extra)).Prepare(ctx); err == nil || !strings.Contains(err.Error(), "0 entries for the main NIC ens18") {
+		t.Fatalf("other MAC: %v", err)
 	}
 }
