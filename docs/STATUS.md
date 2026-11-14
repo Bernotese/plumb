@@ -158,6 +158,9 @@ Order with the test host: real-host part of T-015 on the running install → `--
 ## Dev VM notes
 - `jannes` is in the `docker` group since 2026-11-10; local guest runs are possible. Agent sessions that started before that do not have the group yet: run `sg docker -c "make test-guest"` (plain `docker` works after a session restart).
 
+## Open technical points (pl-lead watches)
+- `TestGuestFirewall` failed once in the VM job (PR #281, 2026-11-14): port 8080 not reachable although the table accepts it. Not reproduced, cause unknown, not proven test-only. T-200 adds a dump for the next failure. Read every red VM job before a rerun.
+
 ## Open for the user
 - **Working rule D-326 (user, 2026-11-13):** no release until all of BRIEF §5/§6 is done; the team plans and builds slice after slice on its own and sends short notes. The user is asked only for: new token rights or ACLs, public steps, anything outside `pve-dev`, changes to the user's own installation.
 - First release: **rests** (D-326). The workflow of T-124 is ready and stays unused.
