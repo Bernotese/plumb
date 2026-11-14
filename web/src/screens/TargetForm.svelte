@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import targetSchema from "../../../internal/state/schema/target.json";
   import type { PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
@@ -39,6 +40,10 @@
   import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
   import RawResources from "../ui/RawResources.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
+  import YamlEditor from "../ui/YamlEditor.svelte";
+  import { docPointers } from "../lib/blocks";
+  import { pointerErrors } from "../lib/formErrors";
+  import { parseDocText, toYaml, type LineError, type Parsed } from "../lib/yaml";
 
   let { api, name }: { api: PlumbApi; name?: string } = $props();
 
@@ -80,6 +85,26 @@
   let reenrollError = $state<unknown>(null);
   let reenrollBusy = $state(false);
   let nextKey = 0;
+
+  // D-363: the YAML mode. `base` is the stored spec, or the spec last read
+  // from the YAML text: the form keeps the keys it does not show from it.
+  let base = $state<Partial<TargetSpec>>({});
+  const YAML_HINT =
+    "The whole Target document. Secrets appear as {secret: name}, never as a value. Saving makes the same plan as the form; the server checks the document.";
+  let mode = $state<"form" | "yaml">("form");
+  let yamlText = $state("");
+  let yamlErrors = $state<LineError[]>([]);
+  let yamlParsed = $state.raw<Parsed | null>(null);
+  let modeError = $state("");
+  const yamlServer = $derived(
+    mode === "yaml" && yamlParsed
+      ? Object.entries(docPointers(pointerErrors(submitError))).map(([p, message]): LineError => ({
+          line: yamlParsed?.lineOf(p) ?? 0,
+          pointer: p,
+          message,
+        }))
+      : [],
+  );
 
   // T-071: the open guest:address Issue of this Target, for the mismatch line.
   let addressIssue = $state<Issue | null>(null);
@@ -227,12 +252,7 @@
         existing = t;
         if (t) {
           targetName = t.document.name;
-          image = t.document.spec.image;
-          guest = initialValues(guestFields, t.document.spec.guest);
-          allowRestart = t.document.spec.allow_restart === true;
-          uses = (t.document.spec.blocks ?? []).map((u) =>
-            makeUse(u.use, u.id ?? "", u.params ?? {}),
-          );
+          loadSpec(t.document.spec);
         } else {
           image = i[0]?.document.name ?? "";
           guest = initialValues(guestFields, {
@@ -251,6 +271,15 @@
     );
   });
 
+  /** Fills the form from a spec: the stored one, or one read from YAML. */
+  function loadSpec(spec: Partial<TargetSpec>) {
+    base = spec;
+    if (typeof spec.image === "string") image = spec.image;
+    guest = initialValues(guestFields, (spec.guest ?? {}) as Record<string, unknown>);
+    allowRestart = spec.allow_restart === true;
+    uses = (spec.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
+  }
+
   function addBlock(use = addChoice) {
     if (!use) return;
     uses = [...uses, makeUse(use)];
@@ -263,14 +292,14 @@
     queueMicrotask(() => document.getElementById("add-block")?.focus());
   }
 
-  function check(): boolean {
+  function check(needReason = true): boolean {
     const e: Record<string, string> = {};
     if (!editing && !namePattern.test(targetName)) {
       e["name"] =
         "Use lower-case letters, digits, '-' and '.'; start and end with a letter or digit.";
     }
     if (!image) e["image"] = "Choose an image.";
-    if (!reason.trim()) e["reason"] = "Say why you make this change.";
+    if (needReason && !reason.trim()) e["reason"] = "Say why you make this change.";
     guestErrors = validate(kindFields, guest);
     // D-202: the disk of a Target from a built image cannot be smaller than the template.
     const min = smallestDisk(images.find((i) => i.document.name === image)?.document.spec);
@@ -315,19 +344,17 @@
     );
   }
 
-  async function submit(ev: SubmitEvent) {
-    ev.preventDefault();
-    submitError = null;
-    if (!check()) {
-      queueMicrotask(() =>
-        (
-          document.querySelector('[aria-invalid="true"], .use-unfit') as HTMLElement | null
-        )?.focus(),
-      );
-      return;
-    }
+  const focusInvalid = () =>
+    queueMicrotask(() =>
+      (document.querySelector('[aria-invalid="true"], .use-unfit') as HTMLElement | null)?.focus(),
+    );
+
+  /** The spec that the form saves: `base` with the form values. */
+  function buildSpec(): TargetSpec {
+    const known = ["type", "image", "guest", "blocks", "overrides", "allow_restart"];
+    const extra = Object.fromEntries(Object.entries(base).filter(([k]) => !known.includes(k)));
     const guestSpec = mergeParams(
-      existing?.document.spec.guest ?? {},
+      (base.guest ?? {}) as Record<string, unknown>,
       // On an existing target the create-only fields keep their stored
       // value: a schema default the form shows must not become a change.
       editing
@@ -336,9 +363,9 @@
       guest,
     );
     // D-299: a missing `tags` means "not managed"; an emptied list means "no tags".
-    if (existing?.document.spec.guest.tags !== undefined && guestSpec["tags"] === undefined)
-      guestSpec["tags"] = [];
-    const spec: TargetSpec = {
+    if (base.guest?.tags !== undefined && guestSpec["tags"] === undefined) guestSpec["tags"] = [];
+    return {
+      ...extra,
       type: kind,
       image,
       guest: guestSpec as TargetSpec["guest"],
@@ -347,19 +374,82 @@
         ...(u.id.trim() ? { id: u.id.trim() } : {}),
         params: mergeParams(u.stored, u.fields, u.values),
       })),
-      overrides: existing?.document.spec.overrides ?? {},
+      overrides: base.overrides ?? {},
       // Written only when set or stored before, so an old Target gets no
       // new key by an unrelated edit (default false, D-194).
-      ...(allowRestart || existing?.document.spec.allow_restart !== undefined
-        ? { allow_restart: allowRestart }
-        : {}),
+      ...(allowRestart || base.allow_restart !== undefined ? { allow_restart: allowRestart } : {}),
     };
+  }
+
+  const yamlWant = () => ({
+    kind: "Target",
+    ...(editing && name ? { name } : {}),
+    namePattern,
+  });
+
+  /** Form → YAML: the document that the form would save. */
+  async function showYaml() {
+    modeError = "";
+    if (mode === "yaml") return;
+    if (!check(false)) {
+      modeError = "Fix the marked fields first. Then switch to YAML.";
+      focusInvalid();
+      return;
+    }
+    yamlText = toYaml({ kind: "Target", name: targetName, spec: buildSpec() });
+    yamlErrors = [];
+    yamlParsed = null;
+    submitError = null;
+    mode = "yaml";
+    await tick();
+    document.getElementById("t-yaml")?.focus();
+  }
+
+  /** YAML → form: read the text into the form; on an error stay in YAML. */
+  async function showForm() {
+    modeError = "";
+    if (mode === "form") return;
+    const r = parseDocText(yamlText, yamlWant());
+    yamlParsed = r.parsed;
+    yamlErrors = r.errors;
+    if (!r.doc) {
+      modeError = "The YAML text has problems. Fix them to switch back to the form.";
+      await tick();
+      document.getElementById("t-yaml-errors")?.focus();
+      return;
+    }
+    if (!editing) targetName = r.doc.name;
+    loadSpec(r.doc.spec as Partial<TargetSpec>);
+    submitError = null;
+    mode = "form";
+  }
+
+  async function submit(ev: SubmitEvent) {
+    ev.preventDefault();
+    submitError = null;
+    let put: { kind: "Target"; name: string; spec: TargetSpec };
+    if (mode === "yaml") {
+      // The same proposal as the form: the server checks the document (D-363).
+      const r = parseDocText(yamlText, yamlWant());
+      yamlParsed = r.parsed;
+      yamlErrors = r.errors;
+      errors = reason.trim() ? {} : { reason: "Say why you make this change." };
+      if (!r.doc || errors["reason"]) {
+        await tick();
+        document.getElementById(r.doc ? "t-reason" : "t-yaml-errors")?.focus();
+        return;
+      }
+      put = { kind: "Target", name: r.doc.name, spec: r.doc.spec as unknown as TargetSpec };
+    } else {
+      if (!check()) {
+        focusInvalid();
+        return;
+      }
+      put = { kind: "Target", name: targetName, spec: buildSpec() };
+    }
     busy = true;
     try {
-      const plan = await api.createPlan({
-        reason,
-        put: [{ kind: "Target", name: targetName, spec }],
-      });
+      const plan = await api.createPlan({ reason, put: [put] });
       go({ name: "plan", id: plan.id });
     } catch (err) {
       submitError = err;
@@ -452,172 +542,206 @@
 {/if}
 {#if loaded}
   <form onsubmit={submit} novalidate>
-    <fieldset>
-      <legend>Target</legend>
-      <div class="grid">
-        <div class="field">
-          <label for="t-name"
-            >Name{#if !editing}<span aria-hidden="true"> *</span>{/if}</label
-          >
-          <input
-            id="t-name"
-            type="text"
-            bind:value={targetName}
-            readonly={editing}
-            required
-            aria-invalid={!!errors["name"]}
-            aria-describedby={errors["name"] ? "t-name-error" : editing ? "t-name-hint" : undefined}
-          />
-          {#if editing}<span class="hint" id="t-name-hint">The name cannot change.</span>{/if}
-          {#if errors["name"]}<span class="error" id="t-name-error">{errors["name"]}</span>{/if}
-        </div>
-        <div class="field">
-          <label for="t-image">Image</label>
-          <select
-            id="t-image"
-            bind:value={image}
-            disabled={editing}
-            aria-describedby={editing ? "t-image-hint" : undefined}
-          >
-            {#each images as i (i.document.name)}
-              <option value={i.document.name}>{i.document.spec.title ?? i.document.name}</option>
-            {/each}
-          </select>
-          {#if editing}<span class="hint" id="t-image-hint"
-              >{#if existing?.status.image_version}<span id="t-image-version" class="block"
-                  >Made from image {existing.document.spec.image} v{existing.status
-                    .image_version}.</span
-                >
-              {/if}The image is used only to create the guest.</span
-            >{/if}
-        </div>
-        <div class="field">
-          <span class="label">Type</span>
-          <span id="t-type">{KIND_NAME[kind]}</span>
-        </div>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Guest settings</legend>
-      <SchemaFields
-        fields={kindFields}
-        bind:values={guest}
-        errors={guestErrors}
-        prefix="guest"
-        readonly={editing ? CREATE_ONLY : []}
-        readonlyHint="Create-only: it cannot change on an existing target."
-        notes={{ ...addressNote, ...diskNote }}
-      />
-      {#if builtLxc}
-        <div class="banner info" id="t-lxc-keys">
-          <p>
-            A container from the built image <span class="mono">{image}</span> gets no SSH keys from
-            Proxmox. Add the keys with the Block <span class="mono">deploy-user</span> (D-251).
-          </p>
-          {#if droppedKeys}
-            <p class="warn" id="t-keys-dropped">
-              The {droppedKeys === 1 ? "SSH key" : `${droppedKeys} SSH keys`} you typed for the other
-              image {droppedKeys === 1 ? "is" : "are"} not sent. Put {droppedKeys === 1
-                ? "it"
-                : "them"} into the Block <span class="mono">deploy-user</span>.
-            </p>
-          {/if}
-          {#if deployUser && !usesDeployUser}
-            <button
-              type="button"
-              class="btn"
-              id="t-add-deploy-user"
-              onclick={() => addBlock("deploy-user")}>Add Block deploy-user</button
-            >
-          {:else if !deployUser}
-            <p class="muted">There is no Block <span class="mono">deploy-user</span> yet.</p>
-          {/if}
-        </div>
-      {/if}
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            id="t-allow-restart"
-            bind:checked={allowRestart}
-            aria-describedby="t-allow-restart-hint"
-          />
-          {forKind(ALLOW_RESTART_LABEL, kind)}
-        </label>
-        <span class="hint" id="t-allow-restart-hint"
-          >{kind === "lxc" ? ALLOW_RESTART_HELP_LXC : ALLOW_RESTART_HELP}</span
-        >
-      </div>
-    </fieldset>
-
-    <h2>Blocks</h2>
-    {#each uses as u (u.key)}
-      {@const b = blockByName(u.use)}
-      {@const unfit = unfitUse(u)}
-      <fieldset aria-describedby={b?.document.spec.description ? `use-${u.key}-desc` : undefined}>
-        <legend id="use-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend>
-        {#if b?.document.spec.description}<p class="muted" id="use-{u.key}-desc">
-            {b.document.spec.description}
-          </p>{/if}
-        {#if unfit}<p class="error use-unfit" id="use-{u.key}-unfit" tabindex="-1">
-            This Block does not fit a {kind === "lxc" ? "container" : "virtual machine"}. {unfit}
-            Remove it to save.
-          </p>{/if}
-        <div class="field">
-          <label for="use-{u.key}-id">Use id (optional)</label>
-          <input
-            id="use-{u.key}-id"
-            type="text"
-            bind:value={u.id}
-            placeholder={u.use}
-            aria-invalid={!!u.errors["__id"]}
-            aria-describedby="use-{u.key}-id-hint{u.errors['__id'] ? ` use-${u.key}-id-error` : ''}"
-          />
-          <span class="hint" id="use-{u.key}-id-hint"
-            >Needed when the same Block is used twice.</span
-          >
-          {#if u.errors["__id"]}<span class="error" id="use-{u.key}-id-error"
-              >{u.errors["__id"]}</span
-            >{/if}
-        </div>
-        {#if u.fields.length}
-          <SchemaFields
-            fields={u.fields}
-            bind:values={u.values}
-            errors={u.errors}
-            prefix="use-{u.key}"
-            {api}
-          />
-        {:else}
-          <p class="muted">This Block has no parameters.</p>
-        {/if}
-        <button type="button" class="btn danger" onclick={() => removeBlock(u.key)}>
-          Remove {b?.document.spec.title ?? u.use}
-        </button>
-      </fieldset>
-    {:else}
-      <p class="muted">No Blocks yet.</p>
-    {/each}
-    <div class="row add">
-      <label for="add-choice" class="sr-only">Block to add</label>
-      <select id="add-choice" bind:value={addChoice}>
-        {#each addable as b (b.document.name)}
-          <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
-        {/each}
-      </select>
+    <div class="modes" role="group" aria-label="Edit the target as">
       <button
         type="button"
         class="btn"
-        id="add-block"
-        disabled={addable.length === 0}
-        onclick={() => addBlock()}>Add Block</button
+        id="t-mode-form"
+        aria-pressed={mode === "form"}
+        onclick={showForm}>Form</button
+      >
+      <button
+        type="button"
+        class="btn"
+        id="t-mode-yaml"
+        aria-pressed={mode === "yaml"}
+        onclick={showYaml}>YAML</button
       >
     </div>
-    {#if hidden.length}<p class="muted" id="blocks-hidden">
-        Not offered for a {kind === "lxc" ? "container" : "virtual machine"}:
-        {#each hidden as h, i (h)}{i ? ", " : ""}<span class="mono">{h}</span>{/each}.
-      </p>{/if}
+    {#if modeError}<p class="error" id="t-mode-error" role="alert">{modeError}</p>{/if}
+    {#if mode === "yaml"}
+      <YamlEditor
+        id="t-yaml"
+        label="Target (YAML)"
+        bind:text={yamlText}
+        errors={yamlErrors}
+        serverErrors={yamlServer}
+        hint={YAML_HINT}
+      />
+    {:else}
+      <fieldset>
+        <legend>Target</legend>
+        <div class="grid">
+          <div class="field">
+            <label for="t-name"
+              >Name{#if !editing}<span aria-hidden="true"> *</span>{/if}</label
+            >
+            <input
+              id="t-name"
+              type="text"
+              bind:value={targetName}
+              readonly={editing}
+              required
+              aria-invalid={!!errors["name"]}
+              aria-describedby={errors["name"]
+                ? "t-name-error"
+                : editing
+                  ? "t-name-hint"
+                  : undefined}
+            />
+            {#if editing}<span class="hint" id="t-name-hint">The name cannot change.</span>{/if}
+            {#if errors["name"]}<span class="error" id="t-name-error">{errors["name"]}</span>{/if}
+          </div>
+          <div class="field">
+            <label for="t-image">Image</label>
+            <select
+              id="t-image"
+              bind:value={image}
+              disabled={editing}
+              aria-describedby={editing ? "t-image-hint" : undefined}
+            >
+              {#each images as i (i.document.name)}
+                <option value={i.document.name}>{i.document.spec.title ?? i.document.name}</option>
+              {/each}
+            </select>
+            {#if editing}<span class="hint" id="t-image-hint"
+                >{#if existing?.status.image_version}<span id="t-image-version" class="block"
+                    >Made from image {existing.document.spec.image} v{existing.status
+                      .image_version}.</span
+                  >
+                {/if}The image is used only to create the guest.</span
+              >{/if}
+          </div>
+          <div class="field">
+            <span class="label">Type</span>
+            <span id="t-type">{KIND_NAME[kind]}</span>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Guest settings</legend>
+        <SchemaFields
+          fields={kindFields}
+          bind:values={guest}
+          errors={guestErrors}
+          prefix="guest"
+          readonly={editing ? CREATE_ONLY : []}
+          readonlyHint="Create-only: it cannot change on an existing target."
+          notes={{ ...addressNote, ...diskNote }}
+        />
+        {#if builtLxc}
+          <div class="banner info" id="t-lxc-keys">
+            <p>
+              A container from the built image <span class="mono">{image}</span> gets no SSH keys
+              from Proxmox. Add the keys with the Block <span class="mono">deploy-user</span> (D-251).
+            </p>
+            {#if droppedKeys}
+              <p class="warn" id="t-keys-dropped">
+                The {droppedKeys === 1 ? "SSH key" : `${droppedKeys} SSH keys`} you typed for the other
+                image {droppedKeys === 1 ? "is" : "are"} not sent. Put {droppedKeys === 1
+                  ? "it"
+                  : "them"} into the Block <span class="mono">deploy-user</span>.
+              </p>
+            {/if}
+            {#if deployUser && !usesDeployUser}
+              <button
+                type="button"
+                class="btn"
+                id="t-add-deploy-user"
+                onclick={() => addBlock("deploy-user")}>Add Block deploy-user</button
+              >
+            {:else if !deployUser}
+              <p class="muted">There is no Block <span class="mono">deploy-user</span> yet.</p>
+            {/if}
+          </div>
+        {/if}
+        <div class="field">
+          <label class="check">
+            <input
+              type="checkbox"
+              id="t-allow-restart"
+              bind:checked={allowRestart}
+              aria-describedby="t-allow-restart-hint"
+            />
+            {forKind(ALLOW_RESTART_LABEL, kind)}
+          </label>
+          <span class="hint" id="t-allow-restart-hint"
+            >{kind === "lxc" ? ALLOW_RESTART_HELP_LXC : ALLOW_RESTART_HELP}</span
+          >
+        </div>
+      </fieldset>
+
+      <h2>Blocks</h2>
+      {#each uses as u (u.key)}
+        {@const b = blockByName(u.use)}
+        {@const unfit = unfitUse(u)}
+        <fieldset aria-describedby={b?.document.spec.description ? `use-${u.key}-desc` : undefined}>
+          <legend id="use-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend>
+          {#if b?.document.spec.description}<p class="muted" id="use-{u.key}-desc">
+              {b.document.spec.description}
+            </p>{/if}
+          {#if unfit}<p class="error use-unfit" id="use-{u.key}-unfit" tabindex="-1">
+              This Block does not fit a {kind === "lxc" ? "container" : "virtual machine"}. {unfit}
+              Remove it to save.
+            </p>{/if}
+          <div class="field">
+            <label for="use-{u.key}-id">Use id (optional)</label>
+            <input
+              id="use-{u.key}-id"
+              type="text"
+              bind:value={u.id}
+              placeholder={u.use}
+              aria-invalid={!!u.errors["__id"]}
+              aria-describedby="use-{u.key}-id-hint{u.errors['__id']
+                ? ` use-${u.key}-id-error`
+                : ''}"
+            />
+            <span class="hint" id="use-{u.key}-id-hint"
+              >Needed when the same Block is used twice.</span
+            >
+            {#if u.errors["__id"]}<span class="error" id="use-{u.key}-id-error"
+                >{u.errors["__id"]}</span
+              >{/if}
+          </div>
+          {#if u.fields.length}
+            <SchemaFields
+              fields={u.fields}
+              bind:values={u.values}
+              errors={u.errors}
+              prefix="use-{u.key}"
+              {api}
+            />
+          {:else}
+            <p class="muted">This Block has no parameters.</p>
+          {/if}
+          <button type="button" class="btn danger" onclick={() => removeBlock(u.key)}>
+            Remove {b?.document.spec.title ?? u.use}
+          </button>
+        </fieldset>
+      {:else}
+        <p class="muted">No Blocks yet.</p>
+      {/each}
+      <div class="row add">
+        <label for="add-choice" class="sr-only">Block to add</label>
+        <select id="add-choice" bind:value={addChoice}>
+          {#each addable as b (b.document.name)}
+            <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
+          {/each}
+        </select>
+        <button
+          type="button"
+          class="btn"
+          id="add-block"
+          disabled={addable.length === 0}
+          onclick={() => addBlock()}>Add Block</button
+        >
+      </div>
+      {#if hidden.length}<p class="muted" id="blocks-hidden">
+          Not offered for a {kind === "lxc" ? "container" : "virtual machine"}:
+          {#each hidden as h, i (h)}{i ? ", " : ""}<span class="mono">{h}</span>{/each}.
+        </p>{/if}
+    {/if}
 
     <h2>Review</h2>
     <div class="field">
@@ -702,6 +826,16 @@
 {/if}
 
 <style>
+  .modes {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+  .modes [aria-pressed="true"] {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-accent-text);
+  }
   .waiting {
     border-left: 4px solid var(--color-warn);
   }

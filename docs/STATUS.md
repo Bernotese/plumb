@@ -81,8 +81,11 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-170 API: a pending Plan lists its document changes (`Plan.documents`) | pl-architect (implementer) | merged (PR #267) |
 | T-159 slice 5 C14: README (users, catalogue, `network`, `group`, signed images, Plan document changes; 4 new pictures) | pl-frontend | merged (PR #270) |
 | T-171 users page: role hints from the contract | pl-frontend | merged (PR #271) |
-| T-172 plan of slice 6: part A (no user answer: settings, Accept to a parameter, nested forms, MCP server, rate limits, live drift of ip/nft, leftovers), part B (SSH repair, adoption; waits for U1/U2) | pl-architect, check: pl-reviewer | PR #272, in review. Cards T-173 … T-195 |
-| Slice 6 part A, started: T-173 A1 contract (pl-architect), T-177 A4b nested forms + YAML (pl-frontend), T-181 A7 live drift (pl-backend), T-183 A9 MAC checks + T-185 A11 leftovers (pl-codex-fix), T-184 A10 F5 proof (pl-codex-qa) | – | in work |
+| T-172 plan of slice 6: part A (no user answer), part B (SSH repair, adoption; waits for U1/U2) | pl-architect, check: pl-reviewer | merged (PR #272), D-360 … D-376. Cards T-173 … T-196 |
+| Slice 6 part A, merged: T-173 A1 contract (PR #276), T-177 A4b nested forms + YAML mode (PR #278), T-181 A7 live drift of ip/nft (PR #277), T-183 A9 MAC checks (PR #273), T-184 A10 F5 proof in CI (PR #275), T-185 A11 leftovers (PR #274) | – | done |
+| Slice 6 part A, in work: T-174 A2 settings server (pl-backend), T-175 A3 Accept to a parameter (pl-architect), T-178 A5 MCP server (pl-reviewer builds), T-182 A8 `firewall-off` (pl-codex-fix), T-196 A15 form writes only non-defaults (pl-frontend), T-197 e2e race fix (PR #279) | – | in work |
+| Slice 6 part A, waiting: T-176 A4a web, T-179 A6a token rate limit, T-180 A6b drift report limit, T-186 A12 QA, T-187 A13 host acceptance, T-188 A14 README | – | waits for its dependencies |
+| Slice 6 part B: T-189 … T-195 (SSH repair, adoption) | – | **waits for the user: U1, U2** |
 | T-169 `group`: the Plan of a create shows the gid (host finding F4) | pl-codex-fix | merged (PR #266) |
 | T-166 copy rule: opaque guest reports (`firewall.table`, `network.file`, `apt_repository.sources`, `sysctl.file`) and file/unit lines (host finding F2) | pl-architect (implementer) | merged (PR #264), D-359; step 4 is repeated on the host |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |

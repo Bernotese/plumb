@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   // Only "properties": the "examples" of the schema hold demo data that must not ship (check-dist).
   import { properties as imageProps } from "../../../internal/state/schema/image.json";
   import type { PlumbApi } from "../lib/client";
@@ -26,6 +27,9 @@
   import { KIND_NAME, type GuestKind } from "../lib/view";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import SchemaFields from "../ui/SchemaFields.svelte";
+  import YamlEditor from "../ui/YamlEditor.svelte";
+  import { docPointers } from "../lib/blocks";
+  import { parseDocText, toYaml, type LineError, type Parsed } from "../lib/yaml";
 
   let { api, name }: { api: PlumbApi; name?: string } = $props();
 
@@ -121,6 +125,17 @@
   let busy = $state(false);
   let nextKey = 0;
 
+  // D-363: the YAML mode. `base` is the stored spec, or the spec last read
+  // from the YAML text: the form keeps the keys it does not show from it.
+  let base = $state<Partial<ImageSpec>>({});
+  let mode = $state<"form" | "yaml">("form");
+  let yamlText = $state("");
+  let yamlErrors = $state<LineError[]>([]);
+  let yamlParsed = $state.raw<Parsed | null>(null);
+  let modeError = $state("");
+  const YAML_HINT =
+    "The whole Image document. Saving makes the same plan as the form; the server checks the document.";
+
   /** A Block with a secret parameter cannot go into an Image (D-202). */
   const hasSecret = (b: BlockView) =>
     Object.values(b.document.spec.params?.properties ?? {}).some(
@@ -188,38 +203,41 @@
         keyedTargets = t
           .filter((x) => x.document.spec.image === name && x.document.spec.guest.ssh_keys?.length)
           .map((x) => x.document.name);
-        const s = i?.document.spec;
-        const g = s?.build?.guest;
-        guest = initialValues(guestFields, {
-          cores: 1,
-          memory: 1024,
-          disk: 10,
-          bridge: "vmbr0",
-          ip: "dhcp",
-          ...g,
-        });
-        if (i && s) {
-          imageName = i.document.name;
-          title = s.title ?? "";
-          kind = s.type;
-          url = s.url;
-          vmAlgo = s.type === "vm" && s.sha512 ? "sha512" : "sha256";
-          sha = (s.type === "lxc" || s.sha512 ? s.sha512 : s.sha256) ?? "";
-          verify = s.verify?.source ?? "";
-          build = s.build !== undefined;
-          upgrade = s.build?.upgrade ?? true;
-          uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
-          keep = s.retention?.keep ?? 3;
-          every = s.schedule?.every ?? "none";
-          weekday = s.schedule?.weekday ?? "sun";
-          day = s.schedule?.day ?? 1;
-          at = s.schedule?.at ?? "03:00";
-        }
+        if (i) imageName = i.document.name;
+        loadSpec(i?.document.spec ?? {});
         loaded = true;
       },
       (e: unknown) => (loadError = e),
     );
   });
+
+  /** Fills the form from a spec: the stored one, or one read from YAML. */
+  function loadSpec(s: Partial<ImageSpec>) {
+    base = s;
+    guest = initialValues(guestFields, {
+      cores: 1,
+      memory: 1024,
+      disk: 10,
+      bridge: "vmbr0",
+      ip: "dhcp",
+      ...s.build?.guest,
+    });
+    if (s.type === undefined) return;
+    title = s.title ?? "";
+    kind = s.type;
+    url = s.url ?? "";
+    vmAlgo = s.type === "vm" && s.sha512 ? "sha512" : "sha256";
+    sha = (s.type === "lxc" || s.sha512 ? s.sha512 : s.sha256) ?? "";
+    verify = s.verify?.source ?? "";
+    build = s.build !== undefined;
+    upgrade = s.build?.upgrade ?? true;
+    uses = (s.build?.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
+    keep = s.retention?.keep ?? 3;
+    every = s.schedule?.every ?? "none";
+    weekday = s.schedule?.weekday ?? "sun";
+    day = s.schedule?.day ?? 1;
+    at = s.schedule?.at ?? "03:00";
+  }
 
   // Server field errors (422 pointers) next to their fields.
   const serverErrors = $derived(pointerErrors(submitError));
@@ -238,7 +256,7 @@
     queueMicrotask(() => document.getElementById("add-block")?.focus());
   }
 
-  function check(): boolean {
+  function check(needReason = true): boolean {
     const e: Record<string, string> = {};
     if (!editing && !namePattern.test(imageName))
       e["name"] =
@@ -265,7 +283,7 @@
         e["verify"] =
           `This source gives ${src.algo === "sha512" ? "SHA-512" : "SHA-256"} checksums.`;
     }
-    if (!reason.trim()) e["reason"] = "Say why you make this change.";
+    if (needReason && !reason.trim()) e["reason"] = "Say why you make this change.";
     guestErrors = build ? validate(kindGuestFields, guest) : {};
     if (build && kind === "lxc" && !guestErrors["disk"] && Number(guest["disk"]) < MIN_LXC_DISK)
       guestErrors = {
@@ -299,25 +317,33 @@
     );
   }
 
-  async function submit(ev: SubmitEvent) {
-    ev.preventDefault();
-    submitError = null;
-    if (!check()) {
-      queueMicrotask(() =>
-        (
-          document.querySelector('[aria-invalid="true"], .use-unfit') as HTMLElement | null
-        )?.focus(),
-      );
-      return;
-    }
-    const old = existing?.document.spec;
-    const spec: ImageSpec = {
+  const focusInvalid = () =>
+    queueMicrotask(() =>
+      (document.querySelector('[aria-invalid="true"], .use-unfit') as HTMLElement | null)?.focus(),
+    );
+
+  /** The spec that the form saves: `base` with the form values. */
+  function buildSpec(): ImageSpec {
+    const known = [
+      "title",
+      "type",
+      "url",
+      "sha256",
+      "sha512",
+      "verify",
+      "build",
+      "retention",
+      "schedule",
+    ];
+    const extra = Object.fromEntries(Object.entries(base).filter(([k]) => !known.includes(k)));
+    const spec = {
+      ...extra,
       ...(title.trim() ? { title: title.trim() } : {}),
       type: kind,
       url: url.trim(),
       ...(shaKey === "sha512" ? { sha512: sha.trim() } : { sha256: sha.trim() }),
       ...(verify ? { verify: { source: verify } } : {}),
-    };
+    } as ImageSpec;
     if (build) {
       spec.build = {
         blocks: uses.map((u) => ({
@@ -326,19 +352,96 @@
           params: mergeParams(u.stored, u.fields, u.values),
         })),
         upgrade,
-        guest: mergeParams(old?.build?.guest ?? {}, kindGuestFields, guest) as NonNullable<
-          ImageSpec["build"]
-        >["guest"],
+        guest: mergeParams(
+          (base.build?.guest ?? {}) as Record<string, unknown>,
+          kindGuestFields,
+          guest,
+        ) as NonNullable<ImageSpec["build"]>["guest"],
       };
       spec.retention = { keep };
       if (schedule) spec.schedule = schedule;
     }
+    return spec;
+  }
+
+  const yamlWant = () => ({
+    kind: "Image",
+    ...(editing && name ? { name } : {}),
+    namePattern,
+  });
+  const yamlServer = $derived(
+    mode === "yaml" && yamlParsed
+      ? Object.entries(docPointers(serverErrors)).map(([p, message]): LineError => ({
+          line: yamlParsed?.lineOf(p) ?? 0,
+          pointer: p,
+          message,
+        }))
+      : [],
+  );
+
+  /** Form → YAML: the document that the form would save. */
+  async function showYaml() {
+    modeError = "";
+    if (mode === "yaml") return;
+    if (!check(false)) {
+      modeError = "Fix the marked fields first. Then switch to YAML.";
+      focusInvalid();
+      return;
+    }
+    yamlText = toYaml({ kind: "Image", name: imageName, spec: buildSpec() });
+    yamlErrors = [];
+    yamlParsed = null;
+    submitError = null;
+    mode = "yaml";
+    await tick();
+    document.getElementById("i-yaml")?.focus();
+  }
+
+  /** YAML → form: read the text into the form; on an error stay in YAML. */
+  async function showForm() {
+    modeError = "";
+    if (mode === "form") return;
+    const r = parseDocText(yamlText, yamlWant());
+    yamlParsed = r.parsed;
+    yamlErrors = r.errors;
+    if (!r.doc) {
+      modeError = "The YAML text has problems. Fix them to switch back to the form.";
+      await tick();
+      document.getElementById("i-yaml-errors")?.focus();
+      return;
+    }
+    if (!editing) imageName = r.doc.name;
+    loadSpec(r.doc.spec as Partial<ImageSpec>);
+    submitError = null;
+    mode = "form";
+  }
+
+  async function submit(ev: SubmitEvent) {
+    ev.preventDefault();
+    submitError = null;
+    let put: { kind: "Image"; name: string; spec: ImageSpec };
+    if (mode === "yaml") {
+      // The same proposal as the form: the server checks the document (D-363).
+      const r = parseDocText(yamlText, yamlWant());
+      yamlParsed = r.parsed;
+      yamlErrors = r.errors;
+      errors = reason.trim() ? {} : { reason: "Say why you make this change." };
+      if (!r.doc || errors["reason"]) {
+        await tick();
+        document.getElementById(r.doc ? "i-reason" : "i-yaml-errors")?.focus();
+        return;
+      }
+      put = { kind: "Image", name: r.doc.name, spec: r.doc.spec as unknown as ImageSpec };
+    } else {
+      if (!check()) {
+        focusInvalid();
+        return;
+      }
+      put = { kind: "Image", name: imageName, spec: buildSpec() };
+    }
     busy = true;
     try {
-      const plan = await api.createPlan({
-        reason,
-        put: [{ kind: "Image", name: imageName, spec }],
-      });
+      const plan = await api.createPlan({ reason, put: [put] });
       go({ name: "plan", id: plan.id });
     } catch (err) {
       submitError = err;
@@ -386,383 +489,411 @@
 <ProblemBox error={loadError} />
 {#if loaded}
   <form onsubmit={submit} novalidate>
-    <fieldset>
-      <legend>Base image</legend>
-      <div class="grid">
-        <div class="field">
-          <label for="i-name"
-            >Name{#if !editing}<span aria-hidden="true"> *</span>{/if}</label
-          >
-          <input
-            id="i-name"
-            type="text"
-            bind:value={imageName}
-            readonly={editing}
-            required
-            aria-invalid={!!errors["name"]}
-            aria-describedby={desc("i-name", errors["name"], editing)}
-          />
-          {#if editing}<span class="hint" id="i-name-hint">The name cannot change.</span>{/if}
-          {#if errors["name"]}<span class="error" id="i-name-error">{errors["name"]}</span>{/if}
-        </div>
-        <div class="field">
-          <label for="i-title">Title (optional)</label>
-          <input id="i-title" type="text" bind:value={title} maxlength="100" />
-        </div>
-        {#if editing}
+    <div class="modes" role="group" aria-label="Edit the image as">
+      <button
+        type="button"
+        class="btn"
+        id="i-mode-form"
+        aria-pressed={mode === "form"}
+        onclick={showForm}>Form</button
+      >
+      <button
+        type="button"
+        class="btn"
+        id="i-mode-yaml"
+        aria-pressed={mode === "yaml"}
+        onclick={showYaml}>YAML</button
+      >
+    </div>
+    {#if modeError}<p class="error" id="i-mode-error" role="alert">{modeError}</p>{/if}
+    {#if mode === "yaml"}
+      <YamlEditor
+        id="i-yaml"
+        label="Image (YAML)"
+        bind:text={yamlText}
+        errors={yamlErrors}
+        serverErrors={yamlServer}
+        hint={YAML_HINT}
+      />
+    {:else}
+      <fieldset>
+        <legend>Base image</legend>
+        <div class="grid">
           <div class="field">
-            <span class="label">Type</span>
-            <span id="i-type">{KIND_NAME[kind]}</span>
+            <label for="i-name"
+              >Name{#if !editing}<span aria-hidden="true"> *</span>{/if}</label
+            >
+            <input
+              id="i-name"
+              type="text"
+              bind:value={imageName}
+              readonly={editing}
+              required
+              aria-invalid={!!errors["name"]}
+              aria-describedby={desc("i-name", errors["name"], editing)}
+            />
+            {#if editing}<span class="hint" id="i-name-hint">The name cannot change.</span>{/if}
+            {#if errors["name"]}<span class="error" id="i-name-error">{errors["name"]}</span>{/if}
+          </div>
+          <div class="field">
+            <label for="i-title">Title (optional)</label>
+            <input id="i-title" type="text" bind:value={title} maxlength="100" />
+          </div>
+          {#if editing}
+            <div class="field">
+              <span class="label">Type</span>
+              <span id="i-type">{KIND_NAME[kind]}</span>
+            </div>
+          {/if}
+        </div>
+        {#if !editing}
+          <fieldset class="field plain-set" aria-describedby="i-type-hint">
+            <legend class="label">Type</legend>
+            <label class="check"
+              ><input type="radio" name="i-type" value="vm" bind:group={kind} />
+              {KIND_NAME.vm}</label
+            >
+            <label class="check"
+              ><input type="radio" name="i-type" value="lxc" bind:group={kind} />
+              {KIND_NAME.lxc}</label
+            >
+            <span class="hint" id="i-type-hint"
+              >A Target uses an Image of its own type. The type cannot change later.</span
+            >
+          </fieldset>
+        {/if}
+        {#if kind === "lxc"}
+          <div class="field">
+            <label for="i-known">Known template</label>
+            <select
+              id="i-known"
+              bind:value={known}
+              onchange={(e) => pickKnown(e.currentTarget.value)}
+              aria-describedby="i-known-hint"
+            >
+              <option value="">Choose to fill address and checksum</option>
+              {#each KNOWN_LXC_TEMPLATES as t (t.label)}
+                <option value={t.label}>{t.label}</option>
+              {/each}
+            </select>
+            <span class="hint" id="i-known-hint"
+              >The checksums come from the signed Proxmox appliance index.</span
+            >
           </div>
         {/if}
-      </div>
-      {#if !editing}
-        <fieldset class="field plain-set" aria-describedby="i-type-hint">
-          <legend class="label">Type</legend>
-          <label class="check"
-            ><input type="radio" name="i-type" value="vm" bind:group={kind} />
-            {KIND_NAME.vm}</label
-          >
-          <label class="check"
-            ><input type="radio" name="i-type" value="lxc" bind:group={kind} />
-            {KIND_NAME.lxc}</label
-          >
-          <span class="hint" id="i-type-hint"
-            >A Target uses an Image of its own type. The type cannot change later.</span
-          >
-        </fieldset>
-      {/if}
-      {#if kind === "lxc"}
         <div class="field">
-          <label for="i-known">Known template</label>
-          <select
-            id="i-known"
-            bind:value={known}
-            onchange={(e) => pickKnown(e.currentTarget.value)}
-            aria-describedby="i-known-hint"
+          <label for="i-url">Download address<span aria-hidden="true"> *</span></label>
+          <input
+            id="i-url"
+            oninput={() => (known = "")}
+            type="text"
+            inputmode="url"
+            spellcheck="false"
+            bind:value={url}
+            required
+            placeholder={kind === "lxc"
+              ? "http://download.proxmox.com/images/system/…tar.zst"
+              : "https://cloud.debian.org/images/cloud/…qcow2"}
+            aria-invalid={!!fieldError("url", "/url")}
+            aria-describedby={desc("i-url", fieldError("url", "/url"))}
+          />
+          <span class="hint" id="i-url-hint"
+            >{kind === "lxc"
+              ? "A Proxmox system template. Proxmox serves them over http only: the checksum is the trust, and the controller downloads the file itself."
+              : "The official cloud image (qcow2 or img)."}</span
           >
-            <option value="">Choose to fill address and checksum</option>
-            {#each KNOWN_LXC_TEMPLATES as t (t.label)}
-              <option value={t.label}>{t.label}</option>
+          {#if fieldError("url", "/url")}<span class="error" id="i-url-error"
+              >{fieldError("url", "/url")}</span
+            >{/if}
+        </div>
+        {#if kind === "vm"}
+          <div class="field">
+            <label for="i-algo">Checksum type</label>
+            <select id="i-algo" bind:value={vmAlgo} aria-describedby="i-algo-hint">
+              <option value="sha256">SHA-256</option>
+              <option value="sha512">SHA-512</option>
+            </select>
+            <span class="hint" id="i-algo-hint"
+              >Debian publishes SHA-512 only; Ubuntu publishes SHA-256.</span
+            >
+          </div>
+        {/if}
+        <div class="field">
+          <label for="i-sha"
+            >{shaKey === "sha512" ? "SHA-512" : "SHA-256"} checksum<span aria-hidden="true">
+              *</span
+            ></label
+          >
+          <input
+            id="i-sha"
+            oninput={() => (known = "")}
+            type="text"
+            class="mono"
+            bind:value={sha}
+            required
+            spellcheck="false"
+            aria-invalid={!!fieldError(shaKey, `/${shaKey}`)}
+            aria-describedby={desc("i-sha", fieldError(shaKey, `/${shaKey}`))}
+          />
+          <span class="hint" id="i-sha-hint"
+            >{kind === "lxc"
+              ? "Copy it from the sha512sum field of the signed Proxmox appliance index, never from the downloaded file. Plumb refuses any other file. Only a person can approve a new address or checksum."
+              : "Plumb refuses any other file."}</span
+          >
+          {#if fieldError(shaKey, `/${shaKey}`)}<span class="error" id="i-sha-error"
+              >{fieldError(shaKey, `/${shaKey}`)}</span
+            >{/if}
+        </div>
+        <div class="field">
+          <label for="i-verify">Signed checksum source</label>
+          <select
+            id="i-verify"
+            bind:value={verify}
+            aria-invalid={!!fieldError("verify", "/verify")}
+            aria-describedby={desc("i-verify", fieldError("verify", "/verify"))}
+          >
+            <option value="">None: I check new checksums by hand</option>
+            {#each kindSources as src (src.source)}
+              <option value={src.source}>{src.label}</option>
             {/each}
           </select>
-          <span class="hint" id="i-known-hint"
-            >The checksums come from the signed Proxmox appliance index.</span
+          <span class="hint" id="i-verify-hint"
+            >{pickedSource
+              ? `${pickedSource.hint} "Refresh base" on the image page proposes the new pin; a scheduled build does it first.`
+              : "With a source, Plumb can fetch the newest checksum for this address and propose it as a plan. The keys are built into Plumb."}</span
           >
+          {#if fieldError("verify", "/verify")}<span class="error" id="i-verify-error"
+              >{fieldError("verify", "/verify")}</span
+            >{/if}
         </div>
-      {/if}
-      <div class="field">
-        <label for="i-url">Download address<span aria-hidden="true"> *</span></label>
-        <input
-          id="i-url"
-          oninput={() => (known = "")}
-          type="text"
-          inputmode="url"
-          spellcheck="false"
-          bind:value={url}
-          required
-          placeholder={kind === "lxc"
-            ? "http://download.proxmox.com/images/system/…tar.zst"
-            : "https://cloud.debian.org/images/cloud/…qcow2"}
-          aria-invalid={!!fieldError("url", "/url")}
-          aria-describedby={desc("i-url", fieldError("url", "/url"))}
-        />
-        <span class="hint" id="i-url-hint"
-          >{kind === "lxc"
-            ? "A Proxmox system template. Proxmox serves them over http only: the checksum is the trust, and the controller downloads the file itself."
-            : "The official cloud image (qcow2 or img)."}</span
-        >
-        {#if fieldError("url", "/url")}<span class="error" id="i-url-error"
-            >{fieldError("url", "/url")}</span
-          >{/if}
-      </div>
-      {#if kind === "vm"}
-        <div class="field">
-          <label for="i-algo">Checksum type</label>
-          <select id="i-algo" bind:value={vmAlgo} aria-describedby="i-algo-hint">
-            <option value="sha256">SHA-256</option>
-            <option value="sha512">SHA-512</option>
-          </select>
-          <span class="hint" id="i-algo-hint"
-            >Debian publishes SHA-512 only; Ubuntu publishes SHA-256.</span
-          >
-        </div>
-      {/if}
-      <div class="field">
-        <label for="i-sha"
-          >{shaKey === "sha512" ? "SHA-512" : "SHA-256"} checksum<span aria-hidden="true">
-            *</span
-          ></label
-        >
-        <input
-          id="i-sha"
-          oninput={() => (known = "")}
-          type="text"
-          class="mono"
-          bind:value={sha}
-          required
-          spellcheck="false"
-          aria-invalid={!!fieldError(shaKey, `/${shaKey}`)}
-          aria-describedby={desc("i-sha", fieldError(shaKey, `/${shaKey}`))}
-        />
-        <span class="hint" id="i-sha-hint"
-          >{kind === "lxc"
-            ? "Copy it from the sha512sum field of the signed Proxmox appliance index, never from the downloaded file. Plumb refuses any other file. Only a person can approve a new address or checksum."
-            : "Plumb refuses any other file."}</span
-        >
-        {#if fieldError(shaKey, `/${shaKey}`)}<span class="error" id="i-sha-error"
-            >{fieldError(shaKey, `/${shaKey}`)}</span
-          >{/if}
-      </div>
-      <div class="field">
-        <label for="i-verify">Signed checksum source</label>
-        <select
-          id="i-verify"
-          bind:value={verify}
-          aria-invalid={!!fieldError("verify", "/verify")}
-          aria-describedby={desc("i-verify", fieldError("verify", "/verify"))}
-        >
-          <option value="">None: I check new checksums by hand</option>
-          {#each kindSources as src (src.source)}
-            <option value={src.source}>{src.label}</option>
-          {/each}
-        </select>
-        <span class="hint" id="i-verify-hint"
-          >{pickedSource
-            ? `${pickedSource.hint} "Refresh base" on the image page proposes the new pin; a scheduled build does it first.`
-            : "With a source, Plumb can fetch the newest checksum for this address and propose it as a plan. The keys are built into Plumb."}</span
-        >
-        {#if fieldError("verify", "/verify")}<span class="error" id="i-verify-error"
-            >{fieldError("verify", "/verify")}</span
-          >{/if}
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Build</legend>
-      <div class="field">
-        <label class="check">
-          <input
-            type="checkbox"
-            id="i-build"
-            bind:checked={build}
-            aria-describedby="i-build-hint"
-          />
-          Build templates from this image
-        </label>
-        <span class="hint" id="i-build-hint"
-          >{#if kind === "lxc"}Off: each create uses the Proxmox template with the agent installer
-            added. On: Plumb makes versioned container templates with the Blocks below and fresh
-            packages.{:else}Off: a stock image, imported as it is. On: Plumb makes versioned
-            templates with the Blocks below and fresh packages.{/if} Only a person can approve a change
-          of the recipe, the schedule or the retention.</span
-        >
-      </div>
-      {#if build && kind === "lxc"}
-        <p class="banner info" id="i-lxc-keys">
-          A container from a built image gets no SSH keys from Proxmox. Add the keys with the Block <span
-            class="mono">deploy-user</span
-          > on the Target or in this build (D-251).
-        </p>
-        {#if keyedTargets.length}
-          <p class="banner warn" id="i-lxc-keyed-targets">
-            The server refuses this build while Targets of this image have SSH keys: <span
-              class="mono">{keyedTargets.join(", ")}</span
-            >. Remove their keys first (use the Block <span class="mono">deploy-user</span>), then
-            switch on the build.
-          </p>
-        {/if}
-      {/if}
-      {#if wasBuilt && !build}
-        <p class="banner warn" id="i-unbuild">
-          Without a build, the plan removes every built version of this image. Guests made from them
-          keep running.
-        </p>
-      {/if}
-    </fieldset>
-
-    {#if build}
-      <h2>Blocks</h2>
-      <p class="muted">
-        The build applies these Blocks before the template is made. A Block with a secret parameter
-        cannot be used: a template must hold no secret.
-      </p>
-      {#if secretBlocks.length}
-        <p class="muted" id="i-not-offered">
-          Not offered: <span class="mono">{secretBlocks.join(", ")}</span>.
-        </p>
-      {/if}
-      {#if unfitBlocks.length}
-        <p class="muted" id="i-not-for-kind">
-          Not offered for a {kind === "lxc" ? "container" : "virtual machine"}:
-          <span class="mono">{unfitBlocks.join(", ")}</span>.
-        </p>
-      {/if}
-      {#each uses as u (u.key)}
-        {@const b = blockByName(u.use)}
-        {@const unfit = unfitUse(u.use)}
-        <fieldset>
-          <legend id="iuse-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend>
-          {#if unfit}<p class="error use-unfit" id="iuse-{u.key}-unfit" tabindex="-1">
-              This Block does not fit a {kind === "lxc" ? "container" : "virtual machine"}. {unfit}
-              Remove it to save.
-            </p>{/if}
-          <div class="field">
-            <label for="iuse-{u.key}-id">Use id (optional)</label>
-            <input
-              id="iuse-{u.key}-id"
-              type="text"
-              bind:value={u.id}
-              placeholder={u.use}
-              aria-invalid={!!u.errors["__id"]}
-              aria-describedby={u.errors["__id"] ? `iuse-${u.key}-id-error` : undefined}
-            />
-            {#if u.errors["__id"]}<span class="error" id="iuse-{u.key}-id-error"
-                >{u.errors["__id"]}</span
-              >{/if}
-          </div>
-          {#if u.fields.length}
-            <SchemaFields
-              fields={u.fields}
-              bind:values={u.values}
-              errors={u.errors}
-              prefix="iuse-{u.key}"
-            />
-          {:else}
-            <p class="muted">This Block has no parameters.</p>
-          {/if}
-          <button type="button" class="btn danger" onclick={() => removeBlock(u.key)}>
-            Remove {b?.document.spec.title ?? u.use}
-          </button>
-        </fieldset>
-      {:else}
-        <p class="muted">No Blocks: the template is the base image with fresh packages.</p>
-      {/each}
-      <div class="row add">
-        <label for="add-choice" class="sr-only">Block to add</label>
-        <select id="add-choice" bind:value={addChoice}>
-          {#each usable as b (b.document.name)}
-            <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
-          {/each}
-        </select>
-        <button type="button" class="btn" id="add-block" onclick={addBlock}>Add Block</button>
-      </div>
+      </fieldset>
 
       <fieldset>
-        <legend>{kind === "lxc" ? "Build container" : "Build guest"}</legend>
+        <legend>Build</legend>
         <div class="field">
           <label class="check">
             <input
               type="checkbox"
-              id="i-upgrade"
-              bind:checked={upgrade}
-              aria-describedby="i-upgrade-hint"
+              id="i-build"
+              bind:checked={build}
+              aria-describedby="i-build-hint"
             />
-            Upgrade all packages in the build
+            Build templates from this image
           </label>
-          <span class="hint" id="i-upgrade-hint"
-            >{#if kind === "lxc"}On: before the template is made, the build runs
-              <span class="mono">apt-get update</span> and
-              <span class="mono">apt-get dist-upgrade</span> in the container (old configuration files
-              stay), so the template has what the package mirror serves at that time. apt checks the signatures.
-              The build fails when a package is left to upgrade. Off: the packages of the Proxmox template.{:else}On:
-              every build installs what the package mirror serves at that time. apt checks the
-              signatures. Off: the packages of the base image.{/if}</span
+          <span class="hint" id="i-build-hint"
+            >{#if kind === "lxc"}Off: each create uses the Proxmox template with the agent installer
+              added. On: Plumb makes versioned container templates with the Blocks below and fresh
+              packages.{:else}Off: a stock image, imported as it is. On: Plumb makes versioned
+              templates with the Blocks below and fresh packages.{/if} Only a person can approve a change
+            of the recipe, the schedule or the retention.</span
           >
         </div>
-        <SchemaFields
-          fields={kindGuestFields}
-          bind:values={guest}
-          errors={{
-            ...guestErrors,
-            ...(serverErrors["/put/0/spec/build/guest/disk"]
-              ? { disk: serverErrors["/put/0/spec/build/guest/disk"] }
-              : {}),
-          }}
-          prefix="i-guest"
-        />
-      </fieldset>
-
-      <fieldset>
-        <legend>Versions and schedule</legend>
-        <div class="grid">
-          <div class="field">
-            <label for="i-keep">Keep</label>
-            <input
-              id="i-keep"
-              type="number"
-              min="1"
-              max="20"
-              bind:value={keep}
-              aria-invalid={!!errors["keep"]}
-              aria-describedby={desc("i-keep", errors["keep"])}
-            />
-            <span class="hint" id="i-keep-hint"
-              >Newest ready versions that stay (1 … 20). {kind === "lxc"
-                ? "One version is a full copy of the root file system of the build container."
-                : "One version takes about 1.4 GB (Debian) or 3.3 … 3.9 GB (Ubuntu)."}</span
-            >
-            {#if errors["keep"]}<span class="error" id="i-keep-error">{errors["keep"]}</span>{/if}
-          </div>
-          <div class="field">
-            <label for="i-every">Build on a schedule</label>
-            <select id="i-every" bind:value={every}>
-              <option value="none">No schedule</option>
-              <option value="day">Every day</option>
-              <option value="week">Every week</option>
-              <option value="month">Every month</option>
-            </select>
-          </div>
-          {#if every === "week"}
-            <div class="field">
-              <label for="i-weekday">Day of the week</label>
-              <select id="i-weekday" bind:value={weekday}>
-                {#each WEEKDAYS as d (d)}<option value={d}>{weekdayName(d)}</option>{/each}
-              </select>
-            </div>
+        {#if build && kind === "lxc"}
+          <p class="banner info" id="i-lxc-keys">
+            A container from a built image gets no SSH keys from Proxmox. Add the keys with the
+            Block <span class="mono">deploy-user</span> on the Target or in this build (D-251).
+          </p>
+          {#if keyedTargets.length}
+            <p class="banner warn" id="i-lxc-keyed-targets">
+              The server refuses this build while Targets of this image have SSH keys: <span
+                class="mono">{keyedTargets.join(", ")}</span
+              >. Remove their keys first (use the Block <span class="mono">deploy-user</span>), then
+              switch on the build.
+            </p>
           {/if}
-          {#if every === "month"}
-            <div class="field">
-              <label for="i-day">Day of the month</label>
-              <input
-                id="i-day"
-                type="number"
-                min="1"
-                max="28"
-                bind:value={day}
-                aria-invalid={!!errors["day"]}
-                aria-describedby={desc("i-day", errors["day"])}
-              />
-              <span class="hint" id="i-day-hint">1 … 28, so every month has it.</span>
-              {#if errors["day"]}<span class="error" id="i-day-error">{errors["day"]}</span>{/if}
-            </div>
-          {/if}
-          {#if every !== "none"}
-            <div class="field">
-              <label for="i-at">Time (UTC, 24 h)</label>
-              <input
-                id="i-at"
-                type="time"
-                bind:value={at}
-                aria-invalid={!!errors["at"]}
-                aria-describedby={desc("i-at", errors["at"])}
-              />
-              <span class="hint" id="i-at-hint"
-                >{nextBuild
-                  ? `Next build: ${nextBuild.toLocaleString()} (your local time).`
-                  : "HH:MM, 24 h, in UTC."}</span
-              >
-              {#if errors["at"]}<span class="error" id="i-at-error">{errors["at"]}</span>{/if}
-            </div>
-          {/if}
-        </div>
-        {#if every !== "none"}
-          <p class="muted">
-            A scheduled build runs with no click. A failed one does not try again before the next
-            slot.
+        {/if}
+        {#if wasBuilt && !build}
+          <p class="banner warn" id="i-unbuild">
+            Without a build, the plan removes every built version of this image. Guests made from
+            them keep running.
           </p>
         {/if}
       </fieldset>
+
+      {#if build}
+        <h2>Blocks</h2>
+        <p class="muted">
+          The build applies these Blocks before the template is made. A Block with a secret
+          parameter cannot be used: a template must hold no secret.
+        </p>
+        {#if secretBlocks.length}
+          <p class="muted" id="i-not-offered">
+            Not offered: <span class="mono">{secretBlocks.join(", ")}</span>.
+          </p>
+        {/if}
+        {#if unfitBlocks.length}
+          <p class="muted" id="i-not-for-kind">
+            Not offered for a {kind === "lxc" ? "container" : "virtual machine"}:
+            <span class="mono">{unfitBlocks.join(", ")}</span>.
+          </p>
+        {/if}
+        {#each uses as u (u.key)}
+          {@const b = blockByName(u.use)}
+          {@const unfit = unfitUse(u.use)}
+          <fieldset>
+            <legend id="iuse-{u.key}-legend" tabindex="-1">{b?.document.spec.title ?? u.use}</legend
+            >
+            {#if unfit}<p class="error use-unfit" id="iuse-{u.key}-unfit" tabindex="-1">
+                This Block does not fit a {kind === "lxc" ? "container" : "virtual machine"}. {unfit}
+                Remove it to save.
+              </p>{/if}
+            <div class="field">
+              <label for="iuse-{u.key}-id">Use id (optional)</label>
+              <input
+                id="iuse-{u.key}-id"
+                type="text"
+                bind:value={u.id}
+                placeholder={u.use}
+                aria-invalid={!!u.errors["__id"]}
+                aria-describedby={u.errors["__id"] ? `iuse-${u.key}-id-error` : undefined}
+              />
+              {#if u.errors["__id"]}<span class="error" id="iuse-{u.key}-id-error"
+                  >{u.errors["__id"]}</span
+                >{/if}
+            </div>
+            {#if u.fields.length}
+              <SchemaFields
+                fields={u.fields}
+                bind:values={u.values}
+                errors={u.errors}
+                prefix="iuse-{u.key}"
+              />
+            {:else}
+              <p class="muted">This Block has no parameters.</p>
+            {/if}
+            <button type="button" class="btn danger" onclick={() => removeBlock(u.key)}>
+              Remove {b?.document.spec.title ?? u.use}
+            </button>
+          </fieldset>
+        {:else}
+          <p class="muted">No Blocks: the template is the base image with fresh packages.</p>
+        {/each}
+        <div class="row add">
+          <label for="add-choice" class="sr-only">Block to add</label>
+          <select id="add-choice" bind:value={addChoice}>
+            {#each usable as b (b.document.name)}
+              <option value={b.document.name}>{b.document.spec.title ?? b.document.name}</option>
+            {/each}
+          </select>
+          <button type="button" class="btn" id="add-block" onclick={addBlock}>Add Block</button>
+        </div>
+
+        <fieldset>
+          <legend>{kind === "lxc" ? "Build container" : "Build guest"}</legend>
+          <div class="field">
+            <label class="check">
+              <input
+                type="checkbox"
+                id="i-upgrade"
+                bind:checked={upgrade}
+                aria-describedby="i-upgrade-hint"
+              />
+              Upgrade all packages in the build
+            </label>
+            <span class="hint" id="i-upgrade-hint"
+              >{#if kind === "lxc"}On: before the template is made, the build runs
+                <span class="mono">apt-get update</span> and
+                <span class="mono">apt-get dist-upgrade</span> in the container (old configuration files
+                stay), so the template has what the package mirror serves at that time. apt checks the
+                signatures. The build fails when a package is left to upgrade. Off: the packages of the
+                Proxmox template.{:else}On: every build installs what the package mirror serves at
+                that time. apt checks the signatures. Off: the packages of the base image.{/if}</span
+            >
+          </div>
+          <SchemaFields
+            fields={kindGuestFields}
+            bind:values={guest}
+            errors={{
+              ...guestErrors,
+              ...(serverErrors["/put/0/spec/build/guest/disk"]
+                ? { disk: serverErrors["/put/0/spec/build/guest/disk"] }
+                : {}),
+            }}
+            prefix="i-guest"
+          />
+        </fieldset>
+
+        <fieldset>
+          <legend>Versions and schedule</legend>
+          <div class="grid">
+            <div class="field">
+              <label for="i-keep">Keep</label>
+              <input
+                id="i-keep"
+                type="number"
+                min="1"
+                max="20"
+                bind:value={keep}
+                aria-invalid={!!errors["keep"]}
+                aria-describedby={desc("i-keep", errors["keep"])}
+              />
+              <span class="hint" id="i-keep-hint"
+                >Newest ready versions that stay (1 … 20). {kind === "lxc"
+                  ? "One version is a full copy of the root file system of the build container."
+                  : "One version takes about 1.4 GB (Debian) or 3.3 … 3.9 GB (Ubuntu)."}</span
+              >
+              {#if errors["keep"]}<span class="error" id="i-keep-error">{errors["keep"]}</span>{/if}
+            </div>
+            <div class="field">
+              <label for="i-every">Build on a schedule</label>
+              <select id="i-every" bind:value={every}>
+                <option value="none">No schedule</option>
+                <option value="day">Every day</option>
+                <option value="week">Every week</option>
+                <option value="month">Every month</option>
+              </select>
+            </div>
+            {#if every === "week"}
+              <div class="field">
+                <label for="i-weekday">Day of the week</label>
+                <select id="i-weekday" bind:value={weekday}>
+                  {#each WEEKDAYS as d (d)}<option value={d}>{weekdayName(d)}</option>{/each}
+                </select>
+              </div>
+            {/if}
+            {#if every === "month"}
+              <div class="field">
+                <label for="i-day">Day of the month</label>
+                <input
+                  id="i-day"
+                  type="number"
+                  min="1"
+                  max="28"
+                  bind:value={day}
+                  aria-invalid={!!errors["day"]}
+                  aria-describedby={desc("i-day", errors["day"])}
+                />
+                <span class="hint" id="i-day-hint">1 … 28, so every month has it.</span>
+                {#if errors["day"]}<span class="error" id="i-day-error">{errors["day"]}</span>{/if}
+              </div>
+            {/if}
+            {#if every !== "none"}
+              <div class="field">
+                <label for="i-at">Time (UTC, 24 h)</label>
+                <input
+                  id="i-at"
+                  type="time"
+                  bind:value={at}
+                  aria-invalid={!!errors["at"]}
+                  aria-describedby={desc("i-at", errors["at"])}
+                />
+                <span class="hint" id="i-at-hint"
+                  >{nextBuild
+                    ? `Next build: ${nextBuild.toLocaleString()} (your local time).`
+                    : "HH:MM, 24 h, in UTC."}</span
+                >
+                {#if errors["at"]}<span class="error" id="i-at-error">{errors["at"]}</span>{/if}
+              </div>
+            {/if}
+          </div>
+          {#if every !== "none"}
+            <p class="muted">
+              A scheduled build runs with no click. A failed one does not try again before the next
+              slot.
+            </p>
+          {/if}
+        </fieldset>
+      {/if}
     {/if}
 
     <h2>Review</h2>
@@ -799,6 +930,16 @@
 {/if}
 
 <style>
+  .modes {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+  .modes [aria-pressed="true"] {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-accent-text);
+  }
   .plain-set {
     border: 0;
     padding: 0;
