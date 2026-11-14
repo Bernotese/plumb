@@ -5351,6 +5351,29 @@ components:
                 #321): the token could write a vzdump there. Must be empty; the installer refuses
                 otherwise, and the UI warns.
               items: { type: string }
+            disk_content:
+              type: array
+              description: |
+                The content types `images` and `rootdir` of the guest backup storage (review M1 of
+                #330): with them the token could put guest disks there, outside the disk gate. Must be
+                empty; the installer refuses otherwise, and the UI warns. Missing on a controller before
+                this field.
+              items: { type: string, enum: [images, rootdir] }
+        acl_extra:
+          type: array
+          description: |
+            Rights of the token beyond the ACL lines of the install (review M2/L4 of #330): `VM.Backup`,
+            `SDN.Use` or `Datastore.AllocateSpace` on a path that no planned line names, for example
+            the old line of a repair run that stopped half way. `role` is the Plumb role of that right.
+            Path and role only. Must be empty; the UI warns and names the fix (a repair run). Empty
+            when `acl` is `unknown`. Missing on a controller before this field.
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, role]
+            properties:
+              path: { type: string }
+              role: { type: string }
     ChangeSettingsRequest:
       type: object
       additionalProperties: false

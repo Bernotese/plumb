@@ -15,25 +15,29 @@ import (
 func fullPerms() map[string]map[string]int {
 	p := map[string]map[string]int{}
 	cfg := Config{Pool: fakePool, DiskStorage: "local-lvm", ImageStorage: "local", SnippetStorage: "plumb-snippets", Bridge: "vmbr0", Node: fakeNode}
-	for _, r := range installRoles {
-		path := r.path(cfg)
-		if p[path] == nil {
-			p[path] = map[string]int{}
+	addLines(p, installLines(cfg, InstallExtras{}))
+	return p
+}
+
+// addLines puts the rights of lines into a permissions answer.
+func addLines(p map[string]map[string]int, lines []installLine) {
+	for _, l := range lines {
+		if p[l.path] == nil {
+			p[l.path] = map[string]int{}
 		}
-		for _, priv := range r.Privs {
-			p[path][priv] = 0 // propagate 0 still holds the right on the path
+		for _, priv := range l.privs {
+			p[l.path][priv] = 0 // propagate 0 still holds the right on the path
 		}
 	}
-	return p
 }
 
 func TestViewACL(t *testing.T) {
 	f := newFakePVE(t)
 	f.perms = fullPerms()
 	d := f.driver(t)
-	v := NewViewer(d, TokenUser(fakeToken))
+	v := NewViewer(d, TokenUser(fakeToken), InstallExtras{})
 	got := v.View(context.Background())
-	if got.ACL != ACLOK || got.ACLError != "" || len(got.ACLLines) != len(installRoles) {
+	if got.ACL != ACLOK || got.ACLError != "" || len(got.ACLLines) != len(installRoles)-2 || got.GuestBackup != nil || got.ExtraNets != nil {
 		t.Fatalf("full rights: %+v", got)
 	}
 	if got.Version != "9.2.26" || got.LastOK.IsZero() || got.Node != fakeNode || got.Pool != fakePool ||
@@ -76,7 +80,7 @@ func TestViewACLPropagate(t *testing.T) {
 	delete(p, "/storage/local")
 	delete(p, "/storage/plumb-snippets")
 	p["/storage"] = map[string]int{"Datastore.AllocateSpace": 1, "Datastore.Audit": 1, "Datastore.AllocateTemplate": 0}
-	state, lines := checkACL(cfg, p)
+	state, lines := checkACL(cfg, InstallExtras{}, p)
 	want := map[string]bool{"PlumbDisk": true, "PlumbSnippets": true, "PlumbImages": false}
 	for _, l := range lines {
 		if w, ok := want[l.Role]; ok && l.OK != w {
@@ -94,7 +98,7 @@ func TestViewACLUnknown(t *testing.T) {
 	f := newFakePVE(t)
 	f.perms = nil // 403
 	d := f.driver(t)
-	v := NewViewer(d, "plumb@pve")
+	v := NewViewer(d, "plumb@pve", InstallExtras{})
 	got := v.View(context.Background())
 	if got.ACL != ACLUnknown || got.ACLError != "Proxmox answered 403 for /access/permissions" || got.ACLLines == nil || len(got.ACLLines) != 0 {
 		t.Fatalf("403: %+v", got)
@@ -121,7 +125,7 @@ func TestViewACLUnknown(t *testing.T) {
 // The cache: a second View within the TTL sends no request.
 func TestViewCache(t *testing.T) {
 	f := newFakePVE(t)
-	v := NewViewer(f.driver(t), "plumb@pve")
+	v := NewViewer(f.driver(t), "plumb@pve", InstallExtras{})
 	v.View(context.Background())
 	v.View(context.Background())
 	if n := f.requests("GET /version"); n != 1 {
@@ -130,7 +134,7 @@ func TestViewCache(t *testing.T) {
 	// A request that the caller cut is not cached.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	v2 := NewViewer(f.driver(t), "plumb@pve")
+	v2 := NewViewer(f.driver(t), "plumb@pve", InstallExtras{})
 	if got := v2.View(ctx); got.ACL != ACLUnknown {
 		t.Fatalf("cut: %+v", got)
 	}
@@ -167,14 +171,15 @@ func TestInstallRolesMatchInstaller(t *testing.T) {
 		t.Errorf("roles: install.sh %q, Go %q", names[1], goNames)
 	}
 	cfg := Config{Pool: "$POOL", DiskStorage: "$DISK_STORAGE", ImageStorage: "$IMAGE_STORAGE", SnippetStorage: "$SNIPPET_STORAGE", Bridge: "$BRIDGE", Node: "$NODE"}
+	x := InstallExtras{GuestBackupStorage: "$GUEST_BACKUP_STORAGE"}
 	for _, r := range installRoles {
 		privs := regexp.MustCompile(`(?m)^\s*\[` + r.Role + `\]="([^"]*)"`).FindStringSubmatch(sh)
 		if privs == nil || privs[1] != strings.Join(r.Privs, " ") {
 			t.Errorf("%s privs: install.sh %v, Go %q", r.Role, privs, r.Privs)
 		}
 		path := regexp.MustCompile(`(?m)^\s*` + r.Role + `\) echo "([^"]*)" ;;`).FindStringSubmatch(sh)
-		if path == nil || path[1] != r.path(cfg) {
-			t.Errorf("%s path: install.sh %v, Go %q", r.Role, path, r.path(cfg))
+		if path == nil || path[1] != r.path(cfg, x) {
+			t.Errorf("%s path: install.sh %v, Go %q", r.Role, path, r.path(cfg, x))
 		}
 	}
 }
