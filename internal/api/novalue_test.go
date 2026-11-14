@@ -5,30 +5,24 @@ import (
 	"testing"
 )
 
-// T-213: the text scan of noValue finds a short value where it is
-// stored as text (a positive control: it cannot pass on an empty or
-// wrong haystack), and a value of rawScanMin bytes or more stays in the
-// raw-file scan.
+// T-213: the text scan of noValue finds a short value where it is stored
+// as text (a positive control: it cannot pass on an empty or wrong
+// haystack). The name of an API token is plain text in its table.
 func TestNoValueTextScanFindsShortValue(t *testing.T) {
 	e := newEnv(t, true)
 	adm := e.admin()
 	if where := e.textValuesHold([]string{"ⓩ"}); where != "" {
 		t.Fatalf("the fresh database already holds the needle in %s", where)
 	}
-	code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "short ⓩ marker", "targets": []string{"web1"}})
-	if code != 201 && code != 409 && code != 422 {
-		t.Fatalf("propose: %d %s", code, body)
-	}
-	// The reason is stored as text only when the Plan was made; otherwise
-	// use a secret-free text column that every env has: an Issue comment
-	// needs an Issue, so take the event log of the request instead.
-	where := e.textValuesHold([]string{"ⓩ"})
-	if code == 201 && !strings.HasPrefix(where, "plan.") {
-		t.Fatalf("the text scan did not find the reason: %q", where)
-	}
+	code, body := adm.do("POST", "/api/v1/tokens", map[string]any{"name": "short ⓩ marker", "tier": "read"})
 	if code != 201 {
-		t.Skipf("no Plan was made (%d); the positive control needs one", code)
+		t.Fatalf("create token: %d %s", code, body)
 	}
+	if where := e.textValuesHold([]string{"ⓩ"}); !strings.HasSuffix(where, ".name") {
+		t.Fatalf("the text scan did not find the token name: %q", where)
+	}
+	// rawScanMin splits the two values of TestSecretMaskedInAgentErrors:
+	// the 3-byte one goes to the text scan, the 13-byte one stays raw.
 	if len("ⓩ") >= rawScanMin || len("pw-canary-9x1") < rawScanMin {
 		t.Fatal("rawScanMin does not split the two needles of TestSecretMaskedInAgentErrors")
 	}
