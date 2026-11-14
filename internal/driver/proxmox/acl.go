@@ -21,21 +21,59 @@ import (
 // It holds no secret, no token id and no token name: TokenUser is the
 // user part only.
 
-// installRoles are the ACL lines of install.sh (ROLE_PRIVS and role_path,
-// D-081, D-240). TestInstallRolesMatchInstaller keeps both in step.
+// installRoles are the roles of install.sh (ROLE_NAMES, ROLE_PRIVS and
+// role_path, D-081, D-240, D-405). TestInstallRolesMatchInstaller keeps
+// both in step. A backup role has its line only with a guest backup
+// storage; PlumbBridge has one more line per extra net (installLines).
 var installRoles = []struct {
-	Role  string
-	Privs []string
-	path  func(Config) string
+	Role   string
+	Privs  []string
+	path   func(Config, InstallExtras) string
+	backup bool
 }{
 	{"PlumbGuests", []string{"VM.Allocate", "VM.Audit", "VM.Clone", "VM.Config.CPU", "VM.Config.Cloudinit", "VM.Config.Disk", "VM.Config.HWType", "VM.Config.Memory", "VM.Config.Network", "VM.Config.Options", "VM.PowerMgmt", "Pool.Audit"},
-		func(c Config) string { return "/pool/" + c.Pool }},
-	{"PlumbDisk", []string{"Datastore.AllocateSpace", "Datastore.Audit"}, func(c Config) string { return "/storage/" + c.DiskStorage }},
-	{"PlumbImages", []string{"Datastore.AllocateTemplate", "Datastore.Audit"}, func(c Config) string { return "/storage/" + c.ImageStorage }},
-	{"PlumbSnippets", []string{"Datastore.AllocateSpace"}, func(c Config) string { return "/storage/" + c.SnippetStorage }},
-	{"PlumbBridge", []string{"SDN.Use"}, func(c Config) string { return "/sdn/zones/localnetwork/" + c.Bridge }},
-	{"PlumbNode", []string{"Sys.AccessNetwork"}, func(c Config) string { return "/nodes/" + c.Node }},
-	{"PlumbAudit", []string{"Sys.Audit"}, func(Config) string { return "/" }},
+		func(c Config, _ InstallExtras) string { return "/pool/" + c.Pool }, false},
+	{"PlumbDisk", []string{"Datastore.AllocateSpace", "Datastore.Audit"}, func(c Config, _ InstallExtras) string { return "/storage/" + c.DiskStorage }, false},
+	{"PlumbImages", []string{"Datastore.AllocateTemplate", "Datastore.Audit"}, func(c Config, _ InstallExtras) string { return "/storage/" + c.ImageStorage }, false},
+	{"PlumbSnippets", []string{"Datastore.AllocateSpace"}, func(c Config, _ InstallExtras) string { return "/storage/" + c.SnippetStorage }, false},
+	{"PlumbBridge", []string{"SDN.Use"}, func(c Config, _ InstallExtras) string { return "/sdn/zones/localnetwork/" + c.Bridge }, false},
+	{"PlumbNode", []string{"Sys.AccessNetwork"}, func(c Config, _ InstallExtras) string { return "/nodes/" + c.Node }, false},
+	{"PlumbAudit", []string{"Sys.Audit"}, func(Config, InstallExtras) string { return "/" }, false},
+	{"PlumbGuestBackupVM", []string{"VM.Backup"}, func(c Config, _ InstallExtras) string { return "/pool/" + c.Pool }, true},
+	{"PlumbGuestBackup", []string{"Datastore.AllocateSpace", "Datastore.Audit"},
+		func(_ Config, x InstallExtras) string { return "/storage/" + x.GuestBackupStorage }, true},
+}
+
+// installLine is one planned ACL line of install.sh (acl_plan).
+type installLine struct {
+	path, role string
+	privs      []string
+}
+
+// installLines are the ACL lines of install.sh in the order of acl_plan:
+// the base roles, one PlumbBridge line per extra net (D-401), then the two
+// guest backup lines (D-405).
+func installLines(cfg Config, x InstallExtras) []installLine {
+	var out, backup []installLine
+	var bridgePrivs []string
+	for _, r := range installRoles {
+		l := installLine{path: r.path(cfg, x), role: r.Role, privs: r.Privs}
+		switch {
+		case r.backup:
+			if x.GuestBackupStorage != "" {
+				backup = append(backup, l)
+			}
+		default:
+			out = append(out, l)
+		}
+		if r.Role == "PlumbBridge" {
+			bridgePrivs = r.Privs
+		}
+	}
+	for _, n := range x.ExtraNets {
+		out = append(out, installLine{path: n.ACLPath(), role: "PlumbBridge", privs: bridgePrivs})
+	}
+	return append(out, backup...)
 }
 
 // ACL states of a View.
@@ -66,6 +104,11 @@ type View struct {
 	ACL                          string // ACLOK, ACLMissing, ACLUnknown
 	ACLError                     string // why ACLUnknown; empty otherwise
 	ACLLines                     []ACLLine
+	// ExtraNets are the extra nets of the install (D-401); GuestBackup is
+	// nil without a guest backup storage (D-405, D-406). Both come from
+	// plumb.env; Others in GuestBackup needs the reads.
+	ExtraNets   []ExtraNet
+	GuestBackup *GuestBackupView
 }
 
 // TokenUser returns the user part (user@realm) of a token id
@@ -83,6 +126,7 @@ func TokenUser(id string) string {
 type Viewer struct {
 	d         *Driver
 	tokenUser string
+	extras    InstallExtras
 	ttl       time.Duration
 	now       func() time.Time
 
@@ -97,9 +141,10 @@ type Viewer struct {
 // ViewTTL is how long a View is reused.
 const ViewTTL = 30 * time.Second
 
-// NewViewer returns the viewer of d. tokenUser is TokenUser of the token id.
-func NewViewer(d *Driver, tokenUser string) *Viewer {
-	return &Viewer{d: d, tokenUser: tokenUser, ttl: ViewTTL, now: time.Now}
+// NewViewer returns the viewer of d. tokenUser is TokenUser of the token id;
+// x are the install settings of slice 7 (InstallExtrasFromEnv).
+func NewViewer(d *Driver, tokenUser string, x InstallExtras) *Viewer {
+	return &Viewer{d: d, tokenUser: tokenUser, extras: x, ttl: ViewTTL, now: time.Now}
 }
 
 // View returns the view, from the cache when it is younger than the TTL.
@@ -116,7 +161,8 @@ func (v *Viewer) View(ctx context.Context) View {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cfg := v.d.cfg
-	out := View{Node: cfg.Node, Pool: cfg.Pool, ImageStorage: cfg.ImageStorage, SnippetStorage: cfg.SnippetStorage, TokenUser: v.tokenUser}
+	out := View{Node: cfg.Node, Pool: cfg.Pool, ImageStorage: cfg.ImageStorage, SnippetStorage: cfg.SnippetStorage, TokenUser: v.tokenUser,
+		ExtraNets: append([]ExtraNet(nil), v.extras.ExtraNets...)}
 	out.APIHost, out.APIPort = hostPort(v.d.c.URL())
 	version, sum, err := v.readVersion(ctx)
 	if err == nil {
@@ -124,23 +170,41 @@ func (v *Viewer) View(ctx context.Context) View {
 		var perms map[string]map[string]int
 		if err = v.d.c.Get(ctx, "/access/permissions", nil, &perms); err == nil {
 			v.lastOK = v.now()
-			out.ACL, out.ACLLines = checkACL(cfg, perms)
+			out.ACL, out.ACLLines = checkACL(cfg, v.extras, perms)
+			// The storage configs only with a guest backup storage: the
+			// encryption state and the second-storage check (M2 of #321).
+			if v.extras.GuestBackupStorage != "" {
+				var storages []map[string]any
+				if err = v.d.c.Get(ctx, "/storage", nil, &storages); err == nil {
+					out.GuestBackup = guestBackupView(v.extras, storages, perms)
+				}
+			}
 		}
 	}
 	if err != nil {
 		out.ACL, out.ACLError, out.ACLLines = ACLUnknown, aclReason(err), []ACLLine{}
+		// Without the reads the state comes from the install alone, and
+		// the other storages are not known: the ACL state says why.
+		out.GuestBackup = guestBackupView(v.extras, nil, nil)
 	}
 	out.Version, out.TLSSHA256, out.LastOK = v.version, v.tlsSum, v.lastOK
 	// A request that the caller cut is no answer of Proxmox: no cache.
 	if parent.Err() == nil {
 		v.cached, v.at = out, now
+		return v.copyCached() // the caller gets no pointer into the cache
 	}
 	return out
 }
 
 func (v *Viewer) copyCached() View {
 	out := v.cached
-	out.ACLLines = append([]ACLLine(nil), v.cached.ACLLines...)
+	out.ACLLines = append([]ACLLine{}, v.cached.ACLLines...)
+	out.ExtraNets = append([]ExtraNet(nil), v.cached.ExtraNets...)
+	if g := v.cached.GuestBackup; g != nil {
+		c := *g
+		c.Others = append([]string{}, g.Others...)
+		out.GuestBackup = &c
+	}
 	return out
 }
 
@@ -193,14 +257,14 @@ func fingerprint(der []byte) string {
 // checkACL compares the permissions answer with the ACL lines of the
 // install. A line is ok when every privilege of its role is held on its
 // path (hasRight: on the path, or propagated from a parent).
-func checkACL(cfg Config, perms map[string]map[string]int) (string, []ACLLine) {
+func checkACL(cfg Config, x InstallExtras, perms map[string]map[string]int) (string, []ACLLine) {
 	state := ACLOK
-	lines := make([]ACLLine, 0, len(installRoles))
-	for _, r := range installRoles {
-		path := r.path(cfg)
+	planned := installLines(cfg, x)
+	lines := make([]ACLLine, 0, len(planned))
+	for _, l := range planned {
 		ok := true
-		for _, p := range r.Privs {
-			if !hasRight(perms, path, p) {
+		for _, p := range l.privs {
+			if !hasRight(perms, l.path, p) {
 				ok = false
 				break
 			}
@@ -208,7 +272,7 @@ func checkACL(cfg Config, perms map[string]map[string]int) (string, []ACLLine) {
 		if !ok {
 			state = ACLMissing
 		}
-		lines = append(lines, ACLLine{Path: path, Role: r.Role, OK: ok})
+		lines = append(lines, ACLLine{Path: l.path, Role: l.role, OK: ok})
 	}
 	return state, lines
 }

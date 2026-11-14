@@ -219,6 +219,13 @@ pvesh)
 			exit 1
 		fi
 		;;
+	/nodes/*/storage/*/content)
+		# The backup volumes of a storage: backups.ID holds the JSON list.
+		id=${2#/nodes/*/storage/}
+		id=${id%/content}
+		[[ ${FAKE_CONTENT_FAIL:-0} == 1 ]] && exit 1
+		if [[ -e $st/backups.$id ]]; then cat "$st/backups.$id"; else echo '[]'; fi
+		;;
 	/cluster/nextid) echo 105 ;;
 	/pools)
 		[[ ${FAKE_POOLS_FAIL:-0} == 1 ]] && exit 1
