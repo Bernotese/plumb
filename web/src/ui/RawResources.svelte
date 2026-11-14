@@ -3,6 +3,7 @@
   // resource. Edit its content or go back to the Block; each is a proposal.
   import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { rawResources, withRaw } from "../lib/raw";
   import { go } from "../lib/router";
   import type { TargetView } from "../lib/types";
@@ -100,7 +101,9 @@
         {/if}
       {/if}
       <div class="row">
-        {#if editing === r.id}
+        {#if !can("createPlan")}
+          <span class="muted">Your role cannot change raw resources.</span>
+        {:else if editing === r.id}
           <button
             class="btn primary"
             type="button"

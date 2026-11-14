@@ -23,7 +23,12 @@ describe("blocks list", () => {
     const api = adminApi();
     show(Blocks, { api });
     const blocks = await api.listBlocks();
-    const r = await until(() => rows().length === blocks.length && rows());
+    // The first table: the stored Blocks (the second is the catalogue, T-154).
+    const stored = () =>
+      [...([...document.querySelectorAll("table")][0]?.querySelectorAll("tbody tr") ?? [])].map(
+        (t) => t.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      );
+    const r = await until(() => stored().length === blocks.length && stored());
     const names = blocks.map((b) => b.document.name).sort();
     expect(r.map((x) => x.split(" ")[0])).toEqual(names);
     const motd = r.find((x) => x.startsWith("motd"));

@@ -4,6 +4,7 @@
   import { tick, type Snippet } from "svelte";
   import type { PlumbApi } from "../lib/client";
   import { go } from "../lib/router";
+  import { can } from "../lib/session.svelte";
   import ProblemBox from "./ProblemBox.svelte";
 
   let {
@@ -59,43 +60,43 @@
   }
 </script>
 
-<section class="card danger-zone" aria-labelledby="delete-{word}-title">
-  <h2 id="delete-{word}-title">Delete this {word}</h2>
-  {#if blocked}
-    <p class="muted" id="delete-{word}-blocked">{blocked}</p>
-  {:else if !open}
-    {@render children?.()}
-    <p class="muted">Plumb makes a plan first. Nothing is deleted until you approve it.</p>
-    <div class="row">
-      <button class="btn danger" type="button" onclick={ask}>Delete {word}…</button>
-    </div>
-  {:else}
-    {@render children?.()}
-    <form onsubmit={submit} novalidate>
-      <div class="field">
-        <label for={fieldId}>Reason (required)</label>
-        <input
-          id={fieldId}
-          type="text"
-          bind:value={reason}
-          maxlength="2000"
-          autocomplete="off"
-          aria-invalid={reasonMissing}
-          aria-describedby={reasonMissing ? `${fieldId}-error` : undefined}
-          oninput={() => (reasonMissing = false)}
-        />
-        {#if reasonMissing}<p class="error" id="{fieldId}-error">
-            Give a reason for the delete.
-          </p>{/if}
-      </div>
-      <ProblemBox {error} />
+{#if can("createPlan")}<section class="card danger-zone" aria-labelledby="delete-{word}-title">
+    <h2 id="delete-{word}-title">Delete this {word}</h2>
+    {#if blocked}
+      <p class="muted" id="delete-{word}-blocked">{blocked}</p>
+    {:else if !open}
+      {@render children?.()}
+      <p class="muted">Plumb makes a plan first. Nothing is deleted until you approve it.</p>
       <div class="row">
-        <button class="btn danger" type="submit" disabled={busy}>Make delete plan</button>
-        <button class="btn" type="button" onclick={() => (open = false)}>Cancel</button>
+        <button class="btn danger" type="button" onclick={ask}>Delete {word}…</button>
       </div>
-    </form>
-  {/if}
-</section>
+    {:else}
+      {@render children?.()}
+      <form onsubmit={submit} novalidate>
+        <div class="field">
+          <label for={fieldId}>Reason (required)</label>
+          <input
+            id={fieldId}
+            type="text"
+            bind:value={reason}
+            maxlength="2000"
+            autocomplete="off"
+            aria-invalid={reasonMissing}
+            aria-describedby={reasonMissing ? `${fieldId}-error` : undefined}
+            oninput={() => (reasonMissing = false)}
+          />
+          {#if reasonMissing}<p class="error" id="{fieldId}-error">
+              Give a reason for the delete.
+            </p>{/if}
+        </div>
+        <ProblemBox {error} />
+        <div class="row">
+          <button class="btn danger" type="submit" disabled={busy}>Make delete plan</button>
+          <button class="btn" type="button" onclick={() => (open = false)}>Cancel</button>
+        </div>
+      </form>
+    {/if}
+  </section>{/if}
 
 <style>
   .danger-zone {

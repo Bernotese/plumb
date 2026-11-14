@@ -44,6 +44,11 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if p.Status != store.PlanPending {
 		return store.Run{}, fmt.Errorf("plan: plan %d is %s: %w", planID, p.Status, store.ErrPlanNotPending)
 	}
+	// The copy rule again (D-331): a report since the Plan counts, and
+	// the rights check below sees its reason.
+	if p, err = e.recheckGuestData(ctx, p); err != nil {
+		return store.Run{}, err
+	}
 	if check != nil {
 		if err := check(p); err != nil {
 			return store.Run{}, err

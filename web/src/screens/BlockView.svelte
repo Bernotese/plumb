@@ -1,6 +1,7 @@
 <script lang="ts">
   import { paramRows, usersOf, type Users } from "../lib/blocks";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { liveSnapshot } from "../lib/live";
   import { href } from "../lib/router";
   import type { BlockView } from "../lib/types";
@@ -38,7 +39,10 @@
 <p class="back"><a href={href({ name: "blocks" })}>← Blocks</a></p>
 <div class="spread">
   <h1 id="page-title" tabindex="-1">Block <span class="mono">{name}</span></h1>
-  {#if doc}<a class="btn primary" href={href({ name: "block-edit", block: name })}>Edit</a>{/if}
+  {#if doc && can("createPlan")}<a
+      class="btn primary"
+      href={href({ name: "block-edit", block: name })}>Edit</a
+    >{/if}
 </div>
 <ProblemBox {error} />
 {#if doc && block && users}

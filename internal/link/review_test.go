@@ -258,3 +258,18 @@ func TestLimiterCap(t *testing.T) {
 func net4(i int) string {
 	return "10." + strconv.Itoa(i>>16&255) + "." + strconv.Itoa(i>>8&255) + "." + strconv.Itoa(i&255)
 }
+
+func TestCredentialLookupStoreFailure(t *testing.T) {
+	f := newFixture(t)
+	cred := f.agent("web1")
+	f.st.Close()
+	for method, path := range map[string]string{"GET": wire.PathPoll, "POST": wire.PathReport} {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+cred)
+		rec := httptest.NewRecorder()
+		f.srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" || rec.Body.String() != "{\"error\":\"try again\"}\n" {
+			t.Errorf("%s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}

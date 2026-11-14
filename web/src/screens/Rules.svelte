@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { liveSnapshot } from "../lib/live";
   import { go, href } from "../lib/router";
   import type { RuleView } from "../lib/types";
@@ -130,13 +131,15 @@
                     >
                   </div>
                 </form>
-              {:else}
+              {:else if can("createPlan")}
                 <button
                   class="btn"
                   type="button"
                   aria-label="Remove {r.document.name}"
                   onclick={() => askRemove(r.document.name)}>Remove</button
                 >
+              {:else}
+                <span class="muted">–</span>
               {/if}
             </td>
           </tr>

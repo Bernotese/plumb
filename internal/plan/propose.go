@@ -323,6 +323,12 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if in.Origin == OriginAccept {
 		humanOnly = append(humanOnly, HumanOnlyAcceptGuestData)
 	}
+	// The copy rule (D-331): values that a guest reported as drift.
+	guest, err := e.checkGuestData(ctx, base, next, names)
+	if err != nil {
+		return store.Plan{}, err
+	}
+	humanOnly = withGuestReason(humanOnly, guest)
 
 	// Every check passed: now an import writes its secrets (D-153), and the
 	// Plan records the versions it wrote.
@@ -367,6 +373,9 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		Changes: changes, Images: imagesJSON, Risk: string(risk), Reason: in.Reason, Author: in.Author,
 	})
 	if err != nil {
+		return store.Plan{}, err
+	}
+	if err := e.storeGuestData(ctx, p, guest); err != nil {
 		return store.Plan{}, err
 	}
 	e.emit(ctx, "plan.created", fmt.Sprintf("plan:%d", p.ID), in.Author,

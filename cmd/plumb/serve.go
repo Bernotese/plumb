@@ -348,6 +348,9 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	goBG(func() { eng.PollGuests(ctx, time.Minute) })
 	goBG(func() { eng.RunSchedules(ctx, time.Minute) })                    // scheduled image builds (T-063)
 	goBG(func() { backups.RunSchedule(ctx, time.Minute, restore.Active) }) // daily backup (T-112); waits in restored mode
+	goBG(func() {
+		iss.RunGuestValuePrune(ctx, 24*time.Hour, func(err error) { log.Error("copy rule prune", "err", err) })
+	}) // D-331
 
 	ln, err := net.Listen("tcp", f.listen)
 	if err != nil {

@@ -6,6 +6,7 @@
   import { docPointers, NEW_BLOCK, useErrors, usersOf, type Users } from "../lib/blocks";
   import { parseBlock, type LineError } from "../lib/blockYaml";
   import type { PlumbApi } from "../lib/client";
+  import { can } from "../lib/session.svelte";
   import { pointerErrors } from "../lib/formErrors";
   import { go, href } from "../lib/router";
   import type { BlockDoc, BlockView } from "../lib/types";
@@ -245,7 +246,9 @@
       shown={uses.handled}
     />
     <div class="row">
-      <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
+      {#if can("createPlan")}<button class="btn primary" type="submit" disabled={busy}
+          >Show the plan</button
+        >{/if}
       <a
         class="btn"
         href={editing && name ? href({ name: "block", block: name }) : href({ name: "blocks" })}

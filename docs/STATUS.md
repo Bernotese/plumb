@@ -63,10 +63,15 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-145 slice 5 C1b: contract `network`, `group`, generic safe apply | pl-architect | merged (PR #244), D-348 … D-350 |
 | T-146 slice 5 C2: starter catalogue API | pl-backend | merged (PR #246) |
 | T-147 slice 5 C3: users and roles (migration 0017; closes F3 of T-122) | pl-reviewer (implementer), review: pl-architect | merged (PR #250), D-351 |
-| T-148 slice 5 C4: copy rule for guest-reported values (D-331, migration 0018) | pl-backend | PR #248: review fixes K1–K3 done, re-check next; D-352, D-353 |
-| T-150 slice 5 C6: generic safe apply + resource `network` | pl-backend | in work |
-| T-152 slice 5 C8: signed checksums | pl-architect (implementer) | part A: PR #247, in review; part B after T-147 and T-148 |
-| Slice 5, not started yet: T-151 C7 `group`, T-154 C9b web, T-156 C11 Block `network`, T-157 C12 QA, T-158 C13 host acceptance, T-159 C14 README | – | waits for its dependencies (plan T-138) |
+| T-148 slice 5 C4: copy rule for guest-reported values (D-331, migration 0018) | pl-backend | merged (PR #248), D-352, D-353. The red race job was real: writer starvation by back-to-back write txs (fixed, measured in CI) |
+| T-163 copy rule: write load of hostile guests (review notes d1, d2 of #248) | pl-codex-fix | in work |
+| T-150 slice 5 C6: generic safe apply + resource `network` | pl-backend | code complete locally (Debian + Ubuntu netplan merge proven in CI, draft PR #249); push after #248; D-354 … D-357 |
+| T-152 slice 5 C8: signed checksums | pl-architect (implementer) | part A merged (PR #247); part B1 done locally (migration 0019), B2 after #248 |
+| T-154 slice 5 C9b: web (catalogue, users page, role-aware buttons, Image `verify`) | pl-frontend | merged (PR #252); "Refresh base" tested on the mock only until T-152 part B |
+| T-157 slice 5 C12: QA | pl-codex-qa | part 1 merged (PR #251: role × operation matrix, parallel demote); other parts after their cards |
+| T-161 dev demo: `motd` matches the starter catalogue | pl-codex-fix | merged (PR #253) |
+| T-162 agent link: store error gives 503 + retry, not 401 (an agent drops its credential on 401) | pl-codex-fix | merged (PR #254) |
+| Slice 5, not started yet: T-151 C7 `group`, T-156 C11 Block `network`, T-158 C13 host acceptance, T-159 C14 README | – | waits for its dependencies (plan T-138) |
 | T-129 token removal leaves its 7 ACL lines on PVE 9.2 (T-122 F4): the installer removes them itself; the token ACL set is unchanged | pl-reviewer | merged (PR #230, D-324) |
 | T-123 `README.md` for users (no development docs; the two `make build` lines stay until there is a release, user decision (a); backup part after slice 4) | pl-frontend | merged (PR #215); backup part open |
 | T-131 screenshots for the README: 7 pictures of the dev demo (light theme, 52–132 KB), each checked by pl-reviewer and pl-lead; demo data on the documentation range | pl-frontend | merged (PR #232) |
