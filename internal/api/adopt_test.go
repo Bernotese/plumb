@@ -91,8 +91,9 @@ func TestAdoptAPI(t *testing.T) {
 	if code != 200 || !strings.Contains(string(body), `"adopted":true`) {
 		t.Fatalf("target: %d %s", code, body)
 	}
-	// The Target exists now: a second adopt under its name is refused.
-	if code, body := rc.do(planTok, "POST", "/api/v1/targets/wiki/adopt", "/targets/{name}/adopt", map[string]any{"node": "pve", "vmid": vmid, "digest": digest}); code != 409 || problemType(body) != "document-exists" {
+	// The Target holds the guest now: a second adopt is refused (the guest
+	// is bound; D-395 checks the guest before the name).
+	if code, body := rc.do(planTok, "POST", "/api/v1/targets/wiki/adopt", "/targets/{name}/adopt", map[string]any{"node": "pve", "vmid": vmid, "digest": digest}); code != 409 || problemType(body) != "guest-bound" {
 		t.Fatalf("second adopt: %d %s", code, body)
 	}
 	// D-392: no re-enrollment of an adopted Target.
@@ -137,5 +138,43 @@ func TestAdoptAPI(t *testing.T) {
 		if !strings.Contains(curl, flag) {
 			t.Fatalf("curl without %q: %s", flag, curl)
 		}
+	}
+}
+
+// D-395 through the API: a refused adopt Run leaves a not-adopted Target;
+// the adopt route under the guest's new name replaces it in one Plan.
+func TestAdoptAPINotAdopted(t *testing.T) {
+	e := newEnv(t, true, withInstall)
+	adm := e.admin()
+	rc := &recorder{t: t}
+	vmid, digest := e.person("wiki")
+	_, body := rc.do(adm, "POST", "/api/v1/targets/wiki/adopt", "/targets/{name}/adopt", map[string]any{"node": "pve", "vmid": vmid, "digest": digest})
+	var p struct{ ID int64 }
+	json.Unmarshal(body, &p)
+	e.drv.RenameGuest(driver.GuestID(strconv.Itoa(vmid)), "wiki-new")
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	e.eng.Wait()
+	code, body := rc.do(adm, "GET", "/api/v1/targets/wiki", "/targets/{name}", nil)
+	if code != 200 || !strings.Contains(string(body), `"not_adopted":true`) {
+		t.Fatalf("stale target: %d %s", code, body)
+	}
+	nu, _ := e.drv.InspectGuest(e.ctx, driver.GuestID(strconv.Itoa(vmid)))
+	code, body = rc.do(adm, "POST", "/api/v1/targets/wiki-new/adopt", "/targets/{name}/adopt", map[string]any{"node": "pve", "vmid": vmid, "digest": nu.Digest})
+	if code != 201 || !strings.Contains(string(body), `"wiki"`) {
+		t.Fatalf("adopt again: %d %s", code, body)
+	}
+	json.Unmarshal(body, &p)
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	e.eng.Wait()
+	if code, _ := adm.do("GET", "/api/v1/targets/wiki", nil); code != 404 {
+		t.Fatalf("the stale Target stays: %d", code)
+	}
+	code, body = rc.do(adm, "GET", "/api/v1/targets/wiki-new", "/targets/{name}", nil)
+	if code != 200 || strings.Contains(string(body), `"not_adopted":true`) || !strings.Contains(string(body), `"adopted":true`) {
+		t.Fatalf("new target: %d %s", code, body)
 	}
 }

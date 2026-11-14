@@ -129,7 +129,11 @@
                 >{/if}</td
             >
             <td class="mono"
-              >{#if "adopted" in t.document.spec}<span class="muted">adopted</span>{:else}{t
+              >{#if t.status.not_adopted}<span
+                  class="warn"
+                  title="The adopt Run did not bind the guest: adopt it again or delete the Target (D-395)"
+                  >not adopted</span
+                >{:else if "adopted" in t.document.spec}<span class="muted">adopted</span>{:else}{t
                   .document.spec.image}{/if}{#if t.status.image_version}
                 v{t.status.image_version}{/if}</td
             >
