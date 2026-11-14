@@ -54,7 +54,9 @@ func (s *Service) endTarget(ctx context.Context, target, reason string) (int64, 
 		if iss.Resource == GuestValuesID && len(flagged) > 0 {
 			continue // the end of the flag resolves it (PruneGuestValues)
 		}
-		if err := s.st.ResolveIssue(ctx, iss.ID, "gone", "system"); err != nil {
+		// Marked: never opened again by a report of a new Target of the
+		// name (T-227 row 31).
+		if err := s.st.ResolveIssueTargetDeleted(ctx, iss.ID); err != nil {
 			return n, err
 		}
 		if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: " + reason + "."}); err != nil {

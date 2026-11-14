@@ -181,8 +181,26 @@ func (s *Store) ResolveIssue(ctx context.Context, id int64, resolution, by strin
 	return nil
 }
 
+// ResolveIssueTargetDeleted resolves an Issue as "gone" by system because
+// its Target was deleted, and marks it so that ReopenGoneIssue never opens
+// it again (T-227 row 31).
+func (s *Store) ResolveIssueTargetDeleted(ctx context.Context, id int64) error {
+	now := s.now()
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE issue SET status = 'resolved', resolution = 'gone', resolved_by = 'system', resolved_at = ?, updated_at = ?, target_deleted = 1
+		 WHERE id = ? AND status <> 'resolved'`, now, now, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ReopenGoneIssue opens the newest Issue of a target and resource again
-// when it was resolved as "gone" at or after since, and no other Issue of
+// when it was resolved as "gone" at or after since (and not by the delete of
+// its Target, T-227 row 31), and no other Issue of
 // them is open. It sets the changes and reopened_at. It returns ErrNotFound
 // when there is no such Issue (D-215: a flapping guest gets one Issue row).
 func (s *Store) ReopenGoneIssue(ctx context.Context, target, resource string, since time.Time, changes json.RawMessage) (Issue, error) {
@@ -191,7 +209,7 @@ func (s *Store) ReopenGoneIssue(ctx context.Context, target, resource string, si
 		var id int64
 		err := tx.QueryRowContext(ctx,
 			`SELECT id FROM issue WHERE target = ?1 AND resource = ?2 AND status = 'resolved' AND resolution = 'gone'
-			 AND resolved_at >= ?3
+			 AND target_deleted = 0 AND resolved_at >= ?3
 			 AND NOT EXISTS (SELECT 1 FROM issue WHERE target = ?1 AND resource = ?2 AND status <> 'resolved')
 			 ORDER BY id DESC LIMIT 1`, target, resource, formatTime(since)).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
