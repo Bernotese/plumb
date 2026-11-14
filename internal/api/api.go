@@ -248,6 +248,11 @@ func (s *Server) Handler() http.Handler {
 	route("PATCH /api/v1/users/{name}", admin, s.changeUser)
 	route("POST /api/v1/users/{name}/password", admin, s.resetUserPassword)
 
+	// Adoption and the install command (T-193, D-386, D-387).
+	route("GET /api/v1/guests/unmanaged", read, s.listUnmanagedGuests)
+	route("POST /api/v1/targets/{name}/adopt", planTier, s.adoptTarget)
+	route("POST /api/v1/targets/{name}/install-command", admin, s.createInstallCommand)
+
 	route("GET /api/v1/settings", read, s.getSettings)
 	route("PATCH /api/v1/settings", admin, s.changeSettings)
 	route("POST /api/v1/settings/repair-key/rotate", admin, s.rotateRepairKey)

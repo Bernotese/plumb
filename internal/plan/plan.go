@@ -67,6 +67,10 @@ type Proposal struct {
 	// RefreshPin sets them; the API builds a client proposal from its own
 	// fields, so no client can.
 	Pins []PinRefresh `json:"pins,omitempty"`
+	// Adopt are the guests of an adopt Plan (D-386), with the config
+	// digest that the Run checks again. Only the adopt route sets them; a
+	// Target with spec.adopted and no binding needs one (no other way in).
+	Adopt []AdoptRequest `json:"adopt,omitempty"`
 }
 
 // Input is a request to plan.
@@ -94,8 +98,15 @@ type Input struct {
 type TargetPlan struct {
 	Target string `json:"target"`
 	// Guest is what happens to the guest: "create", "update", "delete",
-	// "reenroll" or "" (no guest change).
-	Guest     string           `json:"guest,omitempty"`
+	// "reenroll", "adopt" (bind a guest a person made, D-386), "unbind"
+	// (the delete of an adopted Target that keeps the guest, D-388) or ""
+	// (no guest change).
+	Guest string `json:"guest,omitempty"`
+	// Adopt is the guest of an "adopt" (with its digest); Adopted is
+	// spec.adopted of the base for "unbind" and "delete" of an adopted
+	// Target, so the Run knows the VMID and delete_guest.
+	Adopt     *AdoptRequest    `json:"adopt,omitempty"`
+	Adopted   *state.Adopted   `json:"adopted,omitempty"`
 	Resources []ResourceChange `json:"resources"`
 	// Secrets are the secrets of the desired state of this target, with
 	// the versions that the Plan was made with (D-089).

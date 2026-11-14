@@ -381,7 +381,7 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	// of #222): no step of this Target writes to it, also not the clear
 	// step of a container. A new guest has no VMID yet; a delete checks
 	// in its guest step and only drops the binding (D-322).
-	if tp.Guest != "create" && tp.Guest != "delete" {
+	if tp.Guest != "create" && tp.Guest != "delete" && tp.Guest != "adopt" && tp.Guest != "unbind" {
 		if err := e.checkOwnGuest(ctx, tp.Target); err != nil {
 			s.failRest(ctx, err.Error())
 			return false
@@ -446,6 +446,12 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 			s.skip(ctx, res.ID, textStoppedSkip)
 		}
 		watched = true
+		return s.ok
+	}
+
+	// An adopted Target without agent resources and without an agent: its
+	// agent comes by the install command (D-386, D-387); nothing waits.
+	if r.Adopted != nil && len(r.Resources) == 0 && !e.cfg.Agents.Online(tp.Target) {
 		return s.ok
 	}
 
@@ -677,7 +683,25 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 			return res, err
 		}
 		e.targetDeleted(ctx, tp.Target)
+		if tp.Adopted != nil {
+			_ = e.SyncAdopted(ctx) // the deleted guest's VMID is no longer ours
+		}
 		return res, nil
+
+	case "adopt":
+		if tp.Adopt == nil {
+			return res, errors.New("adopt without its checked request (D-386)")
+		}
+		if err := e.adoptBind(ctx, *tp.Adopt); err != nil {
+			return res, err
+		}
+		res.output = fmt.Sprintf("bound VMID %d; install the agent with the install command", tp.Adopt.VMID)
+		return res, nil
+
+	case "unbind":
+		out, err := e.unbindGuest(ctx, tp.Target)
+		res.output = out
+		return res, err
 
 	case "create":
 		spec, err := e.guestSpec(tp.Target, r)

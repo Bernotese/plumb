@@ -97,9 +97,9 @@ const (
 	// when T-117 adds the handler (AgentCommands).
 	CommandGrow CommandType = "grow"
 	// CommandUnbind ends the agent in a guest that Plumb keeps (D-388):
-	// remove the repair lines, the unit, the binary and /etc/plumb-agent.
-	// No body. The agent handler comes with T-193; an agent that does not
-	// list it in Capabilities.Commands never gets it.
+	// remove the repair lines, the units, the binary and /etc/plumb-agent;
+	// the credential goes after the result is sent. No body. An agent that
+	// does not list it in Capabilities.Commands never gets it.
 	CommandUnbind CommandType = "unbind"
 )
 

@@ -330,6 +330,11 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	iss = issue.New(st, events, eng)
 	// Close what a crash left open. This must run before the agent
 	// listener, the API and the guest poll start (review T-010 B1, n3).
+	// The driver learns the guests of the adopted Targets before any Run
+	// (D-392): only those may be outside the Plumb VMID range.
+	if err := eng.SyncAdopted(ctx); err != nil {
+		return fmt.Errorf("adopted guests: %w", err)
+	}
 	if err := eng.Recover(ctx); err != nil {
 		return err
 	}

@@ -363,6 +363,8 @@ type targetSpec struct {
 	AllowRestart bool                      `json:"allow_restart"`
 	Blocks       []blockUse                `json:"blocks"`
 	Overrides    map[string]map[string]any `json:"overrides"`
+	// Adopted: a guest that a person made (D-386); the Target has no image.
+	Adopted *Adopted `json:"adopted"`
 }
 
 type blockResource struct {
@@ -729,7 +731,9 @@ func (s *Set) checkTarget(name string) Errors {
 		return &Error{Kind: KindTarget, Name: name, Path: path, Msg: fmt.Sprintf(format, args...)}
 	}
 	var errs Errors
-	if img, ok := s.images[t.Image]; !ok {
+	if t.Adopted != nil {
+		// No image: the schema refuses image next to adopted (D-386).
+	} else if img, ok := s.images[t.Image]; !ok {
 		errs = append(errs, errf("/spec/image", "Image %q %s", t.Image, s.missing(KindImage, t.Image)))
 	} else if img.Type != t.Type {
 		errs = append(errs, errf("/spec/image", "Image %q is for %s, the Target is %s", t.Image, img.Type, t.Type))

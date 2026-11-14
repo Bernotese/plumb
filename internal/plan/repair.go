@@ -491,11 +491,15 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 	if err != nil {
 		return fail("the repair token could not be made: " + err.Error())
 	}
-	drop := func() {
+	// Every end of the Run drops the token while it is unused: a failure,
+	// and also a success through another enrollment (review n1 of #300).
+	// A used token is never touched (store.DropEnrollToken), so a success
+	// with this token changes nothing.
+	defer func() {
 		if err := rc.Tokens.DropRepairToken(context.WithoutCancel(ctx), tp.Target, tok); err != nil {
 			e.log.Error("drop the repair token", "target", tp.Target, "err", err)
 		}
-	}
+	}()
 	bundle := agentinstall.Bundle{Agent: rc.AgentBinary, CA: rc.CA, URL: rc.AgentURL, Token: tok.Token}
 	out := &boundedBuffer{max: MaxRepairOutput}
 	session := rc.SessionTimeout
@@ -512,14 +516,12 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 	tok.Token = "" // not needed past the session
 	text := repairOutput(exit, err == nil, out.Bytes())
 	if err != nil {
-		drop()
 		if !sent {
 			return fail("nothing was sent; the agent stays as it was: " + escapeOutput([]byte(err.Error()), 512) + text)
 		}
 		return fail("the session failed: " + escapeOutput([]byte(err.Error()), 512) + text)
 	}
 	if exit != 0 {
-		drop()
 		return fail("the install in the guest failed; the agent stays as it was" + text)
 	}
 
@@ -545,10 +547,8 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 		case <-w.ch:
 		case <-tick.C:
 		case <-timeout.C:
-			drop()
 			return fail(fmt.Sprintf("no hello of the repaired agent within %v; the old credential stays valid until a new enrollment", wait) + text)
 		case <-ctx.Done():
-			drop()
 			return fail(ctx.Err().Error())
 		}
 	}

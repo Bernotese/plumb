@@ -1468,6 +1468,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
 
   /** The Target part of D-202: a smaller disk than the template, or no ready version yet. */
   function checkTargetImage(t: TargetDoc, at: number, isNew: boolean) {
+    if (t.spec.image === undefined) return; // adopted (D-386)
     const view = findImage(t.spec.image);
     if (
       view?.document.spec.type === "lxc" &&
@@ -2039,6 +2040,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       for (const [at, doc] of (proposal.put ?? []).entries()) {
         if (doc.kind !== "Target") continue;
         const t = doc as TargetDoc;
+        if (t.spec.image === undefined) continue; // an adopted Target has no image (D-386)
         const known =
           images.some((i) => i.document.name === t.spec.image) ||
           (proposal.put ?? []).some((d) => d.kind === "Image" && d.name === t.spec.image);
