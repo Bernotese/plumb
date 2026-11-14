@@ -118,6 +118,13 @@ export function toYaml(v: unknown): string {
   return `${block(v, "").join("\n")}\n`;
 }
 
+/**
+ * Keys that name JavaScript object internals. No document needs them; they
+ * are refused in YAML text and in key/value rows (review of #278).
+ */
+export const FORBIDDEN_KEYS: readonly string[] = ["__proto__", "constructor", "prototype"];
+export const forbiddenKey = (k: string) => `The key "${k}" is not allowed.`;
+
 /** parseYaml refuses more text than this before it parses. */
 export const MAX_TEXT = 256 * 1024;
 
@@ -189,6 +196,8 @@ export function parseYaml(text: string, opts: { allowEmpty?: boolean } = {}): Pa
     Pair(_, p) {
       if (!isScalar(p.key) || (typeof p.key.value !== "string" && typeof p.key.value !== "number"))
         errors.push({ line: nodeLine(p), message: "A key must be a plain text." });
+      else if (FORBIDDEN_KEYS.includes(String(p.key.value)))
+        errors.push({ line: nodeLine(p), message: forbiddenKey(String(p.key.value)) });
     },
   });
 

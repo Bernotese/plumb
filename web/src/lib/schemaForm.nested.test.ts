@@ -175,4 +175,20 @@ describe("nested schema forms (D-363)", () => {
     expect(v["env"]).toBe("DB:\n  secret: db-pass\n");
     expect(toParams(f, v)).toEqual({ env: { DB: { secret: "db-pass" } } });
   });
+
+  it("refuses object-internal keys in key/value rows (review of #278)", () => {
+    const labels = byName("labels");
+    const v = initialValues(fields, { site: { name: "web" } });
+    v["labels"] = ["__proto__", "constructor", "prototype"].map((name) => ({
+      ...newRow(labels),
+      name,
+      value: "x",
+    }));
+    const e = validate(fields, v);
+    expect([e["labels/0/name"], e["labels/1/name"], e["labels/2/name"]]).toEqual([
+      'The key "__proto__" is not allowed.',
+      'The key "constructor" is not allowed.',
+      'The key "prototype" is not allowed.',
+    ]);
+  });
 });

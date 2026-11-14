@@ -10,7 +10,7 @@
 // schema (deeper, oneOf, arrays of numbers, ...) is a YAML field for that
 // one parameter; the server checks it as before.
 // Everything is a pure function, so the screens stay thin.
-import { parseYaml, toYaml } from "./yaml";
+import { FORBIDDEN_KEYS, forbiddenKey, parseYaml, toYaml } from "./yaml";
 
 export type FieldKind =
   | "text"
@@ -306,6 +306,7 @@ export function validate(fields: Field[], values: Values, at = ""): Record<strin
         rows.forEach((r, i) => {
           const name = r.name.trim();
           if (name === "") errors[`${path}/${i}/name`] = "Enter a key.";
+          else if (FORBIDDEN_KEYS.includes(name)) errors[`${path}/${i}/name`] = forbiddenKey(name);
           else if (seen.has(name))
             errors[`${path}/${i}/name`] = `The key "${name}" is there twice.`;
           seen.add(name);
