@@ -7,7 +7,6 @@
   import { tick } from "svelte";
   import { ApiError } from "../lib/api";
   import type { PlumbApi, UnmanagedGuest } from "../lib/client";
-  import { describedBy, pointerErrors } from "../lib/formErrors";
   import { go, href } from "../lib/router";
   import { can, roleNote } from "../lib/session.svelte";
   import Badge from "../ui/Badge.svelte";
@@ -18,13 +17,10 @@
   let guests = $state<UnmanagedGuest[] | null>(null);
   let loadError = $state<unknown>(null);
   let chosen = $state<UnmanagedGuest | null>(null);
-  let name = $state("");
   let reason = $state("");
-  let errors = $state<Record<string, string>>({});
   let submitError = $state<unknown>(null);
   let busy = $state(false);
 
-  const NAME = /^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$/;
   const REASON: Record<string, string> = {
     "disk-layout":
       "the disks do not fit a Target (a VM needs exactly one disk scsi0; a container no mount point)",
@@ -67,9 +63,7 @@
 
   async function choose(g: UnmanagedGuest) {
     chosen = g;
-    name = NAME.test(g.name) ? g.name : "";
     reason = "";
-    errors = {};
     submitError = null;
     await tick();
     document.getElementById("adopt-title")?.focus();
@@ -92,20 +86,11 @@
   async function submit(ev: SubmitEvent) {
     ev.preventDefault();
     if (!chosen) return;
-    const e: Record<string, string> = {};
-    if (!NAME.test(name))
-      e["name"] =
-        "Use lower-case letters, digits, '-' and '.'; start and end with a letter or digit.";
-    errors = e;
-    if (Object.keys(e).length) {
-      await tick();
-      document.getElementById("adopt-name")?.focus();
-      return;
-    }
     busy = true;
     submitError = null;
     try {
-      const plan = await api.adoptTarget(name, {
+      // D-392: the Target takes the guest's Proxmox name.
+      const plan = await api.adoptTarget(chosen.name, {
         node: chosen.node,
         vmid: chosen.vmid,
         digest: chosen.digest,
@@ -114,8 +99,6 @@
       go({ name: "plan", id: plan.id });
     } catch (err) {
       submitError = err;
-      const p = pointerErrors(err);
-      if (p["/name"]) errors = { name: p["/name"] };
       // The guest changed or is gone: the list is old.
       if (err instanceof ApiError && err.problem.status === 409) void load();
     } finally {
@@ -220,23 +203,24 @@
       The Target gets no Image. Deleting it later keeps the guest unless you choose otherwise.
     </p>
     <div class="field">
-      <label for="adopt-name">Name of the new Target<span aria-hidden="true"> *</span></label>
+      <label for="adopt-name">Name of the new Target</label>
       <input
         id="adopt-name"
         type="text"
-        autocomplete="off"
-        bind:value={name}
-        aria-invalid={!!errors["name"]}
-        aria-describedby={describedBy("adopt-name", errors["name"])}
+        value={chosen.name}
+        readonly
+        aria-describedby="adopt-name-hint"
       />
-      <span class="hint" id="adopt-name-hint">The Proxmox name stays as it is.</span>
-      {#if errors["name"]}<span class="error" id="adopt-name-error">{errors["name"]}</span>{/if}
+      <span class="hint" id="adopt-name-hint"
+        >A Target has the name of its guest (D-392). To use another name, rename the guest in
+        Proxmox first.</span
+      >
     </div>
     <div class="field">
       <label for="adopt-reason">Reason (optional)</label>
       <textarea id="adopt-reason" bind:value={reason}></textarea>
     </div>
-    <ProblemBox error={submitError} fields={["/name"]} />
+    <ProblemBox error={submitError} />
     <div class="row">
       <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
       <button class="btn" type="button" onclick={() => (chosen = null)}>Cancel</button>

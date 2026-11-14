@@ -32,7 +32,7 @@
   // --- Repair (D-384, D-385) ---
   const REPAIR_REASON: Record<string, string> = {
     "no-line":
-      "The guest has no repair line: its agent never ran with a version that writes it. Update the agent while it runs.",
+      "The guest has no repair line: its agent never ran with a version that writes it. Update the agent while it runs, or, without an agent, use the install command below.",
     "no-sshd": "The guest has no SSH server.",
     "root-refused":
       "The SSH server refuses root also with a forced command. Set permit_root_login of the Block ssh-hardening to forced-commands-only.",
@@ -168,8 +168,8 @@
       {/if}
       {#if oldKey}
         <p class="warn" id="repair-old-key">
-          The repair line of this guest still holds the previous repair key. The agent writes the
-          new one at its next start.
+          The repair line of this guest still holds the previous repair key. An online agent gets
+          the new key at once; an offline agent gets it when it is back.
         </p>
       {/if}
       {#if repair.host_keys?.length}

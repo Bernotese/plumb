@@ -2845,7 +2845,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         "",
       );
       return {
-        command: `umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n-----BEGIN CERTIFICATE-----\n(mock CA)\n-----END CERTIFICATE-----\nPLUMB_CA\ncat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n${token}\nPLUMB_TOKEN\ncurl -fsS --cacert /etc/plumb-agent/ca.pem https://plumb.lan:8444/agent/v1/install.sh | PLUMB_URL=https://plumb.lan:8444 sh`,
+        command: `umask 077; mkdir -p /etc/plumb-agent && cat > /etc/plumb-agent/ca.pem <<'PLUMB_CA'\n-----BEGIN CERTIFICATE-----\n(mock CA)\n-----END CERTIFICATE-----\nPLUMB_CA\ncat > /etc/plumb-agent/enroll.token <<'PLUMB_TOKEN'\n${token}\nPLUMB_TOKEN\ncurl -fsS --proto =https --connect-timeout 10 --max-time 300 --capath /etc/plumb-agent --cacert /etc/plumb-agent/ca.pem 'https://plumb.lan:8444/agent/v1/install.sh' | PLUMB_URL='https://plumb.lan:8444' sh\n`,
         expires_at: new Date(Date.parse(now()) + 15 * 60_000).toISOString().replace(/\.\d+Z$/, "Z"),
       };
     },
@@ -2871,6 +2871,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "Guest changed",
           409,
           `The config of guest ${req.vmid} changed. Reload the list.`,
+        );
+      // D-392: the Target has the Proxmox name of its guest.
+      if (name !== g.name)
+        throw problem(
+          "guest-changed",
+          "Guest changed",
+          409,
+          `The Target name must be the Proxmox name of guest ${g.vmid} ("${g.name}").`,
         );
       if (targets.has(name))
         throw problem("document-exists", "Document exists", 409, `A Target "${name}" exists.`);

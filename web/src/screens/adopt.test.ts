@@ -71,17 +71,22 @@ describe("adopt a guest of the pool", () => {
     expect((await api.listUnmanagedGuests()).map((g) => g.vmid)).toEqual([9124]);
   });
 
-  it("refuses a bad name in the browser", async () => {
+  it("the Target takes the guest's Proxmox name, read-only (D-392)", async () => {
     const api = adminApi();
-    const adopt = vi.spyOn(api, "adoptTarget");
     show(Adopt, { api });
     (await until(() => button("Adopt wiki (9123)")))?.click();
     await until(() => document.querySelector("#adopt-name"));
-    type("#adopt-name", "Wiki Server");
-    el<HTMLFormElement>("form").requestSubmit();
-    flushSync();
-    expect(adopt).not.toHaveBeenCalled();
-    expect(el("#adopt-name").getAttribute("aria-invalid")).toBe("true");
+    expect(el<HTMLInputElement>("#adopt-name").readOnly).toBe(true);
+    expect(el<HTMLInputElement>("#adopt-name").value).toBe("wiki");
+    expect(text(el("#adopt-name-hint"))).toContain("rename the guest in Proxmox first");
+    // The mock refuses another name, as the server does.
+    await expect(
+      api.adoptTarget("other", {
+        node: "pve",
+        vmid: 9123,
+        digest: "3f1c0d5e8a9b7c6d5e4f3a2b1c0d9e8f7a6b5c4d",
+      }),
+    ).rejects.toMatchObject({ problem: { status: 409, type: "urn:plumb:problem:guest-changed" } });
   });
 
   it("a changed guest (409) shows the problem and reloads the list", async () => {

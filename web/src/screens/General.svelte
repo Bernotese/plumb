@@ -242,7 +242,8 @@
             Still on the previous key ({repairKey.previous.targets.length}):
             {#each repairKey.previous.targets as t, i (t)}{i ? ", " : ""}<a
                 href={href({ name: "target-agent", target: t })}>{t}</a
-              >{/each}. Their agents write the new line at their next start.
+              >{/each}. Online agents get the new key at once; an offline agent gets it when it is
+            back.
           </p>
         {:else}
           <p id="key-old-targets">Every agent has the new key.</p>
@@ -287,8 +288,8 @@
           onclick={() => rotate(false)}>Make a new repair key</button
         >
         <p class="muted">
-          The old key stays valid until you revoke it; the agents write the new line next to the old
-          one.
+          The old key stays valid until you revoke it. Online agents write the new line next to the
+          old one at once; an offline agent when it is back.
         </p>
       {/if}
     </section>
