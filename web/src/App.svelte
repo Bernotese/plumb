@@ -20,6 +20,7 @@
   import RevisionView from "./screens/RevisionView.svelte";
   import RunView from "./screens/RunView.svelte";
   import TargetForm from "./screens/TargetForm.svelte";
+  import Adopt from "./screens/Adopt.svelte";
   import TargetAgent from "./screens/TargetAgent.svelte";
   import Targets from "./screens/Targets.svelte";
   import Images from "./screens/Images.svelte";
@@ -189,8 +190,13 @@
     <nav aria-label="Main">
       <a
         href={href({ name: "targets" })}
-        aria-current={navCurrent(["targets", "target-new", "target-edit", "target-agent"])}
-        >Targets</a
+        aria-current={navCurrent([
+          "targets",
+          "target-new",
+          "target-adopt",
+          "target-edit",
+          "target-agent",
+        ])}>Targets</a
       >
       <a
         href={href({ name: "images" })}
@@ -254,6 +260,8 @@
     <Targets {api} />
   {:else if route.name === "target-new"}
     <TargetForm {api} />
+  {:else if route.name === "target-adopt"}
+    <Adopt {api} />
   {:else if route.name === "target-edit"}
     {#key route.target}<TargetForm {api} name={route.target} />{/key}
   {:else if route.name === "target-agent"}

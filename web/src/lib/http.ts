@@ -2,7 +2,16 @@
 // session cookie, no token or password is stored by the UI. Errors are
 // ApiError with the problem+json body.
 import { API_BASE, ApiError, NetworkError, toProblem } from "./api";
-import type { CatalogBlock, PinRefresh, PlumbApi, Settings, User } from "./client";
+import type {
+  CatalogBlock,
+  InstallCommand,
+  PinRefresh,
+  PlumbApi,
+  RepairKeyView,
+  Settings,
+  UnmanagedGuest,
+  User,
+} from "./client";
 import type { components } from "./api.gen";
 import type {
   BlockView,
@@ -51,6 +60,10 @@ export const EVENT_TYPES = [
   "user.created",
   "user.changed",
   "settings.changed",
+  "repair.finished",
+  "repair_key.rotated",
+  "target.hostkeys",
+  "target.install_command",
 ] as const satisfies readonly components["schemas"]["Event"]["type"][];
 
 export interface HttpOptions {
@@ -218,6 +231,20 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     listTokens: () => all<Token>("/tokens"),
     createToken: (req) => call<TokenCreated>("POST", "/tokens", req),
     enableToken: (id) => call<Token>("POST", `/tokens/${encodeURIComponent(id)}/enable`),
+    repairTarget: (name, req) =>
+      call<Plan>("POST", `/targets/${encodeURIComponent(name)}/repair`, req ?? {}),
+    createInstallCommand: (name) =>
+      call<InstallCommand>("POST", `/targets/${encodeURIComponent(name)}/install-command`),
+    listUnmanagedGuests: async () =>
+      (await call<{ items: UnmanagedGuest[] }>("GET", "/guests/unmanaged")).items,
+    adoptTarget: (name, req) =>
+      call<Plan>("POST", `/targets/${encodeURIComponent(name)}/adopt`, req),
+    rotateRepairKey: (revokeOld) =>
+      call<RepairKeyView>(
+        "POST",
+        "/settings/repair-key/rotate",
+        revokeOld ? { revoke_old: true } : {},
+      ),
     getSettings: () => call<Settings>("GET", "/settings"),
     changeSettings: (change) => call<Settings>("PATCH", "/settings", change),
     listBackups: () => call<BackupList>("GET", "/backups"),
