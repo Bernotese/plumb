@@ -256,7 +256,10 @@ func TestInstallCommandMode(t *testing.T) {
 	s, root, env := sandbox(t, string(script))
 	etc := filepath.Join(root, "etc/plumb-agent")
 	os.WriteFile(filepath.Join(etc, "ca.pem"), []byte(testCA), 0o600)
-	os.WriteFile(filepath.Join(etc, "enroll.token"), []byte("tok\n"), 0o600)
+	// A long token with '-' and '_': a short needle like "tok" can occur
+	// by chance in a random mktemp name in the calls log (T-213 family).
+	const token = "plumb_enroll-secret-for-the-mode-test"
+	os.WriteFile(filepath.Join(etc, "enroll.token"), []byte(token+"\n"), 0o600)
 	cmd := exec.Command("sh", "-c", s)
 	cmd.Dir = t.TempDir()
 	cmd.Env = append(env, "PLUMB_URL=https://192.0.2.10:8444")
@@ -268,7 +271,7 @@ func TestInstallCommandMode(t *testing.T) {
 		!strings.Contains(c, "https://192.0.2.10:8444/agent/v1/binary") || !strings.Contains(c, "systemctl restart plumb-agent.service") {
 		t.Fatalf("calls:\n%s", c)
 	}
-	if strings.Contains(c, "tok") {
+	if strings.Contains(c, token) {
 		t.Fatal("the token is on a command line")
 	}
 	if b, _ := os.ReadFile(filepath.Join(root, "usr/local/bin/plumb-agent")); string(b) != "fetched\n" {

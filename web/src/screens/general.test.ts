@@ -15,6 +15,12 @@ const save = () => {
 };
 
 describe("Settings → General", () => {
+  it("says that a time moved earlier can skip one day (#282 n1)", async () => {
+    show(General, { api: adminApi() });
+    await until(() => document.querySelector("#g-time-hint"));
+    expect(text(el("#g-time-hint"))).toContain("the next backup runs tomorrow: today has none");
+  });
+
   it("shows the schedule with its source and the Proxmox view, no secret", async () => {
     const api = adminApi();
     const s = await api.getSettings();
@@ -131,5 +137,26 @@ describe("Settings → General: repair key (T-194, D-382)", () => {
     await until(() => document.querySelector("#key-previous"));
     expect(rotate).toHaveBeenLastCalledWith(false);
     expect(text(el("#general-key"))).not.toContain("BEGIN");
+  });
+
+  it("shows the left-behind guests also without a previous key (ROADMAP row 32)", async () => {
+    const api = adminApi();
+    const get = api.getSettings.bind(api);
+    vi.spyOn(api, "getSettings").mockImplementation(async () => {
+      const s = await get();
+      if (s.repair_key)
+        s.repair_key = { ...s.repair_key, previous: null, left_behind: ["wiki (VMID 150)"] };
+      return s;
+    });
+    show(General, { api });
+    await until(() => document.querySelector("#key-left-behind"));
+    expect(document.querySelector("#key-previous")).toBeNull();
+    expect(text(el("#key-left-behind"))).toContain("Left behind (1): wiki (VMID 150).");
+  });
+
+  it("shows no left-behind line when the list is empty", async () => {
+    show(General, { api: adminApi() });
+    await until(() => document.querySelector("#general-key"));
+    expect(document.querySelector("#key-left-behind")).toBeNull();
   });
 });

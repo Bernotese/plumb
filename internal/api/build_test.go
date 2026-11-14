@@ -22,6 +22,14 @@ func withBuilds(c *plan.Config) {
 	c.BuildEnrollTimeout, c.SealTimeout, c.PowerPoll = 5*time.Second, 2*time.Second, 10*time.Millisecond
 }
 
+// withBuildsNoAgents is withBuilds for a test that starts no build agent:
+// its build guest never enrolls, and the test does not need the build to
+// get far, so the enroll wait is short (T-211; the race job).
+func withBuildsNoAgents(c *plan.Config) {
+	withBuilds(c)
+	c.BuildEnrollTimeout = time.Second
+}
+
 var builtSHA = strings.Repeat("a", 64)
 
 // buildAgents starts a fake agent for every build guest that appears, as

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -65,11 +67,60 @@ type env struct {
 	buildLoop bool
 }
 
+// migrated is one database file with every migration applied, made once
+// per test binary (T-211): the migrations were 30 % of the CPU of this
+// package, and under -race their SQL parser runs instrumented. Each env
+// starts from a copy, which is the state that store.Open makes on an
+// empty file (the migrations hold no per-store data); store.Open still
+// checks the version of the copy. TestMain removes the dir.
+var migrated struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+func copyMigrated(t *testing.T, dst string) {
+	t.Helper()
+	migrated.once.Do(func() {
+		dir, err := os.MkdirTemp("", "plumb-api-migrated-")
+		if err != nil {
+			migrated.err = err
+			return
+		}
+		migrated.dir = dir
+		path := filepath.Join(dir, "plumb.db")
+		st, err := store.Open(context.Background(), path)
+		if err != nil {
+			migrated.err = err
+			return
+		}
+		if err := st.Close(); err != nil {
+			migrated.err = err
+			return
+		}
+		// A clean close leaves no WAL: the main file holds everything.
+		if _, err := os.Stat(path + "-wal"); err == nil {
+			migrated.err = fmt.Errorf("the migrated template still has a WAL file")
+		}
+	})
+	if migrated.err != nil {
+		t.Fatal(migrated.err)
+	}
+	b, err := os.ReadFile(filepath.Join(migrated.dir, "plumb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
 	log := envLog
+	copyMigrated(t, filepath.Join(dir, "plumb.db"))
 	st, err := store.Open(ctx, filepath.Join(dir, "plumb.db"))
 	if err != nil {
 		t.Fatal(err)
