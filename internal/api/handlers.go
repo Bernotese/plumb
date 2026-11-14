@@ -38,6 +38,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	var ao *plan.AgentOutdatedError
 	switch {
 	case repairProblem(w, err):
+	case adoptProblem(w, err):
 	case errors.As(err, &ao):
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:agent-outdated", Title: "Agent is outdated", Status: http.StatusConflict,
 			Detail: ao.Error(), Targets: ao.Targets, Missing: ao.Missing})
@@ -131,6 +132,8 @@ type targetStatus struct {
 	AgentReverted *agentRevertView `json:"agent_reverted"`
 	// Repair is the SSH repair readiness (D-384, T-191); null without an agent.
 	Repair *plan.RepairStatus `json:"repair"`
+	// Adopted: the Target holds a guest a person made (D-386).
+	Adopted bool `json:"adopted,omitempty"`
 }
 
 type agentRevertView struct {
@@ -242,6 +245,10 @@ func (s *Server) targetStatus(ctx context.Context, name string) (targetStatus, e
 			at = ag.HelloAt
 		}
 		st.AgentReverted = &agentRevertView{From: rv.From, To: rv.To, Reason: rv.Reason, At: at.UTC()}
+	}
+	// D-386: an adopted Target (from the head revision).
+	if err := s.headRaw(ctx, name, func(set *state.Set, _ map[string]state.Source) { _, st.Adopted = set.AdoptedOf(name) }); err != nil {
+		return st, err
 	}
 	st.Waiting = []waitingView{}
 	for _, w := range live.Waiting {

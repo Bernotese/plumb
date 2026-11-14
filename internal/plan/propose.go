@@ -294,6 +294,13 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if err := errors.Join(errs...); err != nil {
 		return store.Plan{}, err
 	}
+	// Adoption (D-386, D-388): every adopt has its checked request, and
+	// the Plan says in clear words what happens to an adopted guest.
+	notes, err := adoptPlans(in.Proposal.Adopt, plans)
+	if err != nil {
+		return store.Plan{}, err
+	}
+	in.Proposal.Notes = append(in.Proposal.Notes, notes...)
 
 	if note := e.diskNote(ctx, next, plans); note != "" {
 		in.Proposal.Notes = append(in.Proposal.Notes, note)
@@ -327,8 +334,13 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	if slices.Contains(binding, true) {
 		humanOnly = append(humanOnly, HumanOnlySecretBinding)
 	}
-	if in.Origin == OriginAccept {
+	if in.Origin == OriginAccept || in.Origin == OriginAdopt {
+		// D-323, D-386: values that a guest or a person's Proxmox config
+		// gave, not the author.
 		humanOnly = append(humanOnly, HumanOnlyAcceptGuestData)
+	}
+	if adoptedGuestDelete(plans) {
+		humanOnly = append(humanOnly, HumanOnlyAdoptedGuestDelete)
 	}
 	// Removing a firewall needs a person (D-368), whatever made the Plan.
 	if off, err := firewallOff(base, next, names); err != nil {
@@ -500,10 +512,34 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 
 	switch {
 	case r == nil: // the Target is deleted
+		if exists && before != nil && before.Adopted != nil {
+			a := boundAdopted(*before.Adopted, bind.Ref)
+			tp.Adopted = &a
+			if !a.DeleteGuest {
+				// D-388: the guest stays; the agent leaves it (unbind).
+				tp.Guest = "unbind"
+				tp.Resources = []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionUpdate, Risk: wire.RiskDisruptive,
+					Changes: []wire.Change{{Attr: attrAdopted, From: adoptedText(a), To: nil, Risk: wire.RiskDisruptive}}}}
+				return tp, nil
+			}
+		}
 		if exists {
 			tp.Guest = "delete"
 			tp.Resources = []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionDelete, Risk: wire.RiskDestructive,
 				Changes: []wire.Change{{Attr: wire.AttrState, From: wire.StatePresent, To: wire.StateAbsent, Risk: wire.RiskDestructive}}}}
+		}
+		return tp, nil
+
+	case !exists && r.Adopted != nil: // D-386: bind a guest that a person made
+		if reenroll {
+			return tp, &ProposalError{Target: target, Msg: "the guest is not adopted yet; there is nothing to re-enroll"}
+		}
+		tp.Guest = "adopt"
+		tp.Resources = append(tp.Resources, ResourceChange{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
+			Risk: wire.RiskReversible, Changes: []wire.Change{{Attr: attrAdopted, From: nil, To: adoptedText(*r.Adopted), Risk: wire.RiskReversible}}})
+		// No agent yet: its resources apply after the install command.
+		if err := e.planUnobserved(ctx, &tp, r, r.Resources); err != nil {
+			return tp, err
 		}
 		return tp, nil
 
@@ -541,7 +577,18 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		return tp, nil
 	}
 
-	// An existing guest: the driver level first.
+	// An existing guest: the driver level first. spec.adopted names the
+	// bound guest and cannot change (A1 of #299).
+	if err := checkAdoptedChange(target, before, r, bind.Ref); err != nil {
+		return tp, err
+	}
+	if r.Adopted != nil {
+		a := boundAdopted(*r.Adopted, bind.Ref)
+		tp.Adopted = &a
+	}
+	if reenroll && r.Adopted != nil {
+		return tp, &ProposalError{Target: target, Err: ErrAdoptedTarget, Msg: "an adopted Target is not re-enrolled: it would write the Proxmox config of a guest that a person made; use the install command (D-392)"}
+	}
 	desired, err := e.guestSpec(target, r)
 	if err != nil {
 		return tp, err
@@ -590,6 +637,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	if ac := allowRestartChange(before, r); ac != nil {
 		gchanges = append([]wire.Change{*ac}, gchanges...)
 	}
+	if dc := deleteGuestChange(before, r); dc != nil {
+		gchanges = append([]wire.Change{*dc}, gchanges...)
+	}
 	if reenroll {
 		tp.Guest = "reenroll"
 		gchanges = append(gchanges, wire.Change{Attr: driver.AttrEnrollToken, Sensitive: true, Risk: wire.RiskDisruptive})
@@ -617,6 +667,12 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 			}
 			return tp, nil
 		}
+	}
+
+	// An adopted Target without agent resources needs no agent (D-386):
+	// its agent may not be installed yet.
+	if r.Adopted != nil && len(r.Resources) == 0 {
+		return tp, nil
 	}
 
 	// Then the agent level.
@@ -717,7 +773,7 @@ func createOnlyField(s driver.GuestSpec, attr string) any {
 // guestSpec turns the rendered guest:config into a driver spec.
 func (e *Engine) guestSpec(target string, r *state.Rendered) (driver.GuestSpec, error) {
 	a := r.Guest.Attrs
-	spec := driver.GuestSpec{Name: target, Kind: r.Kind}
+	spec := driver.GuestSpec{Name: target, Kind: r.Kind, Adopted: r.Adopted != nil}
 	var err error
 	if spec.Cores, err = driver.IntValue(a[driver.AttrCores]); err != nil {
 		return spec, err

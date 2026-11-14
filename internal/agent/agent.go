@@ -75,6 +75,9 @@ type Options struct {
 
 // Agent is one agent process.
 type Agent struct {
+	// unbindID is the id of an unbind command that ran (T-193, D-388).
+	unbindID string
+
 	opt    Options
 	cfg    Config
 	client *client
@@ -317,6 +320,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			sent := pending.CommandID
 			pending = nil
 			b.reset()
+			if a.unboundBy(sent) { // D-388: the controller took the unbind result
+				a.finishUnbind(ctx)
+				return nil
+			}
 			if a.sealedBy(sent) {
 				// Review B1: the controller took the result of seal. The
 				// agent sends nothing more: it removes itself, syncs and

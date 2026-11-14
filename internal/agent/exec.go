@@ -69,6 +69,12 @@ func (a *Agent) handle(ctx context.Context, cmd wire.Command) wire.Report {
 			return fail(fmt.Errorf("update body: %w", err))
 		}
 		rep.Items = []wire.Item{a.selfUpdate(ctx, cmd.ID, body)}
+	case wire.CommandUnbind:
+		// D-388: the credential goes after the result is sent (finishUnbind).
+		a.unbindID = cmd.ID
+		if err := a.unbind(ctx); err != nil {
+			return fail(err)
+		}
 	default:
 		return fail(fmt.Errorf("unknown command type %q", cmd.Type))
 	}
