@@ -6,9 +6,11 @@
   import { can, roleNote } from "../lib/session.svelte";
   import DeleteDocument from "../ui/DeleteDocument.svelte";
   import {
+    blockParams,
     fieldsOf,
     initialValues,
     mergeParams,
+    pinnedDefaults,
     validate,
     type Field,
     type Values,
@@ -61,6 +63,10 @@
     values: Values;
     /** The stored parameters; keys the form cannot show are kept on save. */
     stored: Record<string, unknown>;
+    /** The stored use had a `params` key (an empty one is not added, D-376). */
+    hadParams: boolean;
+    /** Parameters the person set back to follow the Block default (D-376). */
+    followed: string[];
     errors: Record<string, string>;
   }
 
@@ -226,7 +232,7 @@
     return b ? unfitText(b.document, kind) : "";
   };
 
-  function makeUse(use: string, id = "", params: Record<string, unknown> = {}): Use {
+  function makeUse(use: string, id = "", params?: Record<string, unknown>): Use {
     const schema = blockByName(use)?.document.spec.params;
     const fields = fieldsOf(schema);
     return {
@@ -234,10 +240,20 @@
       use,
       id,
       fields,
-      values: initialValues(fields, params),
-      stored: params,
+      values: initialValues(fields, params ?? {}),
+      stored: params ?? {},
+      hadParams: params !== undefined,
+      followed: [],
       errors: {},
     };
+  }
+
+  /** D-376: the person follows the Block default again for one parameter. */
+  function follow(u: Use, name: string) {
+    const f = u.fields.find((x) => x.name === name);
+    if (!f) return;
+    u.followed = [...u.followed, name];
+    u.values[name] = initialValues([f], {})[name] ?? "";
   }
 
   $effect(() => {
@@ -277,7 +293,7 @@
     if (typeof spec.image === "string") image = spec.image;
     guest = initialValues(guestFields, (spec.guest ?? {}) as Record<string, unknown>);
     allowRestart = spec.allow_restart === true;
-    uses = (spec.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params ?? {}));
+    uses = (spec.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params));
   }
 
   function addBlock(use = addChoice) {
@@ -369,12 +385,17 @@
       type: kind,
       image,
       guest: guestSpec as TargetSpec["guest"],
-      blocks: uses.map((u) => ({
-        use: u.use,
-        ...(u.id.trim() ? { id: u.id.trim() } : {}),
-        params: mergeParams(u.stored, u.fields, u.values),
-      })),
-      overrides: base.overrides ?? {},
+      blocks: uses.map((u) => {
+        // D-376: only what the person set; the server fills the defaults.
+        const params = blockParams(u.stored, u.fields, u.values, u.followed);
+        return {
+          use: u.use,
+          ...(u.id.trim() ? { id: u.id.trim() } : {}),
+          ...(Object.keys(params).length || u.hadParams ? { params } : {}),
+        };
+      }),
+      // D-376: an empty overrides is not added; a stored one stays.
+      ...(base.overrides !== undefined ? { overrides: base.overrides } : {}),
       // Written only when set or stored before, so an old Target gets no
       // new key by an unrelated edit (default false, D-194).
       ...(allowRestart || base.allow_restart !== undefined ? { allow_restart: allowRestart } : {}),
@@ -711,6 +732,8 @@
               errors={u.errors}
               prefix="use-{u.key}"
               {api}
+              pinned={pinnedDefaults(u.stored, u.fields, u.values, u.followed)}
+              onfollow={(n) => follow(u, n)}
             />
           {:else}
             <p class="muted">This Block has no parameters.</p>

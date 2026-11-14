@@ -22,4 +22,8 @@ Slice 6 part A, child card **A5** of T-172. An MCP client (the user's own AI cli
 - Everything of other rows. Part B (waits for the user). Any release step.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+branch `pl-reviewer/T-178-mcp-server` · tests: `make lint test` → pass; `make vuln` → no new finding (only the known, uncalled GO-2026-5932 in x/crypto)
+- `internal/mcp`: API client (token; https needs the controller CA as the only root; http only for loopback; no redirect; reads cut at 256 KiB; 429/problem → tool error with the wait), the fixed tool set of ARCH §18 (no approve/ignore/secret/token/user/settings tool), every read tool marks guest data as untrusted, stdio `MaxLineLength` 4 MiB.
+- `cmd/plumb/mcp.go`: `plumb mcp [--url] [--token-file 0600] [--ca]`, env `PLUMB_URL`, `PLUMB_TOKEN`, `PLUMB_CA`; stdout carries only the protocol.
+- `test/mcp`: builds plumb, starts `serve --dev --dev-demo`, makes a `plan` token, drives `plumb mcp` with a real MCP client (tools, read, comment, propose, drop).
+- go-sdk v1.8.0 pinned. Extra files with pl-lead OK: `internal/rules_test.go` (mcp package, allowlist), ARCH §2 row + §18 sentence.

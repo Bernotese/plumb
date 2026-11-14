@@ -13,6 +13,7 @@ Slice 6 part A, child card **A4a** of T-172. The UI for the server features of p
 ## Acceptance criteria
 - [ ] Everything row A4a of the plan lists; touch only the files that row gives you. If you need another file, ask `pl-lead` first.
 - [ ] Also from the reviews: with more than 20 documents the Approve hint stays (#269 n2); a token-made Plan reason is shown below the changes and labelled (#272 F4).
+- [ ] From T-196: the Image form (build Blocks) follows the same rule as the Target form (D-376): it writes only values that differ from the Block default.
 - [ ] A card that adds an API operation updates `web/src/lib/roleHints.ts`, the tier test and the contract marks in the same PR. A new resource type or attribute gets the opaque/guest-value classification test (D-359).
 - [ ] No new token right. New decisions only with numbers from `pl-lead`, in `docs/decisions/T-176.md`.
 - [ ] Tests: `make lint test` passes; `origin/main` merged; own worktree and branch; PR to `main`; pictures only from the mock (D-375); report to `pl-lead`.

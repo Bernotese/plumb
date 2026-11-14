@@ -4,6 +4,7 @@ import (
 	"bytes"
 
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // Reasons why only a human session may approve a Plan (D-099).
@@ -20,7 +21,58 @@ const (
 	// accepted one (also the first refresh), or to a pin this Image used
 	// before (D-335).
 	HumanOnlyUnverifiedPin = "unverified-pin"
+	// HumanOnlyFirewallOff: the Plan removes a firewall that is on in the
+	// base (D-368): the resource leaves the render (its Block use or Block
+	// goes, the Target is deleted) or gets state absent. That opens every
+	// port at once, so a person must see it, whatever made the Plan.
+	HumanOnlyFirewallOff = "firewall-off"
 )
+
+// firewallType is the resource type of the guest firewall (D-295).
+const firewallType = "firewall"
+
+// firewallOff reports whether the Plan from base to next turns off a
+// firewall of one of the touched targets (D-368, ARCHITECTURE §18): a
+// firewall resource that is in the base render and not absent there is
+// gone from the next render, or absent in it. A Target that is deleted
+// counts too: its firewall goes with it. A firewall that was absent in
+// the base is off already.
+func firewallOff(base, next *state.Set, targets []string) (bool, error) {
+	for _, t := range targets {
+		before, err := renderOrNil(base, t)
+		if err != nil || before == nil {
+			if err != nil {
+				return false, err
+			}
+			continue
+		}
+		var after *state.Rendered
+		for _, r := range before.Resources {
+			if r.Type != firewallType || r.Attrs[wire.AttrState] == wire.StateAbsent {
+				continue
+			}
+			if after == nil {
+				if after, err = renderOrNil(next, t); err != nil {
+					return false, err
+				}
+				if after == nil {
+					return true, nil // the Target is deleted
+				}
+			}
+			still := false
+			for _, n := range after.Resources {
+				if n.ID == r.ID {
+					still = n.Attrs[wire.AttrState] != wire.StateAbsent
+					break
+				}
+			}
+			if !still {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
 
 // humanOnlyReasons computes Plan.human_only from the content of the
 // proposal against its base, for every origin (D-099): a Rule that is
