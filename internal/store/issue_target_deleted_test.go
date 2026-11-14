@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 )
 
 // 0026 marks the resolved Issues of Targets that the head no longer holds
@@ -25,7 +28,7 @@ func TestMigrationIssueTargetDeleted(t *testing.T) {
 		`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (1, 'Target', 'live', 'h1'), (1, 'Target', 'gone', 'h2')`,
 		`INSERT INTO revision (id, author, reason, created_at) VALUES (2, 'user:admin', 'delete', '`+now+`')`,
 		`INSERT INTO revision_doc (revision_id, kind, name, hash) VALUES (2, 'Target', 'live', 'h1')`,
-		issue(1, "live", "resolved"), issue(2, "gone", "resolved"), issue(3, "gone", "open"))
+		issue(1, "live", "resolved"), issue(2, "gone", "resolved"), issue(3, "other", "open"))
 	ctx := context.Background()
 	s, err := Open(ctx, path)
 	if err != nil {
@@ -38,5 +41,15 @@ func TestMigrationIssueTargetDeleted(t *testing.T) {
 		if err := s.db.QueryRowContext(ctx, `SELECT target_deleted FROM issue WHERE id = ?`, id).Scan(&got); err != nil || got != w {
 			t.Errorf("issue %d: target_deleted %d (%v), want %d", id, got, err, w)
 		}
+	}
+	// The same drift after the upgrade: the Issue of the Target deleted
+	// before it is not reopened (a new one is made); the control of a
+	// Target in the head is.
+	since := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	if _, err := s.ReopenGoneIssue(ctx, "gone", "guest:addresses", since, json.RawMessage(`[]`)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the Issue of a Target deleted before 0026 was reopened: %v", err)
+	}
+	if got, err := s.ReopenGoneIssue(ctx, "live", "guest:addresses", since, json.RawMessage(`[]`)); err != nil || got.ID != 1 {
+		t.Fatalf("control: %+v %v", got, err)
 	}
 }
