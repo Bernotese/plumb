@@ -7,6 +7,7 @@ import { flushSync } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockApi } from "../lib/mock/mock";
 import type { BlockDoc, TargetDoc } from "../lib/types";
+import ImageForm from "./ImageForm.svelte";
 import TargetForm from "./TargetForm.svelte";
 import { button, el, planOpened, reset, show, text, type, until } from "./testkit";
 
@@ -115,5 +116,23 @@ describe("form writes only what the person set (D-376)", () => {
     doc = createPlan.mock.calls[0]?.[0].put?.[0] as TargetDoc;
     expect(doc.spec.blocks?.find((u) => u.use === "motd")).not.toHaveProperty("params.text");
     expect(follow).toBeDefined();
+  });
+});
+
+describe("the Image form follows the same rule (T-176, D-376)", () => {
+  it.each([
+    ["ubuntu-web", [{ use: "nginx" }]],
+    ["debian-ct-web", [{ use: "nginx", params: {} }]],
+  ])("an unchanged save of %s writes no default", async (name, blocks) => {
+    const api = adminApi();
+    const createPlan = vi.spyOn(api, "createPlan");
+    show(ImageForm, { api, name });
+    await until(() => document.querySelector("#i-url"));
+    await until(() => document.querySelector('[id^="iuse-"]'));
+    type("#i-reason", "Same.");
+    submit();
+    await planOpened();
+    const doc = createPlan.mock.calls[0]?.[0].put?.[0] as { spec: { build?: { blocks: unknown } } };
+    expect(doc.spec.build?.blocks).toEqual(blocks);
   });
 });

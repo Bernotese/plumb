@@ -2,7 +2,7 @@
 // session cookie, no token or password is stored by the UI. Errors are
 // ApiError with the problem+json body.
 import { API_BASE, ApiError, NetworkError, toProblem } from "./api";
-import type { CatalogBlock, PinRefresh, PlumbApi, User } from "./client";
+import type { CatalogBlock, PinRefresh, PlumbApi, Settings, User } from "./client";
 import type { components } from "./api.gen";
 import type {
   BlockView,
@@ -50,6 +50,7 @@ export const EVENT_TYPES = [
   "user.password_reset",
   "user.created",
   "user.changed",
+  "settings.changed",
 ] as const satisfies readonly components["schemas"]["Event"]["type"][];
 
 export interface HttpOptions {
@@ -217,6 +218,8 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     listTokens: () => all<Token>("/tokens"),
     createToken: (req) => call<TokenCreated>("POST", "/tokens", req),
     enableToken: (id) => call<Token>("POST", `/tokens/${encodeURIComponent(id)}/enable`),
+    getSettings: () => call<Settings>("GET", "/settings"),
+    changeSettings: (change) => call<Settings>("PATCH", "/settings", change),
     listBackups: () => call<BackupList>("GET", "/backups"),
     createBackup: () => call<BackupRun>("POST", "/backups"),
     getRestore: () => call<RestoreState>("GET", "/restore"),
