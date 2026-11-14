@@ -130,6 +130,7 @@ type Service struct {
 	hour     int
 	min      int
 	since    time.Time // last change of the time: no slot before it is due
+	dueBy    time.Time // ... but a backup is due by then (the old schedule's next slot)
 	changeMu sync.Mutex
 }
 
@@ -233,7 +234,12 @@ func (s *Service) writeInstall() error {
 // ChangeSchedule writes it, so it means a broken database.
 func (s *Service) applyStored(stored map[string]store.Setting) error {
 	next := Schedule{Time: s.cfg.Time, Keep: s.cfg.Keep, TimeSource: s.cfg.TimeSource, KeepSource: s.cfg.KeepSource}
-	var since time.Time
+	var since, dueBy time.Time
+	if st, ok := stored[store.SettingBackupDueBy]; ok && st.Set() {
+		if err := json.Unmarshal(st.Value, &dueBy); err != nil {
+			return fmt.Errorf("stored setting %s: %w", st.Key, err)
+		}
+	}
 	if st, ok := stored[store.SettingBackupTime]; ok {
 		since = st.ChangedAt
 		if st.Set() {
@@ -259,7 +265,7 @@ func (s *Service) applyStored(stored map[string]store.Setting) error {
 		return err
 	}
 	s.schedMu.Lock()
-	s.sched, s.hour, s.min, s.since = next, h, m, since
+	s.sched, s.hour, s.min, s.since, s.dueBy = next, h, m, since, dueBy
 	s.schedMu.Unlock()
 	return nil
 }
@@ -296,6 +302,13 @@ func (s *Service) ChangeSchedule(ctx context.Context, by string, c ScheduleChang
 	values := map[string]json.RawMessage{}
 	if c.SetTime {
 		values[store.SettingBackupTime] = rawOrNull(c.Time)
+		// The next backup of the old schedule stays the latest time of the
+		// next backup: now when the old one is due, else its next slot.
+		by, err := s.oldNext(ctx)
+		if err != nil {
+			return old, old, err
+		}
+		values[store.SettingBackupDueBy] = rawOrNull(&by)
 	}
 	if c.SetKeep {
 		values[store.SettingBackupKeep] = rawOrNull(c.Keep)
@@ -832,21 +845,38 @@ func printable(s string) bool {
 	return true
 }
 
+// oldNext is the time of the next scheduled backup by the current schedule:
+// now when it is due, else its next slot.
+func (s *Service) oldNext(ctx context.Context) (time.Time, error) {
+	due, err := s.Due(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	now := s.cfg.Now().UTC()
+	if due {
+		return now, nil
+	}
+	s.schedMu.RLock()
+	hour, min := s.hour, s.min
+	s.schedMu.RUnlock()
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, time.UTC)
+	if !next.After(now) {
+		next = next.AddDate(0, 0, 1)
+	}
+	return next, nil
+}
+
 // Due reports whether the scheduled backup of today is due: the time of
 // today passed and no scheduled backup started since then. A controller
 // that was down at the time catches up at its next check.
 func (s *Service) Due(ctx context.Context) (bool, error) {
 	now := s.cfg.Now().UTC()
 	s.schedMu.RLock()
-	hour, min, since := s.hour, s.min, s.since
+	hour, min, since, dueBy := s.hour, s.min, s.since, s.dueBy
 	s.schedMu.RUnlock()
 	slot := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, time.UTC)
 	if now.Before(slot) {
 		slot = slot.AddDate(0, 0, -1)
-	}
-	// A change of the time makes no slot before the change due (D-361).
-	if slot.Before(since) {
-		return false, nil
 	}
 	last, err := s.cfg.Store.LastBackupRun(ctx, store.BackupSchedule)
 	if errors.Is(err, store.ErrNotFound) {
@@ -854,6 +884,12 @@ func (s *Service) Due(ctx context.Context) (bool, error) {
 	}
 	if err != nil {
 		return false, err
+	}
+	// A change of the time makes no slot before the change due (D-361),
+	// but the old schedule's next backup stays due by its time, so a
+	// change never delays the next backup (review n1 of #282).
+	if slot.Before(since) {
+		return !dueBy.IsZero() && !now.Before(dueBy) && last.StartedAt.Before(dueBy), nil
 	}
 	return last.StartedAt.Before(slot), nil
 }

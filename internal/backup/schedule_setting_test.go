@@ -126,3 +126,39 @@ func TestScheduleBadStoredValue(t *testing.T) {
 		t.Error("keep 500 from the store accepted")
 	}
 }
+
+// Review n1 of #282: a change never makes the next backup later than the
+// old schedule would. Old 03:00, last backup yesterday 03:00; at 02:00
+// the time moves to 01:00: today's 01:00 lies before the change, but the
+// old 03:00 is still due (no 46 h gap). The bound survives a restart.
+func TestScheduleChangeNeverDelays(t *testing.T) {
+	f := newFixture(t, func(c *Config) { c.Time = "03:00" })
+	f.clock.set(time.Date(2026, 11, 12, 3, 0, 0, 0, time.UTC))
+	f.backup(SystemActor)
+	f.clock.set(time.Date(2026, 11, 13, 2, 0, 0, 0, time.UTC))
+	if _, _, err := f.svc.ChangeSchedule(f.ctx, "user:admin", ScheduleChange{SetTime: true, Time: strp("01:00")}); err != nil {
+		t.Fatal(err)
+	}
+	if due, _ := f.svc.Due(f.ctx); due {
+		t.Error("02:00: today's 01:00 lies before the change: not due")
+	}
+	// A restart keeps the bound.
+	svc, err := New(f.ctx, Config{Store: f.st, DataDir: f.data, Time: "03:00", Serve: true, CopyStatus: f.copy, Now: f.clock.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.clock.set(time.Date(2026, 11, 13, 3, 0, 0, 0, time.UTC))
+	for _, s := range []*Service{f.svc, svc} {
+		if due, _ := s.Due(f.ctx); !due {
+			t.Error("03:00: the old schedule's backup is due")
+		}
+	}
+	f.backup(SystemActor)
+	if due, _ := f.svc.Due(f.ctx); due {
+		t.Error("after the 03:00 backup: not due")
+	}
+	f.clock.set(time.Date(2026, 11, 14, 1, 0, 0, 0, time.UTC))
+	if due, _ := f.svc.Due(f.ctx); !due {
+		t.Error("next day 01:00: due by the new time")
+	}
+}

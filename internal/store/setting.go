@@ -12,6 +12,9 @@ import (
 const (
 	SettingBackupTime = "backup.time"
 	SettingBackupKeep = "backup.keep"
+	// SettingBackupDueBy is internal: the latest time of the next
+	// scheduled backup after a change of the time (RFC 3339 string).
+	SettingBackupDueBy = "backup.due_by"
 )
 
 // Setting is one stored controller setting. Value "null" means not set.
