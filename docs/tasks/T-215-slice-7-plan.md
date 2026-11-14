@@ -162,7 +162,11 @@ B2 of #321: never `ifreload -a` (it applies the whole file and could change `vmb
 7. **Leak hunt:** grep a real vzdump of the VM for the agent credential and a test secret value, and record the result (expected: present in clear on the clear storage, which is the D-406 warning). Grep the controller DB, events, logs and export for the volume notes: no secret.
 8. **VMID reuse:** delete the VM Target (the guest goes, the backups stay). A new Target gets the same VMID: its list shows the old volumes as `older-guest`, and restore and retention refuse them.
 9. **The rights limit (B1 of #321):** delete a pool guest in Proxmox by hand (outside Plumb): its backups are invisible to the token (`GET …/content` with the token does not list them), as T-214 FACT 1 says. Its Target shows `guest:missing` and offers no restore.
-10. **Second storage (M2 of #321):** turn on `backup` content on the disk storage: the settings view shows the warning; a repair run of the installer refuses until it is off again (then turn it off).
+10. **Second storage (M2 of #321):** never on `local-lvm` (AGENTS.md forbids changing it, and lvmthin cannot hold backups). Steps:
+    1. Copy `/etc/pve/storage.cfg` (0600, outside the repo).
+    2. Add `backup` to the `content` of `plumb-snippets` (a dir).
+    3. The settings view shows the warning, and a repair run of the installer refuses.
+    4. Put `content` back, and check that `storage.cfg` is byte-equal to the copy (memory: `pvesm set` rewrites the file, so compare it, or restore the copy).
 11. **LXC `exclude-path` (L1 of #321):** an LXC backup with `exclude-path` for `/etc/plumb-agent` and `/var/lib/plumb-agent` works with the token (no extra right) and the archive does not hold them; record it. If it needs another right, C5 drops the option and says so.
 12. **Host clean:** remove the test guests and backups; `vmbr9` stays until pl-lead's undo card.
 
