@@ -157,6 +157,8 @@ describe("document changes of a Plan", () => {
     show(PlanView, { api, id: 14 });
     await until(() => document.querySelector("#docs-missing"));
     expect(text()).toContain("This server does not list the document changes of a plan.");
+    // A warning, not a muted note (review n1 of #269).
+    expect(document.querySelector("#docs-missing")?.className).toContain("banner warn");
   });
 
   it("shows the first 20 diffs, the rest on request, and names truncated entries", async () => {
@@ -171,6 +173,12 @@ describe("document changes of a Plan", () => {
     show(PlanView, { api, id: 14 });
     await until(() => document.querySelector("#docs-all"));
     expect(document.querySelectorAll("section.doc").length).toBe(20);
+    // The Approve form says that not all diffs are open (review n2 of #269).
+    const hint = document.querySelector("#approve-docs-hint");
+    expect(hint?.textContent).toContain(
+      "Not all document diffs are open: 20 of 23 are shown above.",
+    );
+    expect(button("Approve and apply")?.getAttribute("aria-describedby")).toBe("approve-docs-hint");
     expect(text()).toContain("Some documents are listed by name only.");
     button("Show the other 3 documents")?.click();
     await until(() => document.querySelector("#pdoc-22"));
@@ -179,5 +187,7 @@ describe("document changes of a Plan", () => {
       /Added\s*Block b21\s*\(too large to show here\)/,
     );
     expect(document.querySelector("#docs-all")).toBeNull();
+    expect(document.querySelector("#approve-docs-hint")).toBeNull();
+    expect(button("Approve and apply")?.hasAttribute("aria-describedby")).toBe(false);
   });
 });

@@ -95,6 +95,13 @@
     changed: docs?.filter((c) => c.op === "changed").length ?? 0,
     removed: docs?.filter((c) => c.op === "removed").length ?? 0,
   });
+  // More diffs than shown: the Approve form says so (review n2 of #269).
+  const docsHidden = $derived(!allDocs && (docs?.length ?? 0) > FIRST_DOCS);
+  async function openAllDocs() {
+    allDocs = true;
+    await tick();
+    document.getElementById(`pdoc-${FIRST_DOCS}-title`)?.scrollIntoView({ block: "start" });
+  }
   const shownDocs = $derived(docs && !allDocs ? docs.slice(0, FIRST_DOCS) : (docs ?? []));
   const noText = (c: DocumentChange) =>
     (c.op !== "added" && c.before === null) || (c.op !== "removed" && c.after === null);
@@ -240,9 +247,9 @@
       </p>
       <ProblemBox error={committedError} />
     {:else if docs === undefined}
-      <p class="muted" id="docs-missing">
-        This server does not list the document changes of a plan. Update Plumb to see them before
-        you approve.
+      <p class="banner warn" id="docs-missing" role="note">
+        <strong>This server does not list the document changes of a plan.</strong> Update Plumb to see
+        them before you approve.
       </p>
     {/if}
     {#if plan.documents_unavailable || docs === undefined}
@@ -277,7 +284,7 @@
         {/if}
       {/each}
       {#if !allDocs && docs.length > FIRST_DOCS}
-        <button class="btn" type="button" id="docs-all" onclick={() => (allDocs = true)}
+        <button class="btn" type="button" id="docs-all" onclick={openAllDocs}
           >Show the other {docs.length - FIRST_DOCS} documents</button
         >
       {/if}
@@ -433,14 +440,24 @@
         </p>
       {/if}
       <ProblemBox error={approveError} />
+      {#if docsHidden}
+        <p class="banner warn" id="approve-docs-hint" role="note">
+          Not all document diffs are open: {FIRST_DOCS} of {docs?.length} are shown above.
+          <button class="link" type="button" onclick={openAllDocs}>Show all diffs</button>
+        </p>
+      {/if}
       <div class="row">
         {#if canApprove(plan)}
           <button
             class="btn primary"
             type="submit"
             disabled={busy || restored.mode}
-            aria-describedby={restored.mode ? "approve-restored" : undefined}
-            >Approve and apply</button
+            aria-describedby={[
+              restored.mode ? "approve-restored" : "",
+              docsHidden ? "approve-docs-hint" : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined}>Approve and apply</button
           >
         {/if}
         <a class="btn" href={href({ name: "plans" })}>Not now</a>
@@ -479,6 +496,19 @@
 {/if}
 
 <style>
+  .link {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .link:focus-visible {
+    outline: 2px solid var(--color-accent);
+  }
   .docs {
     margin-bottom: var(--space-4);
   }
