@@ -226,7 +226,8 @@ Model Context Protocol over stdio. It uses the public API with an API token.
 What the client **can** do (and nothing else):
 
 - read Targets, Issues (with the difference and the comments), Plans (with their changes and
-  documents), Runs and revisions (with their difference), and the events since a given point;
+  documents), Runs, revisions and their difference, Blocks, Images, the starter catalogue, and the
+  events since a given point;
 - propose a change of Targets, Blocks or Images (a Plan);
 - Revert or Accept an Issue (a Plan), re-enroll a Target (a Plan), and drop a Plan;
 - comment on an Issue.
