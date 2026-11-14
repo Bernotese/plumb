@@ -22,12 +22,14 @@ export type TargetSpec = TargetDoc["spec"];
 export type BlockDoc = S["block"];
 export type Proposal = S["Proposal"];
 /**
- * `documents` and `documents_truncated` come with T-170 (Plan.documents);
- * they are optional, as an older server leaves them out.
+ * `documents`, `documents_truncated` and `documents_unavailable` come with
+ * T-170 (Plan.documents); they are optional, as an older server leaves
+ * them out.
  */
 export type Plan = S["Plan"] & {
   documents?: S["DocumentChange"][];
   documents_truncated?: boolean;
+  documents_unavailable?: boolean;
 };
 export type ResourcePlan = S["ResourcePlan"];
 export type Run = S["Run"];

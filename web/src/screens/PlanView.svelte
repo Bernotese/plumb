@@ -77,7 +77,19 @@
   // (T-170) has no text.
   const FIRST_DOCS = 20;
   let allDocs = $state(false);
-  const docs = $derived(plan?.documents);
+  // An approved Plan has no `documents` (T-170): its committed revision
+  // diff shows what the approval changed.
+  let committed = $state<DocumentChange[] | undefined>(undefined);
+  let committedError = $state<unknown>(null);
+  $effect(() => {
+    const n = plan?.status === "approved" && !plan.documents ? plan.revision : null;
+    if (n === null || n === undefined) return;
+    api.diffRevision(n).then(
+      (d) => (committed = d.changes),
+      (e: unknown) => (committedError = e),
+    );
+  });
+  const docs = $derived(plan?.documents_unavailable ? undefined : (plan?.documents ?? committed));
   const docCount = $derived({
     added: docs?.filter((c) => c.op === "added").length ?? 0,
     changed: docs?.filter((c) => c.op === "changed").length ?? 0,
@@ -213,11 +225,28 @@
 
   <section class="docs" aria-labelledby="docs-title">
     <h2 id="docs-title">Document changes</h2>
-    {#if docs === undefined}
+    {#if plan.documents_unavailable}
+      <p class="banner warn" id="docs-unavailable" role="note">
+        The document changes of this plan are not available: Plumb cannot compute them, for example
+        because the proposal is no longer valid.
+      </p>
+    {:else if plan.status === "approved" && !plan.documents && plan.revision === null}
+      <p class="muted" id="docs-none">This plan changed no document.</p>
+    {:else if plan.status === "approved" && !plan.documents}
+      <p class="muted" id="docs-revision">
+        The approval committed <a href={href({ name: "revision", id: plan.revision ?? 0 })}
+          >revision {plan.revision}</a
+        >.
+      </p>
+      <ProblemBox error={committedError} />
+    {:else if docs === undefined}
       <p class="muted" id="docs-missing">
         This server does not list the document changes of a plan. Update Plumb to see them before
         you approve.
       </p>
+    {/if}
+    {#if plan.documents_unavailable || docs === undefined}
+      <!-- nothing more to list -->
     {:else if docs.length === 0}
       <p class="muted" id="docs-none">
         {plan.status === "approved" ? "This plan changed" : "This plan changes"} no document.

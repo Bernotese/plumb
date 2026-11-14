@@ -1030,12 +1030,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
 
   /**
    * The Plan with `documents`: what its approval commits, the base
-   * revision against the proposal applied (T-170). A seeded example Plan
+   * revision against the proposal applied (T-170); pending and stale
+   * Plans only. A seeded example Plan
    * without a stored proposal leaves the field out, like a server before
    * T-170.
    */
   function withDocuments(p: Plan): Plan {
     const out = structuredClone(p);
+    // An approved Plan has no list: its revision diff shows the change.
+    if (p.status === "approved") return out;
     if (p.origin === "build" || p.origin === "agent_update") {
       out.documents = [];
       return out;

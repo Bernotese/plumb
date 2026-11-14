@@ -103,6 +103,48 @@ describe("document changes of a Plan", () => {
     );
   });
 
+  it("an approved Plan shows the diff of its committed revision", async () => {
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
+    await addBlock(api, "lonely", "Old text.");
+    const plan = await api.createPlan({
+      reason: "Update the Block lonely.",
+      put: [block("lonely", "New text.") as never],
+    });
+    await api.approvePlan(plan.id);
+    const done = await api.getPlan(plan.id);
+    expect(done.status).toBe("approved");
+    expect(done.documents).toBeUndefined();
+    show(PlanView, { api, id: plan.id });
+    await until(() => diffOf(0)?.querySelector("table.diff"));
+    expect(document.querySelector("#docs-revision")?.textContent).toContain(
+      `The approval committed revision ${done.revision}.`,
+    );
+    expect(document.querySelector("#docs-count")?.textContent?.replace(/\s+/g, " ")).toContain(
+      "The approval committed 0 added, 1 changed, 0 removed document",
+    );
+    expect(diffOf(0)?.textContent).toMatch(/Added:\s*default: New text\./);
+  });
+
+  it("a Plan whose list the server cannot compute says so", async () => {
+    const api = await withPlan({ documents: undefined, documents_unavailable: true });
+    show(PlanView, { api, id: 14 });
+    await until(() => document.querySelector("#docs-unavailable"));
+    expect(text()).toContain("The document changes of this plan are not available");
+    expect(document.querySelector("#docs-missing, #docs-count, #docs-none")).toBeNull();
+  });
+
+  it("an approved Plan without a revision changed no document", async () => {
+    const api = await withPlan({
+      origin: "agent_update",
+      status: "approved",
+      revision: null,
+      documents: undefined,
+    });
+    show(PlanView, { api, id: 14 });
+    await until(() => document.querySelector("#docs-none"));
+    expect(text()).toContain("This plan changed no document.");
+  });
+
   it("an agent update changes no document", async () => {
     const api = await withPlan({ origin: "agent_update", targets: [], documents: [] });
     show(PlanView, { api, id: 14 });
