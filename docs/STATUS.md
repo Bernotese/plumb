@@ -63,7 +63,8 @@ The user merged PR #8, #5, #13 on 2026-11-10. The real guest tests run in the CI
 | T-145 slice 5 C1b: contract `network`, `group`, generic safe apply | pl-architect | merged (PR #244), D-348 … D-350 |
 | T-146 slice 5 C2: starter catalogue API | pl-backend | merged (PR #246) |
 | T-147 slice 5 C3: users and roles (migration 0017; closes F3 of T-122) | pl-reviewer (implementer), review: pl-architect | merged (PR #250), D-351 |
-| T-148 slice 5 C4: copy rule for guest-reported values (D-331, migration 0018) | pl-backend | PR #248: review passed; **CI red twice** in the race job (`TestCopyRuleCapFailsClosed`, 401 on a report during the cap write); cause under work, no merge before it is proven; D-352, D-353 |
+| T-148 slice 5 C4: copy rule for guest-reported values (D-331, migration 0018) | pl-backend | merged (PR #248), D-352, D-353. The red race job was real: writer starvation by back-to-back write txs (fixed, measured in CI) |
+| T-163 copy rule: write load of hostile guests (review notes d1, d2 of #248) | pl-codex-fix | in work |
 | T-150 slice 5 C6: generic safe apply + resource `network` | pl-backend | code complete locally (Debian + Ubuntu netplan merge proven in CI, draft PR #249); push after #248; D-354 … D-357 |
 | T-152 slice 5 C8: signed checksums | pl-architect (implementer) | part A merged (PR #247); part B1 done locally (migration 0019), B2 after #248 |
 | T-154 slice 5 C9b: web (catalogue, users page, role-aware buttons, Image `verify`) | pl-frontend | merged (PR #252); "Refresh base" tested on the mock only until T-152 part B |
