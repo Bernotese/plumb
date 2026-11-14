@@ -3583,7 +3583,11 @@ components:
             imported change; a `pin_refresh` Plan the Image with its new pin. Bound: at most 500
             entries carry `before`/`after`, and at most 8 MiB of document text in all; past either
             bound the remaining entries keep `kind`, `name` and `op` with `before` and `after`
-            `null`, and `documents_truncated` is true. Present in every answer that returns one Plan
+            `null`, and `documents_truncated` is true. Only for a `pending` or `stale` Plan; missing
+            for an `approved` Plan (read `GET /revisions/{revision}/diff` instead). If the server
+            cannot compute it (for example an old proposal that no longer validates), the field is
+            missing and `documents_unavailable` is true; the answer itself never fails for it.
+            Present in every answer that returns one Plan
             (`GET /plans/{id}`, `POST /plans` and every action that answers with a Plan); missing in the
             items of `GET /plans` (computing it rebuilds the planned state).
           items: { $ref: "#/components/schemas/DocumentChange" }
@@ -3592,6 +3596,11 @@ components:
           description: |
             Some entries of `documents` have `before`/`after` `null` because of the size bound.
             Missing or false otherwise.
+        documents_unavailable:
+          type: boolean
+          description: |
+            The server could not compute `documents` for this pending or stale Plan; the UI shows
+            "document changes not available". Missing or false otherwise (T-170, review D1 of #267).
         images:
           type: array
           description: |

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
 )
 
 // T-170 (host finding F1 of T-158): a pending Plan lists the document
@@ -75,6 +76,10 @@ func TestPlanDocumentsBlockOnly(t *testing.T) {
 	if string(a) != string(b) {
 		t.Fatalf("documents before approval\n%s\n!= committed diff\n%s", a, b)
 	}
+	// An approved Plan has its revision diff, no documents (D1 of #267).
+	if _, got := adm.do("GET", "/api/v1/plans/"+itoa(p.ID), nil); strings.Contains(string(got), `"documents"`) {
+		t.Fatalf("documents of an approved plan: %s", got)
+	}
 	// The list of Plans has no documents (rebuilding them per item costs).
 	_, list := adm.do("GET", "/api/v1/plans?limit=5", nil)
 	if strings.Contains(string(list), `"documents"`) {
@@ -142,5 +147,40 @@ func TestPlanDocumentsStaleAndBound(t *testing.T) {
 	docs := *cut.Documents
 	if !cut.Truncated || len(docs) != 2 || string(docs[0].After) == "null" || string(docs[1].After) != "null" || docs[1].Name != "ddd" {
 		t.Fatalf("bound: %+v truncated=%v", docs, cut.Truncated)
+	}
+}
+
+// Review D1 of #267: a Plan whose proposal no longer validates (an old
+// Plan after a schema change) still loads; the field is missing and the
+// marker says so.
+func TestPlanDocumentsUnavailable(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	head, _ := e.st.Head(e.ctx)
+	for _, status := range []string{store.PlanPending, store.PlanApproved} {
+		p, err := e.st.CreatePlan(e.ctx, store.Plan{BaseRevision: head.ID, Origin: plan.OriginProposal,
+			Proposal: []byte(`{"put":[{"kind":"Block","name":"old","spec":{"no-such-field":1}}]}`), Changes: []byte(`[]`), Images: []byte(`[]`),
+			Risk: "reversible", Reason: "old", Author: "user:admin"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status == store.PlanApproved {
+			rows, err := e.st.RevisionDocs(e.ctx, head.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := e.st.ApprovePlan(e.ctx, p.ID, "user:admin", store.NewRevision{Author: "user:admin", Reason: "old", Docs: rows}); err != nil {
+				t.Fatal(err)
+			}
+			head, _ = e.st.Head(e.ctx)
+		}
+		code, body := adm.do("GET", "/api/v1/plans/"+itoa(p.ID), nil)
+		if code != 200 || strings.Contains(string(body), `"documents"`) {
+			t.Fatalf("%s: %d %s", status, code, body)
+		}
+		if want := status == store.PlanPending; strings.Contains(string(body), `"documents_unavailable":true`) != want {
+			t.Fatalf("%s: marker %s", status, body)
+		}
 	}
 }

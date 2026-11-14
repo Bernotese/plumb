@@ -392,12 +392,19 @@ func (s *Server) writePlan(w http.ResponseWriter, r *http.Request, status int, p
 		s.internal(w, err)
 		return
 	}
-	docs, cut, err := s.cfg.Plans.PlanDocuments(r.Context(), p)
-	if err != nil {
-		s.internal(w, err)
-		return
+	// Plan.documents (T-170): only for a pending or stale Plan; an
+	// approved one has its revision diff. A failure never fails the
+	// answer: the field is left out and documents_unavailable says so
+	// (review D1 of #267).
+	if p.Status != store.PlanApproved {
+		docs, cut, err := s.cfg.Plans.PlanDocuments(r.Context(), p)
+		if err != nil {
+			s.log.Warn("plan documents", "plan", p.ID, "err", err)
+			v.DocumentsUnavailable = true
+		} else {
+			v.Documents, v.DocumentsTruncated = &docs, cut
+		}
 	}
-	v.Documents, v.DocumentsTruncated = &docs, cut
 	if status == http.StatusCreated {
 		w.Header().Set("Location", fmt.Sprintf("/api/v1/plans/%d", p.ID))
 	}
