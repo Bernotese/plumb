@@ -18,8 +18,8 @@
   import RiskBadge from "../ui/RiskBadge.svelte";
 
   let { api, id }: { api: PlumbApi; id: number } = $props();
-  /** The attribute of a drift of NIC 1 … 3 (T-219): "nic1", also "nic1.bridge". */
-  const NIC_ATTR = /^(nic[1-3])(?:$|[._/])/;
+  /** The attribute of a drift of NIC 1 … 3 (T-219): exactly "nic1" … "nic3", one per NIC. */
+  const NIC_ATTR = /^(nic[1-3])$/;
   let issue = $state<Issue | null>(null);
   let error = $state<unknown>(null);
   let actionError = $state<unknown>(null);

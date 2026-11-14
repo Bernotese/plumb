@@ -36,7 +36,14 @@ describe("Issue actions from the server", () => {
   it("guest:config with a NIC change: revert, no accept, the reason (D-418)", async () => {
     await serverIssue("guest:config", {
       changes: [
-        { attr: "nic1", from: "vmbr2 tag 30", to: "vmbr2 tag 20", risk: "disruptive" },
+        {
+          attr: "nic1",
+          from: "bridge=vmbr2,tag=30,mac=02:aa:bb:cc:dd:01",
+          to: "bridge=vmbr2,tag=20,ip=10.20.0.20/24,mac=02:aa:bb:cc:dd:01",
+          risk: "disruptive",
+        },
+        // A NIC added in Proxmox: no `to` (T-219).
+        { attr: "nic3", from: "bridge=vmbr9,mac=02:aa:bb:cc:dd:03", risk: "disruptive" },
         { attr: "cores", from: "4", to: "2", risk: "disruptive" },
       ],
       actions: ["revert", "ignore_once", "ignore_rule"],
@@ -45,7 +52,7 @@ describe("Issue actions from the server", () => {
     expect(accept()).toBeUndefined();
     expect(button("Revert: apply the desired state")).toBeDefined();
     expect(text(el("#accept-nic"))).toContain(
-      "Accept is not possible for a network card (nic1). Revert it, or change guest.nics in the Target web1.",
+      "Accept is not possible for a network card (nic1, nic3). Revert it, or change guest.nics in the Target web1.",
     );
   });
 
@@ -53,6 +60,15 @@ describe("Issue actions from the server", () => {
     await serverIssue("guest:config", {
       changes: [{ attr: "cores", from: "4", to: "2", risk: "disruptive" }],
       actions: ["accept", "revert", "ignore_once", "ignore_rule"],
+      raw: false,
+    });
+    expect(document.querySelector("#accept-nic")).toBeNull();
+  });
+
+  it("an attr that only starts with nic is not a NIC drift", async () => {
+    await serverIssue("guest:config", {
+      changes: [{ attr: "nic1.bridge", from: "a", to: "b", risk: "disruptive" }],
+      actions: ["revert", "ignore_once", "ignore_rule"],
       raw: false,
     });
     expect(document.querySelector("#accept-nic")).toBeNull();
