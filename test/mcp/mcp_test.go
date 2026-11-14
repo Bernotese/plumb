@@ -205,10 +205,18 @@ func TestMCPAgainstServeDev(t *testing.T) {
 		t.Fatal("an approve tool answered")
 	}
 
-	// Read: the demo Targets.
-	isErr, text := toolText(t, cs, "list_targets", nil)
-	if isErr || !strings.Contains(text, `"web1"`) {
-		t.Fatalf("list_targets: %s", text)
+	// Read: the demo Targets. The dev seed runs in the background after
+	// serve prints its address, so wait for it (CI saw an empty list once).
+	var isErr bool
+	var text string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(500 * time.Millisecond) {
+		isErr, text = toolText(t, cs, "list_targets", nil)
+		if !isErr && strings.Contains(text, `"web1"`) {
+			break
+		}
+		if isErr || time.Now().After(deadline) {
+			t.Fatalf("list_targets: %s", text)
+		}
 	}
 
 	// Write 1: a comment on an Issue of the demo (db1 has an address Issue).
