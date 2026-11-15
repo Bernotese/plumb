@@ -118,8 +118,9 @@ func (g *Guests) Delete(ctx context.Context, target, id, actor string) error {
 		if err := g.cfg.Driver.DeleteGuestBackup(ctx, g.cfg.Storage, t.Guest, c.Volid); err != nil {
 			return fmt.Errorf("backup: delete: %w", err)
 		}
-		if err := g.cfg.Store.MarkGuestBackupDeleted(ctx, t.Name, c.Volid); err != nil { // F1 of #331
-			return err
+		if err := g.markDeleted(ctx, t.Name, c.Volid); err != nil { // F1 of #331
+			g.cfg.Logger.Error("guest backup delete: the volume is deleted but not marked; a file made again under its name would count as Plumb's", "target", t.Name, "backup", c.ID, "err", err)
+			return fmt.Errorf("backup: the backup is deleted, but its record could not be marked: %w", err)
 		}
 		g.emit(ctx, "guest_backup.deleted", t.Name, actor, map[string]any{"backup": c.ID, "kind": c.Kind})
 		return nil
@@ -208,4 +209,55 @@ func (g *Guests) StartSchedule(interval time.Duration) {
 			}
 		}
 	}()
+}
+
+// KeepDeletes is the number of the Target's backups that the next job's
+// retention deletes with newKeep (a Plan's note and risk, D-417), or -1
+// when it cannot be known (no storage that can be read): the Plan then
+// fails closed (review of #334).
+func (g *Guests) KeepDeletes(ctx context.Context, target string, newKeep int) (int, error) {
+	t, err := g.cfg.Target(ctx, target)
+	if errors.Is(err, store.ErrNotFound) {
+		return 0, nil // no bound guest: no Plumb backup can exist
+	}
+	if err != nil {
+		return 0, err
+	}
+	if _, _, err := g.storageState(ctx); err != nil {
+		if errors.Is(err, ErrGuestBackupRefused) {
+			return -1, nil
+		}
+		return 0, err
+	}
+	lineage, err := g.cfg.Store.BackupLineage(ctx, t.Name, t.Gen)
+	if err != nil {
+		return 0, err
+	}
+	vols, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest)
+	if err != nil {
+		return 0, err
+	}
+	rec, err := g.recorded(ctx, t.Name)
+	if err != nil {
+		return 0, err
+	}
+	return NextJobDeletes(Classify(vols, g.cfg.InstallID, t.Name, lineage, rec), newKeep), nil
+}
+
+// StorageNote is the warning of a Plan that adds a backup field (D-406):
+// what a backup holds on a clear storage, or why backups will be refused.
+// "" on a PBS with client-side encryption.
+func (g *Guests) StorageNote(ctx context.Context) (string, error) {
+	state, _, err := g.storageState(ctx)
+	switch {
+	case errors.Is(err, ErrGuestBackupRefused):
+		return "the install named no guest backup storage, so no backup runs (install.sh --guest-backup-storage).", nil
+	case err != nil:
+		return "", err
+	case state == StorageStatedClear:
+		return "the guest backup storage keeps backups in clear (stated at install): a backup holds the whole guest disk, also the agent credential and secret values.", nil
+	case state == StorageClearRefuse:
+		return "the guest backup storage keeps backups in clear and the install did not allow that, so every backup is refused (install.sh --guest-backup-clear, D-406).", nil
+	}
+	return "", nil
 }

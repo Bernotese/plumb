@@ -115,8 +115,15 @@ func TestClassifyAndRetention(t *testing.T) {
 		}
 	}
 	// M1 of #325: keep+1 manual backups never push out a scheduled one.
-	if n := LowerKeepDeletes(c, 3); n != 2 {
-		t.Fatalf("lower keep deletes %d", n)
+	// L1 of #334: the next job adds one scheduled volume first: 5+1-3.
+	if n := NextJobDeletes(c, 3); n != 3 {
+		t.Fatalf("next job deletes %d, want 3", n)
+	}
+	if n := NextJobDeletes(c, 1); n != 5 {
+		t.Fatalf("keep 1: %d, want 5 (all old ones, never the new)", n)
+	}
+	if n := NextJobDeletes(c, 9); n != 0 {
+		t.Fatalf("keep 9: %d", n)
 	}
 	// keep 0 (no backup field): no scheduled volume goes, the manual cap
 	// holds (M3 of #331).

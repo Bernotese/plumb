@@ -67,6 +67,9 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if p.Origin == OriginRepair {
 		return e.approveRepair(ctx, p, principal)
 	}
+	if p.Origin == OriginRestore { // T-222
+		return e.approveRestore(ctx, p, principal)
+	}
 	var targets []TargetPlan
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return store.Run{}, err
@@ -238,6 +241,7 @@ func (e *Engine) execute(ctx context.Context, p store.Plan, run store.Run, set *
 	if e.cfg.OnPlanDone != nil {
 		e.cfg.OnPlanDone(fin, p.ID, status == "succeeded")
 	}
+	e.afterRestore(fin, p, set, status == "succeeded") // T-222: the re-enroll Plan
 }
 
 // stepper records the steps of one target and emits an event per change.
@@ -331,6 +335,9 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 	}
 	if p.Origin == OriginRepair {
 		return e.runRepair(ctx, p, run, set, tp)
+	}
+	if p.Origin == OriginRestore { // T-222
+		return e.runRestore(ctx, p, run, set, tp)
 	}
 	s := &stepper{e: e, run: run, target: tp.Target, seq: map[string]int64{}, final: map[string]bool{}, ok: true}
 	if tp.NotAdopted {

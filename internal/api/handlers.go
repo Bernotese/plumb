@@ -38,6 +38,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	var ao *plan.AgentOutdatedError
 	switch {
 	case repairProblem(w, err):
+	case restoreProblem(w, err): // T-222
 	case adoptProblem(w, err):
 	case errors.As(err, &ao):
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:agent-outdated", Title: "Agent is outdated", Status: http.StatusConflict,

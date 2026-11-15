@@ -34,6 +34,10 @@ const (
 	// a person made: it sets spec.adopted.delete_guest to true, or deletes
 	// an adopted Target that has it (D-388).
 	HumanOnlyAdoptedGuestDelete = "adopted-guest-delete"
+	// HumanOnlyGuestRestore: every restore Plan (D-410, T-222). It
+	// overwrites the guest with a backup, the data loss of everything
+	// after the backup time, so a person decides.
+	HumanOnlyGuestRestore = "guest-restore"
 )
 
 // firewallType is the resource type of the guest firewall (D-295).

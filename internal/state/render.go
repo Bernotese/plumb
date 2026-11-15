@@ -25,6 +25,9 @@ type Rendered struct {
 	AllowRestart bool `json:"allow_restart,omitempty"`
 	// Adopted is spec.adopted of an adopted Target (D-386), else nil.
 	Adopted *Adopted `json:"adopted,omitempty"`
+	// Backup is spec.backup (guest backups, D-408, T-221), else nil. Not a
+	// guest setting: the Plan shows its change (AttrBackup).
+	Backup map[string]any `json:"backup,omitempty"`
 	// Guest is the guest:config resource: the Proxmox settings, with
 	// defaults. The driver handles it, not the agent. Its Block is empty.
 	Guest wire.Resource `json:"guest"`
@@ -69,6 +72,7 @@ type unit struct {
 	blocks       []blockUse
 	overrides    map[string]map[string]any
 	adopted      *Adopted
+	backup       map[string]any
 	blocksPath   string // "/spec/blocks" or "/spec/build/blocks"
 	guestPath    string // "/spec/guest" or "/spec/build/guest"
 }
@@ -79,7 +83,7 @@ func (s *Set) targetUnit(name string) (*unit, bool) {
 		return nil, false
 	}
 	return &unit{kind: KindTarget, name: name, typ: t.Type, image: t.Image, allowRestart: t.AllowRestart,
-		guest: t.Guest, blocks: t.Blocks, overrides: t.Overrides, adopted: t.Adopted,
+		guest: t.Guest, blocks: t.Blocks, overrides: t.Overrides, adopted: t.Adopted, backup: t.Backup,
 		blocksPath: "/spec/blocks", guestPath: "/spec/guest"}, true
 }
 
@@ -103,7 +107,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 	t := u
 	target := u.name
 	sch := mustSchemas()
-	out := &Rendered{Target: target, Kind: wire.Kind(t.typ), Image: t.image, AllowRestart: t.allowRestart}
+	out := &Rendered{Target: target, Kind: wire.Kind(t.typ), Image: t.image, AllowRestart: t.allowRestart, Backup: t.backup}
 	if t.adopted != nil {
 		a := *t.adopted
 		out.Adopted = &a

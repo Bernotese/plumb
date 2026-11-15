@@ -9,8 +9,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // Guest backups (T-221): the bound Targets with their backup field, read
@@ -109,4 +111,90 @@ func backupTargetOf(d state.Doc, b store.Binding) (BackupTarget, error) {
 		t.Backup = &BackupField{Schedule: spec.Backup.Schedule, Weekday: spec.Backup.Weekday, Hour: h, Minute: m, Keep: spec.Backup.Keep}
 	}
 	return t, nil
+}
+
+// AttrBackup is the Plan-only change of spec.backup of a Target (T-221):
+// it changes no guest setting; Update never gets it.
+const AttrBackup = "backup"
+
+// backupText is the change value of a backup field ("daily 03:00 keep 7"),
+// or nil without one.
+func backupText(b map[string]any) any {
+	if b == nil {
+		return nil
+	}
+	s := fmt.Sprint(b["schedule"])
+	if w, ok := b["weekday"].(string); ok && w != "" {
+		s += " " + w
+	}
+	return fmt.Sprintf("%s %v keep %v", s, b["time"], b["keep"])
+}
+
+func keepOf(b map[string]any) int {
+	if b == nil {
+		return 0
+	}
+	n, _ := driver.IntValue(b["keep"])
+	return n
+}
+
+// backupChange is the Plan-only change of spec.backup (D-408, D-417).
+// Whenever the new field makes the next job delete backups, the change is
+// destructive and its note says how many: the count comes from the jobs
+// (BackupKeepDeletes), also when the field comes back after a removal (M1
+// of #334: remove, then add again with keep 1, must not pass as read).
+// An unknown count (no jobs, no storage: -1) fails closed: a lower keep
+// than before, or a field that cannot be compared (it comes back, or was
+// not there), is destructive. newGuest: the guest does not exist yet, so
+// no Plumb backup of it can exist (count 0). Removing the field deletes
+// nothing. A new field gets the storage note (D-406).
+func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered, target string, newGuest bool) (*wire.Change, []string, error) {
+	var old, nu map[string]any
+	if before != nil {
+		old = before.Backup
+	}
+	if after != nil {
+		nu = after.Backup
+	}
+	from, to := backupText(old), backupText(nu)
+	if from == to {
+		return nil, nil, nil
+	}
+	c := &wire.Change{Attr: AttrBackup, From: from, To: to, Risk: wire.RiskRead}
+	var notes []string
+	switch {
+	case nu == nil:
+		notes = append(notes, fmt.Sprintf("Target %s: Plumb stops its backups; it deletes none. Its backups stay until a person deletes them.", target))
+	case newGuest:
+		// No guest yet: nothing to delete.
+	default:
+		n := -1
+		if e.cfg.BackupKeepDeletes != nil {
+			var err error
+			if n, err = e.cfg.BackupKeepDeletes(ctx, target, keepOf(nu)); err != nil {
+				return nil, nil, err
+			}
+		}
+		switch {
+		case n > 0:
+			c.Risk = wire.RiskDestructive
+			notes = append(notes, fmt.Sprintf("Target %s: with keep %d the next backup job deletes %d backup(s).", target, keepOf(nu), n))
+		case n == 0:
+		case old != nil && keepOf(nu) >= keepOf(old):
+			// Unknown count, but keep is not lower: nothing more goes.
+		default: // unknown count, and keep is lower or cannot be compared: fail closed
+			c.Risk = wire.RiskDestructive
+			notes = append(notes, fmt.Sprintf("Target %s: Plumb cannot count its backups now; with keep %d the next backup job may delete the oldest above %d.", target, keepOf(nu), keepOf(nu)))
+		}
+	}
+	if old == nil && nu != nil && e.cfg.BackupStorageNote != nil {
+		note, err := e.cfg.BackupStorageNote(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if note != "" {
+			notes = append(notes, fmt.Sprintf("Target %s: %s", target, note))
+		}
+	}
+	return c, notes, nil
 }

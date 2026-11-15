@@ -202,7 +202,7 @@
             "keep"
           ],
           "additionalProperties": false,
-          "description": "Backups of the guest by Plumb, to the one backup storage named at install. A backup does not change the guest. Missing: no backups by Plumb. Planned: refused until slice 7 serves it (T-221).",
+          "description": "Backups of the guest by Plumb, to the one backup storage named at install. A backup does not change the guest. Missing: no backups by Plumb.",
           "properties": {
             "schedule": {
               "enum": [
