@@ -307,3 +307,35 @@ func TestRestoreSkipCheckedAtRun(t *testing.T) {
 		t.Errorf("restored %v, safety backups %d", s.fr.restored, s.fr.safeties)
 	}
 }
+
+// D1 at the Run: a Plan made while the guest was healthy (safety backup
+// "first"), approved after another restore failed: the Run takes no backup
+// of the guest that may be empty now and keeps the Issue's good backup.
+func TestRestoreOlderPlanAfterAFailure(t *testing.T) {
+	s := newSafetyEnv(t)
+	propose := func() int64 {
+		code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r"})
+		if code != 201 {
+			t.Fatalf("propose: %d %s", code, body)
+		}
+		var p struct{ ID int64 }
+		json.Unmarshal(body, &p)
+		return p.ID
+	}
+	first, second := propose(), propose()
+	s.fr.fail = errors.New("proxmox: no space left")
+	for _, id := range []int64{first, second} {
+		if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 202 {
+			t.Fatalf("approve %d: %d %s", id, code, body)
+		}
+		s.e.eng.Wait()
+	}
+	if s.fr.safeties != 1 {
+		t.Fatalf("safety backups: %d, want 1 (none of the guest after the first failure)", s.fr.safeties)
+	}
+	r, _ := s.e.st.RunOfPlan(s.e.ctx, second)
+	steps, _ := s.e.st.Steps(s.e.ctx, r.ID)
+	if !strings.Contains(steps[0].Output, "restore the safety backup backup 5afe000000000001") {
+		t.Errorf("second Run: %s", steps[0].Output)
+	}
+}
