@@ -101,11 +101,27 @@ func TestParkEndsOnLateUnbindResult(t *testing.T) {
 	if g := e.unmanaged(adm, vmid); !g.Adoptable || slices.Contains(g.Reasons, "agent-left") {
 		t.Fatalf("after the park: %+v", g)
 	}
-	// The event follows the unpark in endUnbindPark (T-235).
-	waitTrue(t, func() bool {
+	// The event follows the unpark in endUnbindPark (T-235). One park ends
+	// once: exactly one agent.unbound, also after a retry and a few agent
+	// polls (#354 L1, the "one event per park" rule of T-210).
+	unbound := func() int {
 		evs, _ := e.st.EventsAfter(e.ctx, seq, 500)
-		return slices.ContainsFunc(evs, func(ev store.Event) bool { return ev.Type == "agent.unbound" })
-	}, "no agent.unbound event")
+		n := 0
+		for _, ev := range evs {
+			if ev.Type == "agent.unbound" {
+				n++
+			}
+		}
+		return n
+	}
+	waitTrue(t, func() bool { return unbound() > 0 }, "no agent.unbound event")
+	if err := e.eng.RetryUnbinds(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond) // the fake agent polls every 10–20 ms
+	if n := unbound(); n != 1 {
+		t.Fatalf("%d agent.unbound events for one park, want 1", n)
+	}
 }
 
 // waitTrue waits up to 10 s for cond; else it fails with msg.
