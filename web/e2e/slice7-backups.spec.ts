@@ -18,6 +18,11 @@ test("backups tab: no storage in dev mode, back up now is refused", async ({ pag
   });
   expect(now.status()).toBe(409);
   expect(((await now.json()) as { type: string }).type).toBe("urn:plumb:problem:backup-refused");
+  // T-222: no restore without a storage; the request is checked first.
+  const restore = (data: object) =>
+    page.request.post("/api/v1/targets/web1/restore", { headers: { origin }, data });
+  expect((await restore({ backup: "3f2a9c0d1e4b5a67", reason: "e2e" })).status()).toBe(422);
+  expect((await restore({ backup: "3f2a9c0d1e4b5a67", reason: "" })).status()).toBe(400);
 
   await page.goto("/#/targets/web1/edit");
   await page.getByRole("link", { name: "Backups", exact: true }).click();

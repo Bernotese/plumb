@@ -15,7 +15,7 @@
   import { go, href } from "../lib/router";
   import { can, me, roleNote } from "../lib/session.svelte";
   import type { TargetView } from "../lib/types";
-  import { formatTime } from "../lib/view";
+  import { ALLOW_RESTART_LABEL, forKind, formatTime } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
@@ -452,18 +452,27 @@
       <p>What happens in the Run:</p>
       <ol id="restore-steps">
         <li>
-          Plumb stops the guest. Like every stop, this needs "{target.document.spec.type === "lxc"
-            ? "Plumb may stop this container"
-            : "Plumb may restart or stop this VM"}" on the Target, or a guest that you stopped
-          first.
+          Plumb stops the guest. A running guest needs "{forKind(
+            ALLOW_RESTART_LABEL,
+            target.document.spec.type ?? "vm",
+          )}" on the Target, or stop it yourself first; else Plumb refuses the restore.
         </li>
-        <li>Plumb revokes the agent credential before the guest starts again.</li>
-        <li>Proxmox overwrites the whole guest with the backup.</li>
         <li>
-          {adopted
-            ? "Then you install the agent again with an install command (an adopted guest)."
-            : "Then Plumb proposes a re-enrollment of the agent."}
+          Plumb revokes the agent credential and drops the pinned SSH host keys before the guest
+          starts again.
         </li>
+        <li>Proxmox overwrites the whole guest with the backup.</li>
+        {#if adopted}
+          <li>
+            Plumb starts the guest without an agent. Then make an install command on the
+            <a href={href({ name: "target-agent", target: name })}>agent page</a> and run it in the guest.
+          </li>
+        {:else}
+          <li>
+            A re-enrollment plan follows. The guest stays stopped until you approve it; then it
+            starts with a new agent credential.
+          </li>
+        {/if}
       </ol>
       <p>What is lost and what comes back:</p>
       <ul id="restore-lost">
@@ -471,8 +480,8 @@
           <strong>Everything written in the guest after {formatTime(b.time)} is lost.</strong>
         </li>
         <li>
-          Access comes back as it was then: SSH keys and passwords that a person removed later work
-          again.
+          Access comes back as it was then: SSH keys, passwords and users that a person removed
+          later work again.
         </li>
         <li>
           The Target document is not rolled back. The next Run sets the guest to the current

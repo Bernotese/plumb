@@ -3158,17 +3158,25 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       writable();
       const t = targets.get(name);
       if (!t) throw new ApiError(example("getTarget", 404));
-      const errors: { pointer: string; message: string }[] = [];
+      // The answers of internal/api/restore_guest.go (T-222).
+      if (!/^[0-9a-f]{16}$/.test(req.backup) || !req.reason || req.reason.length > 2000)
+        throw problem("bad-request", "Bad request", 400, "backup and reason are needed.");
       const b = (guestBackups.get(name) ?? []).find((x) => x.id === req.backup);
-      if (!b) errors.push({ pointer: "/backup", message: "No such backup of this Target." });
-      else if (b.kind !== "plumb")
-        errors.push({
-          pointer: "/backup",
-          message: "Only a backup of this guest (kind plumb) can be restored.",
-        });
-      if (!req.reason.trim()) errors.push({ pointer: "/reason", message: "Say why." });
-      if (errors.length || !b)
-        throw problem("validation", "Validation failed", 422, undefined, { errors });
+      if (!b) throw problem("not-found", "Not found", 404, `No backup ${req.backup} of ${name}.`);
+      if (b.kind !== "plumb")
+        throw problem(
+          "not-restorable",
+          "Backup not restorable",
+          409,
+          `${name}: only a backup of this guest made by this Plumb can be restored.`,
+        );
+      if (t.status.power === "running" && t.document.spec.allow_restart !== true)
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `${name}: the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first (D-194)`,
+        );
       const adopted = t.document.spec.adopted !== undefined;
       const p = newPlan({
         origin: "restore",
@@ -3189,12 +3197,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
             ],
           },
         ],
+        // restoreNotes of internal/plan/restore_guest.go.
         warnings: [
-          `The guest of ${name} is stopped and overwritten with the backup of ${b.time}. Everything written after it is lost.`,
-          "The restore brings back the access the guest had then, also SSH keys and passwords that a person removed later.",
+          "The guest goes back to the backup time: every change in the guest after it is lost.",
+          "Access that a person removed after the backup comes back (authorized_keys lines, passwords, users).",
+          "The desired state is not rolled back: the next Run converges the guest to the head revision.",
+          "The agent credential is revoked before the guest starts, and the host key pins are dropped.",
           adopted
-            ? "The agent credential is revoked. Then run a new install command in the guest."
-            : "The agent credential is revoked. Then Plumb proposes a re-enrollment.",
+            ? `The guest starts again without an agent: run the install command of ${name} (an adopted Target).`
+            : "A re-enroll Plan follows: approve it to start the guest with a new agent credential.",
         ],
         human_only: ["guest-restore"],
       });

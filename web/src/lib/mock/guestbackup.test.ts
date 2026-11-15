@@ -69,9 +69,9 @@ describe("guest backups (mock)", () => {
     const a = api();
     const p = await a.restoreGuest("db1", { backup: "3f2a9c0d1e4b5a67", reason: "Broken." });
     expect([p.origin, p.risk, p.human_only]).toEqual(["restore", "destructive", ["guest-restore"]]);
-    expect(p.warnings.join(" ")).toContain("removed later");
+    expect(p.warnings.join(" ")).toContain("removed after the backup comes back");
     expect(await code(a.restoreGuest("db1", { backup: "9b1c2d3e4f5a6b7c", reason: "x" }))).toMatch(
-      /^422/,
+      /^409 .*not-restorable/,
     );
     expect(await code(a.approvePlan(p.id))).toBe("ok");
     expect(
@@ -79,6 +79,22 @@ describe("guest backups (mock)", () => {
         api({ token: true }).restoreGuest("db1", { backup: "3f2a9c0d1e4b5a67", reason: "x" }),
       ),
     ).toBe("ok");
+  });
+
+  it("a running guest without allow_restart is refused (D-194)", async () => {
+    const a = api();
+    const t = await a.getTarget("db1");
+    const spec = { ...t.document.spec, allow_restart: false };
+    const p = await a.createPlan({
+      reason: "No restarts.",
+      put: [{ kind: "Target", name: "db1", spec }],
+    });
+    await a.approvePlan(p.id);
+    await a.idle();
+    expect((await a.getTarget("db1")).document.spec.allow_restart).toBe(false);
+    expect(await code(a.restoreGuest("db1", { backup: "3f2a9c0d1e4b5a67", reason: "x" }))).toMatch(
+      /^422/,
+    );
   });
 
   it("a token cannot approve a restore", async () => {
