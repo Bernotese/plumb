@@ -1996,6 +1996,8 @@ paths:
                     changes:
                       - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
                     actions: [accept, revert]
+                    actions_blocked_by: null
+                    actions_note: ""
                     plan_id: null
                     resolution: null
                     comments: []
@@ -2009,6 +2011,8 @@ paths:
                     changes:
                       - { attr: content, sensitive: true, risk: reversible }
                     actions: [revert]
+                    actions_blocked_by: null
+                    actions_note: ""
                     plan_id: null
                     resolution: null
                     comments: []
@@ -2022,6 +2026,8 @@ paths:
                     changes:
                       - { attr: ip, from: [192.0.2.107], to: 192.0.2.20, risk: read }
                     actions: [ignore_once, ignore_rule]
+                    actions_blocked_by: null
+                    actions_note: ""
                     plan_id: null
                     resolution: null
                     comments: []
@@ -2058,6 +2064,8 @@ paths:
                     to: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOm me@laptop"]
                     risk: reversible
                 actions: [accept, revert]
+                actions_blocked_by: null
+                actions_note: ""
                 plan_id: null
                 resolution: null
                 comments:
@@ -2119,6 +2127,8 @@ paths:
                 changes:
                   - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
                 actions: []
+                actions_blocked_by: null
+                actions_note: ""
                 plan_id: null
                 resolution: { action: ignore, by: "user:admin", at: "2026-11-10T09:16:00Z" }
                 comments: []
