@@ -223,7 +223,7 @@ func TestExplainIssueNonceNotInData(t *testing.T) {
 
 // The cut rules (M4 of #360): a long value is cut by runes, also inside a
 // multi-byte rune and next to an escape, with its mark; a list part is cut
-// by items, oldest first; over the whole limit the parts are dropped in
+// by items, each to its share first; over the whole limit the parts are dropped in
 // order. Every part stays valid JSON.
 func TestExplainIssueCuts(t *testing.T) {
 	api := newPromptAPI()
@@ -255,8 +255,11 @@ func TestExplainIssueCuts(t *testing.T) {
 		LeftOut int `json:"left_out"`
 	}
 	json.Unmarshal(parts["comments"], &cm)
-	if len(parts["comments"]) > maxListPart || cm.LeftOut == 0 || len(cm.Items)+cm.LeftOut != lastComments ||
-		!strings.HasPrefix(cm.Items[len(cm.Items)-1].Body, "c39") || strings.HasPrefix(cm.Items[0].Body, "c20 ") {
+	// 20 comments of 600 runes do not fit 8 KiB whole: each is cut to its
+	// share, none is dropped (M1 of #367), and the newest are kept.
+	if len(parts["comments"]) > maxListPart || cm.LeftOut != 0 || len(cm.Items) != lastComments ||
+		!strings.HasPrefix(cm.Items[0].Body, "c20 ") || !strings.HasPrefix(cm.Items[len(cm.Items)-1].Body, "c39 ") ||
+		!strings.Contains(cm.Items[0].Body, "runes left out)") {
 		t.Fatalf("comments part: %d bytes, left_out %d, %d items", len(parts["comments"]), cm.LeftOut, len(cm.Items))
 	}
 
@@ -281,5 +284,98 @@ func TestExplainIssueCuts(t *testing.T) {
 	}
 	if !strings.Contains(string(parts["target"]), "web1") || !strings.Contains(string(parts["issue"]), `"id":7`) {
 		t.Fatal("target or issue dropped")
+	}
+}
+
+// M1 of #367: one huge item cannot push the others out. A newest comment
+// of 20000 "<" keeps an older warning of a person; a newest Run with a huge
+// step output keeps the older Runs.
+func TestExplainIssueBigItemKeepsOthers(t *testing.T) {
+	api := newPromptAPI()
+	issue := api.body["/api/v1/issues/7"]
+	issue = issue[:strings.Index(issue, `"comments":`)] + `"comments":[` +
+		`{"id":1,"author":"user:admin","body":"WARNING-by-admin: do not revert, this host is special","created_at":"2026-11-15T10:00:00Z"},` +
+		`{"id":2,"author":"token:x","body":` + string(mustJSON(strings.Repeat("<", 20000))) + `,"created_at":"2026-11-15T10:01:00Z"}]}`
+	api.body["/api/v1/issues/7"] = issue
+	run := func(id int, out string) string {
+		return fmt.Sprintf(`{"id":%d,"plan_id":1,"status":"failed","started_at":"2026-11-15T09:00:00Z","finished_at":null,`+
+			`"targets":[{"target":"web1","status":"failed","steps":[{"resource":"file:/x","action":"update","status":"failed","output":%s}]}]}`, id, mustJSON(out))
+	}
+	api.body["/api/v1/runs"] = `{"items":[` + run(9, strings.Repeat("<", 20000)) + `,` + run(8, "older-run-8") + `,` + run(7, "older-run-7") + `],"next":null}`
+	cs := session(t, newFakeAPI(t, api.handler))
+	text, err := getPrompt(t, cs, "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, parts := fences(t, text)
+	for k, want := range map[string][]string{"comments": {"WARNING-by-admin", "runes left out)"}, "runs": {"older-run-8", "older-run-7", `"id":9`}} {
+		for _, w := range want {
+			if !strings.Contains(string(parts[k]), w) {
+				t.Errorf("%s part lost %q: %.200s", k, w, parts[k])
+			}
+		}
+		if len(parts[k]) > maxListPart || strings.Contains(string(parts[k]), "left_out") {
+			t.Errorf("%s part: %d bytes or an item dropped", k, len(parts[k]))
+		}
+	}
+	if strings.Contains(string(parts["comments"]), `\u003c`) {
+		t.Error("< is HTML-escaped (six bytes each)")
+	}
+}
+
+// L1 of #367: C1 controls and format characters never reach the client
+// raw; L2: two keys that are the same after the cut both stay; L3: the
+// changes of the issue part have a cap with changes_left_out.
+func TestExplainIssueRunesKeysChanges(t *testing.T) {
+	api := newPromptAPI()
+	key := strings.Repeat("k", maxRunes)
+	var changes []string
+	for i := range 60 {
+		changes = append(changes, fmt.Sprintf(`{"attr":"a%02d","from":%s,"to":"x","risk":"reversible"}`, i, mustJSON(strings.Repeat("v", maxRunes))))
+	}
+	issue := api.body["/api/v1/issues/7"]
+	start, end := strings.Index(issue, `"changes":[`), strings.Index(issue, `"actions":`)
+	api.body["/api/v1/issues/7"] = issue[:start] + `"changes":[` + strings.Join(changes, ",") + `],` + issue[end:]
+	api.body["/api/v1/targets/web1"] = `{"name":"web1","document":{"spec":{"blocks":[{"use":"motd","params":{` +
+		string(mustJSON(key+"A")) + `:"first",` + string(mustJSON(key+"B")) + `:"second",` +
+		`"bidi":"a\u202eb\u2066c\u0085d\u200be"}}]}}}`
+	cs := session(t, newFakeAPI(t, api.handler))
+	text, err := getPrompt(t, cs, "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []rune{0x202e, 0x2066, 0x0085, 0x200b} {
+		if strings.ContainsRune(text, r) {
+			t.Errorf("U+%04X reaches the client raw", r)
+		}
+	}
+	_, parts := fences(t, text)
+	if !strings.Contains(string(parts["target"]), `a\u202eb\u2066c\u0085d\u200be`) {
+		t.Errorf("the format runes are not escaped: %s", parts["target"])
+	}
+	var tg struct {
+		Document struct {
+			Spec struct {
+				Blocks []struct{ Params map[string]string }
+			}
+		}
+	}
+	if err := json.Unmarshal(parts["target"], &tg); err != nil {
+		t.Fatal(err)
+	}
+	vals := []string{}
+	for _, v := range tg.Document.Spec.Blocks[0].Params {
+		vals = append(vals, v)
+	}
+	if !slices.Contains(vals, "first") || !slices.Contains(vals, "second") {
+		t.Errorf("a value of a cut key is lost: %v", vals)
+	}
+	var is struct {
+		Changes []any
+		Left    int `json:"changes_left_out"`
+	}
+	json.Unmarshal(parts["issue"], &is)
+	if is.Left == 0 || len(is.Changes)+is.Left != 60 || len(parts["issue"]) > 3*maxListPart {
+		t.Errorf("issue part: %d bytes, %d changes, left_out %d", len(parts["issue"]), len(is.Changes), is.Left)
 	}
 }
