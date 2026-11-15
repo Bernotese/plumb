@@ -1027,8 +1027,8 @@ func (d *Driver) Observe(ctx context.Context, gid driver.GuestID) (driver.GuestS
 	if name == "" {
 		name = m.Name
 	}
-	st := driver.GuestState{Spec: specOf(name, cfg), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
-	if p := specOf(name, next); !reflect.DeepEqual(p, st.Spec) {
+	st := driver.GuestState{Spec: withDisks(specOf(name, cfg), cfg, d.cfg.DiskStorage, id), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
+	if p := withDisks(specOf(name, next), next, d.cfg.DiskStorage, id); !reflect.DeepEqual(p, st.Spec) {
 		st.Pending = &p
 	}
 	st.TokenPending = parseProps(cfg["smbios1"])["serial"] != parseProps(next["smbios1"])["serial"]

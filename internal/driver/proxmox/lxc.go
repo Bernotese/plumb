@@ -372,8 +372,8 @@ func (d *Driver) observeCT(ctx context.Context, id int) (driver.GuestState, erro
 	if err := d.c.Get(ctx, ctPath(d, id)+"/status/current", nil, &status); err != nil {
 		return driver.GuestState{}, notFound(err)
 	}
-	st := driver.GuestState{Spec: specOfCT(cfg), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
-	if p := specOfCT(next); !equalCTSpec(p, st.Spec) {
+	st := driver.GuestState{Spec: withDisks(specOfCT(cfg), cfg, d.cfg.DiskStorage, id), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
+	if p := withDisks(specOfCT(next), next, d.cfg.DiskStorage, id); !equalCTSpec(p, st.Spec) {
 		st.Pending = &p
 	}
 	now, later := envToken(cfg["env"]), envToken(next["env"])
@@ -394,7 +394,8 @@ func equalCTSpec(a, b driver.GuestSpec) bool {
 		a.IP == b.IP && a.Gateway == b.Gateway && a.DiskGB == b.DiskGB && a.ImageName == b.ImageName &&
 		a.ImageVersion == b.ImageVersion && slices.Equal(a.SSHKeys, b.SSHKeys) && a.Features == b.Features &&
 		slices.Equal(a.Mounts, b.Mounts) && slices.Equal(a.Devices, b.Devices) && slices.Equal(a.RawLXC, b.RawLXC) &&
-		slices.Equal(a.Tags, b.Tags) && slices.Equal(a.NICs, b.NICs)
+		slices.Equal(a.Tags, b.Tags) && slices.Equal(a.NICs, b.NICs) && slices.Equal(a.Disks, b.Disks) &&
+		slices.Equal(a.Unused, b.Unused)
 }
 
 // ctAddresses reads the IPv4 addresses of eth0 that Proxmox sees from the
