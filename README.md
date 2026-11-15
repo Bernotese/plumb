@@ -183,6 +183,11 @@ full list of rights.
        two entries name it.
      - A VM card gets a gateway only while the first card has no default route (also none from
        DHCP).
+     - A running VM gets or loses a card without a restart. The agent removes the netplan file of a
+       removed card. A card that comes back gets the same MAC address.
+     - Plumb refuses the Plan for a bridge or a VLAN tag that the install did not name. The message
+       names the installer option (`--extra-bridge`, `--extra-vlan`); run the installer again with
+       it (see "Updates and repair").
    - **Guest backups:** daily or weekly at a time (UTC), and how many to keep. See "Guest backups"
      below.
 
@@ -387,7 +392,8 @@ An update never changes a stored Block. If your `nginx` or `nginx-site` Block an
 its `index index.html;` line with `index index.html index.htm index.nginx-debian.html;`.
 
 To remove Plumb: `bash install.sh --remove`. It refuses while the pool still holds guests or
-templates. Delete them through Plumb first.
+templates. Delete the Targets and Images through Plumb first, then remove in Proxmox the templates
+that stay (see "Known limits").
 
 ## Backup and restore
 
@@ -433,8 +439,8 @@ The **Backups** page of a Target shows:
 
 A person with the role admin can delete one backup of the first two groups, after a confirm.
 
-When a lower "keep" would delete backups at the next job, that Plan is destructive and says how
-many go. Removing the
+A change of the backup setting is destructive only when the next backup job would delete more
+backups than it would now. The Plan says how many. Removing the
 backup setting stops the backups and deletes none.
 
 ![Backups page of db1: an unencrypted storage with the warning, the schedule, Back up now, and the backups in three groups](docs/screenshots/readme-guest-backups.png)
@@ -463,9 +469,21 @@ restore that worked, it stays, so you can undo the restore; it replaces the olde
 the guest.
 
 If the restore fails, the Run says that the guest may have no disk, and Plumb opens the Issue
-`guest:restore-failed` (only "ignore"). It names the safety backup; its link opens the restore of
-that backup. A restore that works ends the Issue. Re-enroll the agent only after a restore that
-worked. Two cases take no new safety backup:
+`guest:restore-failed`. It names the safety backup, and its link opens the restore of that backup.
+A restore that works ends the Issue. Re-enroll the agent only after a restore that worked.
+
+While this Issue is open, the guest may be empty, so Plumb protects it:
+
+- Plumb opens no drift Issue for the guest.
+- Every Plan for the Target is refused, except a restore and a delete of the Target. Only a person
+  can approve the delete.
+- The other Issues of the Target show no action. They name the Issue of the failed restore, and
+  their actions come back after a restore that works.
+- Only a person with the role admin can end the Issue by hand ("End the issue"), and only when the
+  guest has a disk again (for example after a repair in Proxmox). Do not revert an empty guest:
+  Plumb would make it again, and then no backup of it can be restored through Plumb.
+
+Two cases take no new safety backup:
 
 - the last restore failed: the guest may be empty, so the safety backup from before stays the way
   back. The Plan says so;
@@ -477,8 +495,8 @@ its desired list); a restored container starts its agent and re-enrolls. A VM ba
 whole disk, also the agent credential. Plumb revokes that credential at the restore, and every
 re-enroll makes the credential in older backups useless.
 
-![Restore wizard: only a person can approve, the steps of the Run, what is lost, a confirm box and the reason](docs/screenshots/readme-guest-restore.png)
-<br>*The restore wizard says what is lost before it makes the Plan.*
+![Restore wizard: only a person can approve, Proxmox empties the guest first, the steps of the Run with the safety backup, what is lost, the skip box, a confirm box and the reason](docs/screenshots/readme-guest-restore.png)
+<br>*The restore wizard says what is lost, and that Plumb first takes a safety backup.*
 
 - Plumb restores only over the same guest. For a guest that is gone, restore the backup in Proxmox
   into the pool `plumb`, then adopt the guest ("Adopt a guest").
@@ -574,6 +592,9 @@ Keep the recovery key in any case.
 - A change by hand with `ip` or `nft` in a guest that uses the `network` or `firewall` Block is seen
   within seconds. When the agent cannot watch it live, its agent page says so, and the change is
   seen at the full check every 15 minutes.
+- Deleting an Image removes nothing in Proxmox when the Image has no build: its template and its
+  downloaded file stay. For a built Image, Plumb removes its templates, but the downloaded files
+  stay too. Remove what you no longer need in Proxmox.
 - The first signed refresh of an Image needs a person: an API token cannot approve it.
 - Debian does not sign its cloud image checksums. Every new checksum of a Debian Image needs a
   person.
