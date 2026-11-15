@@ -67,6 +67,16 @@ for l in "${labels[@]}"; do
   if [[ $rc != 0 ]]; then
     fail=1
     grep -E -- '--- FAIL|^FAIL|panic:|timed out' "$logs/$l.log" | head -50 || true
+    # The failing tests' own lines, out of the interleaved -v output (T-235):
+    # the marker lines (=== RUN/CONT/NAME/PAUSE, --- result) name the test
+    # whose output follows.
+    grep -oE -- '^--- FAIL: [^ ]+' "$logs/$l.log" | awk '{ print $3 }' | sort -u | while read -r t; do
+      echo "test-race: output of $t:"
+      awk -v T="$t" '
+        /^=== (RUN|CONT|NAME|PAUSE) / { cur = $3; next }
+        /^ *--- (PASS|FAIL|SKIP): / { name = $3; if (name == T || index(name, T "/") == 1) print; next }
+        { if (cur == T || index(cur, T "/") == 1) print }' "$logs/$l.log" | head -80
+    done
     tail -n 40 "$logs/$l.log"
   fi
   if [[ $l == api* ]]; then
