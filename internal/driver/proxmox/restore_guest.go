@@ -75,6 +75,11 @@ func (d *Driver) RestoreGuest(ctx context.Context, storage, guest, volid string,
 		return nil
 	}
 	if err := d.c.WaitTask(ctx, d.cfg.Node, upid); err != nil {
+		if sdnRefused(err) {
+			// T-244 R1: PVE checks SDN.Use of the backup's networks in the
+			// task, before it touches a disk; the guest is as before.
+			return notStarted(fmt.Errorf("%w: %w", ErrNetworkRefused, err))
+		}
 		return fmt.Errorf("proxmox: restore of %s over %d: %w", volid, id, err)
 	}
 	return nil
