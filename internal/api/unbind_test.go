@@ -121,9 +121,12 @@ func TestAdoptedDeleteUnbindsThroughRealLink(t *testing.T) {
 	adm := e.admin()
 	vmid, a := e.adoptWithAgent(adm, "wiki")
 	run := e.deleteTarget(adm, "wiki")
-	if run.Status != "succeeded" || run.Warnings != 0 || !a.Unbound() {
-		t.Fatalf("run %+v, unbound %v", run, a.Unbound())
+	if run.Status != "succeeded" || run.Warnings != 0 {
+		t.Fatalf("run %+v", run)
 	}
+	// The agent marks itself unbound after its result (T-193), which the
+	// Run already took: wait for it (T-235).
+	waitTrue(t, a.Unbound, "the agent did not run the unbind")
 	if _, err := e.st.AgentByTarget(e.ctx, "wiki"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("the agent row stays: %v", err)
 	}
@@ -174,9 +177,10 @@ func TestAdoptedDeleteUnbindNotConfirmed(t *testing.T) {
 	if err := e.eng.RetryUnbinds(e.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !a.Unbound() || e.agentLeft(adm, vmid) {
-		t.Fatalf("retry: unbound %v", a.Unbound())
+	if e.agentLeft(adm, vmid) {
+		t.Fatal("retry: the agent is still left behind")
 	}
+	waitTrue(t, a.Unbound, "retry: the agent did not run the unbind") // T-235
 	if _, err := e.st.AgentByTarget(e.ctx, "wiki"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("the agent row stays after the retry: %v", err)
 	}
