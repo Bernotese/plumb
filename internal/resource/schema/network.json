@@ -54,6 +54,10 @@
     },
     "dhcp": {
       "type": "boolean",
+      "enum": [
+        true,
+        false
+      ],
       "default": false,
       "description": "Only with mac: DHCPv4 on the card (dhcp4 in the netplan entry; false is written too, so an entry of cloud-init cannot turn it on)."
     },

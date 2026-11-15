@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path"
 	"slices"
 	"strings"
 
@@ -74,7 +75,8 @@ func (n *network) nicLink(ctx context.Context) (string, error) {
 }
 
 // nicKey returns the netplan key of the NIC dev with the MAC: the single
-// entry that names it by key, set-name, match.name or match.macaddress,
+// entry that names it by key, set-name, match.name or match.macaddress
+// (an entry that names it only by a glob such as en* refuses),
 // or the own key when none does. own reports that the key is the own one
 // (then the file holds the MAC match).
 func (n *network) nicKey(view map[string]npView, dev string) (key string, own bool, err error) {
@@ -82,7 +84,14 @@ func (n *network) nicKey(view map[string]npView, dev string) (key string, own bo
 	for k, v := range view {
 		name, _ := v.Match["name"].(string)
 		vmac, _ := v.Match["macaddress"].(string)
-		if k == dev || v.SetName == dev || name == dev || strings.EqualFold(vmac, n.spec.MAC) {
+		exact := k == dev || v.SetName == dev || name == dev || strings.EqualFold(vmac, n.spec.MAC)
+		// match.name may be a glob (en*): such an entry names the card
+		// too, and maybe other cards: Plumb never writes under it (two
+		// cards would share their values).
+		if glob, _ := path.Match(name, dev); !exact && name != "" && glob {
+			return "", false, fmt.Errorf("the netplan entry %s names the network card %s by the pattern %q, maybe with other cards: Plumb does not change it. Nothing was changed", k, dev, name)
+		}
+		if exact {
 			keys = append(keys, k)
 		}
 	}

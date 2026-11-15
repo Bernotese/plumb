@@ -169,6 +169,14 @@ func TestNICKey(t *testing.T) {
 			t.Errorf("%s: %q %v %v", tc.name, key, own, err)
 		}
 	}
+	// A glob of cloud-init that names the card refuses: its entry may hold
+	// other cards, which would share the values.
+	if _, _, err := n.nicKey(map[string]npView{"eth0": eth0, "all-en": {Match: map[string]any{"name": "ens*"}}}, "ens19"); err == nil || !strings.Contains(err.Error(), "by the pattern") {
+		t.Errorf("glob: %v", err)
+	}
+	if key, _, err := n.nicKey(map[string]npView{"eth0": eth0, "all-en": {Match: map[string]any{"name": "enp*"}}}, "ens19"); err != nil || key != "plumb-nic1" {
+		t.Errorf("a glob that does not match: %q %v", key, err)
+	}
 	two := map[string]npView{"eth1": {Match: map[string]any{"macaddress": nicMAC}}, "ens19": {}}
 	if _, _, err := n.nicKey(two, "ens19"); err == nil {
 		t.Fatal("two entries for one card accepted")
