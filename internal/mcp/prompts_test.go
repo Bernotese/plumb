@@ -283,4 +283,3 @@ func TestExplainIssueCuts(t *testing.T) {
 		t.Fatal("target or issue dropped")
 	}
 }
-
