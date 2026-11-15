@@ -257,6 +257,16 @@ func TestRestoreFailedIgnoreOnlyWithADisk(t *testing.T) {
 	if s.openIssue(plan.GuestRestoreFailedID) {
 		t.Fatal("the Issue stays after the ignore")
 	}
+	// The same report again (a later failure with equal changes): the
+	// earlier ignore does not keep it closed.
+	var ch []wire.Change
+	json.Unmarshal(rf.Changes, &ch)
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: plan.GuestRestoreFailedID, Status: wire.StatusDiffers, Changes: ch}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("an earlier ignore kept the Issue of a new failure closed")
+	}
 }
 
 // M2 of #352: the Issue is open while Proxmox restores, so a controller
