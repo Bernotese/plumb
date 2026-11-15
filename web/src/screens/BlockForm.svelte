@@ -1,54 +1,156 @@
 <script module lang="ts">
+  import resourceKinds from "../lib/resourceKinds.json";
+  import type { Field } from "../lib/schemaForm";
+
   /** One resource of the preview: its type and its key, as the server names it (`file:/etc/motd`). */
   export interface PreviewResource {
     type: string;
     key: string;
-    /** The key still holds template text that the preview cannot fill. */
+    /** The key still holds an action that only the server can fill (a pipe, a function). */
     template: boolean;
+    /** Why the server refuses this resource, when the preview knows it. */
+    refused?: string;
+    /** The Target kinds of the type when it does not fit every kind ("vm"). */
+    only?: string;
   }
 
-  /** The key attribute of each resource type (internal/resource, `Key`). */
+  /**
+   * The key attribute of each resource type. A hand copy of `Type.Key` in
+   * internal/resource/resource.go: the tests pin the path-keyed types, so a
+   * new type needs a line here (one source, through resourceKinds.json, is a
+   * later card).
+   */
   const PATH_KEYED = new Set(["file", "directory", "symlink"]);
   export const keyAttr = (type: string) => (PATH_KEYED.has(type) ? "path" : "name");
 
-  const FIELD = /\{\{-?\s*\.([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*-?\}\}/g;
+  const KINDS: Record<string, readonly string[]> = resourceKinds;
+  const ALL_KINDS = [...new Set(Object.values(KINDS).flat())];
 
-  /**
-   * Fills the simple `{{ .name }}` and `{{ .a.b }}` actions of a template
-   * with string, number and boolean parameters. Anything else (pipes,
-   * functions, `if`, a secret parameter, an unset value) stays as it is: the
-   * server's Go template engine is the only real render.
-   */
-  export function fillTemplate(s: string, params: Record<string, unknown>): string {
-    return s.replace(FIELD, (all, path: string) => {
-      let v: unknown = params;
-      for (const k of path.split(".")) {
-        if (typeof v !== "object" || v === null || Array.isArray(v) || !(k in v)) return all;
-        v = (v as Record<string, unknown>)[k];
-      }
-      if (typeof v === "string" || typeof v === "boolean") return String(v);
-      if (typeof v === "number" && Number.isFinite(v)) return String(v);
-      return all;
-    });
+  /** Go text/template actions; `{{- ` and ` -}}` trim the whitespace next to them. */
+  const ACTION = /(\s*)\{\{(- )?([^]*?)( -)?\}\}(\s*)/g;
+  const SIMPLE = /^\s*\.([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*$/;
+  const PARAM_REF = /(?:^|[^A-Za-z0-9_$\]])\.([A-Za-z_][A-Za-z0-9_]*)/g;
+
+  export interface Filled {
+    text: string;
+    /** An action stays that only the server can fill. */
+    template: boolean;
+    refused?: string;
   }
 
-  /** The resources of a Block with their keys filled from the preview parameters. */
+  /**
+   * Fills a template the way the server does where the preview can know it
+   * (internal/state/template.go, render.go): a simple `{{ .a.b }}` with a
+   * string, number or boolean; whitespace trim marks. The server refuses a
+   * parameter that the schema does not name, a value that is missing after
+   * the defaults (`missingkey=error`) and any secret parameter in a key
+   * (D-088). Pipes, functions and `if` stay as written (`template`).
+   */
+  export function fillTemplate(
+    s: string,
+    params: Record<string, unknown>,
+    fields: Field[] = [],
+  ): Filled {
+    let template = false;
+    let refused: string | undefined;
+    const refuse = (why: string) => (refused ??= why);
+    const text = s.replace(
+      ACTION,
+      (
+        all,
+        before: string,
+        lt: string | undefined,
+        body: string,
+        rt: string | undefined,
+        after: string,
+      ) => {
+        const keep = (inner: string) => (lt ? "" : before) + inner + (rt ? "" : after);
+        for (const m of body.matchAll(PARAM_REF)) {
+          const f = fields.find((x) => x.name === m[1]);
+          if (!f) refuse(`.${m[1]} is not a parameter`);
+          else if (f.kind === "secret") refuse("a key cannot hold a secret");
+        }
+        const simple = SIMPLE.exec(body);
+        if (!simple) {
+          template = true;
+          return all;
+        }
+        const path = (simple[1] ?? "").split(".");
+        let v: unknown = params;
+        let fs: Field[] | undefined = fields;
+        for (const k of path) {
+          const f: Field | undefined = fs?.find((x) => x.name === k);
+          if (f?.kind === "secret") {
+            refuse("a key cannot hold a secret");
+            return all;
+          }
+          fs = f?.fields;
+          if (typeof v !== "object" || v === null || Array.isArray(v) || !(k in v)) {
+            refuse(`no value for .${path.join(".")}`);
+            return all;
+          }
+          v = (v as Record<string, unknown>)[k];
+        }
+        if (typeof v === "string" || typeof v === "boolean") return keep(String(v));
+        if (typeof v === "number" && Number.isFinite(v)) return keep(String(v));
+        template = true;
+        return all;
+      },
+    );
+    return refused ? { text, template, refused } : { text, template };
+  }
+
+  /** The parameters as the server renders them: the top-level defaults fill missing values. */
+  export function withDefaults(
+    params: Record<string, unknown>,
+    fields: Field[],
+  ): Record<string, unknown> {
+    const out = { ...params };
+    for (const f of fields)
+      if (!(f.name in out) && f.default !== undefined && f.kind !== "secret")
+        out[f.name] = f.default;
+    return out;
+  }
+
+  /** The resources of a Block with their keys filled from the preview parameters, and marks. */
   export function previewResources(
     resources: unknown[],
     params: Record<string, unknown>,
+    fields: Field[] = [],
   ): PreviewResource[] {
     const out: PreviewResource[] = [];
+    const seen: Record<string, number> = {};
+    const data = withDefaults(params, fields);
     for (const r of resources) {
       if (typeof r !== "object" || r === null || Array.isArray(r)) continue;
       const entries = Object.entries(r as Record<string, unknown>);
       if (entries.length !== 1) continue;
       for (const [type, attrs] of entries) {
+        const attr = keyAttr(type);
         const raw =
           typeof attrs === "object" && attrs !== null
-            ? (attrs as Record<string, unknown>)[keyAttr(type)]
+            ? (attrs as Record<string, unknown>)[attr]
             : undefined;
-        const key = typeof raw === "string" ? fillTemplate(raw, params) : "";
-        out.push({ type, key, template: key.includes("{{") });
+        const res: PreviewResource = { type, key: "", template: false };
+        const kinds = KINDS[type];
+        if (!kinds) res.refused = `unknown resource type ${type}`;
+        else if (ALL_KINDS.some((k) => !kinds.includes(k))) res.only = kinds.join(", ");
+        if (typeof raw !== "string") {
+          res.refused ??= `no ${attr}`;
+        } else {
+          const f = fillTemplate(raw, data, fields);
+          res.key = f.text;
+          res.template = f.template;
+          if (f.refused) res.refused ??= f.refused;
+          else if (!f.template && f.text === "") res.refused ??= `empty ${attr}`;
+        }
+        if (!res.refused && !res.template) {
+          const id = `${type}:${res.key}`;
+          const before = seen[id];
+          if (before !== undefined) res.refused = `the same id as resource ${before}`;
+          else seen[id] = out.length + 1;
+        }
+        out.push(res);
       }
     }
     return out;
@@ -66,14 +168,7 @@
   import { can } from "../lib/session.svelte";
   import { pointerErrors } from "../lib/formErrors";
   import { go, href } from "../lib/router";
-  import {
-    fieldsOf,
-    initialValues,
-    toParams,
-    validate,
-    type Field,
-    type Values,
-  } from "../lib/schemaForm";
+  import { fieldsOf, initialValues, toParams, validate, type Values } from "../lib/schemaForm";
   import type { BlockDoc, BlockView } from "../lib/types";
   import { toYaml } from "../lib/yaml";
   import ProblemBox from "../ui/ProblemBox.svelte";
@@ -229,7 +324,9 @@
     }
   });
   const resourceList = $derived(
-    Array.isArray(spec?.resources) ? previewResources(spec.resources, previewParams) : [],
+    Array.isArray(spec?.resources)
+      ? previewResources(spec.resources, previewParams, preview.fields)
+      : [],
   );
 
   /** Moves the caret to the start of a line and scrolls it into view. */
@@ -430,13 +527,17 @@
           <ol class="resources mono" id="b-resources">
             {#each resourceList as r, i (i)}
               <li>
-                {r.type}:{r.key || "?"}{#if r.template}<span class="muted tpl">(template)</span
-                  >{/if}
+                <span>{r.type}:{r.key || "?"}</span>
+                {#if r.template}<span class="muted tpl">(template)</span>{/if}
+                {#if r.only}<span class="muted tpl">({r.only} only)</span>{/if}
+                {#if r.refused}<span class="refused tpl">(refused: {r.refused})</span>{/if}
               </li>
             {/each}
           </ol>
           <p class="note">
-            Keys from the parameters above. A secret parameter never shows its value here.
+            Keys from the parameters above. "(template)": only the server can fill it. "(refused:
+            …)": the server refuses this Block on a Target. A secret parameter never shows its value
+            here.
           </p>
         {:else}
           <p class="muted" id="b-resources-none">No resources yet.</p>
@@ -479,6 +580,9 @@
   }
   .tpl {
     margin-left: 0.5ch;
+  }
+  .refused {
+    color: var(--color-danger);
   }
   .resources {
     margin: 0;
