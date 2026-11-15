@@ -32,6 +32,13 @@ func TestGuestValueElems(t *testing.T) {
 		{"ssh sources", "firewall", "ssh", "tcp/22 from 203.0.113.7/32,10.0.0.5/24", []string{"10.0.0.0/24", "203.0.113.7/32"}},
 		{"ssh everywhere", "firewall", "ssh", "tcp/2222 from everywhere", nil},
 		{"ssh closed", "firewall", "ssh", "closed (allow_no_ssh)", nil},
+		// T-220 (D-359): a more NIC's dhcp is an enum (observed as text);
+		// its gateway is a guest value like an extra address.
+		{"nic dhcp skipped", "network", "dhcp", "true", nil},
+		{"nic gateway", "network", "gateway", "10.9.20.1", []string{"10.9.20.1"}},
+		// mac: only the render sets it (D-419) and it is never observed;
+		// as a desired value it is compared like any text (review L2 of #336).
+		{"nic mac", "network", "mac", "02:5a:10:20:30:40", []string{"02:5a:10:20:30:40"}},
 	} {
 		got, over := GuestValueElems(c.typ, c.attr, c.v)
 		if over {

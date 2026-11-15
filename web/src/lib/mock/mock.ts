@@ -4,6 +4,8 @@
 import { ApiError } from "../api";
 import type {
   CatalogBlock,
+  GuestBackup,
+  GuestBackupList,
   PinRefresh,
   PlumbApi,
   RepairKeyView,
@@ -903,6 +905,106 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     },
   };
   settings.repair_key = repairKey;
+  // Slice 7 (T-223): the extra networks and the guest backup storage of the install.
+  if (settings.proxmox) {
+    settings.proxmox.extra_nets = [
+      { bridge: "vmbr1", tag: null },
+      { bridge: "vmbr2", tag: 20 },
+      { bridge: "vmbr2", tag: 30 },
+    ];
+    settings.proxmox.guest_backup = {
+      storage: "plumb-guest-backup",
+      state: "stated-clear",
+      other_backup_storages: [],
+      disk_content: [],
+    };
+    settings.proxmox.acl_extra = [];
+  }
+  const guestBackupFree = 62;
+  // db1 has a schedule and a second NIC; its backups show each kind (D-407).
+  const db1 = targets.get("db1");
+  if (db1) {
+    db1.document.spec.backup = { schedule: "daily", time: "03:00", keep: 7 };
+    db1.document.spec.guest.nics = [{ bridge: "vmbr2", tag: 20, ip: "10.20.0.20/24" }];
+  }
+  const guestBackups = new Map<string, GuestBackup[]>([
+    [
+      "db1",
+      [
+        {
+          id: "3f2a9c0d1e4b5a67",
+          time: "2026-11-15T03:00:12Z",
+          size: 812345678,
+          kind: "plumb",
+          trigger: "scheduled",
+          mode: "snapshot",
+        },
+        {
+          id: "5d7e8f9a0b1c2d3e",
+          time: "2026-11-14T16:42:05Z",
+          size: 809112334,
+          kind: "plumb",
+          trigger: "manual",
+          mode: "snapshot",
+        },
+        {
+          id: "1a2b3c4d5e6f7a8b",
+          time: "2026-11-14T03:00:10Z",
+          size: 805002211,
+          kind: "plumb",
+          trigger: "scheduled",
+          mode: "snapshot",
+        },
+        {
+          id: "9b1c2d3e4f5a6b7c",
+          time: "2026-10-01T03:00:09Z",
+          size: 790000000,
+          kind: "older-guest",
+          trigger: "scheduled",
+          mode: "snapshot",
+        },
+        {
+          id: "c0ffee00c0ffee00",
+          time: "2026-09-12T20:11:40Z",
+          size: 650000000,
+          kind: "unmarked",
+          trigger: "unknown",
+          mode: "stop",
+        },
+      ],
+    ],
+  ]);
+  const guestBackupLast = new Map<string, NonNullable<GuestBackupList["last"]>>([
+    ["db1", { at: "2026-11-15T03:00:12Z", result: "done", message: "" }],
+  ]);
+  /** The next scheduled job of a Target (UTC), or null without `backup`. */
+  function nextGuestBackup(t: TargetView): string | null {
+    const b = t.document.spec.backup;
+    if (!b) return null;
+    const [hh, mm] = b.time.split(":").map(Number);
+    const at = new Date();
+    at.setUTCHours(hh ?? 0, mm ?? 0, 0, 0);
+    if (at.getTime() <= Date.now()) at.setUTCDate(at.getUTCDate() + 1);
+    if (b.schedule === "weekly") {
+      const want = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(b.weekday ?? "sun");
+      while (at.getUTCDay() !== want) at.setUTCDate(at.getUTCDate() + 1);
+    }
+    return at.toISOString();
+  }
+  /** Retention (review M1 of #325): newest `keep` scheduled and at most 2 manual plumb volumes. */
+  function retainGuestBackups(name: string, keep: number) {
+    const list = guestBackups.get(name) ?? [];
+    const newest = (trigger: GuestBackup["trigger"], n: number) =>
+      list
+        .filter((b) => b.kind === "plumb" && b.trigger === trigger)
+        .sort((a, b) => b.time.localeCompare(a.time))
+        .slice(n);
+    const gone = new Set([...newest("scheduled", keep), ...newest("manual", 2)]);
+    guestBackups.set(
+      name,
+      list.filter((b) => !gone.has(b)),
+    );
+  }
   settings.backup = { ...installBackup, source: { time: "env", keep: "env" } };
   // The users of the mock (D-321): the restore locked all but admin.
   const MOCK_USERS = ["admin", "alice", "bob", "carol"];
@@ -2321,7 +2423,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         }
         applyImageDocs(proposal);
         for (const ref of proposal?.delete ?? []) {
-          if (ref.kind === "Target") targets.delete(ref.name);
+          if (ref.kind === "Target") {
+            targets.delete(ref.name);
+            // D-397, ARCH §20, M1 of #331: the lineage and run records go with the
+            // binding; the volumes stay in Proxmox and are no longer known (`unmarked`).
+            for (const b of guestBackups.get(ref.name) ?? []) b.kind = "unmarked";
+            guestBackupLast.delete(ref.name);
+          }
           if (ref.kind === "Block") {
             blocks.delete(ref.name);
             const at = blockViews.findIndex((v) => v.document.name === ref.name);
@@ -2970,6 +3078,138 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       settings.repair_key = repairKey;
       emit("repair_key.rotated", "settings:repair_key", { revoke_old: revokeOld === true });
       return structuredClone(repairKey);
+    },
+    async listGuestBackups(name) {
+      need("listGuestBackups");
+      const t = targets.get(name);
+      if (!t) throw new ApiError(example("getTarget", 404));
+      const g = settings.proxmox?.guest_backup ?? null;
+      const items = [...(guestBackups.get(name) ?? [])].sort((a, b) =>
+        b.time.localeCompare(a.time),
+      );
+      return structuredClone({
+        storage: g ? { id: g.storage, state: g.state, free_pct: guestBackupFree } : null,
+        items,
+        next_at: nextGuestBackup(t),
+        last: guestBackupLast.get(name) ?? null,
+      });
+    },
+    async backUpGuestNow(name) {
+      need("backUpGuestNow");
+      const t = targets.get(name);
+      if (!t) throw new ApiError(example("getTarget", 404));
+      const g = settings.proxmox?.guest_backup ?? null;
+      const refused = (detail: string) => problem("backup-refused", "Backup refused", 409, detail);
+      if (guestBackupLast.get(name)?.result === "running")
+        throw problem("backup-running", "Backup running", 409, `A backup of ${name} runs already.`);
+      if (restore.restored_mode)
+        throw refused("This Plumb was restored from a backup. Jobs wait until the confirm.");
+      if (!g) throw refused("The install named no guest backup storage.");
+      if (g.state === "clear-refused")
+        throw refused(
+          `The storage ${g.storage} does not encrypt, and the install did not say --guest-backup-clear.`,
+        );
+      if (guestBackupFree < 10)
+        throw refused(`The storage ${g.storage} has less than 10 % free space.`);
+      const started = now();
+      guestBackupLast.set(name, { at: started, result: "running", message: "" });
+      emit("guest_backup.started", `target:${name}`, { trigger: "manual" });
+      void sleep(stepDelay * 2).then(() => {
+        const id = Array.from(
+          { length: 16 },
+          () => "0123456789abcdef"[Math.floor(Math.random() * 16)],
+        ).join("");
+        const list = guestBackups.get(name) ?? [];
+        list.push({
+          id,
+          time: now(),
+          size: 800000000,
+          kind: "plumb",
+          trigger: "manual",
+          mode: "snapshot",
+        });
+        guestBackups.set(name, list);
+        retainGuestBackups(name, t.document.spec.backup?.keep ?? 7);
+        guestBackupLast.set(name, { at: now(), result: "done", message: "Backup done." });
+        emit("guest_backup.done", `target:${name}`, { result: "done" });
+      });
+    },
+    async deleteGuestBackup(name, backup) {
+      adminPerson();
+      if (!targets.has(name)) throw new ApiError(example("getTarget", 404));
+      const list = guestBackups.get(name) ?? [];
+      const b = list.find((x) => x.id === backup);
+      if (!b) throw problem("not-found", "Not found", 404, `No backup ${backup} of ${name}.`);
+      if (b.kind === "unmarked")
+        throw problem(
+          "not-plumb",
+          "Not a Plumb backup",
+          409,
+          "This backup has no Plumb marker: Plumb never deletes it. Delete it in Proxmox.",
+        );
+      guestBackups.set(
+        name,
+        list.filter((x) => x !== b),
+      );
+      emit("guest_backup.deleted", `target:${name}`, { kind: b.kind });
+    },
+    async restoreGuest(name, req) {
+      need("restoreGuest");
+      writable();
+      const t = targets.get(name);
+      if (!t) throw new ApiError(example("getTarget", 404));
+      // The answers of internal/api/restore_guest.go (T-222).
+      if (!/^[0-9a-f]{16}$/.test(req.backup) || !req.reason || req.reason.length > 2000)
+        throw problem("bad-request", "Bad request", 400, "backup and reason are needed.");
+      const b = (guestBackups.get(name) ?? []).find((x) => x.id === req.backup);
+      if (!b) throw problem("not-found", "Not found", 404, `No backup ${req.backup} of ${name}.`);
+      if (b.kind !== "plumb")
+        throw problem(
+          "not-restorable",
+          "Backup not restorable",
+          409,
+          `${name}: only a backup of this guest made by this Plumb can be restored.`,
+        );
+      if (t.status.power === "running" && t.document.spec.allow_restart !== true)
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `${name}: the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first (D-194)`,
+        );
+      const adopted = t.document.spec.adopted !== undefined;
+      const p = newPlan({
+        origin: "restore",
+        issue_id: null,
+        reason: req.reason.trim(),
+        targets: [
+          {
+            target: name,
+            resources: [
+              {
+                resource: "guest:config",
+                action: "update",
+                risk: "destructive",
+                changes: [
+                  { attr: "restore", to: `backup ${b.id} of ${b.time}`, risk: "destructive" },
+                ],
+              },
+            ],
+          },
+        ],
+        // restoreNotes of internal/plan/restore_guest.go.
+        warnings: [
+          "The guest goes back to the backup time: every change in the guest after it is lost.",
+          "Access that a person removed after the backup comes back (authorized_keys lines, passwords, users).",
+          "The desired state is not rolled back: the next Run converges the guest to the head revision.",
+          "The agent credential is revoked before the guest starts, and the host key pins are dropped.",
+          adopted
+            ? `The guest starts again without an agent: run the install command of ${name} (an adopted Target).`
+            : "A re-enroll Plan follows: approve it to start the guest with a new agent credential.",
+        ],
+        human_only: ["guest-restore"],
+      });
+      return withDocuments(p);
     },
     async getSettings() {
       const s = need("getSettings");

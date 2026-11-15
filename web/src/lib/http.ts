@@ -8,6 +8,7 @@ import type {
   PinRefresh,
   PlumbApi,
   RepairKeyView,
+  GuestBackupList,
   Settings,
   UnmanagedGuest,
   User,
@@ -120,7 +121,9 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
     }
     if (res.status === 204) return undefined as T;
     if (accept !== "application/json") return (await res.text()) as T;
-    return (await res.json()) as T;
+    // A 202 may come without a body (POST /targets/{name}/backups).
+    const raw = await res.text();
+    return (raw === "" ? undefined : JSON.parse(raw)) as T;
   }
 
   /** All items of a list: follows `next` until the last page. */
@@ -248,6 +251,23 @@ export function createHttpApi(opts: HttpOptions = {}): PlumbApi {
         "/settings/repair-key/rotate",
         revokeOld ? { revoke_old: true } : {},
       ),
+    listGuestBackups: (name) =>
+      call<GuestBackupList>("GET", `/targets/${encodeURIComponent(name)}/backups`),
+    backUpGuestNow: async (name, reason) => {
+      await call<undefined>(
+        "POST",
+        `/targets/${encodeURIComponent(name)}/backups`,
+        reason?.trim() ? { reason: reason.trim() } : undefined,
+      );
+    },
+    deleteGuestBackup: async (name, backup) => {
+      await call<undefined>(
+        "DELETE",
+        `/targets/${encodeURIComponent(name)}/backups/${encodeURIComponent(backup)}`,
+      );
+    },
+    restoreGuest: (name, req) =>
+      call<Plan>("POST", `/targets/${encodeURIComponent(name)}/restore`, req),
     getSettings: () => call<Settings>("GET", "/settings"),
     changeSettings: (change) => call<Settings>("PATCH", "/settings", change),
     listBackups: () => call<BackupList>("GET", "/backups"),

@@ -270,7 +270,7 @@ func (e *Engine) checkImageTargets(ctx context.Context, next *state.Set, plans [
 		if tp.Guest != "create" {
 			continue
 		}
-		r, err := renderOrNil(next, tp.Target)
+		r, err := e.renderOrNil(next, tp.Target)
 		if err != nil || r == nil {
 			return err
 		}

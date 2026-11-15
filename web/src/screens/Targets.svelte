@@ -91,6 +91,11 @@
               <a class="mono" href={href({ name: "target-edit", target: t.document.name })}
                 >{t.document.name}</a
               >
+              {#if t.document.spec.backup}<a
+                  class="muted"
+                  href={href({ name: "target-backups", target: t.document.name })}
+                  aria-label="Backups of {t.document.name}">backups</a
+                >{/if}
             </th>
             <td
               ><Badge tone={st.tone} label={st.label} title={st.detail} /><span class="sr-only"

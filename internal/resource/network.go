@@ -1,15 +1,20 @@
 package resource
 
 import (
+	"bytes"
 	"fmt"
+	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 )
 
 // Resource network (D-332, D-348 … D-350; schema/network.json): extra
 // addresses, routes, name servers and search domains of the main NIC of
-// a VM. This file has the value rules that the server and the agent share.
+// a VM, or, with mac, the settings of a more NIC N of the VM (slice 7,
+// D-403, D-419): only the render sets mac, from guest.nics. This file has
+// the value rules that the server and the agent share.
 
 // NetworkRoute is one route of a network resource.
 type NetworkRoute struct {
@@ -24,6 +29,11 @@ type NetworkSpec struct {
 	Routes      []NetworkRoute
 	Nameservers []netip.Addr
 	Search      []string
+	// MAC names a more NIC N (D-403): Plumb's MAC of that NIC (D-400,
+	// 02:…). Empty: the main NIC. Only with MAC: DHCP and Gateway.
+	MAC     string
+	DHCP    bool
+	Gateway netip.Addr
 }
 
 // Limits of the lists (the schema bounds the text; these bound the work).
@@ -200,5 +210,46 @@ func CheckNetworkAttrs(attrs map[string]any) (NetworkSpec, error) {
 	if len(s.Search) > maxNetworkSearch {
 		return s, fmt.Errorf("search: more than %d", maxNetworkSearch)
 	}
-	return s, nil
+	return s, checkNICAttrs(attrs, &s)
+}
+
+// checkNICAttrs reads mac, dhcp and gateway (D-403, D-419). mac must be
+// Plumb's form of a more NIC (02: and five bytes, lower case, D-400): a
+// MAC of a person or a guest never reaches a netplan match.
+func checkNICAttrs(attrs map[string]any, s *NetworkSpec) error {
+	if v, ok := attrs["mac"]; ok && v != nil && v != "" {
+		text, ok := v.(string)
+		mac, err := net.ParseMAC(text)
+		if !ok || err != nil || len(mac) != 6 || mac[0] != 0x02 || mac.String() != text || bytes.Equal(mac[1:], make([]byte, 5)) {
+			return fmt.Errorf("mac is not the MAC that Plumb chose for a network card (02:xx:xx:xx:xx:xx)")
+		}
+		s.MAC = text
+	}
+	if v, ok := attrs["dhcp"]; ok && v != nil {
+		b, ok := v.(bool)
+		if !ok {
+			return fmt.Errorf("dhcp is not true or false")
+		}
+		s.DHCP = b
+	}
+	if v, ok := attrs["gateway"]; ok && v != nil && v != "" {
+		text, ok := v.(string)
+		a, err := netip.ParseAddr(text)
+		if !ok || err != nil {
+			return fmt.Errorf("gateway is not an IP address")
+		}
+		if why := usableAddr(a); why != "" {
+			return fmt.Errorf("gateway is %s", why)
+		}
+		s.Gateway = a
+	}
+	switch {
+	case s.MAC == "" && (s.DHCP || s.Gateway.IsValid()):
+		return fmt.Errorf("dhcp and gateway are only for a network card of guest.nics: the main NIC keeps them as cloud-init made them")
+	case s.Gateway.IsValid() && s.DHCP:
+		return fmt.Errorf("gateway needs a static address, not dhcp")
+	case s.Gateway.IsValid() && !slices.ContainsFunc(s.Addresses, func(p netip.Prefix) bool { return p.Masked().Contains(s.Gateway) }):
+		return fmt.Errorf("gateway is in no network of the addresses")
+	}
+	return nil
 }

@@ -13,13 +13,14 @@ func TestPlannedFieldsRefused(t *testing.T) {
 	if _, err := Validate([]Doc{img, {Kind: KindTarget, Name: "web1", Spec: []byte(`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0"}}`)}}); err != nil {
 		t.Fatalf("base: %v", err)
 	}
-	// T-219: a VM NIC address waits for T-220; a container NIC has it.
-	for _, c := range []struct{ spec, path string }{
-		{`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9"},{"bridge":"vmbr9","tag":20,"ip":"10.9.20.5/24"}]}}`, "/spec/guest/nics/1/ip"},
-		{`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9","ip":"10.9.20.5/24","gateway":"10.9.20.1"}]}}`, "/spec/guest/nics/0/gateway"},
+	// T-220 serves the address of a VM NIC (the agent's network resource).
+	for _, spec := range []string{
+		`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9"},{"bridge":"vmbr9","tag":20,"ip":"10.9.20.5/24"}]}}`,
+		`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9","ip":"10.9.20.5/24","gateway":"10.9.20.1"}]}}`,
+		`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9","ip":"dhcp"}]}}`,
 	} {
-		if _, err := Validate([]Doc{img, {Kind: KindTarget, Name: "web1", Spec: []byte(c.spec)}}); err == nil || !strings.Contains(err.Error(), c.path) || !strings.Contains(err.Error(), "T-220") {
-			t.Errorf("VM NIC address: want a planned refusal at %s, got %v", c.path, err)
+		if _, err := Validate([]Doc{img, {Kind: KindTarget, Name: "web1", Spec: []byte(spec)}}); err != nil {
+			t.Errorf("VM NIC address: %v", err)
 		}
 	}
 	ctImg := Doc{Kind: KindImage, Name: "ct", Spec: []byte(`{"type":"lxc","url":"http://download.proxmox.com/a.tar.zst","sha512":"` + strings.Repeat("0", 128) + `"}`)}
