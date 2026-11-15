@@ -1034,7 +1034,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         {
           attr: "restore",
           from: "failed: the guest may have no disk",
-          to: "restore the safety backup backup 7e6d5c4b3a291807 of 2026-11-15T09:20:31Z",
+          to: "restore the safety backup 7e6d5c4b3a291807 of 2026-11-15T09:20:31Z",
           risk: "destructive",
         },
       ],
