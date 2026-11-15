@@ -26,7 +26,7 @@ func TestGuestBackupTask(t *testing.T) {
 	if _, err := d.GuestBackupTask(ctx, "plumb-backup", "9002", res.UPID); !errors.Is(err, ErrNotGuestTask) {
 		t.Errorf("other guest: %v", err)
 	}
-	for _, u := range []string{"UPID:pve:00000001:00000001:00000001:qmstart:9001:root@pam:", "UPID:other:00000001:00000001:00000001:vzdump:9001:root@pam:", "garbage"} {
+	for _, u := range []string{"UPID:pve:00000001:00000001:00000001:qmstart:9001:plumb@pve!plumb:", "UPID:other:00000001:00000001:00000001:vzdump:9001:plumb@pve!plumb:", "garbage"} {
 		if _, err := d.GuestBackupTask(ctx, "plumb-backup", "9001", u); !errors.Is(err, ErrNotGuestTask) {
 			t.Errorf("%s: %v", u, err)
 		}
