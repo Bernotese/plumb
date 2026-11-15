@@ -257,9 +257,9 @@ func TestQADiskVolumeLeftLifecycle(t *testing.T) {
 	}
 	// A person who is no admin may not ignore it either (only a human
 	// admin, as guest:restore-failed).
-	planner := e.newUser(adm, "pat", "plan")
+	planner := e.newUser(adm, "pat", "apply")
 	if code, body := planner.do("POST", "/api/v1/issues/"+itoa(iss.ID)+"/resolve", resolveBody(issue.ActionIgnoreOnce)); code < 400 {
-		t.Errorf("a plan user ignored guest:volume-left: %d %s", code, body)
+		t.Errorf("an apply user ignored guest:volume-left: %d %s", code, body)
 	}
 	// Every add is refused while it is open; a grow of slot 2 is not an add.
 	if code, body, _ := e.qaPropose(adm, diskTarget("web1", `[{"slot":2,"size_gb":1},{"slot":3,"size_gb":1}]`, true)); code != 422 ||
