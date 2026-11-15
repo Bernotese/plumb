@@ -359,6 +359,9 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	if iss.Resource == plan.GuestRestoreFailedID && action == ActionIgnoreRule {
 		return store.Plan{}, ErrRestoreFailedRule
 	}
+	if iss.Resource == plan.GuestVolumeLeftID && action == ActionIgnoreRule { // F1 of #375
+		return store.Plan{}, ErrVolumeLeftRule
+	}
 	if err := s.restoreFailed(ctx, iss); err != nil {
 		return store.Plan{}, err
 	}
@@ -619,6 +622,11 @@ func (s *Service) restoreFailed(ctx context.Context, iss store.Issue) error {
 	}
 	return fmt.Errorf("%w: Issue %d of %s says that the guest may have no disk; restore a backup first (POST /targets/%s/restore). Its actions come back after a restore that works", plan.ErrRestoreFailed, id, iss.Target, iss.Target)
 }
+
+// ErrVolumeLeftRule: no Rule covers guest:volume-left (D-437). A Rule Plan
+// would set the Issue to resolving, and the poll could no longer end it
+// when the volume is gone (F1 of #375).
+var ErrVolumeLeftRule = errors.New("issue: a left volume cannot be ignored by a rule; free the volume, or end the Issue with ignore once")
 
 // ErrRestoreFailedRule: the Issue of a failed restore cannot be ignored by
 // a Rule (M1 of #352): a Rule would keep every later one from opening.

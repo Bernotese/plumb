@@ -14,6 +14,7 @@ import (
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/issue"
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
@@ -181,6 +182,14 @@ func TestDiskVolumeLeft(t *testing.T) {
 	json.Unmarshal(view, &v)
 	if !slices.Equal(v.Actions, []string{"ignore_once"}) {
 		t.Errorf("volume-left actions %v", v.Actions)
+	}
+	// F1 of #375: ignore_rule is refused, not only hidden; the Issue stays
+	// open, so the poll can still end it when the volume is gone.
+	if code, body := adm.do("POST", "/api/v1/issues/"+itoa(iss.ID)+"/resolve", resolveBody("ignore_rule")); code != 409 || problemType(body) != "action-not-allowed" {
+		t.Errorf("ignore_rule on volume-left: %d %s", code, body)
+	}
+	if got, _ := e.st.GetIssue(e.ctx, iss.ID); got.Status != store.IssueOpen {
+		t.Errorf("volume-left after the refused rule: %s", got.Status)
 	}
 	code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "again", "put": []state.Doc{diskTarget("web1", `[{"slot":2,"size_gb":1}]`, true)}})
 	if code != 422 || pointerOf(body) != "/put/0/spec/guest/disks/0" || !strings.Contains(string(body), "waits for its removal: "+left[0]) {
