@@ -229,6 +229,12 @@ func TestTokenRatePrune(t *testing.T) {
 // is never limited; another kind of the same token still works.
 func TestTokenRateHTTP(t *testing.T) {
 	e := newEnv(t, true)
+	// The limiter's clock is the test's (T-230): a slow runner (race job)
+	// never refills a bucket between two requests, and the refill below is
+	// a step of this clock, not of the wall clock.
+	c := &fakeClock{now: time.Now()}
+	e.srv.now = c.Now
+	e.h = e.srv.Handler()
 	tok := e.token(TierPlan, "")
 	const mark = "ECHO-MARK-7f3a"
 	body := map[string]any{"reason": mark, "put": []any{"not a document"}}
@@ -245,14 +251,26 @@ func TestTokenRateHTTP(t *testing.T) {
 			t.Fatalf("proposal %d: %d %s", i, rec.Code, rec.Body)
 		}
 	}
-	if limited < 30 {
-		t.Fatalf("no 429 after 40 proposals, or before 30 (%d)", limited)
+	if limited != 30 {
+		t.Fatalf("the 429 came at proposal %d, want exactly 30 (the burst; no refill on a frozen clock)", limited)
 	}
 	if problemType(rec429) != "rate-limited" || bytes.Contains(rec429, []byte(mark)) {
 		t.Fatalf("429 body %s", rec429)
 	}
-	if s, err := strconv.Atoi(retry); err != nil || s < 1 || s > 2 {
-		t.Fatalf("Retry-After %q", retry)
+	if retry != "2" {
+		t.Fatalf("Retry-After %q, want 2 (one proposal per 2 s)", retry)
+	}
+	// The refill: 1.9 s give nothing, 2 s give exactly one proposal.
+	c.add(1900 * time.Millisecond)
+	if rec := tok.raw("POST", "/api/v1/plans", body); rec.Code != 429 {
+		t.Fatalf("after 1.9 s: %d", rec.Code)
+	}
+	c.add(100 * time.Millisecond)
+	if rec := tok.raw("POST", "/api/v1/plans", body); rec.Code == 429 {
+		t.Fatal("after 2 s: still 429")
+	}
+	if rec := tok.raw("POST", "/api/v1/plans", body); rec.Code != 429 {
+		t.Fatalf("a second proposal after one refill: %d", rec.Code)
 	}
 	// Reads and comments are other buckets.
 	if code, body := tok.do("GET", "/api/v1/plans", nil); code != 200 {
@@ -262,22 +280,20 @@ func TestTokenRateHTTP(t *testing.T) {
 		t.Fatal("a comment after the proposal limit")
 	}
 
-	// One event, with the token and the kind.
-	sub := e.events.Subscribe(e.ctx, 0)
+	// One event, with the token and the kind, read from the store: the
+	// handler emits it before it answers 429 (T-230: no wait on a
+	// subscription that replays every event of the env in real time).
+	evs, err := e.st.EventsAfter(e.ctx, 0, 100000)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got []string
-	timeout := time.After(500 * time.Millisecond)
-loop:
-	for {
-		select {
-		case ev := <-sub.C:
-			if ev.Type == "token.rate_limited" {
-				got = append(got, fmt.Sprintf("%s %s %s", ev.Subject, ev.Actor, ev.Data))
-				if bytes.Contains(ev.Data, []byte(mark)) {
-					t.Errorf("the event holds the request: %s", ev.Data)
-				}
+	for _, ev := range evs {
+		if ev.Type == "token.rate_limited" {
+			got = append(got, fmt.Sprintf("%s %s %s", ev.Subject, ev.Actor, ev.Data))
+			if bytes.Contains(ev.Data, []byte(mark)) {
+				t.Errorf("the event holds the request: %s", ev.Data)
 			}
-		case <-timeout:
-			break loop
 		}
 	}
 	tokID, _, _ := strings.Cut(tok.bearer, ".")
@@ -306,8 +322,8 @@ loop:
 			break
 		}
 	}
-	if n < 120 || n == 400 {
-		t.Fatalf("read limit after %d reads, want after the burst of 120", n)
+	if n != 120 {
+		t.Fatalf("read limit after %d reads, want exactly after the burst of 120", n)
 	}
 	// The event stream is never limited.
 	if code, _ := rd.do("GET", "/api/v1/events?since=-1", nil); code == 429 {
