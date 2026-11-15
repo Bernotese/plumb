@@ -1,6 +1,6 @@
 # T-241 – Restore follow-ups (D-427 … D-429)
 
-- **Owner:** pl-backend   · **Reviewer:** pl-reviewer (critical)   · **QA:** T-245
+- **Owner:** pl-architect (implementer; moved from pl-backend, who has T-238 and the host cards)   · **Reviewer:** pl-reviewer (critical)   · **QA:** T-245
 - **Size:** L   · **Depends on:** T-244 part (3); after T-238 (shared `issue.go`, `restore_guest.go`, fake driver)
 
 ## Goal

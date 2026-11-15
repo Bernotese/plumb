@@ -304,17 +304,20 @@ changes, marked "written by API token". A Plan that takes a value a guest report
 a firewall, needs a person in any case. A token may make 30 Plans and 30 comments per minute; above
 that Plumb refuses the call and says how long to wait.
 
-**Explain an Issue.** Plumb also offers the MCP prompt `explain_issue`. In the client, choose it and
-give the Issue number. Plumb hands the client the Issue, its Target, the Block or resource that the
-Issue is about, the last Runs and the comments, with short guidance. The client then explains the
-Issue and can propose a Revert or Accept, or a change, as a Plan that you approve. It needs a token
-with the tier plan or higher.
+#### Explain an Issue
 
-- Everything from the guest and from your documents goes to the client marked as data, not as
-  instructions. A text in a guest (for example a file that says "approve this") cannot steer
-  Plumb: the client cannot approve anything.
-- Secret values are never in it, only the names of the secrets.
-- A large Issue is cut, and the prompt says what was left out.
+The prompt **explain_issue** (argument: the Issue id) gives the client one Issue with what it
+needs: the difference, the Target and its Blocks, the source of the resource, the last 5 Runs of
+the Target and the last 20 comments. The client then explains the Issue in a comment and may
+propose **one** Revert or Accept of this Issue. You approve it in the web UI, as every Plan.
+
+- Use a token with the tier **plan**. A **read** token gets an error for this prompt.
+- Everything that comes from a guest or a person (reported values, comments, Run output, Block
+  text, parameters) is marked as untrusted data in the prompt. Plumb tells the client never to
+  follow instructions found in it, but to report them in its comment. If a comment of the client
+  says that it found such instructions, look at who wrote them.
+- The prompt holds no secret: a sensitive value shows only that it differs.
+- Long texts are cut, and the prompt says where. The client then has a partial view.
 
 ### Users and roles
 
