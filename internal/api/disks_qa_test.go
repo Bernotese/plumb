@@ -149,11 +149,11 @@ func TestQADiskMissingThenEmptyAndSlotIdentity(t *testing.T) {
 
 	// The field goes: no disk change, the disk stays.
 	code, body, p := e.qaPropose(adm, targetDoc("web1", "hello"))
-	if code == 201 {
-		if _, _, _, ok := p.change("disk2"); ok {
-			t.Fatalf("a missing field planned a disk change: %s", body)
-		}
-		e.qaApprove(adm, p.ID)
+	if _, _, _, ok := p.change("disk2"); code != 201 || ok {
+		t.Fatalf("a missing field planned a disk change (or was refused): %d %s", code, body)
+	}
+	if code, body := e.qaApprove(adm, p.ID); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
 	}
 	if e.qaGuest("web1").Spec.DiskAt(2) == nil {
 		t.Fatal("removing the field removed the disk")
@@ -254,6 +254,12 @@ func TestQADiskVolumeLeftLifecycle(t *testing.T) {
 		if code, body := tok.do("POST", "/api/v1/issues/"+itoa(iss.ID)+"/resolve", resolveBody(a)); code < 400 {
 			t.Errorf("a token's %s on guest:volume-left: %d %s", a, code, body)
 		}
+	}
+	// A person who is no admin may not ignore it either (only a human
+	// admin, as guest:restore-failed).
+	planner := e.newUser(adm, "pat", "plan")
+	if code, body := planner.do("POST", "/api/v1/issues/"+itoa(iss.ID)+"/resolve", resolveBody(issue.ActionIgnoreOnce)); code < 400 {
+		t.Errorf("a plan user ignored guest:volume-left: %d %s", code, body)
 	}
 	// Every add is refused while it is open; a grow of slot 2 is not an add.
 	if code, body, _ := e.qaPropose(adm, diskTarget("web1", `[{"slot":2,"size_gb":1},{"slot":3,"size_gb":1}]`, true)); code != 422 ||
