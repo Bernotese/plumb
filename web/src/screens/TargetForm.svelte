@@ -1263,10 +1263,27 @@
           </div>
           {#if disksManaged && neverManaged}
             <div class="banner warn" role="note" id="disks-unmanaged-note">
-              Plumb has not managed the data disks of this guest so far. Now it manages slots 1 to
-              {MAX_DISKS}: a data disk that the guest has now in a slot that this list does not name
-              is removed by the Plan (destructive). Add such a disk to the list to keep it. Read the
-              Plan before you approve it.
+              <p>
+                Plumb has not managed the data disks of this guest so far. Now it manages slots 1 to
+                {MAX_DISKS}. Read the Plan before you approve it.
+              </p>
+              {#if kind === "lxc"}
+                <p id="disks-unmanaged-lxc">
+                  A disk that a person added on the disk storage of the install counts as Plumb's:
+                  list it with its slot, size and path to keep it. If this list does not name its
+                  slot, the Plan removes it and its data (destructive). A disk on another storage,
+                  or a bind mount, Plumb did not make: if the list names its slot, Plumb refuses the
+                  Plan; else the Plan detaches it (destructive), and Plumb does not free it.
+                </p>
+              {:else}
+                <p id="disks-unmanaged-vm">
+                  A disk that a person added in Proxmox has no serial <code>plumb-N</code>, so Plumb
+                  did not make it and never takes it over. If this list names its slot, Plumb
+                  refuses the Plan (remove the disk in Proxmox, or use another slot). Else the Plan
+                  detaches it (destructive), and Plumb does not free it. To keep such a disk as it
+                  is, leave this box off.
+                </p>
+              {/if}
             </div>
           {/if}
           {#if disksManaged}

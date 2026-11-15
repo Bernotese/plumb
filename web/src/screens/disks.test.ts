@@ -144,9 +144,26 @@ describe("data disk list (VM)", () => {
     el<HTMLInputElement>("#disks-managed").click();
     flushSync();
     const note = text(el("#disks-unmanaged-note"));
-    expect(note).toContain("removed by the Plan (destructive)");
-    expect(note).toContain("Add such a disk to the list to keep it");
+    expect(note).toContain("the Plan detaches it (destructive), and Plumb does not free it");
+    // A VM disk that a person added is foreign (no serial plumb-N): never taken over (ARCH §21 H1).
+    expect(note).toContain("never takes it over");
+    expect(note).toContain("Plumb refuses the Plan");
+    expect(note).toContain("leave this box off");
+    expect(note).not.toContain("to keep it.");
     expect(el("#disks-managed-hint").textContent).toContain("its revert removes it");
+  });
+
+  it("the first-time note of a container: a hand-made disk on the disk storage counts", async () => {
+    const api = adminApi();
+    const ct = await api.getTarget("ct-web1");
+    expect(ct.document.spec.guest.disks).toBeUndefined();
+    await edit("ct-web1", api);
+    el<HTMLInputElement>("#disks-managed").click();
+    flushSync();
+    const note = text(el("#disks-unmanaged-note"));
+    expect(note).toContain("counts as Plumb's: list it with its slot, size and path to keep it");
+    expect(note).toContain("Plumb refuses the Plan");
+    expect(document.querySelector("#disks-unmanaged-vm")).toBeNull();
   });
 
   it("no first-time note on a Target that manages its disks already", async () => {
