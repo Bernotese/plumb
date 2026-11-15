@@ -88,9 +88,10 @@ func TestParkEndsOnLateUnbindResult(t *testing.T) {
 			t.Fatal("the park did not end after the agent answered the queued unbind")
 		}
 	}
-	if !a.Unbound() {
-		t.Fatal("the agent did not run the unbind")
-	}
+	// The agent reports the result first and goes after it (T-193), and
+	// the park ends inside that report: on a slow runner the test can see
+	// the park end before the agent marks itself unbound (T-235).
+	waitTrue(t, a.Unbound, "the agent did not run the unbind")
 	if n := countType(a.Commands(), wire.CommandUnbind); n != 1 {
 		t.Fatalf("the agent got %d unbind commands, want 1", n)
 	}
@@ -100,9 +101,20 @@ func TestParkEndsOnLateUnbindResult(t *testing.T) {
 	if g := e.unmanaged(adm, vmid); !g.Adoptable || slices.Contains(g.Reasons, "agent-left") {
 		t.Fatalf("after the park: %+v", g)
 	}
-	evs, _ := e.st.EventsAfter(e.ctx, seq, 500)
-	if !slices.ContainsFunc(evs, func(ev store.Event) bool { return ev.Type == "agent.unbound" }) {
-		t.Fatal("no agent.unbound event")
+	// The event follows the unpark in endUnbindPark (T-235).
+	waitTrue(t, func() bool {
+		evs, _ := e.st.EventsAfter(e.ctx, seq, 500)
+		return slices.ContainsFunc(evs, func(ev store.Event) bool { return ev.Type == "agent.unbound" })
+	}, "no agent.unbound event")
+}
+
+// waitTrue waits up to 10 s for cond; else it fails with msg.
+func waitTrue(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !cond(); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
 	}
 }
 
