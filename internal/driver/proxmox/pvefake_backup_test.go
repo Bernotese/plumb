@@ -166,7 +166,11 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 			fail(w, 500, "vzdump: guest or storage not found", nil)
 			return true
 		}
-		upid := f.task(key)
+		// A vzdump task names its type and VMID in the UPID, as PVE does (T-248).
+		qm := f.task(key)
+		upid := fmt.Sprintf("UPID:%s:%08X:%08X:%08X:vzdump:%d:plumb@pve!plumb:", f.node, len(f.tasks)+1, 1, time.Now().Unix(), vmid)
+		f.tasks[upid] = f.tasks[qm]
+		delete(f.tasks, qm)
 		if b.failVzdump != "" {
 			f.tasks[upid].exit = b.failVzdump
 			b.failVzdump = ""
@@ -184,8 +188,10 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 		if vm.ct {
 			kind = "lxc"
 		}
-		volid := fmt.Sprintf("%s:backup/vzdump-%s-%d-%04d.vma.zst", b.storage, kind, vmid, b.seq)
+		file := fmt.Sprintf("vzdump-%s-%d-%04d.vma.zst", kind, vmid, b.seq)
+		volid := b.storage + ":backup/" + file
 		b.vols[volid] = &fakeVol{vmid: vmid, ctime: time.Now().Unix() + int64(b.seq), size: 2 << 20, notes: notes}
+		f.tasks[upid].log = append(f.tasks[upid].log, "INFO: creating vzdump archive '/mnt/pve/"+b.storage+"/dump/"+file+"'")
 		reply(w, 200, upid)
 		return true
 	}

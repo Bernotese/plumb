@@ -24,7 +24,7 @@ type qaGuestDriver struct {
 	start chan struct{} // closed when a held vzdump started
 }
 
-func (d *qaGuestDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, ex []string) (string, bool, error) {
+func (d *qaGuestDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, ex []string, onTask func(string)) (string, bool, error) {
 	d.mu.Lock()
 	hold, start := d.hold, d.start
 	d.mu.Unlock()
@@ -36,7 +36,7 @@ func (d *qaGuestDriver) BackUpGuest(ctx context.Context, storage, guest, notes s
 			return "", false, ctx.Err()
 		}
 	}
-	return d.apiGuestDriver.BackUpGuest(ctx, storage, guest, notes, ex)
+	return d.apiGuestDriver.BackUpGuest(ctx, storage, guest, notes, ex, onTask)
 }
 
 func (d *qaGuestDriver) BackupStorageState(context.Context, string) (backup.StorageState, error) {
