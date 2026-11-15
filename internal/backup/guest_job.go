@@ -428,8 +428,12 @@ func (g *Guests) SafetyBackup(ctx context.Context, target, actor string) (Classi
 }
 
 // DropSafetyBackups deletes the Target's pre-restore volumes of the current
-// lineage except keep (a volid): a restore that worked keeps only its own
-// safety backup (D-420). An error of one delete is logged; the rest go on.
+// lineage that are older than keep (a volid): a restore that worked keeps
+// its own safety backup (D-420). D-429: keep is the safety backup of the
+// Run, or the restored volume when the Run took none (the last restore
+// had failed); a pre-restore volume that is newer than keep is never
+// deleted (review of #359), and nothing goes when keep is not listed. An
+// error of one delete is logged; the rest go on.
 func (g *Guests) DropSafetyBackups(ctx context.Context, target, keep, actor string) error {
 	t, err := g.cfg.Target(ctx, target)
 	if err != nil {
@@ -439,8 +443,14 @@ func (g *Guests) DropSafetyBackups(ctx context.Context, target, keep, actor stri
 	if err != nil {
 		return err
 	}
+	ki := slices.IndexFunc(vols, func(c Classified) bool { return c.Volid == keep })
+	if ki < 0 {
+		g.cfg.Logger.Warn("delete older safety backups: the kept volume is not listed; nothing is deleted", "target", target)
+		return nil
+	}
+	keptAt := vols[ki].Time
 	for _, c := range vols {
-		if c.Kind != KindPlumb || c.Trigger != TriggerPreRestore || c.Volid == keep {
+		if c.Kind != KindPlumb || c.Trigger != TriggerPreRestore || c.Volid == keep || !c.Time.Before(keptAt) {
 			continue
 		}
 		if err := g.cfg.Driver.DeleteGuestBackup(ctx, g.cfg.Storage, t.Guest, c.Volid); err != nil {

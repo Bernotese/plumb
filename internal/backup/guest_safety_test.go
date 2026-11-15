@@ -57,6 +57,42 @@ func TestSafetyBackupMarkerAndRetention(t *testing.T) {
 	}
 }
 
+// D-429 (review of #359): after a restore of a safety backup that took no
+// new one (the last restore had failed), the restored volume and every
+// newer safety backup stay; only the older ones go. A kept volume that is
+// not listed deletes nothing.
+func TestSafetyBackupDropKeepsNewer(t *testing.T) {
+	e := newJobEnv(t, nil)
+	ctx := context.Background()
+	var s []Classified
+	for range 4 {
+		c, err := e.g.SafetyBackup(ctx, "db1", "system")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s = append(s, c)
+	}
+	scheduled := len(e.d.vols["9001"])
+	e.g.BackUp(ctx, "db1", TriggerScheduled, "system")
+	// The restore used s[1]: s[0] goes, s[1] (restored), s[2] and s[3] (newer) stay.
+	if err := e.g.DropSafetyBackups(ctx, "db1", s[1].Volid, "system"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.d.deleted) != 1 || e.d.deleted[0] != s[0].Volid {
+		t.Fatalf("deleted %v, want only %s", e.d.deleted, s[0].Volid)
+	}
+	if len(e.d.vols["9001"]) != scheduled {
+		t.Fatalf("volumes %d, want %d (the scheduled one stays)", len(e.d.vols["9001"]), scheduled)
+	}
+	// A kept volume that is not listed: nothing goes.
+	if err := e.g.DropSafetyBackups(ctx, "db1", "plumb-backup:backup/not-there", "system"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.d.deleted) != 1 {
+		t.Fatalf("deleted %v", e.d.deleted)
+	}
+}
+
 // A safety backup that gives no marked volume is an error with Plumb's
 // text; a refused job too (restored mode, free space).
 func TestSafetyBackupFails(t *testing.T) {
