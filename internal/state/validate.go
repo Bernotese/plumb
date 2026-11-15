@@ -365,8 +365,7 @@ type targetSpec struct {
 	Overrides    map[string]map[string]any `json:"overrides"`
 	// Adopted: a guest that a person made (D-386); the Target has no image.
 	Adopted *Adopted `json:"adopted"`
-	// Backup: guest backups by Plumb (slice 7, D-408). Planned: see
-	// plannedFields.
+	// Backup: guest backups by Plumb (slice 7, D-408; T-221).
 	Backup map[string]any `json:"backup"`
 }
 
