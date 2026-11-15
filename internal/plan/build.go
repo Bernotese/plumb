@@ -478,7 +478,8 @@ func (e *Engine) LeftTemplates(ctx context.Context, image string) ([]LeftTemplat
 // that is in use (pinned by a create, linked clones, a lock) is left and
 // named in the output; the step is applied. Every other error fails the
 // step and the Run, and the output says that the new version is still
-// ready (D-232).
+// ready (D-232). For a deleted Image a template that stays (in use, or a
+// refused remove) gives a warning, never a failed Run (D-430).
 func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, image string, built int) {
 	// The version is ready; finish the clean-up, within the shutdown grace.
 	ctx, stop := e.cleanupContext(ctx, "retention", "run", s.run.ID, "image", image)
@@ -496,8 +497,25 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 	}
 	lines = append(lines, left...)
 	if !ok {
-		// The Image is deleted: name the files that stay (D-430).
+		// The Image is deleted (D-430): no later retention runs for it, so
+		// a template that stays is left for a person, and the delete itself
+		// does not fail (the document is gone). The step names what stays.
+		if err != nil {
+			lines = append(lines, err.Error())
+		}
+		if err != nil || len(left) > 0 {
+			lines = append(lines, fmt.Sprintf("Image %s is deleted, so Plumb does not try again: remove its templates (plumb-img-%s-…) in Proxmox when nothing uses them.", image, image))
+		}
 		lines = append(lines, e.keptFileNotes(ctx, image)...)
+		status := wire.StatusApplied
+		switch {
+		case err != nil || len(left) > 0:
+			status = wire.StatusWarning
+		case len(removed) == 0:
+			status = wire.StatusUnchanged
+		}
+		s.set(ctx, StepImageRetention, status, nil, strings.Join(lines, "\n"))
+		return
 	}
 	if err != nil {
 		// A template stays unless every error is a stale store row of a
