@@ -21,11 +21,27 @@ import (
 
 // GuestDriver is the part of the Proxmox driver that jobs use.
 type GuestDriver interface {
-	BackUpGuest(ctx context.Context, storage, guest, notes string, excludePaths []string) (volid string, warned bool, err error)
+	// BackUpGuest calls onTask with the task's UPID as soon as the task
+	// started (T-248).
+	BackUpGuest(ctx context.Context, storage, guest, notes string, excludePaths []string, onTask func(upid string)) (volid string, warned bool, err error)
+	// GuestBackupTask reads a vzdump task of the guest: its state and the
+	// one volume that its log names (T-248).
+	GuestBackupTask(ctx context.Context, storage, guest, upid string) (GuestTask, error)
 	ListGuestBackups(ctx context.Context, storage, guest string) ([]Volume, error)
 	DeleteGuestBackup(ctx context.Context, storage, guest, volid string) error
 	BackupStorageState(ctx context.Context, storage string) (StorageState, error)
 }
+
+// GuestTask is a vzdump task of a guest as the driver reads it (T-248).
+type GuestTask struct {
+	Running bool
+	OK      bool   // ended OK or with warnings: the archive is complete
+	Volid   string // the one volume that the task log names; "" for none
+}
+
+// ErrNotGuestTask: the task is not a vzdump task of the Target's guest
+// (for example the guest was made again under another VMID).
+var ErrNotGuestTask = errors.New("backup: not a backup task of this guest")
 
 // StorageState is the guest backup storage as the token sees it.
 type StorageState struct {
@@ -252,6 +268,13 @@ func (g *Guests) start(ctx context.Context, target, trigger, actor string) (func
 	if err != nil {
 		return refuse("this controller has no install id, so its backups cannot be marked")
 	}
+	// One job per guest (T-248): the unique running row serializes the
+	// schedule, "back up now" and the safety backup inside Plumb. A job
+	// that a controller stop cut off may still have its task in Proxmox:
+	// no new job starts while it runs.
+	if running, err := g.settle(ctx, t.Name); err == nil && running {
+		return refuse("the Proxmox task of an earlier backup job of this guest still runs; the next job starts when it ended")
+	}
 	id, err := g.cfg.Store.StartGuestBackupRun(ctx, t.Name, lineage, trigger)
 	if errors.Is(err, store.ErrGuestBackupRunning) {
 		return nil, ErrGuestBackupBusy
@@ -270,18 +293,49 @@ func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, mark
 	if t.LXC {
 		exclude = excludeLXC
 	}
-	volid, warned, err := g.cfg.Driver.BackUpGuest(ctx, g.cfg.Storage, t.Guest, marker, exclude)
+	onTask := func(upid string) {
+		// Its own short context: the UPID must reach the row also when the
+		// job's context ends right after the start.
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := g.cfg.Store.SetGuestBackupTask(sctx, id, upid); err != nil {
+			g.cfg.Logger.Error("guest backup: the task is not recorded", "target", t.Name, "err", err)
+		}
+	}
+	volid, warned, err := g.cfg.Driver.BackUpGuest(ctx, g.cfg.Storage, t.Guest, marker, exclude, onTask)
 	if err != nil {
 		msg := "the backup failed in Proxmox (see the task log there)"
 		switch {
 		case ctx.Err() != nil:
 			// The driver's wait stops the Proxmox task when its context
 			// ends (Client.WaitTask → stopTask, TestBackUpGuestCancelStopsTask).
+			// The task may still have ended OK: settle checks it later.
 			msg = "the controller stopped during the backup; the Proxmox task was asked to stop"
 		case errors.Is(err, ErrManyNew):
-			msg = "another backup of this guest ran at the same time; Plumb's volume stays and is listed when its record is complete"
+			// T-248: the new volumes cannot tell which is Plumb's; the
+			// job's own task can (settle, right below).
+			msg = "another backup of this guest ran at the same time"
 		}
 		g.finish(ctx, id, t.Name, actor, trigger, "failed", Volume{}, msg)
+		if ctx.Err() == nil {
+			if _, err := g.settle(ctx, t.Name); err != nil {
+				g.cfg.Logger.Warn("guest backup: check of the task", "target", t.Name, "err", err)
+			}
+			if r, err := g.cfg.Store.GuestBackupRun(ctx, id); err == nil && r.Result == "done" && r.Volid != "" {
+				// The task proved the volume: the job is done after all.
+				vols, lerr := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest)
+				made := Volume{Volid: r.Volid}
+				if lerr == nil {
+					if i := slices.IndexFunc(vols, func(v Volume) bool { return v.Volid == r.Volid }); i >= 0 {
+						made = vols[i]
+					}
+					g.retain(ctx, t, lineage, vols)
+				}
+				return jobResult{Result: "done", Message: r.Message, Volume: made}, nil
+			} else if err == nil {
+				msg = r.Message
+			}
+		}
 		return jobResult{Result: "failed", Message: msg}, fmt.Errorf("backup: guest backup of %s: %w", t.Name, err)
 	}
 	// vzdump only warns when the notes fail (T-214): read the marker back.
