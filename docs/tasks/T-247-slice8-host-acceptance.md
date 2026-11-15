@@ -21,5 +21,8 @@ Slice 8, child card **C11** of T-236. Prove slice 8 on `pve-dev`.
 ## Out of scope
 - Other rows. Any release step. The user's own installation.
 
+- [ ] Restore with a bridge/tag that is no longer named, for an **LXC** (T-241 #369 H1): at which point does PVE refuse – before or after it removes the rootfs? Record the task's exit status text and the state of the volumes. Until this is proven, Plumb says 'not started' only for a VM.
+- [ ] T-248: the token can read its own vzdump task log and status; the exact user field of a UPID made with the token.
+
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
