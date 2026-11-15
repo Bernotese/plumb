@@ -1231,6 +1231,11 @@ paths:
         its binding and its backup lineage; the Run drops the host key pins, and the next repair
         report pins the keys again. There is
         no restore after the guest is gone: it would need a new right (D-411, a later user question).
+        Data disks (D-423, planned: T-238): the backup holds every data disk the guest had at the
+        backup time. The Plan names every data disk that the guest has now and the backup lacks
+        (added later), with a `warnings` line and a change `disk<N>`: a VM keeps it as an unused
+        volume (Plumb never frees it; the next Run attaches a new empty disk in that slot), an LXC
+        loses its data. The safety backup holds it.
         A person restores such a volume in Proxmox into pool `plumb` and adopts it. 409
         `restored-mode` in restored mode. The token itself can restore at the Proxmox API with the
         D-380 rights; this rule holds inside Plumb.
@@ -1678,7 +1683,15 @@ paths:
         Validates and renders the proposal, observes the affected targets and stores a Plan with
         one entry per changed resource. A proposal that cannot be planned gets no Plan: 422 when
         a document is invalid, changes a create-only field (`ip`, `gateway`, `user`,
-        `ssh_keys`, `disk`) or refers to a missing secret, 409 when the base revision moved.
+        `ssh_keys`, the `path` of a data disk) or refers to a missing secret, 409 when the base
+        revision moved. Also 422:
+        - a smaller `disk`, or a smaller `size_gb` of a data disk, of a bound Target: Proxmox cannot
+          shrink a disk (D-299, D-423; the error points at the field);
+        - `nics` or `disks` on an adopted Target (`nics-not-adoptable`, D-404;
+          `disks-not-adoptable`, D-423, planned: T-238);
+        - a slot of `disks` that holds a volume Plumb did not make (D-436, planned: T-238; the
+          error points at the disk);
+        - a bridge or bridge/tag that the install did not name (`network-not-allowed`, D-401).
         `targets` plans targets without a document change, for example after a new secret value
         (D-090).
       security:

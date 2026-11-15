@@ -733,6 +733,7 @@ func (s *Set) checkTarget(name string) Errors {
 		return &Error{Kind: KindTarget, Name: name, Path: path, Msg: fmt.Sprintf(format, args...)}
 	}
 	var errs Errors
+	errs = append(errs, checkDisks(t, errf)...)
 	errs = append(errs, plannedFields(t, errf)...)
 	if t.Adopted != nil {
 		// No image: the schema refuses image next to adopted (D-386).
