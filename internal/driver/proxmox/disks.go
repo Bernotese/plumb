@@ -337,7 +337,7 @@ func (d *Driver) undoCTAdd(ctx context.Context, id, n int, path string, before m
 	if isStorageVolume(vol) && ownVolume(vol, d.cfg.DiskStorage, id) && !before[vol] {
 		ferr = free(n, vol)
 	} else {
-		ferr = &driver.VolumeLeftError{Slot: n, Volume: vol, Err: errors.New("Plumb did not free it: it is not the volume this Run made")}
+		ferr = &driver.VolumeLeftError{Slot: n, Volume: vol, Err: errors.New("not freed: it is not the volume this Run made")}
 	}
 	if err := start(); err != nil {
 		return fmt.Errorf("proxmox: the container did not start with disk %d at %s, and it did not start again after Plumb removed the disk: %w", n, path, err)
