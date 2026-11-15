@@ -55,6 +55,35 @@ var (
 	}
 )
 
+// LXCBackupExclude are the agent's paths that a container backup leaves
+// out (vzdump exclude-path, tar patterns anchored at the container root;
+// T-231). Exactly the secrets: the credential, the desired list (it can
+// hold sensitive values, D-037), the temp files of both, and a one-shot
+// repair token. agent.json and ca.pem stay: without them a restored
+// container can never re-enroll. A VM backup holds the whole disk; its
+// credential is revoked at a restore (D-410).
+var LXCBackupExclude = []string{
+	"/var/lib/plumb-agent/credential",
+	"/var/lib/plumb-agent/.credential-*",
+	"/var/lib/plumb-agent/desired.json",
+	"/var/lib/plumb-agent/.desired.json-*",
+	RepairTokenFile,
+}
+
+// BackupExcluded reports whether a container backup leaves p out:
+// p or one of its parent directories matches a LXCBackupExclude pattern.
+func BackupExcluded(p string) bool {
+	p = path.Clean(p)
+	for q := p; q != "/" && q != "."; q = path.Dir(q) {
+		for _, pat := range LXCBackupExclude {
+			if ok, _ := path.Match(pat, q); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // The agent's units: the agent, the first-boot installer of an LXC
 // template (T-076), the update guard with its timer (T-091, D-271), and
 // the firewall boot unit with the rollback timer of a safe apply (T-116,

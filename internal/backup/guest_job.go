@@ -11,6 +11,7 @@ import (
 
 	"github.com/Bernotese/plumb/internal/event"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // The guest backup jobs (T-221; D-405 … D-409, D-417). A job is no Plan:
@@ -142,9 +143,10 @@ var (
 	ErrGuestBackupBusy = errors.New("backup: a guest backup of this Target runs")
 )
 
-// excludeLXC: the agent's files stay out of a container archive (L1 of
-// #321); a VM archive holds the whole disk (D-406).
-var excludeLXC = []string{"/etc/plumb-agent", "/var/lib/plumb-agent"}
+// excludeLXC: the agent's secrets stay out of a container archive (L1 of
+// #321), and its config stays in, so a restored container can re-enroll
+// (T-231). A VM archive holds the whole disk (D-406).
+var excludeLXC = wire.LXCBackupExclude
 
 // minFreePct: below this, a job is refused (D-408).
 const minFreePct = 10
