@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,18 @@ const (
 // Key is the master key. Its bytes leave the package only as a recovery
 // key (Recovery) or a key file (WriteKeyFile).
 type Key struct{ b [KeySize]byte }
+
+// redactedKey is what fmt, %v of a struct with an exported Key field, and
+// slog show of a Key: never its bytes (T-243, D-431). A struct that holds
+// a Key in an unexported field still prints the bytes with %v; no Plumb
+// type logs such a struct.
+const redactedKey = "secret.Key(redacted)"
+
+// String, GoString, Format and LogValue never show the key bytes.
+func (Key) String() string             { return redactedKey }
+func (Key) GoString() string           { return redactedKey }
+func (Key) Format(f fmt.State, _ rune) { io.WriteString(f, redactedKey) }
+func (Key) LogValue() slog.Value       { return slog.StringValue(redactedKey) }
 
 // NewKey returns a new random master key.
 func NewKey() Key {
