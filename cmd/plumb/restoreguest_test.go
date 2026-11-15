@@ -8,6 +8,7 @@ import (
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/driver/proxmox"
+	"github.com/Bernotese/plumb/internal/plan"
 )
 
 // T-222: no restorer without Proxmox, a guest backup storage or an install
@@ -25,7 +26,7 @@ func TestGuestRestorerOf(t *testing.T) {
 	if g == nil {
 		t.Fatal("no restorer")
 	}
-	if err := g.RestoreGuest(context.Background(), "9001", "plumb-backup:backup/x"); !errors.Is(err, driver.ErrReadOnly) {
+	if err := g.RestoreGuest(context.Background(), "9001", plan.RestoreVolume{Volid: "plumb-backup:backup/x"}); !errors.Is(err, driver.ErrReadOnly) {
 		t.Errorf("restored mode: %v", err)
 	}
 }

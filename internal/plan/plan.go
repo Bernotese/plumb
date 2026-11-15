@@ -252,6 +252,10 @@ type Config struct {
 type Engine struct {
 	cfg Config
 	st  *store.Store
+	// restored holds the restore Plans whose restore call succeeded
+	// (T-222): afterRestore makes their re-enroll Plan also after a failed
+	// later step.
+	restored sync.Map
 	// parkMu orders the park write of a delete Run and a late unbind
 	// result (T-210 M1): either order ends the park. lateOK holds a
 	// confirmed late unbind that found no park yet: target → agent id and

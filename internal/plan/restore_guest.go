@@ -46,6 +46,7 @@ type RestoreVolume struct {
 	Kind  string // "plumb", "older-guest" or "unmarked"
 	Notes string // the notes with the marker
 	Time  time.Time
+	Size  int64 // bytes; the driver compares it right before the restore (review L1 of #335)
 }
 
 // GuestRestorer finds and restores guest backups. serve gives the backup
@@ -55,8 +56,9 @@ type GuestRestorer interface {
 	// FindBackup returns backup id of the guest ref of target, or
 	// ErrBackupNotFound.
 	FindBackup(ctx context.Context, target, ref, id string) (RestoreVolume, error)
-	// RestoreGuest writes the volume over the stopped guest ref.
-	RestoreGuest(ctx context.Context, ref, volid string) error
+	// RestoreGuest writes the volume over the stopped guest ref. It
+	// refuses a volume whose size or time is not v's any more.
+	RestoreGuest(ctx context.Context, ref string, v RestoreVolume) error
 }
 
 // ErrBackupNotFound: no backup with this id of the Target's guest (404).
@@ -87,6 +89,15 @@ func restoreNotes(target string, adopted bool) []string {
 		return append(notes, "The guest starts again without an agent: run the install command of "+target+" (an adopted Target).")
 	}
 	return append(notes, "A re-enroll Plan follows: approve it to start the guest with a new agent credential.")
+}
+
+// wayBack is the end of every failure text after the revoke (review F1 of
+// #335): the guest is stopped and its old credential gets 401.
+func wayBack(target string, adopted bool) string {
+	if adopted {
+		return " The way back: start the guest in Proxmox, then run the install command of the Target (POST /targets/" + target + "/install-command)."
+	}
+	return " The way back: re-enroll the Target (POST /targets/" + target + "/reenroll); its Run starts the guest with a new agent credential."
 }
 
 func notRestorable(target, msg string) error {
@@ -121,7 +132,7 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s has no marker of this Target and its lineage", id))
 	}
 	run, err := e.st.GuestBackupRunOfVolume(ctx, target, v.Volid)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && (run.Lineage != lineage || (run.Result != "done" && run.Result != "warning"))) {
+	if errors.Is(err, store.ErrNotFound) || (err == nil && (run.Lineage != lineage || run.Result != "done")) {
 		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s has no finished backup job of this controller for this guest (M1 of #331)", id))
 	}
 	if err != nil {
@@ -337,26 +348,30 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	}
 	// 3. Revoke before the guest can start again (D-410); drop the pins
 	// and the repair report of the old guest (D-417 (4)).
+	way := wayBack(tp.Target, r.Adopted != nil)
 	if err := e.cfg.Agents.Revoke(ctx, tp.Target); err != nil {
-		return fail("the guest is stopped, nothing was restored: the agent credential could not be revoked: " + err.Error())
+		return fail("the guest is stopped, nothing was restored: the agent credential could not be revoked: " + err.Error() + ". Start the guest in Proxmox, or plan the restore again")
 	}
 	if _, err := e.st.DropHostKeys(ctx, tp.Target); err != nil {
-		return fail("the guest is stopped and its agent credential is revoked, nothing was restored: the host key pins could not be dropped: " + err.Error())
+		return fail("the guest is stopped and its agent credential is revoked, nothing was restored: the host key pins could not be dropped: " + err.Error() + "." + way)
 	}
 	// 4. Restore.
-	if err := e.cfg.GuestRestore.RestoreGuest(ctx, b.Ref, v.Volid); err != nil {
-		return fail("the guest is stopped and its agent credential is revoked; the restore failed: " + err.Error() + ". Plan the restore again, or check the guest in Proxmox")
+	if err := e.cfg.GuestRestore.RestoreGuest(ctx, b.Ref, v); err != nil {
+		return fail("the guest is stopped and its agent credential is revoked; the restore failed: " + err.Error() + ". Plan the restore again." + way)
 	}
+	// The disk is the restored one now: the follow-up (re-enroll Plan)
+	// comes also when a later step fails (review F1 of #335).
+	e.restored.Store(p.ID, true)
 	// The restored config is Plumb's own step, no drift; the next Run
 	// converges it to the head.
 	after, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
 	if err != nil {
-		return fail("restored, but the guest cannot be read: " + err.Error())
+		return fail("restored, but the guest cannot be read: " + err.Error() + "." + way)
 	}
 	if nb, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target); err == nil && nb.Ref == b.Ref {
 		nb.Digest = pollKey(after)
 		if err := e.st.PutBinding(ctx, nb); err != nil {
-			return fail("restored, but the binding could not be written: " + err.Error())
+			return fail("restored, but the binding could not be written: " + err.Error() + "." + way)
 		}
 	}
 	// 5. The way back for the agent.
@@ -364,7 +379,7 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	if r.Adopted != nil {
 		if after.Power != driver.PowerRunning {
 			if err := e.cfg.Driver.Power(ctx, driver.GuestID(b.Ref), driver.PowerStart); err != nil {
-				return fail(out + "The start failed: " + err.Error() + ". Start the guest in Proxmox, then run the install command")
+				return fail(out + "The start failed: " + err.Error() + "." + way)
 			}
 		}
 		out += "The guest runs without an agent: run the install command of the Target (POST /targets/" + tp.Target + "/install-command)."
@@ -376,11 +391,15 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 }
 
 // afterRestore makes the re-enroll Plan of a Plumb-made Target after its
-// restore Run (the Target is free again). Its error is logged: a person
+// restore Run (the Target is free again), also when a step after the
+// restore call failed: the disk is the restored one. Its error is logged: a person
 // can always re-enroll by hand.
 func (e *Engine) afterRestore(ctx context.Context, p store.Plan, set *state.Set, ok bool) {
-	if !ok || p.Origin != OriginRestore {
+	if p.Origin != OriginRestore {
 		return
+	}
+	if _, restored := e.restored.LoadAndDelete(p.ID); !ok && !restored {
+		return // nothing was restored: the old disk, the Run output says the way back
 	}
 	tp, _, _, err := restorePlanned(p)
 	if err != nil {

@@ -61,17 +61,17 @@ func (g guestRestorer) FindBackup(ctx context.Context, target, ref, id string) (
 	}
 	for _, c := range backup.Classify(vols, g.install, target, lineage, rec) {
 		if c.ID == id {
-			return plan.RestoreVolume{ID: c.ID, Volid: c.Volid, Kind: c.Kind, Notes: c.Notes, Time: c.Time}, nil
+			return plan.RestoreVolume{ID: c.ID, Volid: c.Volid, Kind: c.Kind, Notes: c.Notes, Time: c.Time, Size: c.Size}, nil
 		}
 	}
 	return plan.RestoreVolume{}, plan.ErrBackupNotFound
 }
 
-func (g guestRestorer) RestoreGuest(ctx context.Context, ref, volid string) error {
+func (g guestRestorer) RestoreGuest(ctx context.Context, ref string, v plan.RestoreVolume) error {
 	if g.readOnly != nil && g.readOnly() {
 		return driver.ErrReadOnly
 	}
-	err := g.d.RestoreGuest(ctx, g.storage, ref, volid)
+	err := g.d.RestoreGuest(ctx, g.storage, ref, v.Volid, v.Size, v.Time.Unix())
 	if errors.Is(err, proxmox.ErrBackupNotFound) {
 		return plan.ErrBackupNotFound
 	}

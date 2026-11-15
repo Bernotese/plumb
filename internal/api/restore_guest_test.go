@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
@@ -26,6 +27,7 @@ type fakeRestorer struct {
 	vols     map[string]plan.RestoreVolume // id → volume
 	restored []string                      // "ref volid"
 	fail     error
+	after    func() // runs after a restore that succeeded
 }
 
 func (f *fakeRestorer) FindBackup(_ context.Context, _, _, id string) (plan.RestoreVolume, error) {
@@ -38,13 +40,17 @@ func (f *fakeRestorer) FindBackup(_ context.Context, _, _, id string) (plan.Rest
 	return v, nil
 }
 
-func (f *fakeRestorer) RestoreGuest(_ context.Context, ref, volid string) error {
+func (f *fakeRestorer) RestoreGuest(_ context.Context, ref string, v plan.RestoreVolume) error {
+	volid := v.Volid
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail != nil {
 		return f.fail
 	}
 	f.restored = append(f.restored, ref+" "+volid)
+	if f.after != nil {
+		f.after()
+	}
 	return nil
 }
 
@@ -270,10 +276,49 @@ func TestRestoreGuestFails(t *testing.T) {
 		t.Fatalf("run: %+v %v", r, err)
 	}
 	steps, _ := e.st.Steps(ctx, r.ID)
-	if len(steps) != 1 || !strings.Contains(steps[0].Output, "the guest is stopped and its agent credential is revoked; the restore failed: archive unreadable") {
+	if len(steps) != 1 || !strings.Contains(steps[0].Output, "the guest is stopped and its agent credential is revoked; the restore failed: archive unreadable") ||
+		!strings.Contains(steps[0].Output, "The way back: re-enroll the Target (POST /targets/web1/reenroll)") {
 		t.Errorf("steps: %+v", steps)
 	}
 	if re, _ := e.st.PendingPlans(ctx, plan.OriginReenroll); len(re) != 0 {
 		t.Errorf("a re-enroll Plan after a failed restore: %v", re)
+	}
+}
+
+// Review F1 of #335: the restore call succeeded, a later step failed. The
+// Run fails and names the way back, and the re-enroll Plan still follows:
+// the disk is the restored one.
+func TestRestoreGuestFailsAfterTheRestore(t *testing.T) {
+	fr := &fakeRestorer{vols: map[string]plan.RestoreVolume{}}
+	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+	fr.after = func() { e.drv.Fail(fake.OpObserve, errors.New("proxmox answered 595")) }
+	adm := e.admin()
+	e.seed(adm, "web1")
+	e.approve(adm, "allow restart", restoreTarget("web1", true))
+	ctx := context.Background()
+	b, _ := e.st.GetBinding(ctx, state.KindTarget, "web1")
+	lineage, _ := e.st.BackupLineage(ctx, "web1", b.Gen)
+	at := time.Date(2026, 11, 15, 3, 0, 12, 0, time.UTC)
+	run, _ := e.st.StartGuestBackupRun(ctx, "web1", lineage, "scheduled")
+	e.st.FinishGuestBackupRun(ctx, run, "done", "bk:v1", 100, at.Unix(), "")
+	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at, Size: 100}
+	code, body := adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r"})
+	if code != 201 {
+		t.Fatalf("propose: %d %s", code, body)
+	}
+	var p struct{ ID int64 }
+	json.Unmarshal(body, &p)
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	e.eng.Wait()
+	r, _ := e.st.RunOfPlan(ctx, p.ID)
+	steps, _ := e.st.Steps(ctx, r.ID)
+	if r.Status != "failed" || len(steps) != 1 || !strings.Contains(steps[0].Output, "restored, but the guest cannot be read") ||
+		!strings.Contains(steps[0].Output, "POST /targets/web1/reenroll") {
+		t.Fatalf("run %s, steps %+v", r.Status, steps)
+	}
+	if re, _ := e.st.PendingPlans(ctx, plan.OriginReenroll); len(re) != 1 {
+		t.Fatalf("re-enroll plans after a restore with a failed later step: %v", re)
 	}
 }
