@@ -316,6 +316,7 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 		case "/status/start":
 			if vm.running {
 				f.tasks[upid].exit = fmt.Sprintf("CT %d already running", id)
+			} else if f.disks.onStart != nil && func() bool { f.disks.onStart(vm); return false }() {
 			} else if f.ctStartBlocked(vm) {
 				f.tasks[upid].exit = "startup for container '" + strconv.Itoa(id) + "' failed"
 			} else if f.tasks[upid].exit == "OK" {

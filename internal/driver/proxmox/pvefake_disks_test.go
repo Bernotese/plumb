@@ -25,6 +25,9 @@ type diskState struct {
 	freed     []string        // volumes freed by a delete of unusedK
 	symlinks  map[string]bool // container mount paths that cross a symlink
 	failFree  bool            // a delete of unusedK fails
+	freeNoop  bool            // a delete of unusedK answers OK and keeps the entry
+	keepDisk  bool            // a delete of scsiN or mpN answers OK and keeps the disk
+	onStart   func(*fakeVM)   // runs at a container start, before its check
 	allocated int             // volumes allocated so far (the next disk number)
 }
 
@@ -49,10 +52,16 @@ func (f *fakePVE) diskDelete(vm *fakeVM, k string) (handled bool, err error) {
 		if f.disks.failFree {
 			return true, fmt.Errorf("unable to free %s", vm.cfg[k])
 		}
+		if f.disks.freeNoop {
+			return true, nil
+		}
 		f.disks.freed = append(f.disks.freed, parseProps(vm.cfg[k])[""])
 		delete(vm.cfg, k)
 		return true, nil
 	case reFakeDataDisk.MatchString(k):
+		if f.disks.keepDisk {
+			return true, nil
+		}
 		if vm.ct && vm.running {
 			if vm.delete == nil {
 				vm.delete = map[string]bool{}

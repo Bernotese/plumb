@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -44,8 +45,8 @@ func TestWithDisksVM(t *testing.T) {
 	s := withDisks(driver.GuestSpec{Kind: wire.KindVM}, cfg, "local-lvm", 9001)
 	want := []driver.Disk{
 		{Slot: 1, SizeGB: 4, Volume: "local-lvm:vm-9001-disk-1"},
-		{Slot: 2, Foreign: true, Raw: "local-lvm:vm-9001-disk-2,size=1G"},
-		{Slot: 3, Foreign: true, Raw: "local:iso/x.iso,media=cdrom"},
+		{Slot: 2, Foreign: true, Raw: "local-lvm:vm-9001-disk-2,size=1G", Volume: "local-lvm:vm-9001-disk-2"},
+		{Slot: 3, Foreign: true, Raw: "local:iso/x.iso,media=cdrom", Volume: "local:iso/x.iso"},
 	}
 	if !reflect.DeepEqual(s.Disks, want) || !s.DisksSet || !reflect.DeepEqual(s.Unused, []string{"local-lvm:vm-9001-disk-5"}) {
 		t.Fatalf("%+v", s)
@@ -67,15 +68,36 @@ func TestWithDisksCT(t *testing.T) {
 	base := driver.GuestSpec{Kind: wire.KindLXC, Mounts: []string{
 		"mp0=" + cfg["mp0"], "mp1=" + cfg["mp1"], "mp2=" + cfg["mp2"], "mp3=" + cfg["mp3"]}}
 	s := withDisks(base, cfg, "local-lvm", 9001)
+	// H1 of the #373 review: a bind mount occupies its slot (foreign).
 	want := []driver.Disk{
 		{Slot: 1, SizeGB: 2, Path: "/srv/data", Volume: "local-lvm:vm-9001-disk-2"},
-		{Slot: 3, Foreign: true, Raw: "other:vm-9001-disk-3,mp=/srv/o,size=1G"},
+		{Slot: 2, Foreign: true, Raw: "/srv/host,mp=/host"},
+		{Slot: 3, Foreign: true, Raw: "other:vm-9001-disk-3,mp=/srv/o,size=1G", Volume: "other:vm-9001-disk-3"},
 	}
 	if !reflect.DeepEqual(s.Disks, want) {
 		t.Fatalf("disks %+v", s.Disks)
 	}
-	if !reflect.DeepEqual(s.Mounts, []string{"mp0=" + cfg["mp0"], "mp2=" + cfg["mp2"]}) {
+	if !reflect.DeepEqual(s.Mounts, []string{"mp0=" + cfg["mp0"]}) {
 		t.Fatalf("mounts %v", s.Mounts)
+	}
+}
+
+// H1 of the #373 review: every form of mount point that PVE knows (a
+// bind path, a device, a volume of another storage) occupies a named slot:
+// the diff refuses it; with an unmanaged list it is the person's mount.
+func TestOccupiedSlotForms(t *testing.T) {
+	for _, raw := range []string{"/srv/host,mp=/data", "/dev/sdb,mp=/data", "other:vm-9001-disk-3,mp=/data,size=1G", "local-lvm:vm-1234-disk-1,mp=/data,size=1G"} {
+		obs := withDisks(driver.GuestSpec{Kind: wire.KindLXC, Mounts: []string{"mp1=" + raw}}, map[string]string{"mp1": raw}, "local-lvm", 9001)
+		named := driver.GuestSpec{Kind: wire.KindLXC, DisksSet: true, Disks: []driver.Disk{{Slot: 1, SizeGB: 1, Path: "/data"}}}
+		var fe *driver.DiskForeignError
+		if _, err := driver.DiffGuest(named, driver.GuestState{Spec: obs}); !errors.As(err, &fe) || fe.Slot != 1 {
+			t.Errorf("%s named: %v", raw, err)
+		}
+		unmanaged := driver.GuestSpec{Kind: wire.KindLXC}
+		cs := driver.DriftGuest(unmanaged, driver.GuestState{Spec: obs})
+		if len(cs) != 1 || cs[0].Attr != driver.AttrMounts {
+			t.Errorf("%s unmanaged: %+v", raw, cs)
+		}
 	}
 }
 

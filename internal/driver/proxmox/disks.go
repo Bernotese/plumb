@@ -61,8 +61,10 @@ func isStorageVolume(vol string) bool {
 // and takes the data disk slots out of s.Mounts. A slot holds a Plumb disk
 // when its volume is on the disk storage and owned by vmid (a VM disk also
 // with serial plumb-N and no cdrom); any other volume in the slot is a
-// foreign one. A container mount point that is a host path or a device is
-// never a data disk: it stays in Mounts (outside, D-436).
+// foreign one. A container mount point that is a host path or a device
+// occupies its slot too, as a foreign occupant (H1 of the #373 review):
+// a named slot with it refuses the Plan, and with an unmanaged disks list
+// the diff counts it as the person's mount again (driver.mountsOf).
 func withDisks(s driver.GuestSpec, cfg map[string]string, storage string, vmid int) driver.GuestSpec {
 	s.DisksSet = true
 	s.Disks, s.Unused = nil, nil
@@ -75,18 +77,18 @@ func withDisks(s driver.GuestSpec, cfg map[string]string, storage string, vmid i
 		p := parseProps(v)
 		vol := p[""]
 		if s.Kind == wire.KindLXC {
-			if !isStorageVolume(vol) {
-				continue // a bind mount or a device: Mounts
-			}
 			s.Mounts = slices.DeleteFunc(s.Mounts, func(m string) bool { return strings.HasPrefix(m, key+"=") })
 		}
 		d := driver.Disk{Slot: n, Volume: vol, SizeGB: sizeGB(p["size"]), Path: p["mp"]}
-		plumb := ownVolume(vol, storage, vmid) && p["media"] != "cdrom"
+		plumb := isStorageVolume(vol) && ownVolume(vol, storage, vmid) && p["media"] != "cdrom"
 		if s.Kind != wire.KindLXC {
 			plumb = plumb && p["serial"] == driver.DiskSerial(n)
 		}
 		if !plumb {
 			d = driver.Disk{Slot: n, Foreign: true, Raw: v}
+			if isStorageVolume(vol) {
+				d.Volume = vol // named, never freed: only a Plumb disk is (D-436)
+			}
 		}
 		s.Disks = append(s.Disks, d)
 	}
@@ -202,7 +204,11 @@ func (d *Driver) diskChanges(ctx context.Context, id int, kind wire.Kind, change
 		if err := write(url.Values{"digest": {cfg["digest"]}, "delete": {key}}); err != nil {
 			return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: err}
 		}
-		if cfg, err = read(); err == nil && unusedKeyOf(cfg, vol) != "" {
+		// Read back: Proxmox may answer OK and keep the entry (M1 of #373).
+		if cfg, err = read(); err != nil {
+			return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: err}
+		}
+		if unusedKeyOf(cfg, vol) != "" {
 			return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: errors.New("it is still in the config")}
 		}
 		return nil
@@ -232,13 +238,18 @@ func (d *Driver) diskChanges(ctx context.Context, id int, kind wire.Kind, change
 				if err := write(url.Values{"digest": {cfg["digest"]}, "delete": {key}}); err != nil {
 					return fmt.Errorf("proxmox: remove disk %d: %w", n, err)
 				}
-				if after, err := read(); err == nil && after[key] != "" {
-					return fmt.Errorf("proxmox: disk %d is still attached after the remove (it waits for a stop and start)", n)
+				after, err := read()
+				if err != nil {
+					return err
 				}
-				if !have.Foreign {
-					if err := free(n, have.Volume); err != nil {
-						return err
-					}
+				if after[key] != "" {
+					return fmt.Errorf("proxmox: disk %d is still attached after the remove (it waits for a stop and start); nothing was freed", n)
+				}
+				if have.Foreign {
+					continue // a foreign occupant is only detached, never freed (D-436)
+				}
+				if err := free(n, have.Volume); err != nil {
+					return err
 				}
 			case have == nil: // add
 				if kind == wire.KindLXC && !reAbsPath.MatchString(want.Path) {
@@ -250,6 +261,11 @@ func (d *Driver) diskChanges(ctx context.Context, id int, kind wire.Kind, change
 				if cfg, err = read(); err != nil {
 					return err
 				}
+				// H1 of #373: never write over anything in the slot.
+				if cfg[key] != "" {
+					return &driver.DiskForeignError{Slot: n, Raw: cfg[key]}
+				}
+				before := guestVolumes(cfg) // H2 of #373: the undo frees only a new volume
 				v := vmDiskValue(d.cfg.DiskStorage, n, want.SizeGB)
 				if kind == wire.KindLXC {
 					v = ctDiskValue(d.cfg.DiskStorage, want.SizeGB, want.Path)
@@ -261,7 +277,12 @@ func (d *Driver) diskChanges(ctx context.Context, id int, kind wire.Kind, change
 					continue
 				}
 				if err := start(); err != nil {
-					return d.undoCTAdd(ctx, n, want.Path, read, write, free, start)
+					err := d.undoCTAdd(ctx, id, n, want.Path, before, read, write, free, start)
+					if !errors.As(err, new(*driver.DiskStartError)) && !errors.As(err, new(*driver.VolumeLeftError)) {
+						return err // it did not start again: the deferred start tries once more
+					}
+					stopped = false
+					return err
 				}
 				stopped = false
 			case have.Foreign:
@@ -297,18 +318,27 @@ func (d *Driver) diskChanges(ctx context.Context, id int, kind wire.Kind, change
 
 // undoCTAdd removes a container disk whose start failed (D-437 (2)):
 // detach it (stopped: it becomes unusedM at once), free it by its id, and
-// start the container again.
-func (d *Driver) undoCTAdd(ctx context.Context, n int, path string, read func() (map[string]string, error),
+// start the container again. It frees only a volume that this add made:
+// on the disk storage, owned by the guest, and not among the guest's
+// volumes before the add (H2 of #373). Anything else is detached only, and
+// the step names it as a volume left (guest:volume-left).
+func (d *Driver) undoCTAdd(ctx context.Context, id, n int, path string, before map[string]bool, read func() (map[string]string, error),
 	write func(url.Values) error, free func(int, string) error, start func() error) error {
 	cfg, err := read()
 	if err != nil {
 		return err
 	}
-	vol := parseProps(cfg["mp"+strconv.Itoa(n)])[""]
-	if err := write(url.Values{"digest": {cfg["digest"]}, "delete": {"mp" + strconv.Itoa(n)}}); err != nil {
+	key := "mp" + strconv.Itoa(n)
+	vol := parseProps(cfg[key])[""]
+	if err := write(url.Values{"digest": {cfg["digest"]}, "delete": {key}}); err != nil {
 		return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: err}
 	}
-	ferr := free(n, vol)
+	var ferr error
+	if isStorageVolume(vol) && ownVolume(vol, d.cfg.DiskStorage, id) && !before[vol] {
+		ferr = free(n, vol)
+	} else {
+		ferr = &driver.VolumeLeftError{Slot: n, Volume: vol, Err: errors.New("Plumb did not free it: it is not the volume this Run made")}
+	}
 	if err := start(); err != nil {
 		return fmt.Errorf("proxmox: the container did not start with disk %d at %s, and it did not start again after Plumb removed the disk: %w", n, path, err)
 	}
@@ -322,3 +352,19 @@ var (
 	reDiskWriteKey = regexp.MustCompile(`^(scsi|mp)[1-3]$`)
 	reAbsPath      = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
 )
+
+// guestVolumes is the set of volumes that a config view names (every
+// disk, mount point and unused entry).
+func guestVolumes(cfg map[string]string) map[string]bool {
+	out := map[string]bool{}
+	for k, v := range cfg {
+		if k == "rootfs" || reDiskKeyAny.MatchString(k) || reUnusedKey.MatchString(k) {
+			if vol := parseProps(v)[""]; vol != "" {
+				out[vol] = true
+			}
+		}
+	}
+	return out
+}
+
+var reDiskKeyAny = regexp.MustCompile(`^(scsi|sata|ide|virtio|mp)[0-9]+$`)
