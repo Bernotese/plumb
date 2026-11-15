@@ -259,7 +259,7 @@ func (e *Engine) putWaiting(ctx context.Context, b *store.Binding, waiting []wir
 // the guest step stored it.
 func (e *Engine) recordWaiting(ctx context.Context, set *state.Set, targets []TargetPlan) {
 	for _, tp := range targets {
-		r, err := renderOrNil(set, tp.Target)
+		r, err := e.renderOrNil(set, tp.Target)
 		if err != nil || r == nil {
 			continue
 		}

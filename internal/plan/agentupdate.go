@@ -280,7 +280,7 @@ func (e *Engine) checkGate(ctx context.Context, set *state.Set, targets []string
 	out := &AgentOutdatedError{By: map[string][]string{}}
 	all := map[string]bool{}
 	for _, t := range targets {
-		r, err := renderOrNil(set, t)
+		r, err := e.renderOrNil(set, t)
 		if err != nil {
 			return err
 		}
@@ -537,7 +537,7 @@ func (e *Engine) runAgentUpdate(ctx context.Context, p store.Plan, run store.Run
 	// The agent watches its list again at the end, also after a failure:
 	// the hellos during the Run sent none (the Target is busy).
 	defer func() {
-		r, err := renderOrNil(set, tp.Target)
+		r, err := e.renderOrNil(set, tp.Target)
 		if err == nil && r != nil {
 			err = e.watch(ctx, tp.Target, r)
 		}

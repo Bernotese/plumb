@@ -184,12 +184,57 @@ func changedBlocks(base, next *state.Set, put []state.Doc) []string {
 	return out
 }
 
-// renderOrNil renders a target, or returns nil when the set has none.
-func renderOrNil(set *state.Set, target string) (*state.Rendered, error) {
+// renderPlain renders a target, or returns nil when the set has none.
+func renderPlain(set *state.Set, target string) (*state.Rendered, error) {
 	if !contains(set.Targets(), target) {
 		return nil, nil
 	}
 	return set.Render(target)
+}
+
+// renderOrNil is renderPlain plus the network resources of the more NICs
+// of a VM (T-220, D-403): every desired list that the agent gets (Plan,
+// Run, watch, the agent gate) holds them.
+func (e *Engine) renderOrNil(set *state.Set, target string) (*state.Rendered, error) {
+	r, err := renderPlain(set, target)
+	if err != nil || r == nil {
+		return r, err
+	}
+	return r, e.addNICNetworks(r)
+}
+
+// addNICNetworks adds the network resources of the more NICs of a VM to
+// a render (T-220, D-403): each gets Plumb's MAC of its card (D-400).
+// Without the install id there is no MAC: docNICs refuses such a Plan.
+func (e *Engine) addNICNetworks(r *state.Rendered) error {
+	if list, _ := r.Guest.Attrs["nics"].([]any); len(list) > 0 && e.cfg.InstallID == "" {
+		return &ProposalError{Target: r.Target, Msg: "more NICs need the install id (PLUMB_INSTALL_ID) for their MAC addresses; run a repair run of install.sh"}
+	}
+	return r.AddNICNetworks(func(n int) string { return driver.NICMAC(e.cfg.InstallID, r.Target, n) }, e.nicAbsentTo(r))
+}
+
+// nicAbsentTo is the last index up to which a VM's render holds nic<N>
+// with state absent after its last card (review M1 of #336): MaxNICs when
+// the Target's agent knows the network type (its stored hello), else 0
+// (no agent, or an agent without it: it never wrote such a file, and an
+// absent network would fail its gate).
+func (e *Engine) nicAbsentTo(r *state.Rendered) int {
+	if r.Kind != wire.KindVM || e.st == nil {
+		return 0
+	}
+	caps, _, known, err := e.agentCaps(context.Background(), r.Target)
+	if err != nil || !known {
+		return 0
+	}
+	return nicAbsentFor(caps)
+}
+
+// nicAbsentFor is nicAbsentTo for known capabilities.
+func nicAbsentFor(caps wire.Capabilities) int {
+	if _, ok := caps.Resources[state.NetworkType]; ok {
+		return driver.MaxNICs
+	}
+	return 0
 }
 
 // Propose turns a proposal into a pending Plan. It observes every target
@@ -223,11 +268,11 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		touched[t] = true
 	}
 	for _, t := range union(base.Targets(), next.Targets()) {
-		before, err := renderOrNil(base, t)
+		before, err := e.renderOrNil(base, t)
 		if err != nil {
 			return store.Plan{}, err
 		}
-		after, err := renderOrNil(next, t)
+		after, err := e.renderOrNil(next, t)
 		if err != nil {
 			return store.Plan{}, err
 		}
@@ -276,8 +321,8 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 			// The rule reads the renders, not the origin (D-099). The same
 			// result keeps the value of a new binding out of the planning
 			// observe (D-156).
-			before, err := renderOrNil(base, t)
-			after, err2 := renderOrNil(next, t)
+			before, err := e.renderOrNil(base, t)
+			after, err2 := e.renderOrNil(next, t)
 			if errs[i] = errors.Join(err, err2); errs[i] != nil {
 				return
 			}
@@ -432,7 +477,7 @@ func union(a, b []string) []string {
 // observed before the approval.
 // before is the render of the base revision (nil for a new Target).
 func (e *Engine) planTarget(ctx context.Context, before *state.Rendered, next *state.Set, target string, reenroll bool, fresh map[string]bool) (TargetPlan, error) {
-	r, err := renderOrNil(next, target)
+	r, err := e.renderOrNil(next, target)
 	if err != nil {
 		return TargetPlan{Target: target}, err
 	}
@@ -955,7 +1000,7 @@ func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPl
 		if tp.Guest != "create" {
 			continue
 		}
-		r, err := renderOrNil(next, tp.Target)
+		r, err := e.renderOrNil(next, tp.Target)
 		if err != nil || r == nil {
 			continue
 		}

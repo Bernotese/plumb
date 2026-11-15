@@ -327,7 +327,7 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	if err != nil {
 		return fail(err.Error())
 	}
-	r, err := renderOrNil(set, tp.Target)
+	r, err := e.renderOrNil(set, tp.Target)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -405,7 +405,7 @@ func (e *Engine) afterRestore(ctx context.Context, p store.Plan, set *state.Set,
 	if err != nil {
 		return
 	}
-	if r, err := renderOrNil(set, tp.Target); err != nil || r == nil || r.Adopted != nil {
+	if r, err := e.renderOrNil(set, tp.Target); err != nil || r == nil || r.Adopted != nil {
 		return
 	}
 	re, err := e.Propose(ctx, Input{Proposal: Proposal{Reenroll: []string{tp.Target}}, Origin: OriginReenroll, Author: "system",
