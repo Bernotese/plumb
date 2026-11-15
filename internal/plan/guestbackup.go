@@ -9,8 +9,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // Guest backups (T-221): the bound Targets with their backup field, read
@@ -109,4 +111,78 @@ func backupTargetOf(d state.Doc, b store.Binding) (BackupTarget, error) {
 		t.Backup = &BackupField{Schedule: spec.Backup.Schedule, Weekday: spec.Backup.Weekday, Hour: h, Minute: m, Keep: spec.Backup.Keep}
 	}
 	return t, nil
+}
+
+// AttrBackup is the Plan-only change of spec.backup of a Target (T-221):
+// it changes no guest setting; Update never gets it.
+const AttrBackup = "backup"
+
+// backupText is the change value of a backup field ("daily 03:00 keep 7"),
+// or nil without one.
+func backupText(b map[string]any) any {
+	if b == nil {
+		return nil
+	}
+	s := fmt.Sprint(b["schedule"])
+	if w, ok := b["weekday"].(string); ok && w != "" {
+		s += " " + w
+	}
+	return fmt.Sprintf("%s %v keep %v", s, b["time"], b["keep"])
+}
+
+func keepOf(b map[string]any) int {
+	if b == nil {
+		return 0
+	}
+	n, _ := driver.IntValue(b["keep"])
+	return n
+}
+
+// backupChange is the Plan-only change of spec.backup (D-408, D-417):
+// risk read, except a lower keep, which deletes backups at the next job:
+// destructive, and its notes say how many. Removing the field deletes
+// nothing. A new field on a storage that keeps backups in clear gets the
+// storage note (D-406).
+func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered, target string) (*wire.Change, []string, error) {
+	var old, nu map[string]any
+	if before != nil {
+		old = before.Backup
+	}
+	if after != nil {
+		nu = after.Backup
+	}
+	from, to := backupText(old), backupText(nu)
+	if from == to {
+		return nil, nil, nil
+	}
+	c := &wire.Change{Attr: AttrBackup, From: from, To: to, Risk: wire.RiskRead}
+	var notes []string
+	switch {
+	case nu == nil:
+		notes = append(notes, fmt.Sprintf("Target %s: Plumb stops its backups; it deletes none. Its backups stay until a person deletes them.", target))
+	case old != nil && keepOf(nu) < keepOf(old):
+		c.Risk = wire.RiskDestructive
+		n := -1
+		if e.cfg.BackupKeepDeletes != nil {
+			var err error
+			if n, err = e.cfg.BackupKeepDeletes(ctx, target, keepOf(nu)); err != nil {
+				return nil, nil, err
+			}
+		}
+		if n >= 0 {
+			notes = append(notes, fmt.Sprintf("Target %s: keep %d → %d deletes %d backup(s) at the next backup job.", target, keepOf(old), keepOf(nu), n))
+		} else {
+			notes = append(notes, fmt.Sprintf("Target %s: keep %d → %d deletes the oldest backups above %d at the next backup job.", target, keepOf(old), keepOf(nu), keepOf(nu)))
+		}
+	}
+	if old == nil && nu != nil && e.cfg.BackupStorageNote != nil {
+		note, err := e.cfg.BackupStorageNote(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if note != "" {
+			notes = append(notes, fmt.Sprintf("Target %s: %s", target, note))
+		}
+	}
+	return c, notes, nil
 }

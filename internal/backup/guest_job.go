@@ -288,6 +288,26 @@ func (g *Guests) recorded(ctx context.Context, target string) (map[string]Record
 	return out, nil
 }
 
+// markDeleted marks the record of a volume that Plumb deleted. The
+// volume is gone already, so the mark must not get lost quietly: three
+// tries with its own context, then the caller logs (review nit of #331).
+func (g *Guests) markDeleted(ctx context.Context, target, volid string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	var err error
+	for try := 0; try < 3; try++ {
+		if err = g.cfg.Store.MarkGuestBackupDeleted(ctx, target, volid); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(try+1) * 100 * time.Millisecond):
+		}
+	}
+	return err
+}
+
 // finish ends a job row. It uses its own short context: a job stopped by
 // Close (or a cancelled request) must still end its row, else the Target
 // answers 409 backup-running for ever (M2 of #331).
@@ -325,8 +345,8 @@ func (g *Guests) retain(ctx context.Context, t GuestTarget, lineage string, vols
 			g.cfg.Logger.Warn("guest backup retention", "target", t.Name, "err", err)
 			continue
 		}
-		if err := g.cfg.Store.MarkGuestBackupDeleted(ctx, t.Name, v.Volid); err != nil { // F1 of #331
-			g.cfg.Logger.Error("guest backup retention: mark deleted", "target", t.Name, "err", err)
+		if err := g.markDeleted(ctx, t.Name, v.Volid); err != nil { // F1 of #331
+			g.cfg.Logger.Error("guest backup retention: a deleted volume is not marked; a file made again under its name would count as Plumb's", "target", t.Name, "backup", v.ID, "err", err)
 		}
 		g.emit(ctx, "guest_backup.deleted", t.Name, "system", map[string]any{"backup": v.ID, "reason": "retention"})
 	}

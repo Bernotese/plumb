@@ -202,6 +202,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		return err
 	}
 	var drv driver.Driver
+	var guests *backup.Guests             // guest backup jobs (T-221); set below with Proxmox
 	var extras proxmox.InstallExtras      // slice 7 install settings (D-401, D-405)
 	var netAllowed func(string, int) bool // nil with the fake driver: every network (T-219)
 	switch f.driver {
@@ -320,6 +321,20 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		AddrStable:          devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
 		InstallID: os.Getenv("PLUMB_INSTALL_ID"), NetAllowed: netAllowed, // T-219 (D-400, D-401)
+		// T-221 (D-406, D-417): the backup notes of a Plan; nil guests
+		// (no Proxmox) → no note, no count.
+		BackupKeepDeletes: func(ctx context.Context, target string, keep int) (int, error) {
+			if guests == nil {
+				return 0, nil
+			}
+			return guests.KeepDeletes(ctx, target, keep)
+		},
+		BackupStorageNote: func(ctx context.Context) (string, error) {
+			if guests == nil {
+				return "", nil
+			}
+			return guests.StorageNote(ctx)
+		},
 		// The transport comes with T-191; without it a repair is not ready.
 		Repair: repairConfig(ctx, log, rep, lk, agentURL(f.hosts, f.agentListen)),
 	})
@@ -403,7 +418,6 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 	// Guest backups (T-221, D-405 … D-409, D-417): only with Proxmox; the
 	// raw driver (a job writes no guest config; restored mode refuses
 	// every job itself).
-	var guests *backup.Guests
 	if pd, ok := rawDrv.(*proxmox.Driver); ok {
 		viewer := proxmox.NewViewer(pd, proxmox.TokenUser(os.Getenv("PLUMB_PVE_TOKEN_ID")), extras)
 		pveView = func(ctx context.Context) *api.ProxmoxView { return proxmoxView(viewer.View(ctx)) }
