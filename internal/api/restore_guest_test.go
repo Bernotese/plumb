@@ -78,7 +78,12 @@ func TestRestoreGuestOverTheBoundGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: volid, Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
-	fr.vols["00000000000000aa"] = plan.RestoreVolume{ID: "00000000000000aa", Volid: "plumb-backup:backup/x", Kind: "older-guest", Notes: "plumb:iid:web1:0000000000000000", Time: at}
+	// Unmarked by the backup service (for example a replaced archive of
+	// another size), although its marker and run row look right: only
+	// the classification refuses it.
+	run2, _ := e.st.StartGuestBackupRun(ctx, "web1", lineage, "manual")
+	e.st.FinishGuestBackupRun(ctx, run2, "done", "plumb-backup:backup/x", 100, at.Unix(), "")
+	fr.vols["00000000000000aa"] = plan.RestoreVolume{ID: "00000000000000aa", Volid: "plumb-backup:backup/x", Kind: "unmarked", Notes: "plumb:iid:web1:" + lineage + ":m", Time: at}
 	// A forged copy of the marker: classified plumb by a broken adapter, but no run row.
 	fr.vols["00000000000000bb"] = plan.RestoreVolume{ID: "00000000000000bb", Volid: "plumb-backup:backup/forged", Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
 	pinned, err := e.st.PinFirstHostKeys(ctx, "web1", b.GuestKey(), []string{"SHA256:old"}, time.Now())
@@ -232,5 +237,43 @@ func TestRestoreGuestRunChecksAgain(t *testing.T) {
 	}
 	if _, err := e.st.AgentByTarget(ctx, "web1"); err != nil {
 		t.Errorf("the agent was touched: %v", err)
+	}
+}
+
+// A failed restore ends the Run with the state named: the guest is stopped
+// and its credential is revoked; no re-enroll Plan follows.
+func TestRestoreGuestFails(t *testing.T) {
+	fr := &fakeRestorer{vols: map[string]plan.RestoreVolume{}, fail: errors.New("archive unreadable")}
+	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+	adm := e.admin()
+	e.seed(adm, "web1")
+	e.approve(adm, "allow restart", restoreTarget("web1", true))
+	ctx := context.Background()
+	b, _ := e.st.GetBinding(ctx, state.KindTarget, "web1")
+	lineage, _ := e.st.BackupLineage(ctx, "web1", b.Gen)
+	at := time.Date(2026, 11, 15, 3, 0, 12, 0, time.UTC)
+	run, _ := e.st.StartGuestBackupRun(ctx, "web1", lineage, "scheduled")
+	e.st.FinishGuestBackupRun(ctx, run, "done", "bk:v1", 100, at.Unix(), "")
+	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
+	code, body := adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r"})
+	if code != 201 {
+		t.Fatalf("propose: %d %s", code, body)
+	}
+	var p struct{ ID int64 }
+	json.Unmarshal(body, &p)
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	e.eng.Wait()
+	r, err := e.st.RunOfPlan(ctx, p.ID)
+	if err != nil || r.Status != "failed" {
+		t.Fatalf("run: %+v %v", r, err)
+	}
+	steps, _ := e.st.Steps(ctx, r.ID)
+	if len(steps) != 1 || !strings.Contains(steps[0].Output, "the guest is stopped and its agent credential is revoked; the restore failed: archive unreadable") {
+		t.Errorf("steps: %+v", steps)
+	}
+	if re, _ := e.st.PendingPlans(ctx, plan.OriginReenroll); len(re) != 0 {
+		t.Errorf("a re-enroll Plan after a failed restore: %v", re)
 	}
 }
