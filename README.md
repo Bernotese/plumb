@@ -453,13 +453,23 @@ Everything written in the guest after the backup is lost. Access comes back as i
 keys, passwords and users that a person removed later work again. The Target is not rolled back:
 the next Run sets the guest to the current Target again.
 
+**Safety backup.** Proxmox removes the guest's disks before it writes the backup. If the restore
+fails, the guest is left empty. So Plumb first takes a safety backup of the guest as it is now. It
+shows in the list as "safety backup before a restore". If the restore fails, Plumb opens an Issue
+that names this safety backup; restore it to get the guest back. Two cases need no new safety
+backup:
+
+- the last restore failed: the safety backup from before it stays, and the Plan says so;
+- the guest is broken already (no disk, or such an Issue is open): a person may tick "skip the
+  safety backup" in the wizard. An API token never can.
+
 ![Restore wizard: only a person can approve, the steps of the Run, what is lost, a confirm box and the reason](docs/screenshots/readme-guest-restore.png)
 <br>*The restore wizard says what is lost before it makes the Plan.*
 
 - Plumb restores only over the same guest. For a guest that is gone, restore the backup in Proxmox
   into the pool `plumb`, then adopt the guest ("Adopt a guest").
-- After a delete of the Target the backups stay in Proxmox, and Plumb forgets them. Delete them in
-  Proxmox when you no longer need them.
+- After a delete of the Target the backups stay in Proxmox, and Plumb forgets them. This includes
+  the safety backups. Delete them in Proxmox when you no longer need them.
 
 ### Copy the backups off the host
 
