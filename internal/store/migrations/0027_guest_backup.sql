@@ -9,7 +9,10 @@
 --   new lineage too.
 -- * guest_backup_run: one backup job of a Target (scheduled or manual).
 --   Goes with the binding. The trigger is also in the volume's marker
---   (":m"), so a lost row (a controller restore) does not change retention.
+--   (":m"). A volume is Plumb's only with a "done" row of its volid whose
+--   size and ctime still match (M1, F2 of #331); a Plumb delete marks the
+--   row deleted, so a file made again under that name is never Plumb's
+--   (F1 of #331).
 
 CREATE TABLE guest_backup_lineage (
     target     TEXT PRIMARY KEY,
@@ -27,6 +30,9 @@ CREATE TABLE guest_backup_run (
     finished_at TEXT,
     result      TEXT NOT NULL CHECK (result IN ('running', 'done', 'warning', 'failed', 'refused')),
     volid       TEXT NOT NULL DEFAULT '',
+    size        INTEGER NOT NULL DEFAULT 0,
+    ctime       INTEGER NOT NULL DEFAULT 0,  -- the volume's ctime (Unix seconds) at finish
+    deleted_at  TEXT,                        -- Plumb deleted the volume
     message     TEXT NOT NULL DEFAULT '' CHECK (length(message) <= 1024)
 ) STRICT;
 

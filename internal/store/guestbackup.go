@@ -79,11 +79,20 @@ func (s *Store) RefusedGuestBackupRun(ctx context.Context, target, lineage, trig
 	return err
 }
 
-// FinishGuestBackupRun ends a running job.
-func (s *Store) FinishGuestBackupRun(ctx context.Context, id int64, result, volid, message string) error {
+// FinishGuestBackupRun ends a running job. size and ctime are the made
+// volume's, from the read-back list (F2 of #331).
+func (s *Store) FinishGuestBackupRun(ctx context.Context, id int64, result, volid string, size, ctime int64, message string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE guest_backup_run SET result = ?, volid = ?, message = ?, finished_at = ? WHERE id = ? AND result = 'running'`,
-		result, volid, clipText(message, 1024), s.now(), id)
+		`UPDATE guest_backup_run SET result = ?, volid = ?, size = ?, ctime = ?, message = ?, finished_at = ? WHERE id = ? AND result = 'running'`,
+		result, volid, size, ctime, clipText(message, 1024), s.now(), id)
+	return err
+}
+
+// MarkGuestBackupDeleted marks the record of a volume that Plumb deleted
+// (F1 of #331): a file made again under that volume id is never Plumb's.
+func (s *Store) MarkGuestBackupDeleted(ctx context.Context, target, volid string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE guest_backup_run SET deleted_at = ? WHERE target = ? AND volid = ? AND deleted_at IS NULL`, s.now(), target, volid)
 	return err
 }
 
@@ -158,6 +167,8 @@ func clipText(s string, n int) string {
 type RecordedGuestBackup struct {
 	Lineage string
 	Trigger string // scheduled | manual
+	Size    int64
+	CTime   int64 // Unix seconds
 }
 
 // RecordedGuestBackups maps the volume ids that finished jobs of target
@@ -166,7 +177,8 @@ type RecordedGuestBackup struct {
 // controller restore) is never Plumb's.
 func (s *Store) RecordedGuestBackups(ctx context.Context, target string) (map[string]RecordedGuestBackup, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT volid, lineage, trigger FROM guest_backup_run WHERE target = ? AND result = 'done' AND volid <> ''`, target)
+		`SELECT volid, lineage, trigger, size, ctime FROM guest_backup_run
+		 WHERE target = ? AND result = 'done' AND volid <> '' AND deleted_at IS NULL`, target)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +187,7 @@ func (s *Store) RecordedGuestBackups(ctx context.Context, target string) (map[st
 	for rows.Next() {
 		var v string
 		var r RecordedGuestBackup
-		if err := rows.Scan(&v, &r.Lineage, &r.Trigger); err != nil {
+		if err := rows.Scan(&v, &r.Lineage, &r.Trigger, &r.Size, &r.CTime); err != nil {
 			return nil, err
 		}
 		out[v] = r

@@ -245,16 +245,18 @@ func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, mark
 		case errors.Is(err, ErrManyNew):
 			msg = "another backup of this guest ran at the same time; Plumb's volume stays and is listed when its record is complete"
 		}
-		g.finish(ctx, id, t.Name, actor, trigger, "failed", "", msg)
+		g.finish(ctx, id, t.Name, actor, trigger, "failed", Volume{}, msg)
 		return fmt.Errorf("backup: guest backup of %s: %w", t.Name, err)
 	}
 	// vzdump only warns when the notes fail (T-214): read the marker back.
 	result, msg := "done", ""
 	vols, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest)
 	marked := false
+	made := Volume{Volid: volid}
 	if err == nil {
 		i := slices.IndexFunc(vols, func(v Volume) bool { return v.Volid == volid })
 		if i >= 0 {
+			made = vols[i]
 			m, ok := ParseMarker(vols[i].Notes)
 			marked = ok && m.Install == g.cfg.InstallID && m.Target == t.Name && m.Lineage == lineage
 		}
@@ -264,7 +266,7 @@ func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, mark
 	} else if warned {
 		msg = "Proxmox reported warnings"
 	}
-	g.finish(ctx, id, t.Name, actor, trigger, result, volid, msg)
+	g.finish(ctx, id, t.Name, actor, trigger, result, made, msg)
 	if err == nil && ctx.Err() == nil {
 		// Also without a backup field: the manual cap holds (M3 of #331).
 		g.retain(ctx, t, lineage, vols)
@@ -281,7 +283,7 @@ func (g *Guests) recorded(ctx context.Context, target string) (map[string]Record
 	}
 	out := make(map[string]Recorded, len(rows))
 	for v, r := range rows {
-		out[v] = Recorded{Lineage: r.Lineage, Trigger: r.Trigger}
+		out[v] = Recorded{Lineage: r.Lineage, Trigger: r.Trigger, Size: r.Size, CTime: r.CTime}
 	}
 	return out, nil
 }
@@ -289,10 +291,14 @@ func (g *Guests) recorded(ctx context.Context, target string) (map[string]Record
 // finish ends a job row. It uses its own short context: a job stopped by
 // Close (or a cancelled request) must still end its row, else the Target
 // answers 409 backup-running for ever (M2 of #331).
-func (g *Guests) finish(ctx context.Context, id int64, target, actor, trigger, result, volid, msg string) {
+func (g *Guests) finish(ctx context.Context, id int64, target, actor, trigger, result string, vol Volume, msg string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if err := g.cfg.Store.FinishGuestBackupRun(ctx, id, result, volid, msg); err != nil {
+	var ctime int64
+	if !vol.Time.IsZero() {
+		ctime = vol.Time.Unix()
+	}
+	if err := g.cfg.Store.FinishGuestBackupRun(ctx, id, result, vol.Volid, vol.Size, ctime, msg); err != nil {
 		g.cfg.Logger.Error("finish guest backup run", "target", target, "err", err)
 	}
 	typ := "guest_backup.done"
@@ -318,6 +324,9 @@ func (g *Guests) retain(ctx context.Context, t GuestTarget, lineage string, vols
 		if err := g.cfg.Driver.DeleteGuestBackup(ctx, g.cfg.Storage, t.Guest, v.Volid); err != nil {
 			g.cfg.Logger.Warn("guest backup retention", "target", t.Name, "err", err)
 			continue
+		}
+		if err := g.cfg.Store.MarkGuestBackupDeleted(ctx, t.Name, v.Volid); err != nil { // F1 of #331
+			g.cfg.Logger.Error("guest backup retention: mark deleted", "target", t.Name, "err", err)
 		}
 		g.emit(ctx, "guest_backup.deleted", t.Name, "system", map[string]any{"backup": v.ID, "reason": "retention"})
 	}

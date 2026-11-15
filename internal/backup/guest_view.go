@@ -118,6 +118,9 @@ func (g *Guests) Delete(ctx context.Context, target, id, actor string) error {
 		if err := g.cfg.Driver.DeleteGuestBackup(ctx, g.cfg.Storage, t.Guest, c.Volid); err != nil {
 			return fmt.Errorf("backup: delete: %w", err)
 		}
+		if err := g.cfg.Store.MarkGuestBackupDeleted(ctx, t.Name, c.Volid); err != nil { // F1 of #331
+			return err
+		}
 		g.emit(ctx, "guest_backup.deleted", t.Name, actor, map[string]any{"backup": c.ID, "kind": c.Kind})
 		return nil
 	}

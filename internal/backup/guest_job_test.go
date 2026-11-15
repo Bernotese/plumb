@@ -426,3 +426,39 @@ func TestGuestBackupCloseDuringJob(t *testing.T) {
 		t.Fatalf("after Recover %+v", last)
 	}
 }
+
+// F1 of #331: a recorded volume that Plumb deleted (a person, retention)
+// and that a storage writer makes again under the same name, with the
+// copied marker, size and time, is never Plumb's again.
+func TestGuestBackupDeletedVolidComesBack(t *testing.T) {
+	e := newJobEnv(t, nil)
+	ctx := context.Background()
+	if err := e.g.BackUp(ctx, "db1", TriggerScheduled, "system"); err != nil {
+		t.Fatal(err)
+	}
+	orig := e.d.vols["9001"][0]
+	if err := e.g.Delete(ctx, "db1", VolumeID(orig.Volid), "user:admin"); err != nil {
+		t.Fatal(err)
+	}
+	e.d.vols["9001"] = append(e.d.vols["9001"], orig) // the same file again
+	l, _ := e.g.List(ctx, "db1")
+	if len(l.Items) != 1 || l.Items[0].Kind != KindUnmarked {
+		t.Fatalf("a deleted volid came back as %+v", l.Items)
+	}
+	// Retention marks its deletes too.
+	e.d.vols["9001"] = nil
+	e.t.Backup.Keep = 1
+	e.g.BackUp(ctx, "db1", TriggerScheduled, "system")
+	first := e.d.vols["9001"][0]
+	e.g.BackUp(ctx, "db1", TriggerScheduled, "system") // retention deletes first
+	if e.d.deleted[len(e.d.deleted)-1] != first.Volid {
+		t.Fatalf("setup: retention deleted %s", e.d.deleted[len(e.d.deleted)-1])
+	}
+	e.d.vols["9001"] = append(e.d.vols["9001"], first) // the exact file again
+	l, _ = e.g.List(ctx, "db1")
+	for _, it := range l.Items {
+		if it.ID == VolumeID(first.Volid) && it.Kind != KindUnmarked {
+			t.Fatalf("a volid that retention deleted came back as %s", it.Kind)
+		}
+	}
+}
