@@ -140,3 +140,52 @@ func TestNetworkNICRefusals(t *testing.T) {
 		})
 	}
 }
+
+
+// Review M1 of #336: the render's absent nic<N> (no mac) removes the file
+// of a removed card, also one under cloud-init's key; the main NIC stays.
+func TestNetworkNICAbsentRemovesFile(t *testing.T) {
+	ctx := context.Background()
+	env, f, _ := newNetEnv(t)
+	f.cards = [][2]string{{"eth1", nicMAC}}
+	ci := cloudInit + "    eth1:\n      match:\n        macaddress: \"" + nicMAC + "\"\n      set-name: \"eth1\"\n"
+	if err := os.WriteFile(filepath.Join(env.Root, "etc/netplan/50-cloud-init.yaml"), []byte(ci), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := netRes(t, env, map[string]any{"mac": nicMAC, "addresses": "10.9.20.5/24"})
+	if err := n.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Apply(ctx, diffOf(t, n)); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The card leaves guest.nics (and the VM): the render sends absent.
+	f.cards = nil
+	gone := netRes(t, env, map[string]any{"state": "absent"})
+	ch := diffOf(t, gone)
+	if len(ch) != 1 || ch[0].Attr != wire.AttrState || ch[0].To != wire.StateAbsent {
+		t.Fatalf("absent diff: %+v", ch)
+	}
+	if err := gone.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := gone.Apply(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	if err := gone.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(env.Root, NetworkFile("extra"))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the file of the removed card stays")
+	}
+	if ch := diffOf(t, gone); len(ch) != 0 {
+		t.Fatalf("after the removal: %+v", ch)
+	}
+	// No file: absent is unchanged, also without a card (the common case).
+	if ch := diffOf(t, netRes(t, env, map[string]any{"state": "absent"})); len(ch) != 0 {
+		t.Fatalf("absent without a file: %+v", ch)
+	}
+}

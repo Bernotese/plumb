@@ -210,7 +210,31 @@ func (e *Engine) addNICNetworks(r *state.Rendered) error {
 	if list, _ := r.Guest.Attrs["nics"].([]any); len(list) > 0 && e.cfg.InstallID == "" {
 		return &ProposalError{Target: r.Target, Msg: "more NICs need the install id (PLUMB_INSTALL_ID) for their MAC addresses; run a repair run of install.sh"}
 	}
-	return r.AddNICNetworks(func(n int) string { return driver.NICMAC(e.cfg.InstallID, r.Target, n) })
+	return r.AddNICNetworks(func(n int) string { return driver.NICMAC(e.cfg.InstallID, r.Target, n) }, e.nicAbsentTo(r))
+}
+
+// nicAbsentTo is the last index up to which a VM's render holds nic<N>
+// with state absent after its last card (review M1 of #336): MaxNICs when
+// the Target's agent knows the network type (its stored hello), else 0
+// (no agent, or an agent without it: it never wrote such a file, and an
+// absent network would fail its gate).
+func (e *Engine) nicAbsentTo(r *state.Rendered) int {
+	if r.Kind != wire.KindVM || e.st == nil {
+		return 0
+	}
+	caps, _, known, err := e.agentCaps(context.Background(), r.Target)
+	if err != nil || !known {
+		return 0
+	}
+	return nicAbsentFor(caps)
+}
+
+// nicAbsentFor is nicAbsentTo for known capabilities.
+func nicAbsentFor(caps wire.Capabilities) int {
+	if _, ok := caps.Resources[state.NetworkType]; ok {
+		return driver.MaxNICs
+	}
+	return 0
 }
 
 // Propose turns a proposal into a pending Plan. It observes every target

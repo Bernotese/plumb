@@ -27,7 +27,7 @@ func TestAddNICNetworks(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := len(r.Resources)
-	if err := r.AddNICNetworks(fakeMAC); err != nil {
+	if err := r.AddNICNetworks(fakeMAC, 0); err != nil {
 		t.Fatal(err)
 	}
 	got := r.Resources[before:]
@@ -63,7 +63,7 @@ func TestAddNICNetworksLXC(t *testing.T) {
 	}
 	r, _ := set.Render("web2")
 	before := len(r.Resources)
-	if err := r.AddNICNetworks(fakeMAC); err != nil || len(r.Resources) != before {
+	if err := r.AddNICNetworks(fakeMAC, 0); err != nil || len(r.Resources) != before {
 		t.Fatalf("container: %v %+v", err, r.Resources)
 	}
 }
@@ -85,7 +85,7 @@ func TestNICNetworkRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, _ := set.Render("web1")
-	if err := r.AddNICNetworks(fakeMAC); err == nil || !strings.Contains(err.Error(), "network card 1 of guest.nics") {
+	if err := r.AddNICNetworks(fakeMAC, 0); err == nil || !strings.Contains(err.Error(), "network card 1 of guest.nics") {
 		t.Fatalf("name clash: %v", err)
 	}
 	set, err = Validate(withBlock(block("extra", `,"mac":"02:00:00:00:00:01"`)))
@@ -112,5 +112,55 @@ func TestNICAddressTaken(t *testing.T) {
 	}
 	if err := CheckNetworks(nets, []string{"web3"}, nil); err == nil || !strings.Contains(err.Error(), "guest.nics[0]") {
 		t.Fatalf("a NIC address of another Target passed: %v", err)
+	}
+}
+
+// Review M1 of #336: after the last card up to absentTo, nic<N> is absent
+// without mac (an agent that knows network passes the gate); a Block
+// network with such a name is refused too.
+func TestAddNICNetworksAbsent(t *testing.T) {
+	set, err := Validate(nicDocs(`{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := set.Render("web1")
+	before := len(r.Resources)
+	if err := r.AddNICNetworks(fakeMAC, 3); err != nil {
+		t.Fatal(err)
+	}
+	got := r.Resources[before:]
+	if len(got) != 3 || got[0].ID != "network:nic1" || got[0].Attrs["mac"] != fakeMAC(1) {
+		t.Fatalf("resources %+v", got)
+	}
+	for i, res := range got[1:] {
+		name := NICNetworkName(i + 2)
+		if res.ID != "network:"+name || len(res.Attrs) != 2 || res.Attrs["name"] != name || res.Attrs[wire.AttrState] != wire.StateAbsent {
+			t.Errorf("absent %d: %+v", i+2, res)
+		}
+	}
+	// No nics at all: every index is absent.
+	set2, _ := Validate(nicDocs(`{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0"}`))
+	r2, _ := set2.Render("web1")
+	n2 := len(r2.Resources)
+	if err := r2.AddNICNetworks(fakeMAC, 3); err != nil || len(r2.Resources) != n2+3 {
+		t.Fatalf("no nics: %v %+v", err, r2.Resources)
+	}
+	// A Block network named nic3 clashes with the absent one.
+	b := Doc{Kind: KindBlock, Name: "net", Spec: []byte(`{"resources":[{"network":{"name":"nic3","addresses":"192.0.2.10/24"}}]}`)}
+	docs := nicDocs(`{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9"}]}`, b)
+	docs[1].Spec = []byte(`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9"}]},"blocks":[{"use":"net"}]}`)
+	set3, err := Validate(docs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r3, _ := set3.Render("web1")
+	if err := r3.AddNICNetworks(fakeMAC, 3); err == nil || !strings.Contains(err.Error(), "network card 3") {
+		t.Fatalf("clash with an absent index: %v", err)
+	}
+	// absentTo 0 (an agent without network): none.
+	r4, _ := set2.Render("web1")
+	n4 := len(r4.Resources)
+	if err := r4.AddNICNetworks(fakeMAC, 0); err != nil || len(r4.Resources) != n4 {
+		t.Fatalf("absentTo 0: %+v", r4.Resources)
 	}
 }

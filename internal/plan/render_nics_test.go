@@ -6,6 +6,7 @@ import (
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/state"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // T-220: every render of the engine (Plan, Run, watch, the agent gate)
@@ -48,5 +49,19 @@ func TestEngineRenderAddsNICNetworks(t *testing.T) {
 	set2, _ := state.Validate([]state.Doc{img, plain})
 	if _, err := (&Engine{}).renderOrNil(set2, "web2"); err != nil {
 		t.Fatalf("without nics: %v", err)
+	}
+}
+
+// Review M1 of #336: absent nic<N> only for an agent that knows network.
+func TestNICAbsentFor(t *testing.T) {
+	if n := nicAbsentFor(wire.BaselineCapabilities()); n != 0 {
+		t.Fatalf("baseline: %d", n)
+	}
+	caps := wire.Capabilities{Resources: map[string][]string{"network": {"name", "state"}}}
+	if n := nicAbsentFor(caps); n != driver.MaxNICs {
+		t.Fatalf("with network: %d", n)
+	}
+	if m := caps.Missing([]wire.Resource{{Type: "network", Attrs: map[string]any{"name": "nic2", "state": "absent"}}}); len(m) != 0 {
+		t.Fatalf("an absent nic fails the gate of an agent that knows network: %v", m)
 	}
 }

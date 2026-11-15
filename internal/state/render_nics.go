@@ -26,16 +26,20 @@ func NICNetworkName(n int) string { return "nic" + strconv.Itoa(n) }
 // static address with an optional gateway, or none (the card is up
 // without an address). Every card gets its resource, also one without an
 // address, so a card that comes back with the same MAC never keeps an
-// old file. A container gets none: Proxmox sets its address (D-403). A
-// Block network resource with the same name is an error.
-func (r *Rendered) AddNICNetworks(mac func(n int) string) error {
+// old file. For the indexes after the last card up to absentTo it
+// appends nic<N> with state absent and no mac (review M1 of #336): the
+// file of a removed card goes, also in a guest whose agent was offline at
+// the removal (the absent stays in the desired list). The engine passes
+// absentTo only for an agent that knows the network type: an agent
+// without it never wrote such a file. A container gets none: Proxmox
+// sets its address (D-403). A Block network resource with such a name is
+// an error.
+func (r *Rendered) AddNICNetworks(mac func(n int) string, absentTo int) error {
 	if r.Kind != wire.KindVM {
 		return nil
 	}
 	list, _ := r.Guest.Attrs["nics"].([]any)
-	for i, item := range list {
-		n := i + 1
-		m, _ := item.(map[string]any)
+	clash := func(n int) error {
 		name := NICNetworkName(n)
 		id := wire.ID(NetworkType, name)
 		for _, res := range r.Resources {
@@ -43,6 +47,21 @@ func (r *Rendered) AddNICNetworks(mac func(n int) string) error {
 				return Errors{{Kind: KindTarget, Name: r.Target, Path: "/spec/blocks",
 					Msg: fmt.Sprintf("resource %s: the name %s is the network card %d of guest.nics; name the Block's network resource otherwise", id, name, n)}}
 			}
+		}
+		return nil
+	}
+	for n := len(list) + 1; n <= absentTo; n++ {
+		if err := clash(n); err != nil {
+			return err
+		}
+	}
+	for i, item := range list {
+		n := i + 1
+		m, _ := item.(map[string]any)
+		name := NICNetworkName(n)
+		id := wire.ID(NetworkType, name)
+		if err := clash(n); err != nil {
+			return err
 		}
 		attrs := map[string]any{"name": name, "mac": mac(n), "dhcp": false}
 		switch ip, _ := m["ip"].(string); ip {
@@ -56,6 +75,11 @@ func (r *Rendered) AddNICNetworks(mac func(n int) string) error {
 			}
 		}
 		r.Resources = append(r.Resources, wire.Resource{ID: id, Type: NetworkType, Block: NICBlock, Attrs: attrs})
+	}
+	for n := len(list) + 1; n <= absentTo; n++ {
+		name := NICNetworkName(n)
+		r.Resources = append(r.Resources, wire.Resource{ID: wire.ID(NetworkType, name), Type: NetworkType, Block: NICBlock,
+			Attrs: map[string]any{"name": name, wire.AttrState: wire.StateAbsent}})
 	}
 	return nil
 }

@@ -36,6 +36,9 @@ func TestGuestValueElems(t *testing.T) {
 		// its gateway is a guest value like an extra address.
 		{"nic dhcp skipped", "network", "dhcp", "true", nil},
 		{"nic gateway", "network", "gateway", "10.9.20.1", []string{"10.9.20.1"}},
+		// mac: only the render sets it (D-419) and it is never observed;
+		// as a desired value it is compared like any text (review L2 of #336).
+		{"nic mac", "network", "mac", "02:5a:10:20:30:40", []string{"02:5a:10:20:30:40"}},
 	} {
 		got, over := GuestValueElems(c.typ, c.attr, c.v)
 		if over {

@@ -139,6 +139,27 @@ func TestGuestNetworkNIC(t *testing.T) {
 		t.Fatal("the file changed after a refused Prepare")
 	}
 	t.Log("step 3 ok: an unknown MAC is refused with nothing changed")
+
+	// 4. The card leaves guest.nics: the render sends nic<N> absent
+	// (review M1 of #336); the file goes, the address goes, the main NIC
+	// stays.
+	gone, err := resource.New(wire.Resource{ID: "network:ci-nic", Type: "network", Block: "guest.nics",
+		Attrs: map[string]any{"name": "ci-nic", "state": "absent"}}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(gone)
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("the file stays after absent: %v", err)
+	}
+	waitLive("10.99.20.5/24", false)
+	if rs, _, _ := waitDefaultRoute(30 * time.Second); len(rs) == 0 || rs[0].Dev != dev {
+		t.Fatalf("the default route moved: %+v", rs)
+	}
+	if ch := diff(gone); len(ch) != 0 {
+		t.Fatalf("after the removal: %+v", ch)
+	}
+	t.Log("step 4 ok: absent removes the file and the address of the card")
 }
 
 // cardOf returns the interface whose permanent (else current) MAC is mac.
