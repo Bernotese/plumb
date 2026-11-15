@@ -107,15 +107,21 @@ func TestRestorePlanSaysSafetyBackup(t *testing.T) {
 // the restore; the guest runs and keeps its agent.
 func TestRestoreSafetyBackupFails(t *testing.T) {
 	s := newSafetyEnv(t)
+	var powerAtBackup driver.Power
 	s.fr.safety = func() (plan.RestoreVolume, error) {
+		st, _ := s.e.drv.Observe(s.e.ctx, driver.GuestID(s.ref))
+		powerAtBackup = st.Power
 		return plan.RestoreVolume{}, errors.New("backup: guest backup refused: the storage has 4 % free, less than 10 %")
 	}
 	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
-	if status != "failed" || out != "nothing was changed: the safety backup before the restore failed: the storage has 4 % free, less than 10 %" {
+	if status != "failed" || out != "nothing was changed: the safety backup before the restore failed: the storage has 4 % free, less than 10 %. The guest was stopped for it and runs again" {
 		t.Fatalf("%s: %q", status, out)
 	}
 	if len(s.fr.restored) != 0 {
 		t.Errorf("restored: %v", s.fr.restored)
+	}
+	if powerAtBackup != driver.PowerStopped { // design point e: stop first, then the safety backup
+		t.Errorf("the safety backup ran on a %s guest", powerAtBackup)
 	}
 	if st, _ := s.e.drv.Observe(s.e.ctx, driver.GuestID(s.ref)); st.Power != driver.PowerRunning {
 		t.Errorf("guest power %s", st.Power)
@@ -197,6 +203,9 @@ func TestRestoreSecondFailureAndSkip(t *testing.T) {
 	status, out := s.restore(t, "3f2a9c0d1e4b5a67", true)
 	if status != "succeeded" || s.fr.safeties != n || strings.Contains(out, "The safety backup") {
 		t.Fatalf("skip: %s %s, safety backups %d → %d", status, out, n, s.fr.safeties)
+	}
+	if len(s.fr.dropped) != 0 { // design point a: a Run without a safety backup deletes none
+		t.Errorf("safety backups dropped by a Run that took none: %v", s.fr.dropped)
 	}
 	if s.openIssue(plan.GuestRestoreFailedID) {
 		t.Error("the Issue stays after a restore that worked")

@@ -487,22 +487,33 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 			return fail("nothing was changed: " + err.Error())
 		}
 	}
-	// 1b. The safety backup of the guest as it is (D-420): Proxmox removes
+	// 2. Stop, before the safety backup: the backup then holds the guest
+	// exactly as the restore overwrites it (no lost window; design point e
+	// of #345).
+	wasRunning := st.Power != driver.PowerStopped
+	if wasRunning {
+		if err := e.stopGuest(ctx, tp.Target); err != nil {
+			return fail("nothing was restored; the guest may be stopped: " + pveText(err) + ". Plan the restore again.")
+		}
+	}
+	// 2b. The safety backup of the guest as it is (D-420): Proxmox removes
 	// the guest's disks before it writes the backup, so a failed restore
-	// needs a way back. If it fails, nothing is changed.
+	// needs a way back. The 10 % gate does not prove that it fits: if it
+	// fails, the guest is started again and nothing else is changed.
 	var safety *RestoreVolume
 	if !skip {
 		sv, err := e.cfg.GuestRestore.SafetyBackup(ctx, tp.Target)
 		if err != nil {
-			return fail("nothing was changed: the safety backup before the restore failed: " + safetyText(err))
+			msg := "nothing was changed: the safety backup before the restore failed: " + safetyText(err)
+			if wasRunning {
+				if serr := e.cfg.Driver.Power(ctx, driver.GuestID(b.Ref), driver.PowerStart); serr != nil {
+					return fail(msg + ". The guest was stopped for it, and its start failed: " + pveText(serr) + "; start it in Proxmox")
+				}
+				msg += ". The guest was stopped for it and runs again"
+			}
+			return fail(msg)
 		}
 		safety = &sv
-	}
-	// 2. Stop.
-	if st.Power != driver.PowerStopped {
-		if err := e.stopGuest(ctx, tp.Target); err != nil {
-			return fail("nothing was restored; the guest may be stopped: " + pveText(err) + ". Plan the restore again.")
-		}
 	}
 	// 3. Revoke before the guest can start again (D-410); drop the pins
 	// and the repair report of the old guest (D-417 (4)).
@@ -522,17 +533,17 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	// The disk is the restored one now: the follow-up (re-enroll Plan)
 	// comes also when a later step fails (review F1 of #335).
 	e.restored.Store(p.ID, true)
-	// A restore that worked: the Issue of a failed one ends, and only this
-	// Run's safety backup stays (D-420).
+	// A restore that worked: the Issue of a failed one ends (D-420).
 	if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusUnchanged, nil); err != nil {
 		e.log.Warn("end the Issue of a failed restore", "target", tp.Target, "err", err)
 	}
-	keep := ""
+	// Exactly one safety backup per Target: this Run's replaces the older
+	// ones. It stays after the restore, so a wrong restore can be undone.
+	// A Run without one deletes none.
 	if safety != nil {
-		keep = safety.Volid
-	}
-	if err := e.cfg.GuestRestore.DropSafetyBackups(ctx, tp.Target, keep); err != nil {
-		e.log.Warn("delete the older safety backups", "target", tp.Target, "err", err)
+		if err := e.cfg.GuestRestore.DropSafetyBackups(ctx, tp.Target, safety.Volid); err != nil {
+			e.log.Warn("delete the older safety backups", "target", tp.Target, "err", err)
+		}
 	}
 	// The restored config is Plumb's own step, no drift; the next Run
 	// converges it to the head.
