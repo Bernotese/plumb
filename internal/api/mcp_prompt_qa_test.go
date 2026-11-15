@@ -318,3 +318,25 @@ func TestQAExplainIssueSizes(t *testing.T) {
 		t.Errorf("comments part is %d bytes, over 8 KiB", len(cs))
 	}
 }
+
+// A long Block parameter in the target part (no list): it is cut at its
+// own value with a mark, and the injection in it stays fenced.
+func TestQAExplainIssueLongParam(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	long := "INJECT-PARAM " + qaInject + " " + strings.Repeat("p", 6000) + " PARAM-END"
+	e.approve(adm, "long param", targetDoc("web1", long))
+	e.motd("hand edit")
+	id := e.motdIssue()
+	text, err := promptAgainstEnv(t, e, e.token(TierPlan, "").bearer, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, parts := qaParse(t, text)
+	qaCheck(t, e, adm, text, id, "INJECT-PARAM")
+	tp := string(parts["target"])
+	if strings.Contains(tp, "PARAM-END") || !strings.Contains(tp, "runes left out)") {
+		t.Errorf("the long parameter is not cut with a mark: %d bytes", len(tp))
+	}
+}
