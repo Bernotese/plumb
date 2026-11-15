@@ -171,15 +171,19 @@ func Retention(vols []Classified, keep int) []Classified {
 	return del
 }
 
-// LowerKeepDeletes is the number of volumes that the next retention
-// deletes when keep goes from old to new (a Plan's diff, D-417): the
-// scheduled plumb volumes above new.
-func LowerKeepDeletes(vols []Classified, newKeep int) int {
+// NextJobDeletes is the number of existing volumes that the next
+// scheduled job's retention deletes with keep (a Plan's note, D-417): the
+// job adds one scheduled volume first (L1 of #334), so of the n recorded
+// scheduled plumb volumes, n+1-keep go, at most n (the new one never).
+func NextJobDeletes(vols []Classified, keep int) int {
 	n := 0
 	for _, v := range vols {
 		if v.Kind == KindPlumb && v.Trigger == TriggerScheduled {
 			n++
 		}
 	}
-	return max(n-newKeep, 0)
+	if keep < 1 {
+		return 0
+	}
+	return min(max(n+1-keep, 0), n)
 }
