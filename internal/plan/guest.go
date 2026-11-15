@@ -66,6 +66,17 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 		if busy {
 			continue
 		}
+		// T-234 (host finding F3): after a failed restore the guest may be
+		// empty, and guest:restore-failed names that state and the way
+		// back. No guest:config or guest:missing Issue of the empty guest
+		// (its Revert would re-create it). The digest stays, so the round
+		// after a restore that worked compares again.
+		if id, err := e.RestoreFailedIssue(ctx, b.Name); err != nil {
+			errs = append(errs, err)
+			continue
+		} else if id != 0 {
+			continue
+		}
 		observed, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
 		if errors.Is(err, driver.ErrNotFound) && e.cfg.Restore.Restored() {
 			// After a restore: the guest was deleted after the backup

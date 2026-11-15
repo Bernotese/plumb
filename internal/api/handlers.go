@@ -67,6 +67,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		problem(w, http.StatusConflict, "action-not-allowed", "Action not allowed", err.Error())
 	case errors.Is(err, plan.ErrRestoredMode):
 		problem(w, http.StatusConflict, "restored-mode", "Restored mode", err.Error())
+	case errors.Is(err, plan.ErrRestoreFailed): // T-234
+		problem(w, http.StatusConflict, "restore-failed", "The last restore failed", strings.TrimPrefix(err.Error(), "plan: "))
 	case errors.Is(err, plan.ErrOffline):
 		problem(w, http.StatusConflict, "target-offline", "Target is offline", err.Error())
 	case errors.Is(err, store.ErrBuildRunning):

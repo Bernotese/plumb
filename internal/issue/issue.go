@@ -269,6 +269,9 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	if IgnoreOnly(iss.Resource) && (action == ActionRevert || action == ActionAccept) {
 		return store.Plan{}, ErrAddressFix
 	}
+	if err := s.restoreFailed(ctx, iss); err != nil {
+		return store.Plan{}, err
+	}
 	var changes []wire.Change
 	if err := json.Unmarshal(iss.Changes, &changes); err != nil {
 		return store.Plan{}, err
@@ -482,4 +485,32 @@ func decodeNumbers(raw []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	return dec.Decode(v)
+}
+
+// RestoreFailedBlocks returns the open guest:restore-failed Issue of the
+// target of iss that takes the actions of iss away (T-234), or 0. The
+// restore Issue itself keeps its own action (ignore once).
+func (s *Service) RestoreFailedBlocks(ctx context.Context, iss store.Issue) (int64, error) {
+	if iss.Resource == plan.GuestRestoreFailedID {
+		return 0, nil
+	}
+	r, err := s.st.OpenIssue(ctx, iss.Target, plan.GuestRestoreFailedID)
+	if errors.Is(err, store.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return r.ID, nil
+}
+
+// restoreFailed refuses every action on an Issue of a Target whose last
+// restore failed (T-234): the guest may be empty, and only a restore is
+// the way back. Ignore once of guest:restore-failed itself stays.
+func (s *Service) restoreFailed(ctx context.Context, iss store.Issue) error {
+	id, err := s.RestoreFailedBlocks(ctx, iss)
+	if err != nil || id == 0 {
+		return err
+	}
+	return fmt.Errorf("%w: Issue %d of %s says that the guest may have no disk; restore a backup first (POST /targets/%s/restore). Its actions come back after a restore that works", plan.ErrRestoreFailed, id, iss.Target, iss.Target)
 }

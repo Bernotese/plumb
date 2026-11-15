@@ -4195,12 +4195,15 @@ components:
             an adopted Target to `true`, or deletes an adopted Target that has it (D-388).
             `guest-restore`: a Plan of origin `restore` (D-410): it overwrites the guest with a
             backup.
+            `restore-failed`: the Plan deletes a Target whose last restore failed (an open
+            `guest:restore-failed`, T-234); every other Plan for such a Target is refused with 409
+            `restore-failed`, at the proposal and again at the approval.
             The server computes it from the content of the proposal, for every origin, and from
             the origin for `accept-guest-data` and `unverified-pin`; no client field sets or
             clears it.
           items:
             type: string
-            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off, repair, adopted-guest-delete, guest-restore]
+            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off, repair, adopted-guest-delete, guest-restore, restore-failed]
         guest_data_issues:
           type: array
           description: |
@@ -4569,6 +4572,8 @@ components:
         - updated_at
         - changes
         - actions
+        - actions_blocked_by
+        - actions_note
         - plan_id
         - resolution
         - comments
@@ -4588,8 +4593,21 @@ components:
           items: { $ref: "#/components/schemas/Change" }
         actions:
           type: array
-          description: Actions allowed now. `accept` is missing for a sensitive change.
+          description: |
+            Actions allowed now. `accept` is missing for a sensitive change. Empty while
+            `actions_blocked_by` is set (T-234).
           items: { $ref: "#/components/schemas/IssueAction" }
+        actions_blocked_by:
+          $ref: "#/components/schemas/NullableId"
+          description: |
+            T-234: the open Issue `guest:restore-failed` of the Target, while the last restore
+            failed and the guest may have no disk. Then this Issue has no action, and every
+            resolve or ignore answers 409 `restore-failed`; the actions come back after a restore
+            that works. Null otherwise, and always for `guest:restore-failed` itself.
+        actions_note:
+          type: string
+          maxLength: 1024
+          description: Plumb's text on why `actions` is empty (T-234); "" when it is not.
         plan_id:
           $ref: "#/components/schemas/NullableId"
           description: The Plan that resolves it (`accept`, `revert`, `ignore_rule`).

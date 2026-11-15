@@ -330,20 +330,24 @@ type commentView struct {
 }
 
 type issueView struct {
-	ID         int64           `json:"id"`
-	Target     string          `json:"target"`
-	Resource   string          `json:"resource"`
-	Status     string          `json:"status"`
-	Risk       wire.Risk       `json:"risk"`
-	OpenedAt   time.Time       `json:"opened_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
-	Changes    []wire.Change   `json:"changes"`
-	Actions    []string        `json:"actions"`
-	PlanID     *int64          `json:"plan_id"`
-	Resolution *resolutionView `json:"resolution"`
-	Comments   []commentView   `json:"comments"`
-	Raw        bool            `json:"raw"`    // D-301; accept_mode == raw (D-362)
-	Source     *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
+	ID        int64         `json:"id"`
+	Target    string        `json:"target"`
+	Resource  string        `json:"resource"`
+	Status    string        `json:"status"`
+	Risk      wire.Risk     `json:"risk"`
+	OpenedAt  time.Time     `json:"opened_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	Changes   []wire.Change `json:"changes"`
+	Actions   []string      `json:"actions"`
+	// ActionsBlockedBy: the open guest:restore-failed Issue of the Target
+	// that takes the actions away (T-234); ActionsNote says why.
+	ActionsBlockedBy *int64          `json:"actions_blocked_by"`
+	ActionsNote      string          `json:"actions_note"`
+	PlanID           *int64          `json:"plan_id"`
+	Resolution       *resolutionView `json:"resolution"`
+	Comments         []commentView   `json:"comments"`
+	Raw              bool            `json:"raw"`    // D-301; accept_mode == raw (D-362)
+	Source           *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
 	// What accept writes (D-362).
 	AcceptMode   string            `json:"accept_mode"`
 	AcceptReason string            `json:"accept_reason"`
@@ -379,6 +383,19 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		// The list does not depend on the caller; the server checks who
 		// may ignore (D-091, D-092).
 		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
+	}
+	// T-234: while the last restore of the Target failed, its other
+	// Issues offer no action (the server refuses them too).
+	if i.Status == store.IssueOpen && s.cfg.Issues != nil {
+		blocked, err := s.cfg.Issues.RestoreFailedBlocks(ctx, i)
+		if err != nil {
+			return v, err
+		}
+		if blocked != 0 {
+			v.Actions = []string{}
+			v.ActionsBlockedBy = &blocked
+			v.ActionsNote = fmt.Sprintf("The last restore of %s failed, and the guest may have no disk: Issue %d names the way back (a restore of the safety backup). The actions of this Issue come back after a restore that works.", i.Target, blocked)
+		}
 	}
 	if i.Status == store.IssueResolved {
 		v.Resolution = &resolutionView{Action: i.Resolution, By: i.ResolvedBy, At: i.ResolvedAt.UTC()}

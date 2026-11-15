@@ -149,6 +149,9 @@ func (s *Service) IgnoreOnce(ctx context.Context, id int64, principal string, ch
 	if iss.Status != store.IssueOpen {
 		return store.Issue{}, ErrNotOpen
 	}
+	if err := s.restoreFailed(ctx, iss); err != nil {
+		return store.Issue{}, err
+	}
 	var changes []wire.Change
 	if err := json.Unmarshal(iss.Changes, &changes); err != nil {
 		return store.Issue{}, err

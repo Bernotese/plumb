@@ -622,14 +622,17 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 			e.log.Warn("delete the older safety backups", "target", tp.Target, "err", err)
 		}
 	}
-	// The restored config is Plumb's own step, no drift; the next Run
-	// converges it to the head.
+	// T-234: an open guest:config Issue showed the guest before the
+	// restore (or the empty guest of a failed one): it ends, and the next
+	// poll compares the restored guest again (an empty digest), so real
+	// drift of the restored config opens a new Issue.
+	e.endStaleConfigIssue(ctx, tp.Target)
 	after, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
 	if err != nil {
 		return fail("restored, but the guest cannot be read: " + pveText(err) + "." + way)
 	}
 	if nb, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target); err == nil && nb.Ref == b.Ref {
-		nb.Digest = pollKey(after)
+		nb.Digest = ""
 		if err := e.st.PutBinding(ctx, nb); err != nil {
 			return fail("restored, but the binding could not be written: " + err.Error() + "." + way)
 		}
