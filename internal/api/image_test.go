@@ -92,9 +92,10 @@ func (e *env) ubuntuRef(sha string) driver.ImageRef {
 	return ref
 }
 
-// T-015 run 3: Plan A creates an Image and a Target, Plan B deletes both,
-// the template is destroyed outside Plumb, Plan C creates both again with
-// the same Image name. The Run succeeds.
+// T-015 run 3: Plan A creates an Image and a Target, Plan B deletes both
+// (since T-242 Plan B also removes the base template, D-430), Plan C
+// creates both again with the same Image name: it fetches again. The Run
+// succeeds.
 func TestImageDeleteAndCreateAgain(t *testing.T) {
 	e := newEnv(t, true)
 	adm := e.admin()
@@ -102,7 +103,9 @@ func TestImageDeleteAndCreateAgain(t *testing.T) {
 	e.noImageBinding()
 	e.runPlan(adm, map[string]any{"reason": "remove", "delete": []map[string]string{
 		{"kind": "Target", "name": "web1"}, {"kind": "Image", "name": "ubuntu"}}})
-	e.drv.DestroyTemplate(e.ubuntuRef("0")) // the test cleanup of T-015: qm destroy as root
+	if b, _ := e.stockObjects("ubuntu"); len(b) != 0 {
+		t.Fatalf("base template left after the delete: %+v", b)
+	}
 	e.agent("web2")
 	before := e.drv.Calls(fake.OpFetchImage)
 	e.runPlan(adm, map[string]any{"reason": "again", "put": []state.Doc{imageDoc("ubuntu", "0"), targetWith("web2", "ubuntu", 2)}})
