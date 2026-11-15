@@ -115,20 +115,6 @@ export const GUEST_CONFIG = "guest:config";
 /** D-420: the Issue of a restore that failed after Proxmox began; ignore only. */
 export const GUEST_RESTORE_FAILED = "guest:restore-failed";
 
-/**
- * The way back that a guest:restore-failed Issue names (D-420): the backup id and
- * time from its change `restore` ("restore the safety backup … <id> of <time>"),
- * or null when it names none ("restore another backup").
- */
-export function restoreWayBack(issue: Issue): { id: string; time: string } | null {
-  for (const c of issue.changes) {
-    if (c.attr !== "restore" || !("to" in c) || typeof c.to !== "string") continue;
-    const m = /\bbackup ([0-9a-f]{16}) of (\S+)$/.exec(c.to);
-    if (m?.[1] && m[2]) return { id: m[1], time: m[2] };
-  }
-  return null;
-}
-
 /** The label of spec.allow_restart (D-196). */
 export const ALLOW_RESTART_LABEL = "Plumb may restart this VM";
 

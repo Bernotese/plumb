@@ -16,13 +16,7 @@
   import { go, href } from "../lib/router";
   import { can, me, roleNote } from "../lib/session.svelte";
   import type { Issue, TargetView } from "../lib/types";
-  import {
-    ALLOW_RESTART_LABEL,
-    GUEST_RESTORE_FAILED,
-    forKind,
-    formatTime,
-    restoreWayBack,
-  } from "../lib/view";
+  import { ALLOW_RESTART_LABEL, GUEST_RESTORE_FAILED, forKind, formatTime } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
@@ -114,7 +108,8 @@
   const person = $derived(me.session?.principal.startsWith("user:") ?? false);
   const canDelete = $derived(can("deleteGuestBackup") && person);
   // Review L1 of #338: no job on a refused storage, and say why.
-  const wayBack = $derived(failed ? restoreWayBack(failed) : null);
+  // T-234: the way back as data (null: "restore another backup").
+  const wayBack = $derived(failed?.restore_way_back ?? null);
   const nowOff = $derived(
     !list?.storage
       ? "Off: the install named no guest backup storage."
@@ -248,8 +243,8 @@
       <strong>The last restore of this guest failed.</strong> Proxmox removes the guest's disks
       before it writes the backup, so the guest may have no disk now.
       {#if wayBack}The way back: restore the safety backup of {formatTime(wayBack.time)} (backup
-        <span class="mono">{wayBack.id}</span>), or another backup.{:else}The way back: restore
-        another backup.{/if}
+        <span class="mono">{wayBack.backup_id}</span>), or another backup.{:else}The way back:
+        restore another backup.{/if}
       A restore that works ends
       <a href={href({ name: "issue", id: failed.id })}>Issue {failed.id}</a>.
     </p>
