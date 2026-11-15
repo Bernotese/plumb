@@ -208,6 +208,11 @@
         Plumb cannot revert or accept this: the address is set only when the guest is created. ·
         Status: {issue.status}
       </p>
+    {:else if issue.resource === GUEST_RESTORE_FAILED}
+      <p id="restore-failed-found">
+        <span class="mono">{issue.resource}</span> on <span class="mono">{issue.target}</span>.
+        Plumb opened it at {formatTime(issue.opened_at)}, when the restore failed. · Status: {issue.status}
+      </p>
     {:else}
       <p>
         <span class="mono">{issue.resource}</span> on <span class="mono">{issue.target}</span>

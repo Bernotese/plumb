@@ -123,6 +123,9 @@ describe("Issue actions from the server", () => {
     expect(text(el("#restore-hint"))).toContain("the guest may have no disk now");
     expect(text(el("#restore-hint"))).toContain("backup 7e6d5c4b3a291807");
     expect(text(el("#restore-hint"))).not.toContain("backup backup");
+    expect(text(el("#restore-failed-found"))).toContain("when the restore failed");
+    expect(text()).not.toContain("Risk of a revert");
+    expect(text()).not.toContain("Found by");
     const links = [...el("#restore-way-back").querySelectorAll("a")];
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
       "#/targets/web1/backups?restore=7e6d5c4b3a291807",
