@@ -173,6 +173,26 @@ describe("Issue actions from the server", () => {
     expect(button("Ignore once")).toBeFalsy();
   });
 
+  it("guest:restore-failed: the end while the guest has no disk shows the server's text (409 restore-not-ended)", async () => {
+    me.session = ADMIN_PERSON;
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0, guestsWithoutDisk: ["cache1"] });
+    const issue = (await api.listIssues({ target: "cache1", status: "open" })).find(
+      (i) => i.resource === "guest:restore-failed",
+    );
+    if (!issue) throw new Error("the cache1 seed is missing");
+    show(IssueView, { api, id: issue.id });
+    await until(() => button("Ignore once"));
+    button("Ignore once")?.click();
+    await until(() => document.querySelector("#ignore-confirm"));
+    el<HTMLButtonElement>("#ignore-confirm").click();
+    await until(() => text().includes("restore a backup first"));
+    expect(text()).toContain(
+      "the guest of the Target has no disk: restore a backup first, or bring the guest back in Proxmox; then end this Issue",
+    );
+    expect(text()).not.toContain("Ended. Plumb compares the guest again");
+    expect((await api.getIssue(issue.id)).status).toBe("open");
+  });
+
   it("guest:restore-failed without a safety backup: only the backups link", async () => {
     await serverIssue("guest:restore-failed", failedIssue(null));
     await until(() => document.querySelector("#restore-way-back"));

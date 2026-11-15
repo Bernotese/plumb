@@ -137,6 +137,9 @@ describe("guest backups (mock)", () => {
     expect(await code(api({ token: true }).ignoreOnce(failed.id))).toMatch(
       /^403 .*human-required$/,
     );
+    // M1 of #352: not while the guest has no disk.
+    const noDisk = createMockApi({ signedIn: true, stepDelayMs: 0, guestsWithoutDisk: ["cache1"] });
+    expect(await code(noDisk.ignoreOnce(failed.id))).toMatch(/^409 .*restore-not-ended$/);
     expect(await code(a.ignoreOnce(failed.id))).toBe("ok");
     const back = await a.getIssue(other.id);
     expect([back.actions_blocked_by, back.actions.includes("revert")]).toEqual([null, true]);

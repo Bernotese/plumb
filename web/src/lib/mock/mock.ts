@@ -83,6 +83,11 @@ export interface MockOptions {
    * apply → alice, plan → carol, read → bob (T-154).
    */
   role?: UserRole;
+  /**
+   * Targets whose guest has no disk now (M1 of #352): the end of their
+   * guest:restore-failed answers 409 restore-not-ended (#355).
+   */
+  guestsWithoutDisk?: string[];
 }
 
 export interface MockApi extends PlumbApi {
@@ -2778,6 +2783,17 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "Human session required",
           403,
           "Only a human admin session can end the Issue of a failed restore.",
+        );
+      // ErrRestoreNotEnded of internal/plan/restore_failed.go.
+      if (
+        issue.resource === "guest:restore-failed" &&
+        (opts.guestsWithoutDisk ?? []).includes(issue.target)
+      )
+        throw problem(
+          "restore-not-ended",
+          "The guest has no disk",
+          409,
+          "the guest of the Target has no disk: restore a backup first, or bring the guest back in Proxmox; then end this Issue",
         );
       // A person with role apply up to disruptive (ARCHITECTURE §17).
       if (isPerson(s) && s.tier !== "admin") {
