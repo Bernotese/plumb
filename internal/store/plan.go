@@ -224,8 +224,8 @@ func (s *Store) ApproveBuildPlan(ctx context.Context, planID int64, approvedBy s
 		if err != nil {
 			return err
 		}
-		if origin != "build" && origin != "agent_update" && origin != "repair" {
-			return fmt.Errorf("store: plan %d has origin %s, not build, agent_update or repair", planID, origin)
+		if origin != "build" && origin != "agent_update" && origin != "repair" && origin != "restore" { // restore: T-222
+			return fmt.Errorf("store: plan %d has origin %s, not build, agent_update, repair or restore", planID, origin)
 		}
 		if status != PlanPending {
 			return ErrPlanNotPending
