@@ -495,6 +495,10 @@ func (e *Engine) retentionStep(ctx context.Context, s *stepper, set *state.Set, 
 		lines = append(lines, "removed "+r)
 	}
 	lines = append(lines, left...)
+	if !ok {
+		// The Image is deleted: name the files that stay (D-430).
+		lines = append(lines, e.keptFileNotes(ctx, image)...)
+	}
 	if err != nil {
 		// A template stays unless every error is a stale store row of a
 		// removed template (review of PR #150).

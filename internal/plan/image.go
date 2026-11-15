@@ -146,7 +146,10 @@ func (e *Engine) planImages(ctx context.Context, base, next *state.Set, force, f
 			return nil, nil, err
 		}
 		wasBuilt, isBuilt := okb && b.info.Built, okn && n.info.Built
-		if !wasBuilt && !isBuilt {
+		// A stock Image is planned only when it is deleted: it loses the
+		// base templates that Plumb made for it (D-430, T-225).
+		deleted := okb && !okn
+		if !wasBuilt && !isBuilt && !deleted {
 			continue
 		}
 		ip := ImagePlan{Image: name, Removes: []ImageRemoval{}}
@@ -189,9 +192,36 @@ func (e *Engine) planImages(ctx context.Context, base, next *state.Set, force, f
 		if ip.Build == nil && len(ip.Removes) == 0 {
 			continue
 		}
+		if deleted {
+			notes = append(notes, e.keptFileNotes(ctx, name)...)
+		}
 		out = append(out, ip)
 	}
 	return out, notes, nil
+}
+
+// keptFileNotes names the import files of a deleted Image, which Plumb
+// never deletes (D-209), each with its pvesm free line (D-430): after the
+// delete no Image view lists them any more. Container template files
+// (vztmpl, D-233) are left out: another lxc Image may share the file
+// prefix, so a free line could name a file in use (review S1 of #171).
+func (e *Engine) keptFileNotes(ctx context.Context, image string) []string {
+	objs, err := e.cfg.Driver.ListImages(ctx, image)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, o := range objs {
+		if o.Kind != driver.ImageImportFile {
+			continue
+		}
+		line := fmt.Sprintf("kept %s: Plumb never deletes an import file", o.Name)
+		if cmd := FreeCommand(image, o.Name); cmd != "" {
+			line += "; free it on the Proxmox host with: " + cmd
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // planRemovals lists the templates that retention would remove (D-209):
