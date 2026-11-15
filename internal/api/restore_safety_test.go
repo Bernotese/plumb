@@ -254,3 +254,56 @@ func TestRestoreGuestGone(t *testing.T) {
 	}
 	_ = store.ErrNotFound
 }
+
+// M1 of #346: a restore that Proxmox did not begin says so; the guest runs
+// again, no Issue opens, and so no later skip of the safety backup.
+func TestRestoreNotStartedIsHonest(t *testing.T) {
+	s := newSafetyEnv(t)
+	s.fr.fail = fmt.Errorf("%w: the backup volume changed since it was checked", plan.ErrRestoreNotStarted)
+	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
+	for _, w := range []string{"the restore did not start: the backup volume changed since it was checked.",
+		"The guest's disks are as before; nothing was restored.", "The guest runs again.", "The agent credential is revoked."} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output without %q: %s", w, out)
+		}
+	}
+	if status != "failed" || strings.Contains(out, "may have no disk") || s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatalf("%s %s, Issue %v", status, out, s.openIssue(plan.GuestRestoreFailedID))
+	}
+	if st, _ := s.e.drv.Observe(s.e.ctx, driver.GuestID(s.ref)); st.Power != driver.PowerRunning {
+		t.Errorf("guest power %s", st.Power)
+	}
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r", "skip_safety_backup": true})
+	if code != 422 {
+		t.Errorf("skip after a restore that did not start: %d %s", code, body)
+	}
+}
+
+// The Run checks "broken" again: a Plan made with the skip for a guest
+// without a disk refuses when the guest has its disk back at the Run.
+func TestRestoreSkipCheckedAtRun(t *testing.T) {
+	s := newSafetyEnv(t)
+	id := driver.GuestID(s.ref)
+	if err := s.e.drv.Tamper(id, func(g *driver.GuestSpec) { g.DiskGB = 0 }); err != nil {
+		t.Fatal(err)
+	}
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r", "skip_safety_backup": true})
+	if code != 201 || !strings.Contains(string(body), "skipped: the guest is broken already") {
+		t.Fatalf("skip on a guest without a disk: %d %s", code, body)
+	}
+	var p struct{ ID int64 }
+	json.Unmarshal(body, &p)
+	s.e.drv.Tamper(id, func(g *driver.GuestSpec) { g.DiskGB = 10 })
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	s.e.eng.Wait()
+	r, _ := s.e.st.RunOfPlan(s.e.ctx, p.ID)
+	steps, _ := s.e.st.Steps(s.e.ctx, r.ID)
+	if r.Status != "failed" || !strings.HasPrefix(steps[0].Output, "nothing was changed: ") || !strings.Contains(steps[0].Output, "only for a broken guest") {
+		t.Fatalf("%s: %+v", r.Status, steps)
+	}
+	if len(s.fr.restored) != 0 || s.fr.safeties != 0 {
+		t.Errorf("restored %v, safety backups %d", s.fr.restored, s.fr.safeties)
+	}
+}

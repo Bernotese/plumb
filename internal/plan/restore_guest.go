@@ -76,6 +76,11 @@ var ErrBackupNotFound = errors.New("no such backup of this Target")
 // not-restorable).
 var ErrNotRestorable = errors.New("not-restorable")
 
+// ErrRestoreNotStarted: Proxmox did not begin the restore (a check of the
+// driver, or a refused call): the guest's disks are as before (M1 of #346).
+// Its text after the colon is Plumb's reason.
+var ErrRestoreNotStarted = errors.New("the restore did not start")
+
 // ErrGuestGone: the Target's guest is not in the pool (the restorer cannot
 // list it): no restore after the guest is gone (D-411).
 var ErrGuestGone = errors.New("the guest of the Target is gone")
@@ -579,6 +584,20 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	}
 	// 4. Restore.
 	if err := e.cfg.GuestRestore.RestoreGuest(ctx, b.Ref, v); err != nil {
+		if errors.Is(err, ErrRestoreNotStarted) {
+			// The disks are as before: no Issue, no "may have no disk"; the
+			// guest runs again if it ran (M1 of #346).
+			msg := "the restore did not start: " + strings.TrimPrefix(err.Error(), ErrRestoreNotStarted.Error()+": ") +
+				". The guest's disks are as before; nothing was restored."
+			if wasRunning {
+				if serr := e.cfg.Driver.Power(ctx, driver.GuestID(b.Ref), driver.PowerStart); serr != nil {
+					msg += " Its start failed: " + pveText(serr) + "; start it in Proxmox."
+				} else {
+					msg += " The guest runs again."
+				}
+			}
+			return fail(msg + " The agent credential is revoked." + way)
+		}
 		if failedBefore {
 			// The Issue keeps naming the good backup from before the first
 			// failure.

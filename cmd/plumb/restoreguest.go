@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Bernotese/plumb/internal/backup"
 	"github.com/Bernotese/plumb/internal/driver"
@@ -75,13 +76,33 @@ func (g guestRestorer) FindBackup(ctx context.Context, target, ref, id string) (
 
 func (g guestRestorer) RestoreGuest(ctx context.Context, ref string, v plan.RestoreVolume) error {
 	if g.readOnly != nil && g.readOnly() {
-		return driver.ErrReadOnly
+		return fmt.Errorf("%w: %s (%w)", plan.ErrRestoreNotStarted, "restored mode: Plumb sends no Proxmox write", driver.ErrReadOnly)
 	}
 	err := g.d.RestoreGuest(ctx, g.storage, ref, v.Volid, v.Size, v.Time.Unix())
-	if errors.Is(err, proxmox.ErrBackupNotFound) {
-		return plan.ErrBackupNotFound
+	if errors.Is(err, proxmox.ErrRestoreNotStarted) {
+		return fmt.Errorf("%w: %s", plan.ErrRestoreNotStarted, notStartedReason(err))
 	}
 	return err
+}
+
+// notStartedReason is Plumb's text of a restore that Proxmox did not begin
+// (M1 of #346): never the raw answer.
+func notStartedReason(err error) string {
+	switch {
+	case errors.Is(err, proxmox.ErrBackupChanged):
+		return "the backup volume changed since it was checked"
+	case errors.Is(err, proxmox.ErrBackupNotFound):
+		return "the backup volume is not listed for this guest any more"
+	case errors.Is(err, proxmox.ErrGuestRunning):
+		return "the guest was not stopped"
+	case errors.Is(err, driver.ErrNotFound):
+		return "the guest is not in the pool any more"
+	}
+	var ae *proxmox.APIError
+	if errors.As(err, &ae) {
+		return fmt.Sprintf("Proxmox refused the restore (HTTP %d)", ae.Status)
+	}
+	return "the guest or its backups could not be read"
 }
 
 // SafetyBackup runs the pre-restore job of the Target (D-420).
