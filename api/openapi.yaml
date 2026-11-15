@@ -1232,9 +1232,10 @@ paths:
         report pins the keys again. There is
         no restore after the guest is gone: it would need a new right (D-411, a later user question).
         Data disks (D-423, planned: T-238): the backup holds every data disk the guest had at the
-        backup time. A data disk of the Target that the backup lacks (added later) loses its data;
-        the Plan names it with a `warnings` line and a change `disk<N>` ("the data on disk N is
-        lost"). The safety backup holds it.
+        backup time. The Plan names every data disk that the guest has now and the backup lacks
+        (added later), with a `warnings` line and a change `disk<N>`: a VM keeps it as an unused
+        volume (Plumb never frees it; the next Run attaches a new empty disk in that slot), an LXC
+        loses its data. The safety backup holds it.
         A person restores such a volume in Proxmox into pool `plumb` and adopts it. 409
         `restored-mode` in restored mode. The token itself can restore at the Proxmox API with the
         D-380 rights; this rule holds inside Plumb.
@@ -1688,6 +1689,8 @@ paths:
           shrink a disk (D-299, D-423; the error points at the field);
         - `nics` or `disks` on an adopted Target (`nics-not-adoptable`, D-404;
           `disks-not-adoptable`, D-423, planned: T-238);
+        - a slot of `disks` that holds a volume Plumb did not make (D-436, planned: T-238; the
+          error points at the disk);
         - a bridge or bridge/tag that the install did not name (`network-not-allowed`, D-401).
         `targets` plans targets without a document change, for example after a new secret value
         (D-090).

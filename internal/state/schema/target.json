@@ -127,7 +127,7 @@
             "disks": {
               "type": "array",
               "maxItems": 3,
-              "description": "Data disks after the main disk, at most 3 (D-423). Missing: Plumb does not manage data disks (as before). [] or a list: Plumb manages slots 1 to 3, and a disk in a slot that the list does not name is drift. Removing the field deletes nothing. Each is a new volume on the disk storage that was named at install; there is no storage field and no bind mount. slot N is the disk's fixed name: vm scsiN with the serial plumb-N (a raw block device: format and mount it with a Block or by hand), lxc mpN, a file system that Proxmox mounts at path and that guest backups hold. Grow only, like disk. Adding a disk is reversible, or disruptive when the guest must restart for it. Removing a disk deletes its data: destructive, a person approves it, and a running guest needs allow_restart. Every disk counts for the disk gate. Not for an adopted Target.",
+              "description": "Data disks after the main disk, at most 3 (D-423). Missing: Plumb does not manage data disks (as before). [] or a list: Plumb manages slots 1 to 3 against what the guest has, so a disk in a slot that the list does not name is removed by that Plan (destructive). A slot that holds a volume Plumb did not make is never taken over or freed. Removing the field deletes nothing. Each is a new volume on the disk storage that was named at install; there is no storage field and no bind mount. slot N is the disk's fixed name: vm scsiN with the serial plumb-N (a raw block device; find it with lsblk -o NAME,SERIAL, then format and mount it with a Block or by hand), lxc mpN, a file system that Proxmox mounts at path and that guest backups hold. Grow only, like disk. Adding a disk is reversible. Removing a disk deletes its data: destructive, a person approves it, and a running guest needs allow_restart. Every disk counts for the disk gate. Not for an adopted Target.",
               "items": {
                 "type": "object",
                 "required": [
@@ -152,8 +152,8 @@
                     "type": "string",
                     "minLength": 2,
                     "maxLength": 255,
-                    "pattern": "^(/[A-Za-z0-9_.-]+)+$",
-                    "description": "lxc only, and required there: the absolute mount path in the container, for example /srv/data. Refused: /, a . or .. part, a system tree (/bin, /boot, /dev, /etc, /lib*, /proc, /root, /run, /sbin, /sys, /usr, /var and below), an agent path, and a path at or inside the path of another disk. Fixed after create: to move the data, change it in the guest."
+                    "pattern": "^(/([A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.\\.[A-Za-z0-9_.-]+))+$",
+                    "description": "lxc only, and required there: the absolute mount path in the container, for example /srv/data. Refused: /, a . or .. part, a slot or path twice, a system tree (/bin, /boot, /dev, /etc, /lib*, /proc, /root, /run, /sbin, /sys, /usr, /var and below), an agent path, and a path at or inside the path of another disk. Fixed after create: to move the data, change it in the guest."
                   }
                 }
               }
