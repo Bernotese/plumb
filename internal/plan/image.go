@@ -217,7 +217,7 @@ func (e *Engine) keptFileNotes(ctx context.Context, image string) []string {
 		}
 		line := fmt.Sprintf("kept %s: Plumb never deletes an import file", o.Name)
 		if cmd := FreeCommand(image, o.Name); cmd != "" {
-			line += "; free it on the Proxmox host with: " + cmd
+			line += "; it may be the last copy of this base image: free it only when no Image will need it again (a new one downloads it from its URL, if the URL still serves it), on the Proxmox host with: " + cmd
 		}
 		out = append(out, line)
 	}

@@ -115,7 +115,9 @@ func TestStockImageDeleteLeavesTemplateWarning(t *testing.T) {
 			}
 			s := e.lastSteps(p.ID)["image:retention"]
 			if s.Status != "warning" || !strings.Contains(s.Output, c.want) ||
-				!strings.Contains(s.Output, "Image ubuntu is deleted, so Plumb does not try again") ||
+				!strings.Contains(s.Output, "Image ubuntu is deleted, so Plumb does not try again: remove these templates in Proxmox when nothing uses them: "+bases[0].Name+" (VMID "+string(bases[0].Ref)+").") ||
+				strings.Contains(s.Output, "…") ||
+				!strings.Contains(s.Output, "it may be the last copy of this base image") ||
 				!strings.Contains(s.Output, "pvesm free "+imports[0].Name) {
 				t.Fatalf("retention step = %+v", s)
 			}
