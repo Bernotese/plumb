@@ -290,3 +290,31 @@ func TestCTUndoFreesOnlyNewVolume(t *testing.T) {
 		t.Fatalf("freed %v running %v", f.disks.freed, f.vms[9000].running)
 	}
 }
+
+// pl-lead before the merge of #373: the ownership check of the undo is
+// pinned on its own. A NEW volume in the slot at the failed start that is
+// not Plumb's (another storage, or another owner's name) is detached only,
+// never freed, and named as a volume left.
+func TestCTUndoNeverFreesForeignNewVolume(t *testing.T) {
+	for _, foreign := range []string{"other:vm-9000-disk-77", "local-lvm:vm-1234-disk-77"} {
+		f, d, id := newCT(t)
+		ctx := context.Background()
+		f.disks.symlinks = map[string]bool{"/srv/lnk": true}
+		f.disks.onStart = func(vm *fakeVM) {
+			if strings.Contains(vm.cfg["mp1"], "/srv/lnk") && !strings.HasPrefix(vm.cfg["mp1"], foreign) {
+				vm.cfg["mp1"] = foreign + ",mp=/srv/lnk,size=1G"
+			}
+		}
+		err := d.Update(ctx, id, []wire.Change{diskChange(1, nil, "1 GiB at /srv/lnk")}, nil)
+		var ve *driver.VolumeLeftError
+		if !errors.As(err, &ve) || ve.Volume != foreign || !strings.Contains(err.Error(), "not the volume this Run made") {
+			t.Fatalf("%s: %v", foreign, err)
+		}
+		if len(f.disks.freed) != 0 {
+			t.Fatalf("%s: freed %v", foreign, f.disks.freed)
+		}
+		if _, ok := f.vms[9000].cfg["mp1"]; ok || !f.vms[9000].running {
+			t.Fatalf("%s: not detached or not running: %v", foreign, f.vms[9000].cfg)
+		}
+	}
+}
