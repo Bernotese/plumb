@@ -1,3 +1,60 @@
+<script module lang="ts">
+  /** One resource of the preview: its type and its key, as the server names it (`file:/etc/motd`). */
+  export interface PreviewResource {
+    type: string;
+    key: string;
+    /** The key still holds template text that the preview cannot fill. */
+    template: boolean;
+  }
+
+  /** The key attribute of each resource type (internal/resource, `Key`). */
+  const PATH_KEYED = new Set(["file", "directory", "symlink"]);
+  export const keyAttr = (type: string) => (PATH_KEYED.has(type) ? "path" : "name");
+
+  const FIELD = /\{\{-?\s*\.([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*-?\}\}/g;
+
+  /**
+   * Fills the simple `{{ .name }}` and `{{ .a.b }}` actions of a template
+   * with string, number and boolean parameters. Anything else (pipes,
+   * functions, `if`, a secret parameter, an unset value) stays as it is: the
+   * server's Go template engine is the only real render.
+   */
+  export function fillTemplate(s: string, params: Record<string, unknown>): string {
+    return s.replace(FIELD, (all, path: string) => {
+      let v: unknown = params;
+      for (const k of path.split(".")) {
+        if (typeof v !== "object" || v === null || Array.isArray(v) || !(k in v)) return all;
+        v = (v as Record<string, unknown>)[k];
+      }
+      if (typeof v === "string" || typeof v === "boolean") return String(v);
+      if (typeof v === "number" && Number.isFinite(v)) return String(v);
+      return all;
+    });
+  }
+
+  /** The resources of a Block with their keys filled from the preview parameters. */
+  export function previewResources(
+    resources: unknown[],
+    params: Record<string, unknown>,
+  ): PreviewResource[] {
+    const out: PreviewResource[] = [];
+    for (const r of resources) {
+      if (typeof r !== "object" || r === null || Array.isArray(r)) continue;
+      const entries = Object.entries(r as Record<string, unknown>);
+      if (entries.length !== 1) continue;
+      for (const [type, attrs] of entries) {
+        const raw =
+          typeof attrs === "object" && attrs !== null
+            ? (attrs as Record<string, unknown>)[keyAttr(type)]
+            : undefined;
+        const key = typeof raw === "string" ? fillTemplate(raw, params) : "";
+        out.push({ type, key, template: key.includes("{{") });
+      }
+    }
+    return out;
+  }
+</script>
+
 <script lang="ts">
   // The Block editor (D-261): the Block is YAML text. The browser checks it
   // against block.json while the user types; the server checks it again and
@@ -9,9 +66,18 @@
   import { can } from "../lib/session.svelte";
   import { pointerErrors } from "../lib/formErrors";
   import { go, href } from "../lib/router";
+  import {
+    fieldsOf,
+    initialValues,
+    toParams,
+    validate,
+    type Field,
+    type Values,
+  } from "../lib/schemaForm";
   import type { BlockDoc, BlockView } from "../lib/types";
   import { toYaml } from "../lib/yaml";
   import ProblemBox from "../ui/ProblemBox.svelte";
+  import SchemaFields from "../ui/SchemaFields.svelte";
 
   let { api, name }: { api: PlumbApi; name?: string } = $props();
   const editing = $derived(name !== undefined);
@@ -99,6 +165,73 @@
   const badLines = $derived(new Set([...shown, ...serverAtLines].map((e) => e.line)));
   const changed = $derived(text !== original);
 
+  // The preview (D-426): the parameter form that a Target gets for this
+  // Block (the same schemaForm as the Target form) and the resource list.
+  // It is a local approximation: the server renders and validates only when
+  // a plan is made (no route renders a Block without storing a Plan).
+  const spec = $derived(
+    doc && typeof doc.spec === "object" && doc.spec !== null
+      ? (doc.spec as Partial<BlockDoc["spec"]>)
+      : undefined,
+  );
+  const preview = $derived.by((): { fields: Field[]; error: boolean } => {
+    const p = spec?.params;
+    if (p === undefined) return { fields: [], error: false };
+    if (typeof p !== "object" || p === null || Array.isArray(p)) return { fields: [], error: true };
+    try {
+      return { fields: fieldsOf(p), error: false };
+    } catch {
+      return { fields: [], error: true };
+    }
+  });
+  let previewValues = $state<Values>({});
+  let previewFields: Field[] = [];
+  let previewShape = "";
+  // A new form when the parameter schema changes; values of the old form
+  // carry over by name where they still fit.
+  $effect.pre(() => {
+    const fields = preview.fields;
+    const shape = JSON.stringify(fields);
+    if (shape === previewShape) return;
+    let carry: Record<string, unknown>;
+    try {
+      carry = toParams(previewFields, $state.snapshot(previewValues) as Values);
+    } catch {
+      carry = {};
+    }
+    try {
+      previewValues = initialValues(fields, carry);
+    } catch {
+      previewValues = initialValues(fields);
+    }
+    previewFields = fields;
+    previewShape = shape;
+  });
+  /** Errors show after the person types in the preview, not on load. */
+  let previewTouched = $state(false);
+  // The preview has no secret picker (it lists no secrets and makes none),
+  // so a secret field shows no error.
+  const previewErrors = $derived.by(() => {
+    if (!previewTouched) return {};
+    const secrets = preview.fields.filter((f) => f.kind === "secret").map((f) => f.name);
+    try {
+      const all = validate(preview.fields, previewValues);
+      return Object.fromEntries(Object.entries(all).filter(([k]) => !secrets.includes(k)));
+    } catch {
+      return {};
+    }
+  });
+  const previewParams = $derived.by((): Record<string, unknown> => {
+    try {
+      return toParams(preview.fields, previewValues);
+    } catch {
+      return {};
+    }
+  });
+  const resourceList = $derived(
+    Array.isArray(spec?.resources) ? previewResources(spec.resources, previewParams) : [],
+  );
+
   /** Moves the caret to the start of a line and scrolls it into view. */
   function goToLine(line: number) {
     if (!editor) return;
@@ -167,101 +300,191 @@
       {/if}
     </div>
   {/if}
-  <form onsubmit={submit} novalidate>
-    <div class="field">
-      <label for="b-text">Block (YAML)<span aria-hidden="true"> *</span></label>
-      <div class="editor" class:invalid={shown.length + serverAtLines.length > 0}>
-        <div class="gutter mono" aria-hidden="true" bind:this={gutter}>
-          {#each Array.from({ length: lineCount }, (_x, i) => i + 1) as n (n)}
-            <span class:bad={badLines.has(n)}>{badLines.has(n) ? "!" : ""}{n}</span>
-          {/each}
+  <div class="split">
+    <form onsubmit={submit} novalidate>
+      <div class="field">
+        <label for="b-text">Block (YAML)<span aria-hidden="true"> *</span></label>
+        <div class="editor" class:invalid={shown.length + serverAtLines.length > 0}>
+          <div class="gutter mono" aria-hidden="true" bind:this={gutter}>
+            {#each Array.from({ length: lineCount }, (_x, i) => i + 1) as n (n)}
+              <span class:bad={badLines.has(n)}>{badLines.has(n) ? "!" : ""}{n}</span>
+            {/each}
+          </div>
+          <textarea
+            id="b-text"
+            class="mono"
+            bind:this={editor}
+            bind:value={text}
+            onscroll={syncScroll}
+            onblur={() => (checked = true)}
+            spellcheck="false"
+            autocapitalize="off"
+            autocomplete="off"
+            wrap="off"
+            rows="24"
+            aria-invalid={shown.length + serverAtLines.length > 0}
+            aria-describedby="b-text-hint{shown.length + serverAtLines.length ? ' b-errors' : ''}"
+          ></textarea>
         </div>
-        <textarea
-          id="b-text"
-          class="mono"
-          bind:this={editor}
-          bind:value={text}
-          onscroll={syncScroll}
-          onblur={() => (checked = true)}
-          spellcheck="false"
-          autocapitalize="off"
-          autocomplete="off"
-          wrap="off"
-          rows="24"
-          aria-invalid={shown.length + serverAtLines.length > 0}
-          aria-describedby="b-text-hint{shown.length + serverAtLines.length ? ' b-errors' : ''}"
-        ></textarea>
+        <span class="hint" id="b-text-hint"
+          >YAML 1.2. Indent with spaces; Tab moves to the next field. Quote a file mode (<code
+            >"0644"</code
+          >). Values are Go templates over the parameters (<code>{"{{ .name }}"}</code>). The server
+          also checks the resource attributes and the parameter schema.</span
+        >
       </div>
-      <span class="hint" id="b-text-hint"
-        >YAML 1.2. Indent with spaces; Tab moves to the next field. Quote a file mode (<code
-          >"0644"</code
-        >). Values are Go templates over the parameters (<code>{"{{ .name }}"}</code>). The server
-        also checks the resource attributes and the parameter schema.</span
-      >
-    </div>
 
-    <div id="b-errors" tabindex="-1" class="errors" aria-live="polite">
-      {#if shown.length + serverAtLines.length > 0}
-        <p class="error-title">
-          {plural(shown.length + serverAtLines.length, "problem")}. Select one to go to its line.
-        </p>
-        <ul>
-          {#each shown as e, i (i)}
-            <li>
-              <button type="button" class="link" onclick={() => goToLine(e.line)}
-                >{lineText(e.line)}</button
-              >: {e.message}
-            </li>
-          {/each}
-          {#each serverAtLines as e, i (i)}
-            <li>
-              <button type="button" class="link" onclick={() => goToLine(e.line)}
-                >{lineText(e.line)}</button
-              >: {e.message} <span class="muted">(server)</span>
-            </li>
-          {/each}
-        </ul>
-      {:else if unchangedTried && !changed}
-        <p class="error-title">The text has no change. Change it to make a plan.</p>
-      {:else if checked && loaded}
-        <p class="ok">The text matches the Block schema.</p>
+      <div id="b-errors" tabindex="-1" class="errors" aria-live="polite">
+        {#if shown.length + serverAtLines.length > 0}
+          <p class="error-title">
+            {plural(shown.length + serverAtLines.length, "problem")}. Select one to go to its line.
+          </p>
+          <ul>
+            {#each shown as e, i (i)}
+              <li>
+                <button type="button" class="link" onclick={() => goToLine(e.line)}
+                  >{lineText(e.line)}</button
+                >: {e.message}
+              </li>
+            {/each}
+            {#each serverAtLines as e, i (i)}
+              <li>
+                <button type="button" class="link" onclick={() => goToLine(e.line)}
+                  >{lineText(e.line)}</button
+                >: {e.message} <span class="muted">(server)</span>
+              </li>
+            {/each}
+          </ul>
+        {:else if unchangedTried && !changed}
+          <p class="error-title">The text has no change. Change it to make a plan.</p>
+        {:else if checked && loaded}
+          <p class="ok">The text matches the Block schema.</p>
+        {/if}
+      </div>
+
+      <div class="field">
+        <label for="b-reason">Reason<span aria-hidden="true"> *</span></label>
+        <textarea
+          id="b-reason"
+          bind:value={reason}
+          required
+          aria-invalid={reasonMissing}
+          aria-describedby="b-reason-hint{reasonMissing ? ' b-reason-error' : ''}"></textarea>
+        <span class="hint" id="b-reason-hint">Stored with the revision (provenance).</span>
+        {#if reasonMissing}<span class="error" id="b-reason-error"
+            >Say why you make this change.</span
+          >{/if}
+      </div>
+      <ProblemBox
+        error={submitError}
+        fields={Object.keys(serverErrors).filter((p) => p === "/put/0" || p.startsWith("/put/0/"))}
+        shown={uses.handled}
+      />
+      <div class="row">
+        {#if can("createPlan")}<button class="btn primary" type="submit" disabled={busy}
+            >Show the plan</button
+          >{/if}
+        <a
+          class="btn"
+          href={editing && name ? href({ name: "block", block: name }) : href({ name: "blocks" })}
+          >Cancel</a
+        >
+      </div>
+      <p class="muted">Nothing changes until you approve the plan.</p>
+    </form>
+    <aside class="preview" aria-labelledby="b-preview-title">
+      <h2 id="b-preview-title">Preview</h2>
+      <p class="note" id="b-preview-hint">
+        A local approximation while you type. The server renders and checks the Block when you make
+        the plan.
+      </p>
+      {#if !spec}
+        <p class="muted" id="b-preview-none">The preview shows when the text is a Block.</p>
+      {:else}
+        <h3>Parameters on a Target</h3>
+        {#if preview.error}
+          <p class="muted" id="b-params-bad">
+            The preview cannot read <code>spec.params</code>. It must be an object schema.
+          </p>
+        {:else if preview.fields.length}
+          <form
+            class="params"
+            novalidate
+            onsubmit={(e) => e.preventDefault()}
+            oninput={() => (previewTouched = true)}
+            onchange={() => (previewTouched = true)}
+            id="b-params"
+          >
+            <SchemaFields
+              fields={preview.fields}
+              bind:values={previewValues}
+              errors={previewErrors}
+              prefix="preview"
+            />
+          </form>
+        {:else}
+          <p class="muted" id="b-params-none">This Block has no parameters.</p>
+        {/if}
+        <h3>Resources</h3>
+        {#if resourceList.length}
+          <ol class="resources mono" id="b-resources">
+            {#each resourceList as r, i (i)}
+              <li>
+                {r.type}:{r.key || "?"}{#if r.template}<span class="muted tpl">(template)</span
+                  >{/if}
+              </li>
+            {/each}
+          </ol>
+          <p class="note">
+            Keys from the parameters above. A secret parameter never shows its value here.
+          </p>
+        {:else}
+          <p class="muted" id="b-resources-none">No resources yet.</p>
+        {/if}
       {/if}
-    </div>
-
-    <div class="field">
-      <label for="b-reason">Reason<span aria-hidden="true"> *</span></label>
-      <textarea
-        id="b-reason"
-        bind:value={reason}
-        required
-        aria-invalid={reasonMissing}
-        aria-describedby="b-reason-hint{reasonMissing ? ' b-reason-error' : ''}"></textarea>
-      <span class="hint" id="b-reason-hint">Stored with the revision (provenance).</span>
-      {#if reasonMissing}<span class="error" id="b-reason-error">Say why you make this change.</span
-        >{/if}
-    </div>
-    <ProblemBox
-      error={submitError}
-      fields={Object.keys(serverErrors).filter((p) => p === "/put/0" || p.startsWith("/put/0/"))}
-      shown={uses.handled}
-    />
-    <div class="row">
-      {#if can("createPlan")}<button class="btn primary" type="submit" disabled={busy}
-          >Show the plan</button
-        >{/if}
-      <a
-        class="btn"
-        href={editing && name ? href({ name: "block", block: name }) : href({ name: "blocks" })}
-        >Cancel</a
-      >
-    </div>
-    <p class="muted">Nothing changes until you approve the plan.</p>
-  </form>
+    </aside>
+  </div>
 {:else if !loadError}
   <p class="muted" aria-live="polite">Loading…</p>
 {/if}
 
 <style>
+  .split {
+    display: grid;
+    gap: var(--space-6);
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 1100px) {
+    .split {
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      align-items: start;
+    }
+  }
+  .preview {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius, 6px);
+    padding: var(--space-4);
+    background: var(--color-surface);
+  }
+  .preview .note {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+  .preview h2 {
+    margin-top: 0;
+  }
+  .preview h3 {
+    margin: var(--space-4) 0 var(--space-2);
+    font-size: var(--text-base, 1rem);
+  }
+  .tpl {
+    margin-left: 0.5ch;
+  }
+  .resources {
+    margin: 0;
+    padding-left: var(--space-6);
+    overflow-wrap: anywhere;
+  }
   .editor {
     display: flex;
     border: 1px solid var(--color-border);
