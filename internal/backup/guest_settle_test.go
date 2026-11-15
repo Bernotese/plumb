@@ -13,7 +13,7 @@ import (
 // marker that the job writes.
 func settleEnv(t *testing.T) (*jobEnv, int64, string, string) {
 	t.Helper()
-	e := newJobEnv(t, nil)
+	e := newClockedEnv(t)
 	ctx := context.Background()
 	lineage, err := e.st.BackupLineage(ctx, "db1", e.t.Gen)
 	if err != nil {
@@ -33,6 +33,15 @@ func settleEnv(t *testing.T) (*jobEnv, int64, string, string) {
 	}
 	marker, _ := Marker{Install: tInstall, Target: "db1", Lineage: lineage, Manual: true}.String()
 	return e, id, upid, marker
+}
+
+// newClockedEnv is a job env whose store uses the env clock, so a job's
+// start and its volume's time compare as on a real host.
+func newClockedEnv(t *testing.T) *jobEnv {
+	t.Helper()
+	e := newJobEnv(t, nil)
+	e.st.Now = func() time.Time { return e.now }
+	return e
 }
 
 func settleKinds(t *testing.T, e *jobEnv) map[string]int {
@@ -61,7 +70,7 @@ func runRow(t *testing.T, e *jobEnv, id int64) (result, msg string) {
 // job's own task names its volume, which carries the job's marker: the
 // record is completed at once, and the hand volume stays unmarked.
 func TestSettleOverlapClaimsOwnVolume(t *testing.T) {
-	e := newJobEnv(t, nil)
+	e := newClockedEnv(t)
 	ctx := context.Background()
 	e.d.overlap = true
 	if err := e.g.BackUp(ctx, "db1", TriggerManual, "user:admin"); err != nil {
@@ -100,7 +109,7 @@ func TestSettleNoProofClaimsNothing(t *testing.T) {
 		{"task failed after its archive", func(e *jobEnv) { e.d.failLeft = true }, "may be incomplete; Plumb does not claim it"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			e := newJobEnv(t, nil)
+			e := newClockedEnv(t)
 			ctx := context.Background()
 			c.prep(e)
 			if err := e.g.BackUp(ctx, "db1", TriggerManual, "user:admin"); err == nil {
@@ -154,7 +163,7 @@ func TestSettleAfterCrash(t *testing.T) {
 // A stop through Close: the driver's wait asked Proxmox to stop the task,
 // which left nothing. The next job's start settles it with a true text.
 func TestSettleAfterClose(t *testing.T) {
-	e := newJobEnv(t, nil)
+	e := newClockedEnv(t)
 	ctx := context.Background()
 	e.d.block = make(chan struct{})
 	run, err := e.g.Start(ctx, "db1", TriggerManual, "user:admin")
@@ -192,23 +201,21 @@ func TestSettleRefusals(t *testing.T) {
 		}
 	})
 	t.Run("recorded by another job", func(t *testing.T) {
-		e, id, upid, _ := settleEnv(t)
-		if err := e.g.BackUp(ctx, "db1", TriggerManual, "user:admin"); !errors.Is(err, ErrGuestBackupRefused) {
-			t.Fatalf("running task: %v", err)
-		}
-		e.d.tasks[upid] = &GuestTask{} // ended, nothing: a new job may run
-		if err := e.g.BackUp(ctx, "db1", TriggerManual, "user:admin"); err != nil {
+		e, id, upid, marker := settleEnv(t)
+		vol := Volume{Volid: "plumb-backup:backup/vzdump-9001-taken", Time: e.now, Size: 9, Notes: marker}
+		e.d.vols["9001"] = append(e.d.vols["9001"], vol)
+		lineage, _ := e.st.BackupLineage(ctx, "db1", e.t.Gen)
+		other, err := e.st.StartGuestBackupRun(ctx, "db1", lineage, TriggerManual)
+		if err != nil {
 			t.Fatal(err)
 		}
-		other, _ := e.st.LastGuestBackupRun(ctx, "db1")
-		// A wrong log line names the other job's volume.
-		if _, err := e.st.GuestBackupRun(ctx, id); err != nil {
+		if err := e.st.FinishGuestBackupRun(ctx, other, "done", vol.Volid, vol.Size, vol.Time.Unix(), ""); err != nil {
 			t.Fatal(err)
 		}
-		e.st.SetGuestBackupTask(ctx, id, upid) // no effect: the row is not running
-		e.d.tasks[upid] = &GuestTask{OK: true, Volid: other.Volid}
-		if res, msg := runRow(t, e, id); res != "failed" || !strings.Contains(msg, "left no volume") {
-			t.Fatalf("settled at the start: %s %q", res, msg)
+		e.d.tasks[upid] = &GuestTask{OK: true, Volid: vol.Volid}
+		e.g.Tick(ctx)
+		if res, msg := runRow(t, e, id); res != "failed" || !strings.Contains(msg, "already the record of another job") {
+			t.Fatalf("%s %q", res, msg)
 		}
 	})
 	t.Run("task of another guest", func(t *testing.T) {

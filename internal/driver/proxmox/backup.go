@@ -288,7 +288,10 @@ func archiveOf(line string) (string, bool) {
 		return "", false
 	}
 	a, _, ok := strings.Cut(quoted, "'")
-	return a, ok && a != ""
+	if !ok || a == "" {
+		return "", false
+	}
+	return a, true
 }
 
 // archiveNames reports whether the log's archive is the volume volid
