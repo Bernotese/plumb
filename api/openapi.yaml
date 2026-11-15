@@ -1156,8 +1156,8 @@ paths:
         changed). A manual backup is marked as such (`trigger: manual`). Retention keeps at most 2
         manual backups beside the `keep` scheduled ones and never deletes a scheduled backup because
         of a manual one (review M1 of #325), so repeated calls cannot push out the good backups. 409 `backup-running` (a job of this Target runs), 409 `backup-refused` (no storage, a
-        clear storage without `--guest-backup-clear`, less than 10 % free, or restored mode; the detail
-        says which). Events `guest_backup.started`, then `done`, `failed` or `warning` in `done` (the
+        clear storage without `--guest-backup-clear`, less than 10 % free, restored mode, or the guest is
+        gone from the pool; the detail says which). Events `guest_backup.started`, then `done`, `failed` or `warning` in `done` (the
         marker could not be read back: the volume is `unmarked`, D-407).
       security:
         - session: []
