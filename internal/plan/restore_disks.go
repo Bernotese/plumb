@@ -19,7 +19,9 @@ import (
 // disk (slots 1 … 3), and a note for each unused volume, that the backup
 // does not hold. Without a reader, or when the backup's config cannot be
 // read, one note says so: the Plan stays destructive either way.
-func (e *Engine) restoreDiskChanges(ctx context.Context, b store.Binding, v RestoreVolume, st driver.GuestState) ([]wire.Change, []string) {
+// named are the slots that the document names: only there does the next
+// Run attach a new empty disk (L2 of the #373 review).
+func (e *Engine) restoreDiskChanges(ctx context.Context, b store.Binding, v RestoreVolume, st driver.GuestState, named map[int]bool) ([]wire.Change, []string) {
 	if len(st.Spec.Disks) == 0 && len(st.Spec.Unused) == 0 {
 		return nil, nil
 	}
@@ -51,7 +53,11 @@ func (e *Engine) restoreDiskChanges(ctx context.Context, b store.Binding, v Rest
 			notes = append(notes, fmt.Sprintf("Disk %d (%s) is not in this backup: the data on disk %d is lost (the safety backup holds it).", d.Slot, what, d.Slot))
 		} else {
 			changes = append(changes, wire.Change{Attr: driver.AttrDiskN(d.Slot), From: (&d).Value(), To: "detached: not in the backup", Risk: wire.RiskDestructive})
-			notes = append(notes, fmt.Sprintf("Disk %d (%s) is not in this backup: it is detached and kept as an unused volume; the next Run attaches a new empty disk in slot %d; free the old volume by hand.", d.Slot, what, d.Slot))
+			note := fmt.Sprintf("Disk %d (%s) is not in this backup: it is detached and kept as an unused volume; free it by hand when it is not needed.", d.Slot, what)
+			if named[d.Slot] {
+				note = fmt.Sprintf("Disk %d (%s) is not in this backup: it is detached and kept as an unused volume; the next Run attaches a new empty disk in slot %d; free the old volume by hand.", d.Slot, what, d.Slot)
+			}
+			notes = append(notes, note)
 		}
 	}
 	for _, u := range st.Spec.Unused {

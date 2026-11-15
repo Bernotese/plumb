@@ -289,9 +289,12 @@ func (e *Engine) deleteDiskNotes(ctx context.Context, ref string) []string {
 	}
 	var notes []string
 	for _, d := range st.Spec.Disks {
-		if d.Foreign {
+		switch {
+		case d.Foreign && strings.HasPrefix(d.Raw, "/"): // a bind mount or a device (H1 of #373)
+			notes = append(notes, fmt.Sprintf("Mount point %d (%s, a host path or device) goes with the guest; what it holds on the host stays.", d.Slot, d.Raw))
+		case d.Foreign:
 			notes = append(notes, fmt.Sprintf("Disk %d (%s, not made by Plumb) is lost with the guest.", d.Slot, d.Raw))
-		} else {
+		default:
 			notes = append(notes, fmt.Sprintf("Disk %d (%s, %d GiB) is lost with the guest.", d.Slot, d.Volume, d.SizeGB))
 		}
 	}

@@ -344,7 +344,13 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	if reason == "" {
 		reason = "restore " + target + " from " + restoreText(v)
 	}
-	diskChanges, diskNotes := e.restoreDiskChanges(ctx, b, v, st) // T-238
+	named := map[int]bool{}
+	if dk, _, err := docDisks(target, r); err == nil {
+		for _, d := range dk {
+			named[d.Slot] = true
+		}
+	}
+	diskChanges, diskNotes := e.restoreDiskChanges(ctx, b, v, st, named) // T-238
 	tp := TargetPlan{Target: target, Resources: []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
 		Risk: wire.RiskDestructive, Changes: append([]wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive},
 			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety, failedBefore), Risk: wire.RiskDestructive}}, diskChanges...)}}}
