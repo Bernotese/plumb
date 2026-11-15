@@ -57,7 +57,7 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 - Remote: `origin` = https://github.com/Bernotese/plumb.git (public). Never commit secrets or `.env` files.
 - One worktree per agent: `git worktree add ../plump-wt/<agent> -b <agent>/T-NNN-<slug>`.
 - Small commits on your branch. Push your branch (`git push -u origin <branch>`) and open a PR with `gh pr create --base main --title "T-NNN: …" --body "<card link, tests>"`. Never edit another agent's worktree.
-- Only `pl-lead` merges into `main` (after QA + review, `gh pr merge --squash` or local merge + push) and removes worktrees.
+- Only `pl-lead` merges into `main` (after QA + review, `gh pr merge --squash` or local merge + push) and removes worktrees. `pl-lead` removes the worktree of a PR when it is merged. An agent removes its own temporary worktrees (review checkouts, build copies, detached HEADs) as soon as it is done with them, with `git worktree remove` (never `--force`); it keeps its home worktree and the worktree of an open PR. Reason: the disk was 96 % full on 2026-11-15 (user note).
 - Forbidden: force-push, deleting remote branches, changing repo settings/secrets. These are blocked by the permission rules.
 - Tests must pass on your branch before you report done. If you cannot test, say why.
 - New decisions: do not edit `docs/DECISIONS.md` in a PR (it conflicted on almost every merge). Write them to `docs/decisions/T-NNN.md` in your PR, one line each, same format, with the numbers `pl-lead` gave you. `pl-lead` appends them to `docs/DECISIONS.md` after the merge.
