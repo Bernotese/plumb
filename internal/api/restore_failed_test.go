@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/plan"
@@ -346,5 +347,78 @@ func TestRestoreFailedAdoptedUnbind(t *testing.T) {
 	}
 	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
 		t.Fatalf("a person approves the unbind: %d %s", code, body)
+	}
+}
+
+// Re-check of #352 (fail closed): when the "running" Issue cannot be
+// written, the Run stops before the restore call: nothing is revoked or
+// restored, and the guest runs again.
+func TestRestoreStopsWhenTheIssueCannotBeWritten(t *testing.T) {
+	s := newSafetyEnv(t)
+	e := s.e
+	e.failWrites(t, "INSERT", "issue")
+	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
+	if status != "failed" || !strings.HasPrefix(out, "nothing was changed: the Issue of the restore could not be written") || !strings.Contains(out, "runs again") {
+		t.Fatalf("%s: %s", status, out)
+	}
+	if len(s.fr.restored) != 0 {
+		t.Fatalf("the restore call ran: %v", s.fr.restored)
+	}
+	if obs, err := e.drv.Observe(e.ctx, driver.GuestID(s.ref)); err != nil || obs.Power != driver.PowerRunning {
+		t.Fatalf("the guest does not run again: %+v %v", obs.Power, err)
+	}
+	if _, err := e.st.AgentByTarget(e.ctx, "web1"); err != nil {
+		t.Fatalf("the agent credential went: %v", err)
+	}
+}
+
+// A stop after the "running" Issue but before the restore call (the pins
+// cannot be dropped) ends that Issue: the disks are as before.
+func TestRestoreRunningIssueEndsBeforeTheCall(t *testing.T) {
+	s := newSafetyEnv(t)
+	b, _ := s.e.st.GetBinding(s.e.ctx, state.KindTarget, "web1")
+	if ok, err := s.e.st.PinFirstHostKeys(s.e.ctx, "web1", b.GuestKey(), []string{"SHA256:old"}, time.Now()); err != nil || !ok {
+		t.Fatalf("pin: %v %v", ok, err)
+	}
+	s.e.failWrites(t, "DELETE", "guest_host_key")
+	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
+	if status != "failed" || !strings.Contains(out, "the host key pins could not be dropped") || len(s.fr.restored) != 0 {
+		t.Fatalf("%s: %s", status, out)
+	}
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatal("the Issue of a restore that never started stays open")
+	}
+}
+
+// The host path of F3 (Issue 52 of T-225): a guest:config Issue of the
+// empty guest is open (made by an older build), and the restore of the
+// safety backup puts back a guest that matches. No poll report ever says
+// "unchanged" for it; the Run itself ends the Issue, and the next poll
+// opens nothing.
+func TestRestoreEndsTheEmptyGuestIssueWithoutAPollReport(t *testing.T) {
+	s := newSafetyEnv(t)
+	e := s.e
+	s.fr.fail = errors.New("proxmox: restore failed")
+	s.restore(t, "3f2a9c0d1e4b5a67", false)
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: wire.GuestConfigID, Status: wire.StatusDiffers,
+		Changes: []wire.Change{{Attr: "disk", From: 0, To: 10, Risk: wire.RiskDisruptive}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.fr.fail = nil
+	if status, out := s.restore(t, "5afe000000000001", false); status != "succeeded" {
+		t.Fatalf("%s %s", status, out)
+	}
+	if v := s.issue(t, stale.ID); v.Status != "resolved" || v.Resolution == nil || v.Resolution.By != "system" {
+		t.Fatalf("the Issue of the empty guest stays: %+v", v)
+	}
+	if err := e.eng.CheckGuests(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if iss, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID); err == nil {
+		t.Fatalf("a drift Issue of a guest that matches: %+v", iss)
 	}
 }

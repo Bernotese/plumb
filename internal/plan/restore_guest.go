@@ -573,30 +573,49 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 		}
 		safety = &sv
 	}
+	// 2c. The Issue opens before anything else changes (M2 of #352): a
+	// controller that stops while Proxmox restores leaves the gate of
+	// T-234 closed, so the next poll never offers a revert of an empty
+	// guest. Fail closed: when it cannot be written, the Run stops here
+	// (re-check of #352). A failure before keeps its Issue (D1 of #346).
+	if !failedBefore {
+		if err := e.restoreRunningIssue(ctx, tp.Target, safety); err != nil {
+			msg := "nothing was changed: the Issue of the restore could not be written: " + err.Error()
+			if wasRunning {
+				if serr := e.cfg.Driver.Power(ctx, driver.GuestID(b.Ref), driver.PowerStart); serr != nil {
+					return fail(msg + ". The guest was stopped for the restore, and its start failed: " + pveText(serr) + "; start it in Proxmox")
+				}
+				msg += ". The guest was stopped for the restore and runs again"
+			}
+			return fail(msg + ". Plan the restore again")
+		}
+	}
+	// endRunning ends the Issue of this Run when it stops before the
+	// restore call: the disks are as before.
+	endRunning := func() {
+		if failedBefore {
+			return
+		}
+		if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusUnchanged, nil); err != nil {
+			e.log.Warn("end the Issue of a restore that did not start", "target", tp.Target, "err", err)
+		}
+	}
 	// 3. Revoke before the guest can start again (D-410); drop the pins
 	// and the repair report of the old guest (D-417 (4)).
 	way := wayBack(tp.Target, r.Adopted != nil)
 	if err := e.cfg.Agents.Revoke(ctx, tp.Target); err != nil {
+		endRunning()
 		return fail("the guest is stopped, nothing was restored: the agent credential could not be revoked: " + err.Error() + ". Start the guest in Proxmox, or plan the restore again")
 	}
 	if _, err := e.st.DropHostKeys(ctx, tp.Target); err != nil {
+		endRunning()
 		return fail("the guest is stopped and its agent credential is revoked, nothing was restored: the host key pins could not be dropped: " + err.Error() + "." + way)
 	}
-	// 4. Restore. The Issue opens before the call (M2 of #352): a
-	// controller that stops while Proxmox restores leaves the gate of
-	// T-234 closed, so the next poll never offers a revert of an empty
-	// guest. A failure before keeps its Issue as it is (D1 of #346).
-	if !failedBefore {
-		e.restoreRunningIssue(ctx, tp.Target, safety)
-	}
+	// 4. Restore.
 	if err := e.cfg.GuestRestore.RestoreGuest(ctx, b.Ref, v); err != nil {
 		if errors.Is(err, ErrRestoreNotStarted) {
 			// The disks are as before: the Issue of this Run ends.
-			if !failedBefore {
-				if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusUnchanged, nil); err != nil {
-					e.log.Warn("end the Issue of a restore that did not start", "target", tp.Target, "err", err)
-				}
-			}
+			endRunning()
 			// The disks are as before: no Issue, no "may have no disk"; the
 			// guest runs again if it ran (M1 of #346).
 			msg := "the restore did not start: " + strings.TrimPrefix(err.Error(), ErrRestoreNotStarted.Error()+": ") +
@@ -712,17 +731,20 @@ func safetyText(err error) string {
 // restoreFailedIssue opens the Issue guest:restore-failed (D-420): the
 // guest may have no disk; the change names the safety backup to restore.
 func (e *Engine) restoreFailedIssue(ctx context.Context, target string, safety *RestoreVolume) {
-	e.writeRestoreIssue(ctx, target, safety, "failed: the guest may have no disk")
+	if err := e.writeRestoreIssue(ctx, target, safety, "failed: the guest may have no disk"); err != nil {
+		// The "running" text of this Run stays open: the gate holds.
+		e.log.Error("update the Issue of a failed restore", "target", target, "err", err)
+	}
 }
 
 // restoreRunningIssue opens guest:restore-failed before the restore call
 // (M2 of #352): if the Run does not end (a controller stop), the guest may
 // have no disk, and the Issue names the way back already.
-func (e *Engine) restoreRunningIssue(ctx context.Context, target string, safety *RestoreVolume) {
-	e.writeRestoreIssue(ctx, target, safety, "running: if this restore does not end, the guest may have no disk")
+func (e *Engine) restoreRunningIssue(ctx context.Context, target string, safety *RestoreVolume) error {
+	return e.writeRestoreIssue(ctx, target, safety, "running: if this restore does not end, the guest may have no disk")
 }
 
-func (e *Engine) writeRestoreIssue(ctx context.Context, target string, safety *RestoreVolume, from string) {
+func (e *Engine) writeRestoreIssue(ctx context.Context, target string, safety *RestoreVolume, from string) error {
 	to := "restore another backup"
 	if safety != nil {
 		to = "restore the safety backup " + restoreText(*safety)
@@ -731,7 +753,5 @@ func (e *Engine) writeRestoreIssue(ctx context.Context, target string, safety *R
 	if safety != nil { // the way back as data, for the web (L1 of #350)
 		ch = append(ch, wayBackChange(*safety))
 	}
-	if err := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, ch); err != nil {
-		e.log.Error("open the Issue of a failed restore", "target", target, "err", err)
-	}
+	return e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, ch)
 }
