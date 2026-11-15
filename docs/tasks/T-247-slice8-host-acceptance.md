@@ -24,5 +24,7 @@ Slice 8, child card **C11** of T-236. Prove slice 8 on `pve-dev`.
 - [ ] Restore with a bridge/tag that is no longer named, for an **LXC** (T-241 #369 H1): at which point does PVE refuse – before or after it removes the rootfs? Record the task's exit status text and the state of the volumes. Until this is proven, Plumb says 'not started' only for a VM.
 - [ ] T-248: the token can read its own vzdump task log and status; the exact user field of a UPID made with the token.
 
+- [ ] guest:volume-left (T-245 C2, F2): make a left volume on purpose; which way out really ends the Issue – `pvesm free`, or does the config keep an `unusedN` line that needs `qm/pct set --delete unusedN`? The text of the Issue must name the way that works (fix card if not).
+
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
