@@ -165,7 +165,8 @@ func lastSlot(s GuestSchedule, now time.Time) time.Time {
 // Tick runs the jobs whose slot came since the last tick (one per Target
 // and slot). A slot that passed while the controller was down is not
 // made up for; the next one runs. The first tick after a start only
-// learns the slots.
+// learns the slots. In restored mode the jobs wait: after the confirm the
+// latest slot runs once (D-303).
 func (g *Guests) Tick(ctx context.Context) {
 	targets, err := g.cfg.Targets(ctx)
 	if err != nil {
@@ -173,6 +174,7 @@ func (g *Guests) Tick(ctx context.Context) {
 		return
 	}
 	now := g.cfg.Now()
+	restored := g.cfg.Restored()
 	for _, t := range targets {
 		if t.Backup == nil {
 			continue
@@ -180,6 +182,18 @@ func (g *Guests) Tick(ctx context.Context) {
 		slot := lastSlot(*t.Backup, now)
 		g.mu.Lock()
 		prev, seen := g.last[t.Name]
+		if restored {
+			// Restored mode (D-303): the job waits. Nothing is attempted or
+			// recorded, and the slot is not used up: after the confirm the
+			// latest slot runs once, as the controller's own backup does.
+			// A controller in restored mode has just started, so its first
+			// sight keeps the latest slot pending.
+			if !seen && !slot.IsZero() {
+				g.last[t.Name] = slot.Add(-time.Nanosecond)
+			}
+			g.mu.Unlock()
+			continue
+		}
 		g.last[t.Name] = slot
 		g.mu.Unlock()
 		if !seen || slot.IsZero() || !slot.After(prev) {

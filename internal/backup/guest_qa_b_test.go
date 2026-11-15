@@ -6,10 +6,13 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Bernotese/plumb/internal/store"
 )
 
 // The keep risk of a Plan comes from KeepDeletes (D-417, M1 of #334). It
@@ -109,6 +112,9 @@ func TestQATickRaceOneJobPerSlot(t *testing.T) {
 // the run row and no vzdump runs. After the confirm the missed slot is not
 // made up; the next slot runs once.
 func TestQARestoredModeAtTheSlot(t *testing.T) {
+	// D-303 (answer of #339): in restored mode the job waits. Nothing is
+	// attempted or recorded; after the confirm the latest slot runs once,
+	// then the normal slots follow.
 	e := newJobEnv(t, nil)
 	ctx := context.Background()
 	e.g.Tick(ctx)
@@ -118,20 +124,41 @@ func TestQARestoredModeAtTheSlot(t *testing.T) {
 	if len(e.d.notes) != 0 {
 		t.Fatal("a vzdump in restored mode")
 	}
-	last, err := e.st.LastGuestBackupRun(ctx, "db1")
-	if err != nil || last.Result != "refused" || last.Trigger != TriggerScheduled {
-		t.Fatalf("run row: %+v %v", last, err)
+	if _, err := e.st.LastGuestBackupRun(ctx, "db1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a run row in restored mode: %v", err)
 	}
 	e.restor = false
 	e.now = time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)
 	e.g.Tick(ctx)
-	if len(e.d.notes) != 0 {
-		t.Fatal("the missed slot was made up after the confirm")
+	e.g.Tick(ctx)
+	if len(e.d.notes) != 1 {
+		t.Fatalf("%d jobs after the confirm, want the missed slot once", len(e.d.notes))
 	}
 	e.now = time.Date(2026, 11, 16, 3, 0, 30, 0, time.UTC)
 	e.g.Tick(ctx)
 	e.g.Tick(ctx)
-	if len(e.d.notes) != 1 {
+	if len(e.d.notes) != 2 {
 		t.Fatalf("%d jobs at the next slot", len(e.d.notes))
+	}
+}
+
+// A controller that starts in restored mode (plumb restore) keeps the
+// latest slot pending: after the confirm it runs once.
+func TestRestoredStartRunsTheLatestSlotOnce(t *testing.T) {
+	e := newJobEnv(t, nil)
+	ctx := context.Background()
+	e.restor = true
+	e.now = time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC) // the 03:00 slot passed
+	e.g.Tick(ctx)
+	e.now = e.now.Add(time.Hour)
+	e.g.Tick(ctx)
+	if len(e.d.notes) != 0 {
+		t.Fatal("a job in restored mode")
+	}
+	e.restor = false
+	e.g.Tick(ctx)
+	e.g.Tick(ctx)
+	if len(e.d.notes) != 1 {
+		t.Fatalf("%d jobs after the confirm, want 1", len(e.d.notes))
 	}
 }
