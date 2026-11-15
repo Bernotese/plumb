@@ -66,9 +66,17 @@ func TestBackupChange(t *testing.T) {
 		t.Fatalf("higher: %+v %v", c, notes)
 	}
 	deletes = 4
-	// A lower keep: destructive, the count from the jobs.
+	// A lower keep: destructive, the counts from the jobs (T-233: the
+	// difference to the old keep's count).
+	e.cfg.BackupKeepDeletes = func(_ context.Context, _ string, keep int) (int, error) {
+		if keep == 3 {
+			asked = keep
+			return 4, nil
+		}
+		return 0, nil
+	}
 	c, notes, _ = e.backupChange(ctx, r(daily(7)), r(daily(3)), "db1", false)
-	if c == nil || c.Risk != wire.RiskDestructive || asked != 3 || len(notes) != 1 || !strings.Contains(notes[0], "deletes 4 backup") {
+	if c == nil || c.Risk != wire.RiskDestructive || asked != 3 || len(notes) != 1 || !strings.Contains(notes[0], "deletes 4 backup(s), 4 more") {
 		t.Fatalf("lower: %+v %v asked %d", c, notes, asked)
 	}
 	// No count (no jobs): a lower keep is destructive by the fallback.
@@ -80,6 +88,13 @@ func TestBackupChange(t *testing.T) {
 	// field that comes back, or a lower keep, is destructive; a keep that is
 	// not lower stays read; a new guest has nothing to delete.
 	unknown := &Engine{cfg: Config{BackupKeepDeletes: func(context.Context, string, int) (int, error) { return -1, nil }}}
+	// The new keep's count is known, the old one's is not: fail closed too.
+	oldUnknown := &Engine{cfg: Config{BackupKeepDeletes: func(_ context.Context, _ string, keep int) (int, error) {
+		if keep == 7 {
+			return -1, nil
+		}
+		return 1, nil
+	}}}
 	for name, tc := range map[string]struct {
 		eng       *Engine
 		old, nu   map[string]any
@@ -89,6 +104,8 @@ func TestBackupChange(t *testing.T) {
 		"re-added, -1":       {unknown, nil, daily(1), false, true},
 		"re-added, no hook":  {noCount, nil, daily(1), false, true},
 		"lower, -1":          {unknown, daily(7), daily(3), false, true},
+		"lower, old -1":      {oldUnknown, daily(7), daily(3), false, true},
+		"same keep, old -1":  {oldUnknown, daily(7), map[string]any{"schedule": "daily", "time": "04:00", "keep": float64(7)}, false, false},
 		"same keep, -1":      {unknown, daily(7), map[string]any{"schedule": "weekly", "weekday": "sun", "time": "03:00", "keep": float64(7)}, false, false},
 		"higher, -1":         {unknown, daily(3), daily(7), false, false},
 		"new guest, no hook": {noCount, nil, daily(1), true, false},
