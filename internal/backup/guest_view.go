@@ -212,7 +212,7 @@ func (g *Guests) StartSchedule(interval time.Duration) {
 }
 
 // KeepDeletes is the number of the Target's backups that the next job's
-// retention deletes when keep becomes newKeep (a Plan's note, D-417).
+// retention deletes with newKeep (a Plan's note and risk, D-417).
 func (g *Guests) KeepDeletes(ctx context.Context, target string, newKeep int) (int, error) {
 	t, err := g.cfg.Target(ctx, target)
 	if errors.Is(err, store.ErrNotFound) {
@@ -239,7 +239,7 @@ func (g *Guests) KeepDeletes(ctx context.Context, target string, newKeep int) (i
 	if err != nil {
 		return 0, err
 	}
-	return LowerKeepDeletes(Classify(vols, g.cfg.InstallID, t.Name, lineage, rec), newKeep), nil
+	return NextJobDeletes(Classify(vols, g.cfg.InstallID, t.Name, lineage, rec), newKeep), nil
 }
 
 // StorageNote is the warning of a Plan that adds a backup field (D-406):

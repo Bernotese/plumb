@@ -41,23 +41,40 @@ func TestBackupChange(t *testing.T) {
 	daily := func(keep int) map[string]any {
 		return map[string]any{"schedule": "daily", "time": "03:00", "keep": float64(keep)}
 	}
-	// New field: read, with the storage note.
+	// New field, nothing to delete: read, with the storage note.
+	deletes := 0
+	e.cfg.BackupKeepDeletes = func(_ context.Context, _ string, keep int) (int, error) { asked = keep; return deletes, nil }
 	c, notes, err := e.backupChange(ctx, r(nil), r(daily(7)), "db1")
 	if err != nil || c == nil || c.Risk != wire.RiskRead || c.To != "daily 03:00 keep 7" || len(notes) != 1 || !strings.Contains(notes[0], "clear") {
 		t.Fatalf("new: %+v %v %v", c, notes, err)
 	}
+	// M1 of #334: the field comes back after a removal with keep 1 and
+	// old backups exist: destructive, by the count, not by the old keep.
+	deletes = 6
+	c, notes, _ = e.backupChange(ctx, r(nil), r(daily(1)), "db1")
+	if c == nil || c.Risk != wire.RiskDestructive || !strings.Contains(strings.Join(notes, " "), "deletes 6 backup") {
+		t.Fatalf("re-added: %+v %v", c, notes)
+	}
+	deletes = 4
 	// Same field: no change.
 	if c, _, _ := e.backupChange(ctx, r(daily(7)), r(daily(7)), "db1"); c != nil {
 		t.Fatalf("same: %+v", c)
 	}
-	// A higher keep: read, no note.
+	// A higher keep that deletes nothing: read, no note.
+	deletes = 0
 	if c, notes, _ := e.backupChange(ctx, r(daily(7)), r(daily(9)), "db1"); c == nil || c.Risk != wire.RiskRead || len(notes) != 0 {
 		t.Fatalf("higher: %+v %v", c, notes)
 	}
+	deletes = 4
 	// A lower keep: destructive, the count from the jobs.
 	c, notes, _ = e.backupChange(ctx, r(daily(7)), r(daily(3)), "db1")
 	if c == nil || c.Risk != wire.RiskDestructive || asked != 3 || len(notes) != 1 || !strings.Contains(notes[0], "deletes 4 backup") {
 		t.Fatalf("lower: %+v %v asked %d", c, notes, asked)
+	}
+	// No count (no jobs): a lower keep is destructive by the fallback.
+	noCount := &Engine{}
+	if c, _, _ := noCount.backupChange(ctx, r(daily(7)), r(daily(3)), "db1"); c == nil || c.Risk != wire.RiskDestructive {
+		t.Fatalf("fallback: %+v", c)
 	}
 	// Removed: read, deletes nothing.
 	c, notes, _ = e.backupChange(ctx, r(daily(7)), r(nil), "db1")

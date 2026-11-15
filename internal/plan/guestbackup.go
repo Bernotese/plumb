@@ -138,11 +138,14 @@ func keepOf(b map[string]any) int {
 	return n
 }
 
-// backupChange is the Plan-only change of spec.backup (D-408, D-417):
-// risk read, except a lower keep, which deletes backups at the next job:
-// destructive, and its notes say how many. Removing the field deletes
-// nothing. A new field on a storage that keeps backups in clear gets the
-// storage note (D-406).
+// backupChange is the Plan-only change of spec.backup (D-408, D-417).
+// Whenever the new field makes the next job delete backups, the change is
+// destructive and its note says how many: the count comes from the jobs
+// (BackupKeepDeletes), also when the field comes back after a removal (M1
+// of #334: remove, then add again with keep 1, must not pass as read).
+// Without a count (no jobs) a lower keep than before is the fallback.
+// Removing the field deletes nothing. A new field gets the storage note
+// (D-406).
 func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered, target string) (*wire.Change, []string, error) {
 	var old, nu map[string]any
 	if before != nil {
@@ -160,20 +163,18 @@ func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered
 	switch {
 	case nu == nil:
 		notes = append(notes, fmt.Sprintf("Target %s: Plumb stops its backups; it deletes none. Its backups stay until a person deletes them.", target))
-	case old != nil && keepOf(nu) < keepOf(old):
+	case e.cfg.BackupKeepDeletes != nil:
+		n, err := e.cfg.BackupKeepDeletes(ctx, target, keepOf(nu))
+		if err != nil {
+			return nil, nil, err
+		}
+		if n > 0 {
+			c.Risk = wire.RiskDestructive
+			notes = append(notes, fmt.Sprintf("Target %s: with keep %d the next backup job deletes %d backup(s).", target, keepOf(nu), n))
+		}
+	case old != nil && keepOf(nu) < keepOf(old): // no count: the fallback
 		c.Risk = wire.RiskDestructive
-		n := -1
-		if e.cfg.BackupKeepDeletes != nil {
-			var err error
-			if n, err = e.cfg.BackupKeepDeletes(ctx, target, keepOf(nu)); err != nil {
-				return nil, nil, err
-			}
-		}
-		if n >= 0 {
-			notes = append(notes, fmt.Sprintf("Target %s: keep %d → %d deletes %d backup(s) at the next backup job.", target, keepOf(old), keepOf(nu), n))
-		} else {
-			notes = append(notes, fmt.Sprintf("Target %s: keep %d → %d deletes the oldest backups above %d at the next backup job.", target, keepOf(old), keepOf(nu), keepOf(nu)))
-		}
+		notes = append(notes, fmt.Sprintf("Target %s: keep %d → %d deletes the oldest backups above %d at the next backup job.", target, keepOf(old), keepOf(nu), keepOf(nu)))
 	}
 	if old == nil && nu != nil && e.cfg.BackupStorageNote != nil {
 		note, err := e.cfg.BackupStorageNote(ctx)
