@@ -691,6 +691,9 @@ func (e *Engine) headRender(ctx context.Context, target string) (*state.Rendered
 		return nil, nil
 	}
 	r, err = c.set.Render(target)
+	if err == nil {
+		err = e.addNICNetworks(r) // T-220
+	}
 	if err != nil {
 		return nil, err
 	}

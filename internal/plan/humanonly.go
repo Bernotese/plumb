@@ -47,7 +47,7 @@ const firewallType = "firewall"
 // the base is off already.
 func firewallOff(base, next *state.Set, targets []string) (bool, error) {
 	for _, t := range targets {
-		before, err := renderOrNil(base, t)
+		before, err := renderPlain(base, t)
 		if err != nil || before == nil {
 			if err != nil {
 				return false, err
@@ -60,7 +60,7 @@ func firewallOff(base, next *state.Set, targets []string) (bool, error) {
 				continue
 			}
 			if after == nil {
-				if after, err = renderOrNil(next, t); err != nil {
+				if after, err = renderPlain(next, t); err != nil {
 					return false, err
 				}
 				if after == nil {

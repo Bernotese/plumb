@@ -36,6 +36,9 @@ type fakeNet struct {
 	// DHCP address (-1: all of them).
 	noRoute int
 	failArm bool // systemd-run fails
+	// cards are the more NICs of the VM (T-220): ifname and address each;
+	// "ip -j link show" without a device lists them after the main NIC.
+	cards [][2]string
 }
 
 func (f *fakeNet) live() (addrs []string, routes []liveRoute, dns, search []string) {
@@ -78,6 +81,12 @@ func (f *fakeNet) Run(ctx context.Context, name string, args ...string) ([]byte,
 			return nil, &ExitError{Name: "ip", Code: 2, Stderr: "RTNETLINK answers: Network is unreachable"}
 		}
 		return json.Marshal([]map[string]string{{"dev": f.dev, "prefsrc": f.main}})
+	case name == "ip" && slices.Equal(args, []string{"-j", "link", "show"}):
+		links := []map[string]string{{"ifname": f.dev, "address": f.mac, "link_type": "ether"}}
+		for _, c := range f.cards {
+			links = append(links, map[string]string{"ifname": c[0], "address": c[1], "link_type": "ether"})
+		}
+		return json.Marshal(links)
 	case name == "ip" && slices.Equal(args[:3], []string{"-j", "link", "show"}):
 		if args[len(args)-1] != f.dev {
 			return nil, &ExitError{Name: "ip", Code: 1, Stderr: "Device does not exist"}

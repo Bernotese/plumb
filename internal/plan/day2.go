@@ -144,11 +144,11 @@ func (e *Engine) lacksGrow(ctx context.Context, target string) string {
 func (e *Engine) checkNoShrink(ctx context.Context, base, next *state.Set, names []string) error {
 	var errs state.Errors
 	for _, t := range names {
-		before, err := renderOrNil(base, t)
+		before, err := e.renderOrNil(base, t)
 		if err != nil || before == nil {
 			continue
 		}
-		after, err := renderOrNil(next, t)
+		after, err := e.renderOrNil(next, t)
 		if err != nil || after == nil {
 			continue
 		}

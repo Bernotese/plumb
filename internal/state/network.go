@@ -58,6 +58,18 @@ func (s *Set) Networks() ([]TargetNetwork, error) {
 				tn.Gateway = a
 			}
 		}
+		// The static addresses of the more NICs (guest.nics, T-219, T-220)
+		// take part like extra addresses: no other Target may use them.
+		if nics, _ := t.Guest["nics"].([]any); len(nics) > 0 {
+			for i, item := range nics {
+				m, _ := item.(map[string]any)
+				if ip, _ := m["ip"].(string); ip != "" && ip != "dhcp" {
+					if p, err := netip.ParsePrefix(ip); err == nil {
+						tn.Extras = append(tn.Extras, NetworkAddr{Resource: fmt.Sprintf("guest.nics[%d]", i), Addr: p})
+					}
+				}
+			}
+		}
 		r, err := s.Render(name)
 		if err != nil {
 			return nil, err
@@ -65,6 +77,12 @@ func (s *Set) Networks() ([]TargetNetwork, error) {
 		for _, res := range r.Resources {
 			if res.Type != NetworkType {
 				continue
+			}
+			// Only the render sets mac, from guest.nics (D-419): no MAC of
+			// a person or a guest ever reaches a netplan match.
+			if v, ok := res.Attrs["mac"]; ok && v != nil && v != "" {
+				return nil, Errors{{Kind: KindTarget, Name: name, Path: "/spec/blocks",
+					Msg: fmt.Sprintf("resource %s: a network card is chosen by guest.nics, not by mac in a Block or an override", res.ID)}}
 			}
 			tn.HasNetwork = true
 			if res.Attrs[wire.AttrState] == wire.StateAbsent {

@@ -146,11 +146,11 @@ type planElem struct {
 // render in base does not have, keyed by hash. Sensitive attributes are
 // skipped: their value is a secret, never guest data the controller knows.
 func (e *Engine) newElems(base, next *state.Set, target string, out map[string][]planElem) (over bool, err error) {
-	before, err := renderOrNil(base, target)
+	before, err := e.renderOrNil(base, target)
 	if err != nil {
 		return false, err
 	}
-	after, err := renderOrNil(next, target)
+	after, err := e.renderOrNil(next, target)
 	if err != nil || after == nil {
 		return false, err
 	}
