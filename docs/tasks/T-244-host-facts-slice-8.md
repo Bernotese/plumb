@@ -23,4 +23,4 @@ Test guests are made **through Plumb** in the pool `plumb` (one Debian 13 VM, on
 - (2) `/status` is right; a stopped guest is backed up in `stop` mode; `WARNINGS` not caused. F1: two vzdumps → Plumb's own volume stays `unmarked` (T-248).
 - L2: PVE never follows a symlink in an `mp` path. A refused hot-add leaks a volume; the token cannot free it, but a Plumb guest delete does (T-238).
 - (3) The restore with a missing bridge right is refused before the disks are touched; `extractconfig` works with the token (pre-check, T-241). The way back works after the revert.
-- Host clean: only LXC 100, `storage.cfg` byte-equal, 11 ACL lines.
+- Host clean: only LXC 100, `storage.cfg` byte-equal, 11 ACL lines (22 rows: user + token).
