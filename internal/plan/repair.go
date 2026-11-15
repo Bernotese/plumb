@@ -517,7 +517,7 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 		e.emit(context.WithoutCancel(ctx), "repair.finished", subject, "system", map[string]any{"plan": p.ID, "run": run.ID, "result": result})
 		// The agent watches its list again (the hellos during the Run sent
 		// none: the Target was busy).
-		if r, err := renderOrNil(set, tp.Target); err == nil && r != nil {
+		if r, err := e.renderOrNil(set, tp.Target); err == nil && r != nil {
 			if err := e.watch(ctx, tp.Target, r); err != nil {
 				e.log.Info("watch after the repair", "target", tp.Target, "err", err)
 			}
@@ -608,7 +608,7 @@ func (e *Engine) runRepair(ctx context.Context, p store.Plan, run store.Run, set
 // list that its agent reported last.
 func (e *Engine) repairAddrs(ctx context.Context, set *state.Set, target string) (string, []string) {
 	var static string
-	if r, err := renderOrNil(set, target); err == nil && r != nil {
+	if r, err := e.renderOrNil(set, target); err == nil && r != nil {
 		if ip, _ := r.Guest.Attrs[driver.AttrIP].(string); ip != "" && ip != "dhcp" {
 			static, _, _ = strings.Cut(ip, "/")
 		}
@@ -679,7 +679,7 @@ func (e *Engine) RewatchAll(ctx context.Context) {
 		if busy {
 			continue
 		}
-		r, err := renderOrNil(set, d.Name)
+		r, err := e.renderOrNil(set, d.Name)
 		if err != nil || r == nil {
 			continue
 		}

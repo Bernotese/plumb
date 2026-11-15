@@ -9,6 +9,7 @@ const routes: Route[] = [
   { name: "target-adopt" },
   { name: "target-edit", target: "web1" },
   { name: "target-agent", target: "web1" },
+  { name: "target-backups", target: "db1" },
   { name: "images" },
   { name: "image-new" },
   { name: "image", image: "ubuntu-26.04" },

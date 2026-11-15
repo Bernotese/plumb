@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import targetSchema from "../../../internal/state/schema/target.json";
-  import type { PlumbApi } from "../lib/client";
+  import { settingsRisks, type PlumbApi } from "../lib/client";
   import { go, href } from "../lib/router";
   import { can, roleNote } from "../lib/session.svelte";
   import DeleteDocument from "../ui/DeleteDocument.svelte";
@@ -10,6 +10,8 @@
     fieldsOf,
     initialValues,
     mergeParams,
+    sameValue,
+    toParams,
     pinnedDefaults,
     validate,
     type Field,
@@ -57,6 +59,170 @@
     (f) => f.name !== "nics",
   );
   const namePattern = new RegExp(targetSchema.properties.name.pattern, "u");
+
+  // --- More NICs (T-223, ARCHITECTURE §20, D-399 … D-404) ---
+  const nicSchema = specSchema.properties.guest.properties.nics;
+  const MAX_NICS = nicSchema.maxItems;
+  const bridgePattern = new RegExp(nicSchema.items.properties.bridge.pattern, "u");
+  const cidrPattern = new RegExp(nicSchema.items.properties.ip.pattern, "u");
+  const gwPattern = new RegExp(nicSchema.items.properties.gateway.pattern, "u");
+  type NicAddr = "none" | "dhcp" | "static";
+  interface Nic {
+    key: number;
+    bridge: string;
+    /** "" is untagged. */
+    tag: string;
+    addr: NicAddr;
+    ip: string;
+    gateway: string;
+  }
+  type GuestNic = NonNullable<TargetSpec["guest"]["nics"]>[number];
+  let nics = $state<Nic[]>([]);
+  let nicErrors = $state<Record<string, string>>({});
+  /** The bridges and bridge/tag pairs the install named; null when not known (D-401). */
+  let extraNets = $state<{ bridge: string; tag: number | null }[] | null>(null);
+  /** M2 of #330: network rights of the token beyond the install. */
+  let sdnExtra = $state<{ path: string; role: string }[]>([]);
+  /** False when the install named no guest backup storage; null when not known. */
+  let backupStorage = $state<boolean | null>(null);
+  const extraBridges = $derived([...new Set((extraNets ?? []).map((n) => n.bridge))]);
+  const tagsOf = (bridge: string) =>
+    (extraNets ?? []).filter((n) => n.bridge === bridge).map((n) => n.tag);
+  function toNic(n: GuestNic): Nic {
+    return {
+      key: nextKey++,
+      bridge: n.bridge,
+      tag: n.tag === undefined ? "" : String(n.tag),
+      addr: n.ip === undefined ? "none" : n.ip === "dhcp" ? "dhcp" : "static",
+      ip: n.ip !== undefined && n.ip !== "dhcp" ? n.ip : "",
+      gateway: n.gateway ?? "",
+    };
+  }
+  function fromNic(n: Nic): GuestNic {
+    return {
+      bridge: n.bridge.trim(),
+      ...(n.tag.trim() !== "" ? { tag: Number(n.tag) } : {}),
+      ...(n.addr === "dhcp" ? { ip: "dhcp" } : {}),
+      ...(n.addr === "static" ? { ip: n.ip.trim() } : {}),
+      ...(n.addr === "static" && n.gateway.trim() ? { gateway: n.gateway.trim() } : {}),
+    };
+  }
+  async function addNic() {
+    const bridge = extraBridges[0] ?? "";
+    const tag = tagsOf(bridge)[0];
+    nics = [
+      ...nics,
+      {
+        key: nextKey++,
+        bridge,
+        tag: tag === null || tag === undefined ? "" : String(tag),
+        addr: "none",
+        ip: "",
+        gateway: "",
+      },
+    ];
+    await tick();
+    document.getElementById(`nic-${nics.length}-bridge`)?.focus();
+  }
+  async function removeNic(key: number) {
+    nics = nics.filter((n) => n.key !== key);
+    await tick();
+    document.getElementById("add-nic")?.focus();
+  }
+  /** Keeps the tag choice valid when the bridge changes. */
+  function pickBridge(n: Nic, bridge: string) {
+    n.bridge = bridge;
+    const tags = tagsOf(bridge);
+    if (extraNets && !tags.includes(n.tag === "" ? null : Number(n.tag))) {
+      const t = tags[0];
+      n.tag = t === null || t === undefined ? "" : String(t);
+    }
+  }
+  function checkNics(): Record<string, string> {
+    const e: Record<string, string> = {};
+    const gw0 = String(guest["gateway"] ?? "").trim() !== "";
+    let gateways = gw0 ? 1 : 0;
+    nics.forEach((n, i) => {
+      const at = `${i + 1}`;
+      const bridge = n.bridge.trim();
+      if (!bridgePattern.test(bridge)) e[`${at}/bridge`] = "Give the name of a Proxmox bridge.";
+      const tag = n.tag.trim();
+      if (tag !== "" && !(/^[0-9]+$/.test(tag) && Number(tag) >= 1 && Number(tag) <= 4094))
+        e[`${at}/tag`] = "A VLAN tag is a number from 1 to 4094.";
+      if (
+        extraNets &&
+        !e[`${at}/bridge`] &&
+        !e[`${at}/tag`] &&
+        !extraNets.some((x) => x.bridge === bridge && x.tag === (tag === "" ? null : Number(tag)))
+      )
+        e[`${at}/bridge`] =
+          tag === ""
+            ? `The install did not name the bridge ${bridge} (--extra-bridge).`
+            : `The install did not name ${bridge} with tag ${tag} (--extra-vlan).`;
+      if (n.addr === "static") {
+        if (!cidrPattern.test(n.ip.trim()) || n.ip.trim() === "dhcp")
+          e[`${at}/ip`] = "Give an IPv4 address in CIDR form, for example 10.20.0.5/24.";
+        if (n.gateway.trim()) {
+          gateways += 1;
+          if (!gwPattern.test(n.gateway.trim()))
+            e[`${at}/gateway`] = "Give an IPv4 address, for example 10.20.0.1.";
+          else if (gateways > 1) e[`${at}/gateway`] = "Only one network card may have a gateway.";
+        }
+      }
+    });
+    return e;
+  }
+  // --- Guest backups (T-223, D-408, D-417): the Target field `backup` ---
+  type BackupSpec = NonNullable<TargetSpec["backup"]>;
+  const backupSchema = specSchema.properties.backup;
+  const WEEKDAYS = backupSchema.properties.weekday.enum as BackupSpec["weekday"][];
+  let backupOn = $state(false);
+  let backupSchedule = $state<BackupSpec["schedule"]>("daily");
+  let backupWeekday = $state<NonNullable<BackupSpec["weekday"]>>("sun");
+  let backupTime = $state("03:00");
+  let backupKeep = $state("7");
+  let backupErrors = $state<Record<string, string>>({});
+  function loadBackup(b: BackupSpec | undefined) {
+    backupOn = b !== undefined;
+    backupSchedule = b?.schedule ?? "daily";
+    backupWeekday = b?.weekday ?? "sun";
+    backupTime = b?.time ?? "03:00";
+    backupKeep = String(b?.keep ?? 7);
+  }
+  function checkBackup(): Record<string, string> {
+    const e: Record<string, string> = {};
+    if (!backupOn) return e;
+    if (!new RegExp(backupSchema.properties.time.pattern, "u").test(backupTime.trim()))
+      e["time"] = "Give a time as HH:MM (UTC), for example 03:00.";
+    const k = backupKeep.trim();
+    if (!(/^[0-9]+$/.test(k) && Number(k) >= 1 && Number(k) <= 30))
+      e["keep"] = "Keep 1 to 30 backups.";
+    return e;
+  }
+  function backupSpec(): BackupSpec {
+    return {
+      schedule: backupSchedule,
+      ...(backupSchedule === "weekly" ? { weekday: backupWeekday } : {}),
+      time: backupTime.trim(),
+      keep: Number(backupKeep.trim()),
+    };
+  }
+
+  const nicHint = (i: number, f: string) => (nicErrors[`${i}/${f}`] ? `nic-${i}-${f}-error` : "");
+  $effect(() => {
+    api.getSettings().then(
+      (s) => {
+        extraNets = s.proxmox?.extra_nets ?? null;
+        backupStorage =
+          s.proxmox && s.proxmox.guest_backup !== undefined
+            ? s.proxmox.guest_backup !== null
+            : null;
+        sdnExtra = settingsRisks(s).aclExtra.filter((a) => a.path.startsWith("/sdn/"));
+      },
+      // Without the settings (a token, an older controller) the server checks the names.
+      () => {},
+    );
+  });
   const editing = $derived(name !== undefined);
 
   interface Use {
@@ -160,6 +326,7 @@
 
   // D-386: a Target that holds a guest a person made (no Image).
   const adopted = $derived(base.adopted ?? existing?.document.spec.adopted);
+  const storedKeep = $derived(existing?.document.spec.backup?.keep);
 
   // T-194 (D-388): an adopted Target may delete its guest only when the
   // person allowed it with `delete_guest`, by its own plan.
@@ -279,6 +446,23 @@
     };
   }
 
+  /**
+   * #283 n1: an object parameter whose parts have defaults that its own
+   * default leaves out never equals that default in the form, so a save
+   * always writes it (D-376 cannot follow the default for it). Say so.
+   */
+  function objectNotes(u: Use): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const f of u.fields) {
+      if (f.kind !== "object" || f.default === undefined || u.values[f.name] == null) continue;
+      const filled = toParams([f], initialValues([f], {}))[f.name];
+      if (!sameValue(filled, f.default))
+        out[f.name] =
+          "Saved with all its parts: they have defaults of their own that the Block default leaves out. A later change of the Block default does not reach this Target.";
+    }
+    return out;
+  }
+
   /** D-376: the person follows the Block default again for one parameter. */
   function follow(u: Use, name: string) {
     const f = u.fields.find((x) => x.name === name);
@@ -323,6 +507,8 @@
     base = spec;
     if (typeof spec.image === "string") image = spec.image;
     guest = initialValues(guestFields, (spec.guest ?? {}) as Record<string, unknown>);
+    nics = (spec.guest?.nics ?? []).map(toNic);
+    loadBackup(spec.backup);
     allowRestart = spec.allow_restart === true;
     uses = (spec.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params));
   }
@@ -372,6 +558,8 @@
         ...guestErrors,
         power: `A stop needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below.`,
       };
+    nicErrors = checkNics();
+    backupErrors = checkBackup();
     const seen: string[] = [];
     for (const u of uses) {
       u.errors = validate(u.fields, u.values);
@@ -387,6 +575,8 @@
     return (
       Object.keys(e).length === 0 &&
       Object.keys(guestErrors).length === 0 &&
+      Object.keys(nicErrors).length === 0 &&
+      Object.keys(backupErrors).length === 0 &&
       uses.every((u) => Object.keys(u.errors).length === 0)
     );
   }
@@ -398,7 +588,7 @@
 
   /** The spec that the form saves: `base` with the form values. */
   function buildSpec(): TargetSpec {
-    const known = ["type", "image", "guest", "blocks", "overrides", "allow_restart"];
+    const known = ["type", "image", "guest", "blocks", "overrides", "allow_restart", "backup"];
     const extra = Object.fromEntries(Object.entries(base).filter(([k]) => !known.includes(k)));
     const guestSpec = mergeParams(
       (base.guest ?? {}) as Record<string, unknown>,
@@ -411,6 +601,9 @@
     );
     // D-299: a missing `tags` means "not managed"; an emptied list means "no tags".
     if (base.guest?.tags !== undefined && guestSpec["tags"] === undefined) guestSpec["tags"] = [];
+    // D-399: no key without a card; removing every card removes the key.
+    if (nics.length) guestSpec["nics"] = nics.map(fromNic);
+    else delete guestSpec["nics"];
     return {
       ...extra,
       type: kind,
@@ -431,6 +624,8 @@
       // Written only when set or stored before, so an old Target gets no
       // new key by an unrelated edit (default false, D-194).
       ...(allowRestart || base.allow_restart !== undefined ? { allow_restart: allowRestart } : {}),
+      // D-417 (3): removing `backup` stops the jobs and deletes no backup.
+      ...(backupOn ? { backup: backupSpec() } : {}),
     };
   }
 
@@ -528,6 +723,14 @@
 </script>
 
 <h1 id="page-title" tabindex="-1">{editing ? `Edit target ${name}` : "New target"}</h1>
+{#if existing}
+  <p class="sub-links">
+    <a href={href({ name: "target-agent", target: existing.document.name })}>Agent</a> ·
+    <a href={href({ name: "target-backups", target: existing.document.name })} id="backups-link"
+      >Backups</a
+    >
+  </p>
+{/if}
 <ProblemBox error={loadError} />
 {#if existing}
   <section class="card addr-card" class:mismatch={addressIssue} aria-labelledby="addr-title">
@@ -734,6 +937,239 @@
         </div>
       </fieldset>
 
+      <fieldset id="nics" aria-describedby="nics-hint">
+        <legend id="nics-legend">More network cards</legend>
+        <p class="hint" id="nics-hint">
+          The card above is the first one. Up to {MAX_NICS} more; Plumb chooses their MAC addresses. Each
+          bridge, and each bridge with a VLAN tag, must be named when Plumb is installed. Adding or removing
+          a card, or changing its bridge or tag, is disruptive.
+        </p>
+        {#if sdnExtra.length}
+          <div class="banner danger" role="note" id="nics-acl-extra">
+            <p>
+              <strong>The token may use networks the install did not name.</strong> Run the installer
+              again with the same flags (a repair run); it removes these rights.
+            </p>
+            <ul>
+              {#each sdnExtra as a (a.path + a.role)}<li>
+                  <code>{a.path}</code> ({a.role})
+                </li>{/each}
+            </ul>
+          </div>
+        {/if}
+        {#if adopted}
+          <p class="muted" id="nics-adopted">
+            An adopted Target keeps the network cards that the guest has. Plumb adds none.
+          </p>
+        {:else}
+          {#if extraNets !== null && extraNets.length === 0}
+            <p class="muted" id="nics-none-named">
+              The install named no other bridge. Run the installer again with
+              <code>--extra-bridge</code> or <code>--extra-vlan</code> first.
+            </p>
+          {/if}
+          {#each nics as n, idx (n.key)}
+            {@const i = idx + 1}
+            {@const tags = tagsOf(n.bridge)}
+            <fieldset class="nic" aria-labelledby="nic-{i}-legend">
+              <legend id="nic-{i}-legend">Network card {i + 1}</legend>
+              <div class="field">
+                <label for="nic-{i}-bridge">Bridge</label>
+                {#if extraNets !== null && (extraBridges.includes(n.bridge) || n.bridge === "")}
+                  <select
+                    id="nic-{i}-bridge"
+                    value={n.bridge}
+                    onchange={(ev) => pickBridge(n, ev.currentTarget.value)}
+                    aria-invalid={!!nicErrors[`${i}/bridge`]}
+                    aria-describedby={nicHint(i, "bridge") || undefined}
+                  >
+                    {#each extraBridges as b (b)}<option value={b}>{b}</option>{/each}
+                  </select>
+                {:else}
+                  <input
+                    id="nic-{i}-bridge"
+                    type="text"
+                    class="mono"
+                    bind:value={n.bridge}
+                    aria-invalid={!!nicErrors[`${i}/bridge`]}
+                    aria-describedby={nicHint(i, "bridge") || undefined}
+                  />
+                {/if}
+                {#if nicErrors[`${i}/bridge`]}<span class="error" id="nic-{i}-bridge-error"
+                    >{nicErrors[`${i}/bridge`]}</span
+                  >{/if}
+              </div>
+              <div class="field">
+                <label for="nic-{i}-tag">VLAN tag</label>
+                {#if extraNets !== null && extraBridges.includes(n.bridge)}
+                  <select
+                    id="nic-{i}-tag"
+                    bind:value={n.tag}
+                    aria-invalid={!!nicErrors[`${i}/tag`]}
+                    aria-describedby={nicHint(i, "tag") || undefined}
+                  >
+                    {#each tags as t (t)}<option value={t === null ? "" : String(t)}
+                        >{t === null ? "(untagged)" : t}</option
+                      >{/each}
+                  </select>
+                {:else}
+                  <input
+                    id="nic-{i}-tag"
+                    type="text"
+                    inputmode="numeric"
+                    bind:value={n.tag}
+                    placeholder="(untagged)"
+                    aria-invalid={!!nicErrors[`${i}/tag`]}
+                    aria-describedby={nicHint(i, "tag") || undefined}
+                  />
+                {/if}
+                {#if nicErrors[`${i}/tag`]}<span class="error" id="nic-{i}-tag-error"
+                    >{nicErrors[`${i}/tag`]}</span
+                  >{/if}
+              </div>
+              <div class="field">
+                <label for="nic-{i}-addr">Address</label>
+                <select id="nic-{i}-addr" bind:value={n.addr}>
+                  <option value="none">none (the card is up without an address)</option>
+                  <option value="dhcp">DHCP</option>
+                  <option value="static">static</option>
+                </select>
+              </div>
+              {#if n.addr === "static"}
+                <div class="field">
+                  <label for="nic-{i}-ip">IPv4 address (CIDR)</label>
+                  <input
+                    id="nic-{i}-ip"
+                    type="text"
+                    class="mono"
+                    bind:value={n.ip}
+                    placeholder="10.20.0.5/24"
+                    aria-invalid={!!nicErrors[`${i}/ip`]}
+                    aria-describedby={nicHint(i, "ip") || undefined}
+                  />
+                  {#if nicErrors[`${i}/ip`]}<span class="error" id="nic-{i}-ip-error"
+                      >{nicErrors[`${i}/ip`]}</span
+                    >{/if}
+                </div>
+                <div class="field">
+                  <label for="nic-{i}-gateway">Gateway (optional)</label>
+                  <input
+                    id="nic-{i}-gateway"
+                    type="text"
+                    class="mono"
+                    bind:value={n.gateway}
+                    aria-invalid={!!nicErrors[`${i}/gateway`]}
+                    aria-describedby="nic-{i}-gateway-hint {nicHint(i, 'gateway')}"
+                  />
+                  <span class="hint" id="nic-{i}-gateway-hint"
+                    >At most one gateway over all network cards.</span
+                  >
+                  {#if nicErrors[`${i}/gateway`]}<span class="error" id="nic-{i}-gateway-error"
+                      >{nicErrors[`${i}/gateway`]}</span
+                    >{/if}
+                </div>
+              {/if}
+              <button type="button" class="btn danger" onclick={() => removeNic(n.key)}
+                >Remove network card {i + 1}</button
+              >
+            </fieldset>
+          {/each}
+          {#if nics.length < MAX_NICS}
+            <button
+              type="button"
+              class="btn"
+              id="add-nic"
+              onclick={addNic}
+              disabled={extraNets !== null && extraNets.length === 0}>Add network card</button
+            >
+          {/if}
+        {/if}
+      </fieldset>
+
+      <fieldset id="backup" aria-describedby="backup-hint">
+        <legend>Guest backups</legend>
+        <p class="hint" id="backup-hint">
+          Plumb backs up the guest to the backup storage named at install. A backup does not change
+          the guest. Without a schedule, Plumb makes backups only with "Back up now".
+          {#if existing}<a href={href({ name: "target-backups", target: existing.document.name })}
+              >Backups of {existing.document.name}</a
+            >{/if}
+        </p>
+        {#if backupStorage === false}
+          <p class="note" id="backup-no-storage">
+            The install named no guest backup storage: a schedule makes no backup until it does (<code
+              >--guest-backup-storage</code
+            >).
+          </p>
+        {/if}
+        <div class="field">
+          <label class="check">
+            <input type="checkbox" id="backup-on" bind:checked={backupOn} />
+            Back up this guest on a schedule
+          </label>
+        </div>
+        {#if backupOn}
+          <div class="field">
+            <label for="backup-schedule">Schedule</label>
+            <select id="backup-schedule" bind:value={backupSchedule}>
+              <option value="daily">daily</option>
+              <option value="weekly">weekly</option>
+            </select>
+          </div>
+          {#if backupSchedule === "weekly"}
+            <div class="field">
+              <label for="backup-weekday">Weekday</label>
+              <select id="backup-weekday" bind:value={backupWeekday}>
+                {#each WEEKDAYS as d (d)}<option value={d}>{d}</option>{/each}
+              </select>
+            </div>
+          {/if}
+          <div class="field">
+            <label for="backup-time">Time (UTC)</label>
+            <input
+              id="backup-time"
+              type="text"
+              class="mono"
+              bind:value={backupTime}
+              aria-invalid={!!backupErrors["time"]}
+              aria-describedby={backupErrors["time"] ? "backup-time-error" : undefined}
+            />
+            {#if backupErrors["time"]}<span class="error" id="backup-time-error"
+                >{backupErrors["time"]}</span
+              >{/if}
+          </div>
+          <div class="field">
+            <label for="backup-keep">Keep</label>
+            <input
+              id="backup-keep"
+              type="text"
+              inputmode="numeric"
+              bind:value={backupKeep}
+              aria-invalid={!!backupErrors["keep"]}
+              aria-describedby="backup-keep-hint{backupErrors['keep'] ? ' backup-keep-error' : ''}"
+            />
+            <span class="hint" id="backup-keep-hint"
+              >How many scheduled backups Plumb keeps (1 to 30). Apart from them it keeps at most 2
+              made by "Back up now".</span
+            >
+            {#if storedKeep !== undefined && Number(backupKeep) < storedKeep}
+              <span class="hint note warn" id="backup-keep-lower"
+                >Lower than now ({storedKeep}): when the next backup job would delete backups with
+                this value, the plan is destructive and says how many go.</span
+              >
+            {/if}
+            {#if backupErrors["keep"]}<span class="error" id="backup-keep-error"
+                >{backupErrors["keep"]}</span
+              >{/if}
+          </div>
+        {:else if existing?.document.spec.backup}
+          <p class="note" id="backup-off-note">
+            Without a schedule Plumb stops the backups of this guest. It deletes none: the backups
+            stay until a person deletes them.
+          </p>
+        {/if}
+      </fieldset>
+
       <h2>Blocks</h2>
       {#each uses as u (u.key)}
         {@const b = blockByName(u.use)}
@@ -773,6 +1209,7 @@
               errors={u.errors}
               prefix="use-{u.key}"
               {api}
+              notes={objectNotes(u)}
               pinned={pinnedDefaults(u.stored, u.fields, u.values, u.followed)}
               onfollow={(n) => follow(u, n)}
             />

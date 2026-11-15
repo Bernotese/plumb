@@ -45,6 +45,38 @@ export type AdoptRequest = S["AdoptRequest"];
 export type UnmanagedGuest = S["UnmanagedGuest"];
 export type RepairKeyView = S["RepairKeyView"];
 export type RepairState = S["RepairState"];
+/** Slice 7 (ARCHITECTURE §20): guest backups and the restore over the guest. */
+export type GuestBackupList = S["GuestBackupList"];
+export type GuestBackup = S["GuestBackup"];
+export type GuestRestoreRequest = S["GuestRestoreRequest"];
+
+/** What the settings view says against guest backups and extra NICs (M2 of #321, M1/M2 of #330). */
+type ProxmoxView = NonNullable<Settings["proxmox"]>;
+type GuestBackupView = NonNullable<ProxmoxView["guest_backup"]>;
+export interface SettingsRisks {
+  /** Other storages the token could write a vzdump to. */
+  otherStorages: GuestBackupView["other_backup_storages"];
+  /** The guest backup storage, when it also takes guest disks. */
+  diskStorage: string | null;
+  diskContent: NonNullable<GuestBackupView["disk_content"]>;
+  /** Rights of the token beyond the install's ACL lines. */
+  aclExtra: NonNullable<ProxmoxView["acl_extra"]>;
+}
+
+/**
+ * The warnings of the settings view. A field missing on an older controller
+ * (before T-218, #330) reads as "nothing to warn".
+ */
+export function settingsRisks(s: Settings): SettingsRisks {
+  const p = s.proxmox;
+  const g = p?.guest_backup ?? null;
+  return {
+    otherStorages: g?.other_backup_storages ?? [],
+    diskStorage: g?.disk_content?.length ? g.storage : null,
+    diskContent: g?.disk_content ?? [],
+    aclExtra: p?.acl_extra ?? [],
+  };
+}
 
 export interface PlumbApi {
   session(): Promise<Session>;
@@ -128,6 +160,14 @@ export interface PlumbApi {
   forgetAgent(vmid: number): Promise<void>;
   /** A new repair key, or `revokeOld` the previous one (D-382, admin session). */
   rotateRepairKey(revokeOld?: boolean): Promise<RepairKeyView>;
+  /** The guest backups of a Target, the storage state and the last job (D-405 … D-409). */
+  listGuestBackups(name: string): Promise<GuestBackupList>;
+  /** Starts one manual guest backup (D-408); 409 `backup-running` or `backup-refused`. */
+  backUpGuestNow(name: string, reason?: string): Promise<void>;
+  /** Deletes one volume (D-409, admin session); 409 `not-plumb` for an unmarked one. */
+  deleteGuestBackup(name: string, backup: string): Promise<void>;
+  /** Proposes a restore over the same bound guest (D-410): a human-only destructive Plan. */
+  restoreGuest(name: string, req: GuestRestoreRequest): Promise<Plan>;
   /** The backup schedule with its sources and the Proxmox view (D-361). */
   getSettings(): Promise<Settings>;
   /** Changes the backup schedule; `null` goes back to the install value (human admin). */

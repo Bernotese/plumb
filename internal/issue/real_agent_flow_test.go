@@ -160,8 +160,17 @@ func TestRealAgentCreateDriftRevertAndUnplannedChange(t *testing.T) {
 	if run.Status != "failed" || read("etc/second") != "unplanned drift" || read("etc/motd") != "planned" {
 		t.Fatalf("unplanned file was overwritten or planned file not applied: %+v", run)
 	}
-	steps, err := e.st.Steps(e.ctx, run.ID)
+	all, err := e.st.Steps(e.ctx, run.ID)
 	check(err)
+	// The absent network:nic<N> of a VM (T-220) are unchanged steps.
+	var steps []store.Step
+	for _, s := range all {
+		if !strings.HasPrefix(s.Resource, "network:nic") {
+			steps = append(steps, s)
+		} else if s.Status != "unchanged" {
+			t.Fatalf("NIC step: %+v", s)
+		}
+	}
 	if len(steps) != 2 || steps[1].Resource != "file:/etc/second" || steps[1].Status != "refused" {
 		t.Fatalf("unplanned change was not refused: %+v", steps)
 	}

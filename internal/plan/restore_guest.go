@@ -126,17 +126,29 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 	if err != nil {
 		return RestoreVolume{}, err
 	}
+	// The engine's own second check, as strict as backup.Classify (T-229,
+	// Q1 of #340): it does not trust the restorer's kind. The marker names
+	// this install, this Target and its current lineage; a recorded,
+	// finished and not deleted job row of this controller has the volume
+	// with the same lineage, trigger, size and time (M1, F1, F2 of #331).
 	line, _, _ := strings.Cut(v.Notes, "\n")
 	parts := strings.Split(strings.TrimSpace(line), ":")
-	if len(parts) < 4 || parts[0] != "plumb" || parts[2] != target || parts[3] != lineage {
-		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s has no marker of this Target and its lineage", id))
+	manual := len(parts) == 5 && parts[4] == "m"
+	if (len(parts) != 4 && !manual) || parts[0] != "plumb" || parts[1] != e.cfg.InstallID || e.cfg.InstallID == "" ||
+		parts[2] != target || parts[3] != lineage {
+		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s has no marker of this install, this Target and its lineage", id))
 	}
-	run, err := e.st.GuestBackupRunOfVolume(ctx, target, v.Volid)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && (run.Lineage != lineage || run.Result != "done")) {
-		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s has no finished backup job of this controller for this guest (M1 of #331)", id))
-	}
+	recs, err := e.st.RecordedGuestBackups(ctx, target)
 	if err != nil {
 		return RestoreVolume{}, err
+	}
+	rec, ok := recs[v.Volid]
+	trigger := "scheduled"
+	if manual {
+		trigger = "manual"
+	}
+	if !ok || rec.Lineage != lineage || rec.Trigger != trigger || rec.Size != v.Size || rec.CTime != v.Time.Unix() {
+		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is not the volume that a finished backup job of this controller recorded for this guest (M1 of #331)", id))
 	}
 	return v, nil
 }
@@ -327,7 +339,7 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	if err != nil {
 		return fail(err.Error())
 	}
-	r, err := renderOrNil(set, tp.Target)
+	r, err := e.renderOrNil(set, tp.Target)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -405,7 +417,7 @@ func (e *Engine) afterRestore(ctx context.Context, p store.Plan, set *state.Set,
 	if err != nil {
 		return
 	}
-	if r, err := renderOrNil(set, tp.Target); err != nil || r == nil || r.Adopted != nil {
+	if r, err := e.renderOrNil(set, tp.Target); err != nil || r == nil || r.Adopted != nil {
 		return
 	}
 	re, err := e.Propose(ctx, Input{Proposal: Proposal{Reenroll: []string{tp.Target}}, Origin: OriginReenroll, Author: "system",

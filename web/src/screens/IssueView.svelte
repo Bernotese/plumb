@@ -8,6 +8,7 @@
   import {
     ADDRESS_HINT,
     GUEST_ADDRESS,
+    GUEST_CONFIG,
     addressIssueText,
     formatTime,
     isSensitive,
@@ -17,6 +18,8 @@
   import RiskBadge from "../ui/RiskBadge.svelte";
 
   let { api, id }: { api: PlumbApi; id: number } = $props();
+  /** The attribute of a drift of NIC 1 … 3 (T-219): exactly "nic1" … "nic3", one per NIC. */
+  const NIC_ATTR = /^(nic[1-3])$/;
   let issue = $state<Issue | null>(null);
   let error = $state<unknown>(null);
   let actionError = $state<unknown>(null);
@@ -61,6 +64,12 @@
   });
 
   const hidden = $derived(issue?.changes.some(isSensitive) ?? false);
+  // D-418: a drift of NIC 1 … 3 has no Accept (issue.AcceptRefused); say why.
+  const nicDrift = $derived(
+    issue?.resource === GUEST_CONFIG
+      ? [...new Set(issue.changes.map((c) => NIC_ATTR.exec(c.attr)?.[1]).filter((n) => n))]
+      : [],
+  );
   const source = $derived(
     issue?.resource === "guest:config" ? "Proxmox" : "the agent in the guest",
   );
@@ -215,6 +224,14 @@
   {#if hidden}
     <p class="muted">
       A secret value changed. Plumb never shows it, and "Accept" is not offered for it.
+    </p>
+  {/if}
+
+  {#if issue.status === "open" && nicDrift.length && !issue.actions.includes("accept")}
+    <p class="muted" id="accept-nic">
+      Accept is not possible for a network card ({nicDrift.join(", ")}). Revert it, or change
+      <span class="mono">guest.nics</span> in the
+      <a href={href({ name: "target-edit", target: issue.target })}>Target {issue.target}</a>.
     </p>
   {/if}
 

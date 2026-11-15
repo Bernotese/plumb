@@ -36,6 +36,11 @@ type fakeNet struct {
 	// DHCP address (-1: all of them).
 	noRoute int
 	failArm bool // systemd-run fails
+	// cards are the more NICs of the VM (T-220): ifname and address each;
+	// "ip -j link show" without a device lists them after the main NIC.
+	cards [][2]string
+	upped []string // cards that "ip link set dev X up" brought up
+	downs []string // cards that "ip link set dev X down" brought down
 }
 
 func (f *fakeNet) live() (addrs []string, routes []liveRoute, dns, search []string) {
@@ -78,6 +83,36 @@ func (f *fakeNet) Run(ctx context.Context, name string, args ...string) ([]byte,
 			return nil, &ExitError{Name: "ip", Code: 2, Stderr: "RTNETLINK answers: Network is unreachable"}
 		}
 		return json.Marshal([]map[string]string{{"dev": f.dev, "prefsrc": f.main}})
+	case name == "ip" && slices.Equal(args, []string{"-j", "link", "show"}):
+		links := []map[string]string{{"ifname": f.dev, "address": f.mac, "link_type": "ether"}}
+		for _, c := range f.cards {
+			links = append(links, map[string]string{"ifname": c[0], "address": c[1], "link_type": "ether"})
+		}
+		return json.Marshal(links)
+	case name == "ip" && len(args) == 5 && slices.Equal(args[:4], []string{"-j", "link", "show", "dev"}) && args[4] != f.dev:
+		for _, c := range f.cards {
+			if c[0] == args[4] {
+				flags := []string{"BROADCAST", "MULTICAST"}
+				f.mu.Lock()
+				if slices.Contains(f.upped, c[0]) {
+					flags = append(flags, "UP")
+				}
+				f.mu.Unlock()
+				return json.Marshal([]map[string]any{{"ifname": c[0], "address": c[1], "flags": flags}})
+			}
+		}
+		return nil, &ExitError{Name: "ip", Code: 1, Stderr: "Device does not exist"}
+	case name == "ip" && len(args) == 5 && slices.Equal(args[:3], []string{"link", "set", "dev"}) && args[4] == "up":
+		f.mu.Lock()
+		f.upped = append(f.upped, args[3])
+		f.mu.Unlock()
+		return nil, nil
+	case name == "ip" && len(args) == 5 && slices.Equal(args[:3], []string{"link", "set", "dev"}) && args[4] == "down":
+		f.mu.Lock()
+		f.downs = append(f.downs, args[3])
+		f.upped = slices.DeleteFunc(f.upped, func(s string) bool { return s == args[3] })
+		f.mu.Unlock()
+		return nil, nil
 	case name == "ip" && slices.Equal(args[:3], []string{"-j", "link", "show"}):
 		if args[len(args)-1] != f.dev {
 			return nil, &ExitError{Name: "ip", Code: 1, Stderr: "Device does not exist"}

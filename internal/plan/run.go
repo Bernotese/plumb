@@ -345,7 +345,7 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		// Only a new adopt Plan binds it.
 		return true
 	}
-	r, err := renderOrNil(set, tp.Target)
+	r, err := e.renderOrNil(set, tp.Target)
 	if err != nil {
 		e.log.Error("render", "target", tp.Target, "err", err)
 		return false
