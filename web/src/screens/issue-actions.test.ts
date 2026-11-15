@@ -104,6 +104,52 @@ describe("Issue actions from the server", () => {
     expect(button("Ignore once")).toBeTruthy();
   });
 
+  it("guest:restore-failed: ignore only, the way back opens the restore of the named backup (D-420)", async () => {
+    await serverIssue("guest:restore-failed", {
+      risk: "destructive",
+      changes: [
+        {
+          attr: "restore",
+          from: "failed: the guest may have no disk",
+          to: "restore the safety backup backup 7e6d5c4b3a291807 of 2026-11-15T09:20:31Z",
+          risk: "destructive",
+        },
+      ],
+      actions: ["ignore_once", "ignore_rule"],
+      raw: false,
+      source: null,
+    });
+    await until(() => document.querySelector("#restore-hint"));
+    expect(text(el("#restore-hint"))).toContain("the guest may have no disk now");
+    expect(text(el("#restore-hint"))).toContain("backup 7e6d5c4b3a291807");
+    expect(text(el("#restore-hint"))).not.toContain("backup backup");
+    expect(text(el("#restore-failed-found"))).toContain("when the restore failed");
+    expect(text()).not.toContain("Risk of a revert");
+    expect(text()).not.toContain("Found by");
+    const links = [...el("#restore-way-back").querySelectorAll("a")];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "#/targets/web1/backups?restore=7e6d5c4b3a291807",
+      "#/targets/web1/backups",
+    ]);
+    expect(button("Revert: apply the desired state")).toBeFalsy();
+    expect(accept()).toBeFalsy();
+    expect(button("Ignore once")).toBeTruthy();
+  });
+
+  it("guest:restore-failed without a safety backup: only the backups link", async () => {
+    await serverIssue("guest:restore-failed", {
+      changes: [
+        { attr: "restore", from: "failed", to: "restore another backup", risk: "destructive" },
+      ],
+      actions: ["ignore_once", "ignore_rule"],
+      raw: false,
+      source: null,
+    });
+    await until(() => document.querySelector("#restore-way-back"));
+    expect(text(el("#restore-hint"))).toContain("restore another backup");
+    expect(el("#restore-way-back").querySelectorAll("a")).toHaveLength(1);
+  });
+
   it("agent:silent: the restore hint links to the re-enrollment", async () => {
     await serverIssue("agent:silent", {
       changes: [],

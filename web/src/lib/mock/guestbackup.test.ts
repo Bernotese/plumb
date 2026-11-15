@@ -81,6 +81,40 @@ describe("guest backups (mock)", () => {
     ).toBe("ok");
   });
 
+  it("restore: the safety backup change and notes; skip only for a broken guest (D-420)", async () => {
+    const a = api();
+    const p = await a.restoreGuest("db1", { backup: "3f2a9c0d1e4b5a67", reason: "Broken." });
+    const ch = p.targets[0]?.resources[0]?.changes ?? [];
+    expect(ch.map((c) => [c.attr, "to" in c ? c.to : null])[1]).toEqual([
+      "safety_backup",
+      "first, of the guest as it is now",
+    ]);
+    expect(p.warnings[0]).toBe(
+      "Proxmox removes the guest's disks before it writes the backup: if the restore fails, the guest is left empty.",
+    );
+    expect(p.warnings.join(" ")).toContain("Plumb first takes a safety backup");
+    expect(
+      await code(
+        a.restoreGuest("db1", {
+          backup: "3f2a9c0d1e4b5a67",
+          reason: "x",
+          skip_safety_backup: true,
+        }),
+      ),
+    ).toMatch(/^422 /);
+    // cache1's last restore failed: kept, with or without the tick.
+    for (const skip of [false, true]) {
+      const q = await a.restoreGuest("cache1", {
+        backup: "2c3d4e5f60718293",
+        reason: "x",
+        skip_safety_backup: skip,
+      });
+      const c = q.targets[0]?.resources[0]?.changes ?? [];
+      expect(c.map((x) => ("to" in x ? x.to : null))[1]).toMatch(/^kept: /);
+      expect(q.warnings.join(" ")).toContain("No new safety backup");
+    }
+  });
+
   it("a running guest without allow_restart is refused (D-194)", async () => {
     const a = api();
     const t = await a.getTarget("db1");

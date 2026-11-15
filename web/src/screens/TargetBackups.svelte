@@ -1,7 +1,8 @@
 <script lang="ts">
   // The guest backups of one Target (T-223, ARCHITECTURE §20, D-405 … D-411, D-417):
   // the storage and its encryption, the schedule, "back up now", the volumes
-  // by kind, the delete of one volume (admin person) and the restore wizard.
+  // by kind, the delete of one volume (admin person) and the restore wizard
+  // with the safety backup of D-420.
   import { tick } from "svelte";
   import {
     settingsRisks,
@@ -14,14 +15,25 @@
   import { liveSnapshot } from "../lib/live";
   import { go, href } from "../lib/router";
   import { can, me, roleNote } from "../lib/session.svelte";
-  import type { TargetView } from "../lib/types";
-  import { ALLOW_RESTART_LABEL, forKind, formatTime } from "../lib/view";
+  import type { Issue, TargetView } from "../lib/types";
+  import {
+    ALLOW_RESTART_LABEL,
+    GUEST_RESTORE_FAILED,
+    forKind,
+    formatTime,
+    restoreWayBack,
+  } from "../lib/view";
   import Badge from "../ui/Badge.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
 
-  let { api, name }: { api: PlumbApi; name: string } = $props();
+  let { api, name, restore }: { api: PlumbApi; name: string; restore?: string | undefined } =
+    $props();
   let target = $state<TargetView | null>(null);
   let list = $state<GuestBackupList | null>(null);
+  /** D-420: the open Issue of a failed restore of this guest, if any. */
+  let failed = $state<Issue | null>(null);
+  /** Review L2 of #350: the open Issues could not be read, so "kept" is not known here. */
+  let issuesUnknown = $state(false);
   let error = $state<unknown>(null);
   // M2 of #321, M1/M2 of #330: what the token could do beyond the install (person only).
   let risks = $state<SettingsRisks | null>(null);
@@ -29,11 +41,19 @@
 
   $effect(() => {
     const live = liveSnapshot({
-      load: () => Promise.all([api.getTarget(name), api.listGuestBackups(name)]),
+      load: () =>
+        Promise.all([
+          api.getTarget(name),
+          api.listGuestBackups(name),
+          // Extra information; the page works without it (the server checks the restore).
+          api.listIssues({ target: name, status: "open" }).catch(() => null),
+        ]),
       subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
-      onSnapshot: ([t, l]) => {
+      onSnapshot: ([t, l, iss]) => {
         target = t;
         list = l;
+        issuesUnknown = iss === null;
+        failed = iss?.find((i) => i.resource === GUEST_RESTORE_FAILED) ?? null;
       },
       onError: (e) => (error = e),
       onEvent: (e, l) => {
@@ -91,10 +111,10 @@
   const running = $derived(list?.last?.result === "running");
   // D-409: the delete of one volume is for a person with the role admin, never a token.
   // Without a known session the button stays hidden (review of #338).
-  const canDelete = $derived(
-    can("deleteGuestBackup") && (me.session?.principal.startsWith("user:") ?? false),
-  );
+  const person = $derived(me.session?.principal.startsWith("user:") ?? false);
+  const canDelete = $derived(can("deleteGuestBackup") && person);
   // Review L1 of #338: no job on a refused storage, and say why.
+  const wayBack = $derived(failed ? restoreWayBack(failed) : null);
   const nowOff = $derived(
     !list?.storage
       ? "Off: the install named no guest backup storage."
@@ -158,15 +178,28 @@
   let restoreErrors = $state<Record<string, string>>({});
   let restoreError = $state<unknown>(null);
   let restoreBusy = $state(false);
+  // D-420 (4): no safety backup only for a guest that is broken already; a person
+  // says so, the server checks it. After a failed restore the old one stays anyway.
+  let skipSafety = $state(false);
   async function startRestore(b: GuestBackup) {
     restoreOf = b;
     restoreReason = "";
     restoreAck = false;
+    skipSafety = false;
     restoreErrors = {};
     restoreError = null;
     await tick();
     document.getElementById("restore-title")?.focus();
   }
+  let restoreAsked = false;
+  let restoreMissing = $state(false);
+  $effect(() => {
+    if (restoreAsked || !restore || !list || !target) return;
+    restoreAsked = true;
+    const b = list.items.find((x) => x.id === restore && x.kind === "plumb");
+    if (b && can("restoreGuest")) void startRestore(b);
+    else restoreMissing = true;
+  });
   async function cancelRestore() {
     const id = restoreOf?.id;
     restoreOf = null;
@@ -191,6 +224,7 @@
       const plan = await api.restoreGuest(name, {
         backup: restoreOf.id,
         reason: restoreReason.trim(),
+        ...(skipSafety && !failed ? { skip_safety_backup: true } : {}),
       });
       go({ name: "plan", id: plan.id });
     } catch (err) {
@@ -209,6 +243,23 @@
 <ProblemBox {error} />
 
 {#if target && list}
+  {#if failed}
+    <p class="banner danger" role="note" id="restore-failed">
+      <strong>The last restore of this guest failed.</strong> Proxmox removes the guest's disks
+      before it writes the backup, so the guest may have no disk now.
+      {#if wayBack}The way back: restore the safety backup of {formatTime(wayBack.time)} (backup
+        <span class="mono">{wayBack.id}</span>), or another backup.{:else}The way back: restore
+        another backup.{/if}
+      A restore that works ends
+      <a href={href({ name: "issue", id: failed.id })}>Issue {failed.id}</a>.
+    </p>
+  {/if}
+  {#if restoreMissing}
+    <p class="banner warn" role="status" id="restore-missing">
+      Plumb cannot open the restore of backup <span class="mono">{restore}</span>: it is not a
+      backup of this guest in the list below, or your role cannot restore.
+    </p>
+  {/if}
   <section class="card" aria-labelledby="storage-title" id="backup-storage">
     <h2 id="storage-title">Storage</h2>
     {#if list.storage}
@@ -461,6 +512,10 @@
         <strong>Only a person can approve a restore.</strong> This makes a plan with the risk destructive.
         A person with the role admin approves it; an API token never can.
       </p>
+      <p class="banner warn" role="note" id="restore-disks">
+        Proxmox removes the guest's disks before it writes the backup: if the restore fails, the
+        guest is left empty.
+      </p>
       <p>What happens in the Run:</p>
       <ol id="restore-steps">
         <li>
@@ -468,6 +523,26 @@
             ALLOW_RESTART_LABEL,
             target.document.spec.type ?? "vm",
           )}" on the Target, or stop it yourself first; else Plumb refuses the restore.
+        </li>
+        <li id="restore-safety">
+          {#if failed}
+            No new safety backup: the last restore failed, so the guest may be empty. The safety
+            backup from before that failure stays the way back.
+          {:else if skipSafety}
+            No safety backup first: you say the guest is broken already. If the restore fails, only
+            another backup brings the guest back.
+          {:else if issuesUnknown}
+            <span id="restore-issues-unknown"
+              >Plumb decides: a safety backup of the guest as it is now, or it keeps the last one
+              (when the last restore failed). Plumb could not read the issues of this Target, so the
+              line <span class="mono">safety_backup</span> of the Plan says which. If Plumb takes a safety
+              backup and it fails, nothing is changed.</span
+            >
+          {:else}
+            Plumb takes a safety backup of the guest as it is now (about {bytesText(b.size)} on the backup
+            storage; below 10 % free Plumb refuses it). If that backup fails, nothing is changed, and
+            a guest that ran starts again.
+          {/if}
         </li>
         <li>
           Plumb revokes the agent credential and drops the pinned SSH host keys before the guest
@@ -495,6 +570,13 @@
           Access comes back as it was then: SSH keys, passwords and users that a person removed
           later work again.
         </li>
+        {#if !failed && !skipSafety && !issuesUnknown}
+          <li>
+            The safety backup stays in the list ("safety backup before a restore"), so you can undo
+            the restore. After a restore that worked, it replaces the older safety backup of this
+            guest.
+          </li>
+        {/if}
         <li>
           The Target document is not rolled back. The next Run sets the guest to the current
           document again.
@@ -504,6 +586,23 @@
         Plumb restores only over this guest. For a guest that is gone, restore the backup in Proxmox
         into the pool <code>plumb</code>, then adopt the guest.
       </p>
+      {#if !failed && person}
+        <div class="field">
+          <label class="check">
+            <input
+              type="checkbox"
+              id="restore-skip-safety"
+              bind:checked={skipSafety}
+              aria-describedby="restore-skip-help"
+            />
+            The guest is broken already: skip the safety backup.
+          </label>
+          <p class="muted" id="restore-skip-help">
+            Only for a guest that has no disk. Plumb checks it and refuses for a guest with a disk.
+            Without a safety backup, a failed restore leaves only the other backups.
+          </p>
+        </div>
+      {/if}
       <div class="field">
         <label class="check">
           <input
