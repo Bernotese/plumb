@@ -91,10 +91,13 @@ test("VM data disks: add, grow only, remove by a person, unmanage", async ({ pag
   await expect(page.locator("#disks-removed")).toContainText(
     "Plumb detaches the disk first, then frees its volume in a second step",
   );
+  // The disk checks run at the submit: a running guest needs allow_restart.
+  await page.getByLabel("Reason").fill("e2e: remove the data disk");
+  await page.getByRole("button", { name: "Show the plan" }).click();
   await expect(page.locator("#disks-remove-error")).toContainText(
     "Removing a disk of a running guest needs",
   );
-  await page.getByLabel(/^Plumb may restart this VM/).check();
+  await page.locator("#t-allow-restart").check();
   await showPlan(page, "e2e: remove the data disk");
   await expect(change(page, "disk1")).toContainText("destructive");
   await expect(
@@ -124,11 +127,24 @@ test("VM data disks: add, grow only, remove by a person, unmanage", async ({ pag
   );
   await showPlan(page, "e2e: stop managing data disks");
   await expect(page.getByRole("row", { name: /^disk[1-3]\b/ })).toHaveCount(0);
-  await approveAndRun(page);
-  const doc = (await (await page.request.get("/api/v1/targets/e2e8-vm")).json()) as {
-    document: { spec: { guest: Record<string, unknown> } };
-  };
-  expect(doc.document.spec.guest).not.toHaveProperty("disks");
+  // Only the document changes (no guest change): approve it by the API and
+  // read the stored document.
+  const unmanage = /Plan (\d+)/.exec(
+    (await page.getByRole("heading", { name: /^Plan \d+$/ }).textContent()) ?? "",
+  )?.[1];
+  const ok = await page.request.post(`/api/v1/plans/${unmanage}/approve`, {
+    headers: ORIGIN,
+    data: {},
+  });
+  expect(ok.status(), await ok.text()).toBe(202);
+  await expect
+    .poll(async () => {
+      const doc = (await (await page.request.get("/api/v1/targets/e2e8-vm")).json()) as {
+        document: { spec: { guest: Record<string, unknown> } };
+      };
+      return "disks" in doc.document.spec.guest;
+    })
+    .toBe(false);
 });
 
 test("container data disks: path rules and the stop-add-start rule (D-437)", async ({ page }) => {
@@ -160,7 +176,7 @@ test("container data disks: path rules and the stop-add-start rule (D-437)", asy
   await expect(page.locator("#disks-add-error")).toContainText(
     "Adding a container disk stops and starts the container",
   );
-  await page.getByLabel(/^Plumb may restart this container/).check();
+  await page.locator("#t-allow-restart").check();
   await showPlan(page, "e2e: container disk");
   await expect(change(page, "disk1")).toContainText("2 GiB at /srv/data");
   await expect(change(page, "disk1")).toContainText("disruptive");
