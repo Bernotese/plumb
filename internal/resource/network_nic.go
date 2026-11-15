@@ -105,13 +105,6 @@ func (n *network) nicKey(view map[string]npView, dev string) (key string, own bo
 	return "", false, fmt.Errorf("netplan has %d entries for the network card %s (%s), want at most one. Nothing was changed", len(keys), dev, strings.Join(keys, ", "))
 }
 
-// fileNICKey reads the key of the current file for Observe: the file's
-// only key, and whether it is the own one.
-func (n *network) fileNICKey(content string) (key string, own bool, ok bool) {
-	key, ok = fileKey(content)
-	return key, ok && key == n.ownNICKey(), ok
-}
-
 // nicPrepare is Prepare's check of a more NIC: the main NIC and its entry
 // stay as they are; it returns the NIC, its key and the entry before.
 func (n *network) nicPrepare(ctx context.Context, view map[string]npView, mainDev string, main netip.Addr) (dev, key string, own bool, mainKeyName string, err error) {
