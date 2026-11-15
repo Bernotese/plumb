@@ -49,6 +49,10 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if p, err = e.recheckGuestData(ctx, p); err != nil {
 		return store.Run{}, err
 	}
+	// T-234: the last restore of a Target may have failed since the Plan.
+	if err := e.approveRestoreFailed(ctx, &p); err != nil {
+		return store.Run{}, err
+	}
 	if check != nil {
 		if err := check(p); err != nil {
 			return store.Run{}, err

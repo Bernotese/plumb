@@ -310,6 +310,12 @@ export function humanOnlyReasons(plan: Plan): string[] {
       );
       continue;
     }
+    if (reason === "restore-failed") {
+      out.push(
+        "It deletes a Target whose last restore failed (T-234): its guest may still come back with a restore of the safety backup.",
+      );
+      continue;
+    }
     if (reason === "firewall-off") {
       out.push(
         "It turns off the firewall of a target (D-368): every port of that guest is open then.",

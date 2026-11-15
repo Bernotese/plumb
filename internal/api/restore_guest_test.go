@@ -28,6 +28,7 @@ type fakeRestorer struct {
 	restored []string                      // "ref volid"
 	fail     error
 	after    func() // runs after a restore that succeeded
+	during   func() // runs at the restore call, before its result (M2 of #352)
 	// safety makes the safety backup (D-420); nil: a fixed volume.
 	safety   func() (plan.RestoreVolume, error)
 	safeties int
@@ -65,6 +66,9 @@ func (f *fakeRestorer) RestoreGuest(_ context.Context, ref string, v plan.Restor
 	volid := v.Volid
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.during != nil {
+		f.during()
+	}
 	if f.fail != nil {
 		return f.fail
 	}

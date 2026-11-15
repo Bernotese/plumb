@@ -310,6 +310,13 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 			return store.Plan{}, err
 		}
 	}
+	// T-234: a Target whose last restore failed takes no Plan but a delete
+	// by a person (a restore Plan has its own path). Before the planning:
+	// the empty guest would fail it with a text that misleads.
+	restoreFailedDelete, err := e.restoreFailedNames(ctx, next, names)
+	if err != nil {
+		return store.Plan{}, err
+	}
 	plans := make([]TargetPlan, len(names))
 	errs := make([]error, len(names))
 	binding := make([]bool, len(names)) // a resource gets a new secret (D-099)
@@ -392,6 +399,9 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	}
 	if adoptedGuestDelete(plans) {
 		humanOnly = append(humanOnly, HumanOnlyAdoptedGuestDelete)
+	}
+	if restoreFailedDelete {
+		humanOnly = append(humanOnly, HumanOnlyRestoreFailed)
 	}
 	// Removing a firewall needs a person (D-368), whatever made the Plan.
 	if off, err := firewallOff(base, next, names); err != nil {

@@ -446,6 +446,9 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 	} else if r == nil {
 		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
 	}
+	if err := e.restoreFailedOne(ctx, target); err != nil { // T-234
+		return store.Plan{}, err
+	}
 	st, err := e.AgentStatus(ctx, target)
 	if err != nil {
 		return store.Plan{}, err
