@@ -931,7 +931,7 @@ func (e *Engine) restoredProof(ctx context.Context, iss store.Issue) bool {
 			return false
 		}
 		for _, s := range steps {
-			if s.Resource == wire.GuestConfigID && s.Target == iss.Target && strings.HasPrefix(s.Output, restoredMark) {
+			if s.Resource == wire.GuestConfigID && s.Target == iss.Target && restoredOutput(s.Output) {
 				return true
 			}
 		}
@@ -966,4 +966,12 @@ func cutRunes(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…(cut)"
+}
+
+// restoredOutput reports a restore step output that proves the restore
+// call worked: "restored <backup>…" while it runs or when it applied, and
+// "restored, but …" when a later step failed (the disk is the restored
+// one, review F1 of #335). "nothing was restored" does not count.
+func restoredOutput(out string) bool {
+	return strings.HasPrefix(out, restoredMark) || strings.HasPrefix(out, "restored, but")
 }

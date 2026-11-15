@@ -150,10 +150,9 @@ func (e *Engine) endStaleConfigIssue(ctx context.Context, target string) {
 	if iss.Status != store.IssueOpen {
 		return
 	}
-	if _, err := e.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: staleConfigComment}); err != nil {
-		e.log.Warn("comment the guest config Issue after a restore", "target", target, "err", err)
-	}
-	if err := e.restoreIssue(ctx, target, wire.GuestConfigID, wire.StatusUnchanged, nil); err != nil {
+	// The reason goes with the item, so the resolve writes one comment
+	// (D-428).
+	if err := e.endRestoreIssue(ctx, target, wire.GuestConfigID, staleConfigComment); err != nil {
 		e.log.Warn("end the guest config Issue after a restore", "target", target, "err", err)
 	}
 }
@@ -259,7 +258,7 @@ func (e *Engine) keepRestoredSteps(ctx context.Context, runs []store.Run) {
 			continue
 		}
 		for _, s := range steps {
-			if s.Resource == wire.GuestConfigID && s.Status == "running" && strings.HasPrefix(s.Output, restoredMark) {
+			if s.Resource == wire.GuestConfigID && s.Status == "running" && restoredOutput(s.Output) {
 				out := s.Output + "; the Run was cut by a controller stop, and the follow-up came at the next start (D-427)"
 				if err := e.st.UpdateStep(ctx, run.ID, s.Seq, "applied", s.Changes, out); err != nil {
 					e.log.Error("keep the restored step of a cut Run", "run", run.ID, "err", err)
@@ -308,7 +307,7 @@ func (e *Engine) recoverRestores(ctx context.Context) error {
 		steps, _ := e.st.Steps(ctx, run.ID)
 		restored := false
 		for _, s := range steps {
-			if s.Resource == wire.GuestConfigID && s.Target == iss.Target && strings.HasPrefix(s.Output, restoredMark) {
+			if s.Resource == wire.GuestConfigID && s.Target == iss.Target && restoredOutput(s.Output) {
 				restored = true
 			}
 		}
