@@ -175,6 +175,13 @@ func TestDiskVolumeLeft(t *testing.T) {
 	if err != nil || !strings.Contains(string(iss.Changes), left[0]) {
 		t.Fatalf("issue: %+v %v", iss, err)
 	}
+	// Only "ignore once": no Rule may hide a left volume (D-437).
+	_, view := adm.do("GET", "/api/v1/issues/"+itoa(iss.ID), nil)
+	var v struct{ Actions []string }
+	json.Unmarshal(view, &v)
+	if !slices.Equal(v.Actions, []string{"ignore_once"}) {
+		t.Errorf("volume-left actions %v", v.Actions)
+	}
 	code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "again", "put": []state.Doc{diskTarget("web1", `[{"slot":2,"size_gb":1}]`, true)}})
 	if code != 422 || pointerOf(body) != "/put/0/spec/guest/disks/0" || !strings.Contains(string(body), "waits for its removal: "+left[0]) {
 		t.Errorf("add while volume-left is open: %d %s", code, body)
