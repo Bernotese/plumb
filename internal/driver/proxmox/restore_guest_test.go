@@ -57,3 +57,47 @@ func TestRestoreGuest(t *testing.T) {
 		t.Error("a guest outside the pool")
 	}
 }
+
+// M1 of #346: every error before Proxmox began the restore is
+// ErrRestoreNotStarted (the disks are as before); a failed task is not.
+func TestRestoreGuestNotStarted(t *testing.T) {
+	f, d := backupFake(t)
+	ctx := context.Background()
+	vm := f.backup.addVol(9001, testMarker, 1)
+	other := f.backup.addVol(9002, testMarker, 2)
+	f.vms[9001].running = true
+	for name, call := range map[string]func() error{
+		"running":          func() error { return d.RestoreGuest(ctx, "plumb-backup", "9001", vm, 1<<20, 1) },
+		"not a pool guest": func() error { return d.RestoreGuest(ctx, "plumb-backup", "100", vm, 1<<20, 1) },
+	} {
+		if err := call(); !errors.Is(err, ErrRestoreNotStarted) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	f.vms[9001].running = false
+	for name, call := range map[string]func() error{
+		"another guest's volume": func() error { return d.RestoreGuest(ctx, "plumb-backup", "9001", other, 1<<20, 2) },
+		"changed size":           func() error { return d.RestoreGuest(ctx, "plumb-backup", "9001", vm, 1<<21, 1) },
+		"changed time":           func() error { return d.RestoreGuest(ctx, "plumb-backup", "9001", vm, 1<<20, 9) },
+		"another storage":        func() error { return d.RestoreGuest(ctx, "nope", "9001", vm, 1<<20, 1) },
+	} {
+		if err := call(); !errors.Is(err, ErrRestoreNotStarted) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if f.count("POST /nodes/pve/qemu") != 0 {
+		t.Fatal("a restore call was sent")
+	}
+	// Proxmox refuses the call (HTTP 403): no task, not started.
+	f.backup.restoreRefuse = true
+	if err := d.RestoreGuest(ctx, "plumb-backup", "9001", vm, 1<<20, 1); !errors.Is(err, ErrRestoreNotStarted) {
+		t.Errorf("a refused call: %v", err)
+	}
+	f.backup.restoreRefuse = false
+	// The task itself fails: Proxmox began, the disks may be gone.
+	f.backup.restoreFail = "command 'vma extract' failed: exit code 133"
+	err := d.RestoreGuest(ctx, "plumb-backup", "9001", vm, 1<<20, 1)
+	if err == nil || errors.Is(err, ErrRestoreNotStarted) {
+		t.Fatalf("a failed task: %v", err)
+	}
+}

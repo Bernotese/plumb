@@ -19,19 +19,21 @@ import (
 // only on the host, C9): the right checks of check_volume_access, PBS, the
 // real archive and its content, exclude-path in the archive.
 type fakeBackup struct {
-	storage    string // the guest backup storage, for example plumb-backup
-	typ        string // dir, pbs …
-	encKey     string // encryption-key of a pbs storage
-	content    string
-	others     []storageEntry // more storages in the index
-	total      int64
-	avail      int64
-	vols       map[string]*fakeVol
-	seq        int
-	notesFail  bool // vzdump writes no notes and ends with a warning
-	failVzdump string
-	forbidden  []string // forbidden vzdump parameters seen
-	restored   []string // "vmid volid storage" of each restore (T-222)
+	storage       string // the guest backup storage, for example plumb-backup
+	typ           string // dir, pbs …
+	encKey        string // encryption-key of a pbs storage
+	content       string
+	others        []storageEntry // more storages in the index
+	total         int64
+	avail         int64
+	vols          map[string]*fakeVol
+	seq           int
+	notesFail     bool // vzdump writes no notes and ends with a warning
+	failVzdump    string
+	forbidden     []string // forbidden vzdump parameters seen
+	restored      []string // "vmid volid storage" of each restore (T-222)
+	restoreFail   string   // non-empty: the restore task ends with this exit status (T-232)
+	restoreRefuse bool     // the restore POST is refused with 403 (no task)
 }
 
 type fakeVol struct {
@@ -116,6 +118,8 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 		vmid, _ := strconv.Atoi(r.Form.Get("vmid"))
 		vm, v := f.vms[vmid], b.vols[volid]
 		switch {
+		case b.restoreRefuse:
+			fail(w, 403, "Permission check failed (/vms/9001, VM.Backup)", nil)
 		case vm == nil || v == nil || v.vmid != vmid:
 			fail(w, 500, "restore: guest or volume not found", nil)
 		case r.Form.Get("force") != "1":
@@ -124,7 +128,11 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 			fail(w, 500, "restore: the guest runs", nil)
 		default:
 			b.restored = append(b.restored, fmt.Sprintf("%d %s %s", vmid, volid, r.Form.Get("storage")))
-			reply(w, 200, f.task(key))
+			upid := f.task(key)
+			if b.restoreFail != "" {
+				f.tasks[upid].exit = b.restoreFail
+			}
+			reply(w, 200, upid)
 		}
 		return true
 	case r.Method == "POST" && path == "/nodes/"+f.node+"/vzdump":

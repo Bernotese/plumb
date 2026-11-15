@@ -59,6 +59,13 @@ type GuestRestorer interface {
 	// RestoreGuest writes the volume over the stopped guest ref. It
 	// refuses a volume whose size or time is not v's any more.
 	RestoreGuest(ctx context.Context, ref string, v RestoreVolume) error
+	// SafetyBackup backs up the guest of target as it is now (trigger
+	// pre-restore, D-420) and waits; it returns the marked volume or an
+	// error with Plumb's own text.
+	SafetyBackup(ctx context.Context, target string) (RestoreVolume, error)
+	// DropSafetyBackups deletes the Target's older pre-restore volumes
+	// except keep (a volid), after a restore that worked.
+	DropSafetyBackups(ctx context.Context, target, keep string) error
 }
 
 // ErrBackupNotFound: no backup with this id of the Target's guest (404).
@@ -69,6 +76,34 @@ var ErrBackupNotFound = errors.New("no such backup of this Target")
 // not-restorable).
 var ErrNotRestorable = errors.New("not-restorable")
 
+// ErrRestoreNotStarted: Proxmox did not begin the restore (a check of the
+// driver, or a refused call): the guest's disks are as before (M1 of #346).
+// Its text after the colon is Plumb's reason.
+var ErrRestoreNotStarted = errors.New("the restore did not start")
+
+// ErrGuestGone: the Target's guest is not in the pool (the restorer cannot
+// list it): no restore after the guest is gone (D-411).
+var ErrGuestGone = errors.New("the guest of the Target is gone")
+
+// GuestRestoreFailedID is the Issue of a Target whose restore failed after
+// Proxmox began (D-420): the guest may have no disk; the Issue names the
+// way back. A restore that works resolves it.
+const GuestRestoreFailedID = "guest:restore-failed"
+
+// AttrSafetyBackup is the second change of a restore Plan: whether the Run
+// takes the safety backup first (D-420).
+const AttrSafetyBackup = "safety_backup"
+
+// Values of AttrSafetyBackup.
+const (
+	safetyFirst   = "first, of the guest as it is now"
+	safetySkipped = "skipped: the guest is broken already"
+	// safetyKept: the last restore failed (guest:restore-failed open), so
+	// the guest may be empty: no backup of it, and the safety backup of the
+	// guest before that failure stays the way back (D1 of #346).
+	safetyKept = "kept: the last restore failed; the safety backup from before it stays"
+)
+
 var reBackupID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // restoreText is the change text: the volume and its time (D-410).
@@ -78,17 +113,77 @@ func restoreText(v RestoreVolume) string {
 
 // restoreNotes are the warnings of a restore Plan: what comes back and
 // what happens to the agent (review L1 of #325, D-410).
-func restoreNotes(target string, adopted bool) []string {
+func restoreNotes(target string, adopted, skip, failedBefore bool, size int64) []string {
 	notes := []string{
+		"Proxmox removes the guest's disks before it writes the backup: if the restore fails, the guest is left empty.",
 		"The guest goes back to the backup time: every change in the guest after it is lost.",
 		"Access that a person removed after the backup comes back (authorized_keys lines, passwords, users).",
 		"The desired state is not rolled back: the next Run converges the guest to the head revision.",
 		"The agent credential is revoked before the guest starts, and the host key pins are dropped.",
 	}
+	switch {
+	case failedBefore:
+		notes = append(notes, "No new safety backup: the last restore failed, so the guest may be empty. The safety backup from before that failure stays the way back.")
+	case skip:
+		notes = append(notes, "No safety backup first: a person said the guest is broken already. If the restore fails, only another backup brings it back.")
+	default:
+		notes = append(notes, fmt.Sprintf("Plumb first takes a safety backup of the guest as it is now (about %s on the backup storage, the free-space gate applies); if that backup fails, nothing is changed.", sizeText(size)))
+	}
 	if adopted {
 		return append(notes, "The guest starts again without an agent: run the install command of "+target+" (an adopted Target).")
 	}
 	return append(notes, "A re-enroll Plan follows: approve it to start the guest with a new agent credential.")
+}
+
+// sizeText is a size in plain units.
+func sizeText(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%d MiB", n>>20)
+	case n > 0:
+		return fmt.Sprintf("%d KiB", (n+1023)>>10)
+	}
+	return "the size of a backup of the guest"
+}
+
+var reUPID = regexp.MustCompile(`UPID:[A-Za-z0-9._-]+:[0-9A-F]+:[0-9A-F]+:[0-9A-F]+:[A-Za-z0-9_-]+:[^: ]*:[^: ]+:`)
+
+// pveText is Plumb's text of a driver error in a restore step: never the
+// raw Proxmox task log (it holds host paths), only the task id when there
+// is one (D-420 (5)).
+func pveText(err error) string {
+	if errors.Is(err, driver.ErrNotFound) {
+		return "the guest is not in the pool any more"
+	}
+	if id := reUPID.FindString(err.Error()); id != "" {
+		return "the Proxmox task " + id + " failed (see its log in Proxmox)"
+	}
+	return "Proxmox did not do it (see the task list in Proxmox)"
+}
+
+// failedWayBack is the text of a restore that failed after Proxmox began.
+func failedWayBack(target string, safety *RestoreVolume) string {
+	t := " Proxmox removes the guest's disks before it writes the backup, so the guest may have no disk now. The way back: "
+	if safety != nil {
+		t += "restore the safety backup " + restoreText(*safety) + " (POST /targets/" + target + "/restore with backup " + safety.ID + "), or another backup"
+	} else {
+		t += "restore another backup (POST /targets/" + target + "/restore)"
+	}
+	return t + "; re-enroll only after a restore that worked."
+}
+
+// failedWayBackText is the way back of a further failure: the text of the
+// open Issue ("restore the safety backup backup <id> of <time>").
+func failedWayBackText(target, issueTo string) string {
+	t := " Proxmox removes the guest's disks before it writes the backup, so the guest may have no disk now. The way back: "
+	if issueTo != "" {
+		t += issueTo + " (POST /targets/" + target + "/restore), or another backup"
+	} else {
+		t += "restore another backup (POST /targets/" + target + "/restore)"
+	}
+	return t + "; re-enroll only after a restore that worked."
 }
 
 // wayBack is the end of every failure text after the revoke (review F1 of
@@ -98,6 +193,12 @@ func wayBack(target string, adopted bool) string {
 		return " The way back: start the guest in Proxmox, then run the install command of the Target (POST /targets/" + target + "/install-command)."
 	}
 	return " The way back: re-enroll the Target (POST /targets/" + target + "/reenroll); its Run starts the guest with a new agent credential."
+}
+
+// goneGuest is the refusal of a restore whose guest left the pool (D-411,
+// S3 of T-225).
+func goneGuest(target string) error {
+	return notRestorable(target, "the guest of the Target is gone; there is no restore after the guest is gone. A person restores the volume in Proxmox into the pool and adopts it (D-411)")
 }
 
 func notRestorable(target, msg string) error {
@@ -116,6 +217,9 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 	if errors.Is(err, ErrBackupNotFound) {
 		return RestoreVolume{}, &ProposalError{Target: target, Err: ErrBackupNotFound, Msg: "no backup " + id + " of this guest"}
 	}
+	if errors.Is(err, ErrGuestGone) || errors.Is(err, driver.ErrNotFound) {
+		return RestoreVolume{}, goneGuest(target)
+	}
 	if err != nil {
 		return RestoreVolume{}, err
 	}
@@ -133,8 +237,18 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 	// with the same lineage, trigger, size and time (M1, F1, F2 of #331).
 	line, _, _ := strings.Cut(v.Notes, "\n")
 	parts := strings.Split(strings.TrimSpace(line), ":")
-	manual := len(parts) == 5 && parts[4] == "m"
-	if (len(parts) != 4 && !manual) || parts[0] != "plumb" || parts[1] != e.cfg.InstallID || e.cfg.InstallID == "" ||
+	trigger := "scheduled"
+	if len(parts) == 5 {
+		switch parts[4] {
+		case "m":
+			trigger = "manual"
+		case "r":
+			trigger = "pre-restore" // a safety backup (D-420)
+		default:
+			trigger = ""
+		}
+	}
+	if len(parts) < 4 || len(parts) > 5 || trigger == "" || parts[0] != "plumb" || parts[1] != e.cfg.InstallID || e.cfg.InstallID == "" ||
 		parts[2] != target || parts[3] != lineage {
 		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s has no marker of this install, this Target and its lineage", id))
 	}
@@ -143,10 +257,6 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 		return RestoreVolume{}, err
 	}
 	rec, ok := recs[v.Volid]
-	trigger := "scheduled"
-	if manual {
-		trigger = "manual"
-	}
 	if !ok || rec.Lineage != lineage || rec.Trigger != trigger || rec.Size != v.Size || rec.CTime != v.Time.Unix() {
 		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is not the volume that a finished backup job of this controller recorded for this guest (M1 of #331)", id))
 	}
@@ -167,6 +277,9 @@ func (e *Engine) restoreBinding(ctx context.Context, target string) (store.Bindi
 // restore stops it (D-194).
 func (e *Engine) checkRestoreStop(ctx context.Context, target string, r *state.Rendered, b store.Binding) (driver.GuestState, error) {
 	st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+	if errors.Is(err, driver.ErrNotFound) {
+		return st, goneGuest(target)
+	}
 	if err != nil {
 		return st, fmt.Errorf("the guest cannot be read: %w", err)
 	}
@@ -180,7 +293,7 @@ func (e *Engine) checkRestoreStop(ctx context.Context, target string, r *state.R
 }
 
 // ProposeRestore makes a restore Plan for one Target (D-410).
-func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, author string) (store.Plan, error) {
+func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, author string, skipSafety bool) (store.Plan, error) {
 	if author == "" {
 		return store.Plan{}, errors.New("plan: a proposal needs an author")
 	}
@@ -212,8 +325,18 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	if err != nil {
 		return store.Plan{}, err
 	}
-	if _, err := e.checkRestoreStop(ctx, target, r, b); err != nil {
+	st, err := e.checkRestoreStop(ctx, target, r, b)
+	if err != nil {
 		return store.Plan{}, err
+	}
+	failedBefore, _, err := e.restoreFailedOpen(ctx, target)
+	if err != nil {
+		return store.Plan{}, err
+	}
+	if skipSafety && !failedBefore {
+		if err := e.checkBroken(ctx, target, st); err != nil {
+			return store.Plan{}, err
+		}
 	}
 	if err := e.checkIdle([]string{target}); err != nil {
 		return store.Plan{}, err
@@ -222,9 +345,10 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 		reason = "restore " + target + " from " + restoreText(v)
 	}
 	tp := TargetPlan{Target: target, Resources: []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
-		Risk: wire.RiskDestructive, Changes: []wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive}}}}}
+		Risk: wire.RiskDestructive, Changes: []wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive},
+			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety, failedBefore), Risk: wire.RiskDestructive}}}}}
 	changes, _ := json.Marshal([]TargetPlan{tp})
-	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: restoreNotes(target, r.Adopted != nil)})
+	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: restoreNotes(target, r.Adopted != nil, skipSafety || failedBefore, failedBefore, v.Size)})
 	p, err := e.st.CreatePlan(ctx, store.Plan{BaseRevision: head.ID, Origin: OriginRestore, Proposal: proposal,
 		Changes: changes, Risk: string(wire.RiskDestructive), Reason: reason, Author: author,
 		HumanOnly: []string{HumanOnlyGuestRestore}})
@@ -236,6 +360,51 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	return p, nil
 }
 
+func safetyValue(skip, failedBefore bool) string {
+	switch {
+	case failedBefore:
+		return safetyKept
+	case skip:
+		return safetySkipped
+	}
+	return safetyFirst
+}
+
+// restoreFailedOpen reports an open guest:restore-failed of target and the
+// way back that it names (the safety backup from before the first failure).
+func (e *Engine) restoreFailedOpen(ctx context.Context, target string) (bool, string, error) {
+	iss, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	var ch []wire.Change
+	json.Unmarshal(iss.Changes, &ch)
+	for _, c := range ch {
+		if to, ok := c.To.(string); ok && c.Attr == "restore" {
+			return true, to, nil
+		}
+	}
+	return true, "", nil
+}
+
+// checkBroken allows "no safety backup" only for a guest that is broken
+// already (D-420 (4)): it has no disk, or its last restore failed (an open
+// Issue guest:restore-failed).
+func (e *Engine) checkBroken(ctx context.Context, target string, st driver.GuestState) error {
+	if st.Spec.DiskGB == 0 {
+		return nil
+	}
+	if _, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return &ProposalError{Target: target, Msg: "the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)"}
+}
+
 // restorePlanned reads the Target and the planned change text of a
 // restore Plan, and the backup id in it.
 func restorePlanned(p store.Plan) (TargetPlan, string, string, error) {
@@ -243,8 +412,8 @@ func restorePlanned(p store.Plan) (TargetPlan, string, string, error) {
 	if err := json.Unmarshal(p.Changes, &tps); err != nil {
 		return TargetPlan{}, "", "", err
 	}
-	if len(tps) != 1 || len(tps[0].Resources) != 1 || len(tps[0].Resources[0].Changes) != 1 {
-		return TargetPlan{}, "", "", errors.New("plan: a restore Plan has one Target and one change")
+	if len(tps) != 1 || len(tps[0].Resources) != 1 || len(tps[0].Resources[0].Changes) < 1 || len(tps[0].Resources[0].Changes) > 2 {
+		return TargetPlan{}, "", "", errors.New("plan: a restore Plan has one Target and the restore change")
 	}
 	c := tps[0].Resources[0].Changes[0]
 	text, _ := c.To.(string)
@@ -253,6 +422,17 @@ func restorePlanned(p store.Plan) (TargetPlan, string, string, error) {
 		return TargetPlan{}, "", "", fmt.Errorf("plan: bad restore change %q", text)
 	}
 	return tps[0], text, id, nil
+}
+
+// skipSafety reports whether a restore Plan skips the safety backup. A Plan
+// without the change (made before D-420) takes it: the safe side.
+func skipSafety(tp TargetPlan) bool {
+	for _, c := range tp.Resources[0].Changes {
+		if c.Attr == AttrSafetyBackup {
+			return c.To == safetySkipped || c.To == safetyKept
+		}
+	}
+	return false
 }
 
 // checkRestore checks a restore Plan again (approval and Run): the Target,
@@ -335,10 +515,11 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 		return false
 	}
 	s.set(ctx, wire.GuestConfigID, wire.StatusRunning, nil, "")
-	_, text, id, err := restorePlanned(p)
+	ptp, text, id, err := restorePlanned(p)
 	if err != nil {
 		return fail(err.Error())
 	}
+	skip := skipSafety(ptp)
 	r, err := e.renderOrNil(set, tp.Target)
 	if err != nil {
 		return fail(err.Error())
@@ -352,11 +533,45 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	if err != nil {
 		return fail("nothing was changed: " + err.Error())
 	}
-	// 2. Stop.
-	if st.Power != driver.PowerStopped {
-		if err := e.stopGuest(ctx, tp.Target); err != nil {
-			return fail("nothing was restored: " + err.Error())
+	failedBefore, prevWay, err := e.restoreFailedOpen(ctx, tp.Target)
+	if err != nil {
+		return fail("nothing was changed: " + err.Error())
+	}
+	if skip && !failedBefore {
+		if err := e.checkBroken(ctx, tp.Target, st); err != nil {
+			return fail("nothing was changed: " + err.Error())
 		}
+	}
+	// D1 of #346: after a failed restore the guest may be empty: no backup
+	// of it, and the safety backup from before stays the way back.
+	skip = skip || failedBefore
+	// 2. Stop, before the safety backup: the backup then holds the guest
+	// exactly as the restore overwrites it (no lost window; design point e
+	// of #345).
+	wasRunning := st.Power != driver.PowerStopped
+	if wasRunning {
+		if err := e.stopGuest(ctx, tp.Target); err != nil {
+			return fail("nothing was restored; the guest may be stopped: " + pveText(err) + ". Plan the restore again.")
+		}
+	}
+	// 2b. The safety backup of the guest as it is (D-420): Proxmox removes
+	// the guest's disks before it writes the backup, so a failed restore
+	// needs a way back. The 10 % gate does not prove that it fits: if it
+	// fails, the guest is started again and nothing else is changed.
+	var safety *RestoreVolume
+	if !skip {
+		sv, err := e.cfg.GuestRestore.SafetyBackup(ctx, tp.Target)
+		if err != nil {
+			msg := "nothing was changed: the safety backup before the restore failed: " + safetyText(err)
+			if wasRunning {
+				if serr := e.cfg.Driver.Power(ctx, driver.GuestID(b.Ref), driver.PowerStart); serr != nil {
+					return fail(msg + ". The guest was stopped for it, and its start failed: " + pveText(serr) + "; start it in Proxmox")
+				}
+				msg += ". The guest was stopped for it and runs again"
+			}
+			return fail(msg)
+		}
+		safety = &sv
 	}
 	// 3. Revoke before the guest can start again (D-410); drop the pins
 	// and the repair report of the old guest (D-417 (4)).
@@ -369,16 +584,49 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	}
 	// 4. Restore.
 	if err := e.cfg.GuestRestore.RestoreGuest(ctx, b.Ref, v); err != nil {
-		return fail("the guest is stopped and its agent credential is revoked; the restore failed: " + err.Error() + ". Plan the restore again." + way)
+		if errors.Is(err, ErrRestoreNotStarted) {
+			// The disks are as before: no Issue, no "may have no disk"; the
+			// guest runs again if it ran (M1 of #346).
+			msg := "the restore did not start: " + strings.TrimPrefix(err.Error(), ErrRestoreNotStarted.Error()+": ") +
+				". The guest's disks are as before; nothing was restored."
+			if wasRunning {
+				if serr := e.cfg.Driver.Power(ctx, driver.GuestID(b.Ref), driver.PowerStart); serr != nil {
+					msg += " Its start failed: " + pveText(serr) + "; start it in Proxmox."
+				} else {
+					msg += " The guest runs again."
+				}
+			}
+			return fail(msg + " The agent credential is revoked." + way)
+		}
+		if failedBefore {
+			// The Issue keeps naming the good backup from before the first
+			// failure.
+			return fail("the agent credential is revoked; the restore failed again: " + pveText(err) + "." + failedWayBackText(tp.Target, prevWay))
+		}
+		msg := "the agent credential is revoked; the restore failed: " + pveText(err) + "." + failedWayBack(tp.Target, safety)
+		e.restoreFailedIssue(ctx, tp.Target, safety)
+		return fail(msg)
 	}
 	// The disk is the restored one now: the follow-up (re-enroll Plan)
 	// comes also when a later step fails (review F1 of #335).
 	e.restored.Store(p.ID, true)
+	// A restore that worked: the Issue of a failed one ends (D-420).
+	if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusUnchanged, nil); err != nil {
+		e.log.Warn("end the Issue of a failed restore", "target", tp.Target, "err", err)
+	}
+	// Exactly one safety backup per Target: this Run's replaces the older
+	// ones. It stays after the restore, so a wrong restore can be undone.
+	// A Run without one deletes none.
+	if safety != nil {
+		if err := e.cfg.GuestRestore.DropSafetyBackups(ctx, tp.Target, safety.Volid); err != nil {
+			e.log.Warn("delete the older safety backups", "target", tp.Target, "err", err)
+		}
+	}
 	// The restored config is Plumb's own step, no drift; the next Run
 	// converges it to the head.
 	after, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
 	if err != nil {
-		return fail("restored, but the guest cannot be read: " + err.Error() + "." + way)
+		return fail("restored, but the guest cannot be read: " + pveText(err) + "." + way)
 	}
 	if nb, err := e.st.GetBinding(ctx, state.KindTarget, tp.Target); err == nil && nb.Ref == b.Ref {
 		nb.Digest = pollKey(after)
@@ -388,10 +636,13 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	}
 	// 5. The way back for the agent.
 	out := "restored " + text + "; the agent credential is revoked and the host key pins are dropped. "
+	if safety != nil {
+		out += "The safety backup " + restoreText(*safety) + " keeps the guest as it was before. "
+	}
 	if r.Adopted != nil {
 		if after.Power != driver.PowerRunning {
 			if err := e.cfg.Driver.Power(ctx, driver.GuestID(b.Ref), driver.PowerStart); err != nil {
-				return fail(out + "The start failed: " + err.Error() + "." + way)
+				return fail(out + "The start failed: " + pveText(err) + "." + way)
 			}
 		}
 		out += "The guest runs without an agent: run the install command of the Target (POST /targets/" + tp.Target + "/install-command)."
@@ -429,4 +680,29 @@ func (e *Engine) afterRestore(ctx context.Context, p store.Plan, set *state.Set,
 		return
 	}
 	e.log.Info("re-enroll Plan after the restore", "target", tp.Target, "plan", re.ID)
+}
+
+// safetyText is the reason of a failed safety backup: Plumb's own text of
+// the job (refused, the storage, the free-space gate), never a task log.
+func safetyText(err error) string {
+	msg := err.Error()
+	for _, p := range []string{"backup: guest backup refused: ", "backup: the safety backup before the restore failed: "} {
+		if i := strings.Index(msg, p); i >= 0 {
+			return msg[i+len(p):]
+		}
+	}
+	return pveText(err)
+}
+
+// restoreFailedIssue opens the Issue guest:restore-failed (D-420): the
+// guest may have no disk; the change names the safety backup to restore.
+func (e *Engine) restoreFailedIssue(ctx context.Context, target string, safety *RestoreVolume) {
+	to := "restore another backup"
+	if safety != nil {
+		to = "restore the safety backup " + restoreText(*safety)
+	}
+	if err := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers,
+		[]wire.Change{{Attr: "restore", From: "failed: the guest may have no disk", To: to, Risk: wire.RiskDestructive}}); err != nil {
+		e.log.Error("open the Issue of a failed restore", "target", target, "err", err)
+	}
 }

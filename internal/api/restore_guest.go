@@ -13,6 +13,9 @@ import (
 type guestRestoreRequest struct {
 	Backup string `json:"backup"`
 	Reason string `json:"reason"`
+	// SkipSafetyBackup: no safety backup first; only for a broken guest
+	// (D-420 (4)).
+	SkipSafetyBackup bool `json:"skip_safety_backup"`
 }
 
 var reGuestBackupID = regexp.MustCompile(`^[0-9a-f]{16}$`)
@@ -40,7 +43,7 @@ func (s *Server) restoreGuest(w http.ResponseWriter, r *http.Request, p *princip
 		s.fail(w, err)
 		return
 	}
-	pl, err := s.cfg.Plans.ProposeRestore(r.Context(), name, req.Backup, req.Reason, p.name)
+	pl, err := s.cfg.Plans.ProposeRestore(r.Context(), name, req.Backup, req.Reason, p.name, req.SkipSafetyBackup)
 	if err != nil {
 		s.fail(w, err)
 		return

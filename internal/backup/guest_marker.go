@@ -35,7 +35,11 @@ type Recorded struct {
 const (
 	TriggerScheduled = "scheduled"
 	TriggerManual    = "manual"
-	TriggerUnknown   = "unknown"
+	// TriggerPreRestore: the safety backup that a restore Run takes of the
+	// guest as it is, before it changes anything (D-420). Retention never
+	// counts or deletes it; a restore that worked deletes the older ones.
+	TriggerPreRestore = "pre-restore"
+	TriggerUnknown    = "unknown"
 )
 
 // MaxManualKept: retention keeps at most this many manual backups beside
@@ -43,10 +47,23 @@ const (
 // scheduled backup.
 const MaxManualKept = 2
 
-// Marker is the parsed notes marker plumb:<install>:<target>:<lineage>[:m].
+// Marker is the parsed notes marker plumb:<install>:<target>:<lineage>[:m|:r]
+// (":m" manual, ":r" the safety backup before a restore, D-420).
 type Marker struct {
 	Install, Target, Lineage string
 	Manual                   bool
+	PreRestore               bool
+}
+
+// Trigger is the trigger that the marker names.
+func (m Marker) Trigger() string {
+	switch {
+	case m.PreRestore:
+		return TriggerPreRestore
+	case m.Manual:
+		return TriggerManual
+	}
+	return TriggerScheduled
 }
 
 var (
@@ -66,8 +83,13 @@ func (m Marker) String() (string, error) {
 		return "", ErrBadMarker
 	}
 	s := "plumb:" + m.Install + ":" + m.Target + ":" + m.Lineage
-	if m.Manual {
+	switch {
+	case m.Manual && m.PreRestore:
+		return "", ErrBadMarker
+	case m.Manual:
 		s += ":m"
+	case m.PreRestore:
+		s += ":r"
 	}
 	return s, nil
 }
@@ -83,10 +105,14 @@ func ParseMarker(notes string) (Marker, bool) {
 	}
 	m := Marker{Install: parts[1], Target: parts[2], Lineage: parts[3]}
 	if len(parts) == 5 {
-		if parts[4] != "m" {
+		switch parts[4] {
+		case "m":
+			m.Manual = true
+		case "r":
+			m.PreRestore = true
+		default:
 			return Marker{}, false
 		}
-		m.Manual = true
 	}
 	if _, err := m.String(); err != nil {
 		return Marker{}, false
@@ -131,7 +157,7 @@ func Classify(vols []Volume, install, target, lineage string, recorded map[strin
 		c := Classified{Volume: v, ID: VolumeID(v.Volid), Kind: KindUnmarked, Trigger: TriggerUnknown}
 		m, ok := ParseMarker(v.Notes)
 		r, rec := recorded[v.Volid]
-		if ok && rec && m.Install == install && m.Target == target && m.Lineage == r.Lineage && m.Manual == (r.Trigger == TriggerManual) &&
+		if ok && rec && m.Install == install && m.Target == target && m.Lineage == r.Lineage && m.Trigger() == r.Trigger &&
 			v.Size == r.Size && v.Time.Unix() == r.CTime {
 			c.Trigger = r.Trigger
 			c.Kind = KindOlderGuest

@@ -49,6 +49,13 @@ func (f *phasedRestorer) FindBackup(context.Context, string, string, string) (pl
 	return f.good, nil
 }
 
+// SafetyBackup and DropSafetyBackups (D-420, T-232): a fixed volume.
+func (f *phasedRestorer) SafetyBackup(context.Context, string) (plan.RestoreVolume, error) {
+	return plan.RestoreVolume{ID: "5afe5afe5afe5afe", Volid: "bk:safety", Kind: "plumb"}, nil
+}
+
+func (f *phasedRestorer) DropSafetyBackups(context.Context, string, string) error { return nil }
+
 func (f *phasedRestorer) RestoreGuest(context.Context, string, plan.RestoreVolume) error {
 	f.mu.Lock()
 	f.restored++
