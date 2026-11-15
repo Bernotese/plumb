@@ -190,6 +190,26 @@ func (g *Guests) BackUp(ctx context.Context, target, trigger, actor string) erro
 // vzdump, the read-back and retention. "Back up now" answers after Start
 // and calls run in the background.
 func (g *Guests) Start(ctx context.Context, target, trigger, actor string) (run func(context.Context) error, err error) {
+	job, err := g.start(ctx, target, trigger, actor)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) error {
+		_, err := job(ctx)
+		return err
+	}, nil
+}
+
+// jobResult is the end of one job: its row's result, message and volume.
+type jobResult struct {
+	Result, Message string
+	Volume          Volume
+}
+
+// start is Start; its job returns the job's own result (a caller that waits
+// reads it from there, never from "the last row", which the scheduler can
+// write at the same time: L1 of #346).
+func (g *Guests) start(ctx context.Context, target, trigger, actor string) (func(context.Context) (jobResult, error), error) {
 	t, err := g.cfg.Target(ctx, target)
 	if err != nil {
 		return nil, err
@@ -198,7 +218,7 @@ func (g *Guests) Start(ctx context.Context, target, trigger, actor string) (run 
 	if err != nil {
 		return nil, err
 	}
-	refuse := func(msg string) (func(context.Context) error, error) {
+	refuse := func(msg string) (func(context.Context) (jobResult, error), error) {
 		if err := g.cfg.Store.RefusedGuestBackupRun(ctx, t.Name, lineage, trigger, msg); err != nil {
 			return nil, err
 		}
@@ -233,10 +253,12 @@ func (g *Guests) Start(ctx context.Context, target, trigger, actor string) (run 
 		return nil, err
 	}
 	g.emit(ctx, "guest_backup.started", t.Name, actor, map[string]any{"trigger": trigger})
-	return func(ctx context.Context) error { return g.run(ctx, id, t, lineage, marker, trigger, actor) }, nil
+	return func(ctx context.Context) (jobResult, error) {
+		return g.run(ctx, id, t, lineage, marker, trigger, actor)
+	}, nil
 }
 
-func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, marker, trigger, actor string) error {
+func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, marker, trigger, actor string) (jobResult, error) {
 	var exclude []string
 	if t.LXC {
 		exclude = excludeLXC
@@ -253,7 +275,7 @@ func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, mark
 			msg = "another backup of this guest ran at the same time; Plumb's volume stays and is listed when its record is complete"
 		}
 		g.finish(ctx, id, t.Name, actor, trigger, "failed", Volume{}, msg)
-		return fmt.Errorf("backup: guest backup of %s: %w", t.Name, err)
+		return jobResult{Result: "failed", Message: msg}, fmt.Errorf("backup: guest backup of %s: %w", t.Name, err)
 	}
 	// vzdump only warns when the notes fail (T-214): read the marker back.
 	result, msg := "done", ""
@@ -278,7 +300,7 @@ func (g *Guests) run(ctx context.Context, id int64, t GuestTarget, lineage, mark
 		// Also without a backup field: the manual cap holds (M3 of #331).
 		g.retain(ctx, t, lineage, vols)
 	}
-	return nil
+	return jobResult{Result: result, Message: msg, Volume: made}, nil
 }
 
 // recorded returns the volumes that this controller's jobs of target
@@ -375,26 +397,23 @@ func (g *Guests) emit(ctx context.Context, typ, target, actor string, data map[s
 // an error with Plumb's own text: then the restore stops before it changes
 // anything.
 func (g *Guests) SafetyBackup(ctx context.Context, target, actor string) (Classified, error) {
-	if err := g.BackUp(ctx, target, TriggerPreRestore, actor); err != nil {
-		return Classified{}, err
-	}
-	last, err := g.cfg.Store.LastGuestBackupRun(ctx, target)
+	job, err := g.start(ctx, target, TriggerPreRestore, actor)
 	if err != nil {
 		return Classified{}, err
 	}
-	if last.Trigger != TriggerPreRestore || last.Result != "done" {
-		msg := last.Message
-		if msg == "" {
-			msg = "the backup ended " + last.Result
-		}
-		return Classified{}, fmt.Errorf("%w: %s", ErrSafetyBackup, msg)
+	res, err := job(ctx)
+	if err != nil {
+		return Classified{}, fmt.Errorf("%w: %s", ErrSafetyBackup, res.Message)
+	}
+	if res.Result != "done" {
+		return Classified{}, fmt.Errorf("%w: %s", ErrSafetyBackup, res.Message)
 	}
 	vols, err := g.classified(ctx, target)
 	if err != nil {
 		return Classified{}, err
 	}
 	for _, c := range vols {
-		if c.Volid == last.Volid && c.Kind == KindPlumb && c.Trigger == TriggerPreRestore {
+		if c.Volid == res.Volume.Volid && c.Kind == KindPlumb && c.Trigger == TriggerPreRestore {
 			return c, nil
 		}
 	}

@@ -93,6 +93,10 @@ const AttrSafetyBackup = "safety_backup"
 const (
 	safetyFirst   = "first, of the guest as it is now"
 	safetySkipped = "skipped: the guest is broken already"
+	// safetyKept: the last restore failed (guest:restore-failed open), so
+	// the guest may be empty: no backup of it, and the safety backup of the
+	// guest before that failure stays the way back (D1 of #346).
+	safetyKept = "kept: the last restore failed; the safety backup from before it stays"
 )
 
 var reBackupID = regexp.MustCompile(`^[0-9a-f]{16}$`)
@@ -104,7 +108,7 @@ func restoreText(v RestoreVolume) string {
 
 // restoreNotes are the warnings of a restore Plan: what comes back and
 // what happens to the agent (review L1 of #325, D-410).
-func restoreNotes(target string, adopted, skip bool, size int64) []string {
+func restoreNotes(target string, adopted, skip, failedBefore bool, size int64) []string {
 	notes := []string{
 		"Proxmox removes the guest's disks before it writes the backup: if the restore fails, the guest is left empty.",
 		"The guest goes back to the backup time: every change in the guest after it is lost.",
@@ -112,9 +116,12 @@ func restoreNotes(target string, adopted, skip bool, size int64) []string {
 		"The desired state is not rolled back: the next Run converges the guest to the head revision.",
 		"The agent credential is revoked before the guest starts, and the host key pins are dropped.",
 	}
-	if skip {
+	switch {
+	case failedBefore:
+		notes = append(notes, "No new safety backup: the last restore failed, so the guest may be empty. The safety backup from before that failure stays the way back.")
+	case skip:
 		notes = append(notes, "No safety backup first: a person said the guest is broken already. If the restore fails, only another backup brings it back.")
-	} else {
+	default:
 		notes = append(notes, fmt.Sprintf("Plumb first takes a safety backup of the guest as it is now (about %s on the backup storage, the free-space gate applies); if that backup fails, nothing is changed.", sizeText(size)))
 	}
 	if adopted {
@@ -156,6 +163,18 @@ func failedWayBack(target string, safety *RestoreVolume) string {
 	t := " Proxmox removes the guest's disks before it writes the backup, so the guest may have no disk now. The way back: "
 	if safety != nil {
 		t += "restore the safety backup " + restoreText(*safety) + " (POST /targets/" + target + "/restore with backup " + safety.ID + "), or another backup"
+	} else {
+		t += "restore another backup (POST /targets/" + target + "/restore)"
+	}
+	return t + "; re-enroll only after a restore that worked."
+}
+
+// failedWayBackText is the way back of a further failure: the text of the
+// open Issue ("restore the safety backup backup <id> of <time>").
+func failedWayBackText(target, issueTo string) string {
+	t := " Proxmox removes the guest's disks before it writes the backup, so the guest may have no disk now. The way back: "
+	if issueTo != "" {
+		t += issueTo + " (POST /targets/" + target + "/restore), or another backup"
 	} else {
 		t += "restore another backup (POST /targets/" + target + "/restore)"
 	}
@@ -305,7 +324,11 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	if err != nil {
 		return store.Plan{}, err
 	}
-	if skipSafety {
+	failedBefore, _, err := e.restoreFailedOpen(ctx, target)
+	if err != nil {
+		return store.Plan{}, err
+	}
+	if skipSafety && !failedBefore {
 		if err := e.checkBroken(ctx, target, st); err != nil {
 			return store.Plan{}, err
 		}
@@ -318,9 +341,9 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	}
 	tp := TargetPlan{Target: target, Resources: []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
 		Risk: wire.RiskDestructive, Changes: []wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive},
-			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety), Risk: wire.RiskDestructive}}}}}
+			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety, failedBefore), Risk: wire.RiskDestructive}}}}}
 	changes, _ := json.Marshal([]TargetPlan{tp})
-	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: restoreNotes(target, r.Adopted != nil, skipSafety, v.Size)})
+	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: restoreNotes(target, r.Adopted != nil, skipSafety || failedBefore, failedBefore, v.Size)})
 	p, err := e.st.CreatePlan(ctx, store.Plan{BaseRevision: head.ID, Origin: OriginRestore, Proposal: proposal,
 		Changes: changes, Risk: string(wire.RiskDestructive), Reason: reason, Author: author,
 		HumanOnly: []string{HumanOnlyGuestRestore}})
@@ -332,11 +355,34 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	return p, nil
 }
 
-func safetyValue(skip bool) string {
-	if skip {
+func safetyValue(skip, failedBefore bool) string {
+	switch {
+	case failedBefore:
+		return safetyKept
+	case skip:
 		return safetySkipped
 	}
 	return safetyFirst
+}
+
+// restoreFailedOpen reports an open guest:restore-failed of target and the
+// way back that it names (the safety backup from before the first failure).
+func (e *Engine) restoreFailedOpen(ctx context.Context, target string) (bool, string, error) {
+	iss, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	var ch []wire.Change
+	json.Unmarshal(iss.Changes, &ch)
+	for _, c := range ch {
+		if to, ok := c.To.(string); ok && c.Attr == "restore" {
+			return true, to, nil
+		}
+	}
+	return true, "", nil
 }
 
 // checkBroken allows "no safety backup" only for a guest that is broken
@@ -378,7 +424,7 @@ func restorePlanned(p store.Plan) (TargetPlan, string, string, error) {
 func skipSafety(tp TargetPlan) bool {
 	for _, c := range tp.Resources[0].Changes {
 		if c.Attr == AttrSafetyBackup {
-			return c.To == safetySkipped
+			return c.To == safetySkipped || c.To == safetyKept
 		}
 	}
 	return false
@@ -482,11 +528,18 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	if err != nil {
 		return fail("nothing was changed: " + err.Error())
 	}
-	if skip {
+	failedBefore, prevWay, err := e.restoreFailedOpen(ctx, tp.Target)
+	if err != nil {
+		return fail("nothing was changed: " + err.Error())
+	}
+	if skip && !failedBefore {
 		if err := e.checkBroken(ctx, tp.Target, st); err != nil {
 			return fail("nothing was changed: " + err.Error())
 		}
 	}
+	// D1 of #346: after a failed restore the guest may be empty: no backup
+	// of it, and the safety backup from before stays the way back.
+	skip = skip || failedBefore
 	// 2. Stop, before the safety backup: the backup then holds the guest
 	// exactly as the restore overwrites it (no lost window; design point e
 	// of #345).
@@ -526,6 +579,11 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	}
 	// 4. Restore.
 	if err := e.cfg.GuestRestore.RestoreGuest(ctx, b.Ref, v); err != nil {
+		if failedBefore {
+			// The Issue keeps naming the good backup from before the first
+			// failure.
+			return fail("the agent credential is revoked; the restore failed again: " + pveText(err) + "." + failedWayBackText(tp.Target, prevWay))
+		}
 		msg := "the agent credential is revoked; the restore failed: " + pveText(err) + "." + failedWayBack(tp.Target, safety)
 		e.restoreFailedIssue(ctx, tp.Target, safety)
 		return fail(msg)

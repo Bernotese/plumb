@@ -161,51 +161,80 @@ func TestRestoreFailsThenSafetyBackupRestores(t *testing.T) {
 	if re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll); len(re) != 0 {
 		t.Errorf("a re-enroll Plan after a failed restore: %v", re)
 	}
-	// The way back: restore the safety backup (a second safety backup comes first).
+	// The way back: restore the safety backup. The guest may be empty, so
+	// no new safety backup is taken and none is deleted (D1 of #346).
 	s.fr.fail = nil
 	status, out = s.restore(t, "5afe000000000001", false)
-	if status != "succeeded" || !strings.Contains(out, "restored backup 5afe000000000001") || !strings.Contains(out, "The safety backup backup 5afe000000000002") {
-		t.Fatalf("%s: %s", status, out)
+	if status != "succeeded" || !strings.Contains(out, "restored backup 5afe000000000001") || strings.Contains(out, "The safety backup") || s.fr.safeties != 1 {
+		t.Fatalf("%s: %s (safety backups %d)", status, out, s.fr.safeties)
 	}
 	if s.openIssue(plan.GuestRestoreFailedID) {
 		t.Error("guest:restore-failed stays open after a restore that worked")
 	}
-	if len(s.fr.dropped) != 1 || s.fr.dropped[0] != "bk:safety-2" {
-		t.Errorf("drop of the older safety backups: keep %v", s.fr.dropped)
+	if len(s.fr.dropped) != 0 {
+		t.Errorf("safety backups dropped: %v", s.fr.dropped)
 	}
 	if re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll); len(re) != 1 {
 		t.Errorf("re-enroll Plans: %v", re)
 	}
+	// The next restore of the healthy guest takes a new safety backup and
+	// replaces the old one (exactly one per Target, point a).
+	status, _ = s.restore(t, "3f2a9c0d1e4b5a67", false)
+	if status != "succeeded" || s.fr.safeties != 2 || len(s.fr.dropped) != 1 || s.fr.dropped[0] != "bk:safety-2" {
+		t.Errorf("next restore: %s, safeties %d, dropped %v", status, s.fr.safeties, s.fr.dropped)
+	}
 }
 
-// A second failure in a row keeps the Issue; the guest is broken now, so a
-// person may skip the safety backup; a healthy guest may not.
-func TestRestoreSecondFailureAndSkip(t *testing.T) {
+// A second failure in a row (D1 of #346): the guest may be empty after the
+// first, so the second Run takes no backup of it, deletes none, and the
+// Issue and the text keep naming the good safety backup from before the
+// first failure. The skip is refused on a healthy guest.
+func TestRestoreSecondFailureKeepsTheGoodBackup(t *testing.T) {
 	s := newSafetyEnv(t)
-	// A healthy guest: no skip.
 	code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r", "skip_safety_backup": true})
 	if code != 422 || !strings.Contains(string(body), "only for a broken guest") {
 		t.Fatalf("skip on a healthy guest: %d %s", code, body)
 	}
 	s.fr.fail = errors.New("proxmox: no space left")
 	if status, _ := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "failed" {
-		t.Fatal("first restore did not fail")
+		t.Fatal("the first restore did not fail")
 	}
-	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "failed" || !strings.Contains(out, "the guest may have no disk now") {
-		t.Fatalf("second restore: %s %s", status, out)
+	if s.fr.safeties != 1 {
+		t.Fatalf("safety backups after the first failure: %d", s.fr.safeties)
 	}
-	if !s.openIssue(plan.GuestRestoreFailedID) {
-		t.Fatal("the Issue went after a second failure")
+	issueText := func() string {
+		iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(iss.Changes)
 	}
-	// Broken now: the skip is allowed, and the Run takes no safety backup.
-	n := s.fr.safeties
+	first := issueText()
+	if !strings.Contains(first, "restore the safety backup backup 5afe000000000001") {
+		t.Fatalf("the Issue: %s", first)
+	}
+	// The second Plan says that the old safety backup stays.
+	code, body = s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r"})
+	if code != 201 || !strings.Contains(string(body), `"to":"kept: the last restore failed; the safety backup from before it stays"`) ||
+		!strings.Contains(string(body), "No new safety backup: the last restore failed") {
+		t.Fatalf("second Plan: %d %s", code, body)
+	}
+	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
+	if status != "failed" || s.fr.safeties != 1 {
+		t.Fatalf("second restore: %s, safety backups %d (want still 1)", status, s.fr.safeties)
+	}
+	if !strings.Contains(out, "the restore failed again") || !strings.Contains(out, "restore the safety backup backup 5afe000000000001") {
+		t.Errorf("second failure text: %s", out)
+	}
+	if got := issueText(); got != first {
+		t.Errorf("the Issue changed: %s, was %s", got, first)
+	}
+	// The way back works: the good safety backup is restored, with no new
+	// safety backup (the guest may be empty) and nothing deleted.
 	s.fr.fail = nil
-	status, out := s.restore(t, "3f2a9c0d1e4b5a67", true)
-	if status != "succeeded" || s.fr.safeties != n || strings.Contains(out, "The safety backup") {
-		t.Fatalf("skip: %s %s, safety backups %d → %d", status, out, n, s.fr.safeties)
-	}
-	if len(s.fr.dropped) != 0 { // design point a: a Run without a safety backup deletes none
-		t.Errorf("safety backups dropped by a Run that took none: %v", s.fr.dropped)
+	status, out = s.restore(t, "5afe000000000001", false)
+	if status != "succeeded" || s.fr.safeties != 1 || len(s.fr.dropped) != 0 {
+		t.Fatalf("restore of the good backup: %s %s, safeties %d, dropped %v", status, out, s.fr.safeties, s.fr.dropped)
 	}
 	if s.openIssue(plan.GuestRestoreFailedID) {
 		t.Error("the Issue stays after a restore that worked")
