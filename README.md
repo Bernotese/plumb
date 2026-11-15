@@ -177,6 +177,12 @@ full list of rights.
      install named. Each card has no address, DHCP, or a static address; at most one card has a
      gateway. Plumb chooses the MAC addresses. Adding or removing a card, or changing its bridge or
      tag, is disruptive: the Plan says so.
+     - A container gets the address of each card from Proxmox.
+     - In a VM, the agent sets it with netplan and finds the card by Plumb's MAC address. It
+       refuses, and changes nothing, when a netplan entry names the card only by a pattern, or when
+       two entries name it.
+     - A VM card gets a gateway only while the first card has no default route (also none from
+       DHCP).
    - **Guest backups:** daily or weekly at a time (UTC), and how many to keep. See "Guest backups"
      below.
 
