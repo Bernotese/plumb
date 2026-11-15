@@ -15,7 +15,12 @@ Test guests are made **through Plumb** in the pool `plumb` (one Debian 13 VM, on
 - Cleanup at the end, with the go of `pl-lead`: this run's guests, volumes, templates, tokens; test secret files by D-416.
 
 ## Acceptance criteria
-- [ ] `docs/plans/host-facts-slice-8.md` (≤ 80 lines, facts with how they were shown, no address / MAC / token id) and a short log `docs/tasks/T-244.log.md`; PR to `main`; report to `pl-lead` (max 8 lines). Part (1) is reported as soon as it is done (it unblocks T-238).
+- [x] `docs/plans/host-facts-slice-8.md` (≤ 80 lines, facts with how they were shown, no address / MAC / token id) and a short log `docs/tasks/T-244.log.md`; PR to `main`; report to `pl-lead` (max 8 lines). Part (1) is reported as soon as it is done (it unblocks T-238).
 
 ## Result (owner, max 8 lines)
-branch · commit · notes
+`pl-backend/T-244-host-facts-slice-8` · PR #362 · facts `docs/plans/host-facts-slice-8.md`, log `docs/tasks/T-244.log.md`.
+- (1) Disks need no new right. Hot-add is live (VM and LXC). An LXC `mp` remove also leaves `unusedN`. The serial is not in `by-id`. An older backup: the VM keeps the disk as `unused0`, the LXC loses it. The LXC re-enroll is refused silently with a hand `mpN`.
+- (2) `/status` is right; a stopped guest is backed up in `stop` mode; `WARNINGS` not caused. F1: two vzdumps → Plumb's own volume stays `unmarked` (T-248).
+- L2: PVE never follows a symlink in an `mp` path. A refused hot-add leaks a volume; the token cannot free it, but a Plumb guest delete does (T-238).
+- (3) The restore with a missing bridge right is refused before the disks are touched; `extractconfig` works with the token (pre-check, T-241). The way back works after the revert.
+- Host clean: only LXC 100, `storage.cfg` byte-equal, 11 ACL lines.
