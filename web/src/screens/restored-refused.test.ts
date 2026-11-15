@@ -51,7 +51,9 @@ describe("restored, re-enroll refused (D-439)", () => {
     expect(text(el("#restored-refused"))).toContain("Restored, the agent is not enrolled");
     expect(text(el("#restored-refused"))).toContain("remove the addition in Proxmox");
     const spy = vi.spyOn(api, "reenrollTarget");
-    button("Propose the re-enroll of web1")!.click();
+    const propose = button("Propose the re-enroll of web1");
+    expect(propose).toBeDefined();
+    propose?.click();
     await until(() => spy.mock.calls.length > 0);
     expect(spy.mock.calls[0][0]).toBe("web1");
   });
