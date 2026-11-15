@@ -160,7 +160,9 @@ describe("backup schedule in the form", () => {
     const { doc } = await edit();
     expect(el<HTMLInputElement>("#backup-on").checked).toBe(true);
     type("#backup-keep", "3");
-    expect(text(el("#backup-keep-lower"))).toContain("destructive");
+    expect(text(el("#backup-keep-lower"))).toContain(
+      "when the next backup job would delete backups with this value, the plan is destructive",
+    );
     el<HTMLInputElement>("#backup-on").click();
     flushSync();
     expect(text(el("#backup-off-note"))).toContain("It deletes none");

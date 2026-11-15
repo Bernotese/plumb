@@ -1154,8 +1154,8 @@
             >
             {#if storedKeep !== undefined && Number(backupKeep) < storedKeep}
               <span class="hint note warn" id="backup-keep-lower"
-                >Lower than now ({storedKeep}): the plan is destructive. It says how many backups
-                go.</span
+                >Lower than now ({storedKeep}): when the next backup job would delete backups with
+                this value, the plan is destructive and says how many go.</span
               >
             {/if}
             {#if backupErrors["keep"]}<span class="error" id="backup-keep-error"

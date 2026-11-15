@@ -15,7 +15,9 @@ afterEach(() => {
   me.session = null;
 });
 const adminApi = () => createMockApi({ signedIn: true, stepDelayMs: 0 });
-const open = async (api = adminApi(), name = "db1") => {
+const ADMIN = { principal: "user:admin", tier: "admin" } as never;
+const open = async (api = adminApi(), name = "db1", session: unknown = ADMIN) => {
+  me.session = session as typeof me.session;
   show(TargetBackups, { api, name });
   await until(() => document.querySelector("#backup-items"));
   return api;
@@ -49,6 +51,26 @@ describe("backups tab", () => {
     await open(withStorage(adminApi(), { id: "nfs", state: "clear-refused", free_pct: 5 }));
     expect(text(el("#backup-encryption"))).toContain("Every backup is refused.");
     expect(document.querySelector("#backup-low-space")).not.toBeNull();
+    // Review L1 of #338: no job on a refused storage, with the reason.
+    expect(el<HTMLButtonElement>("#backup-now").disabled).toBe(true);
+    expect(el("#backup-now").getAttribute("aria-describedby")).toBe("backup-now-off");
+    expect(text(el("#backup-now-off"))).toContain("does not encrypt");
+  });
+
+  it("back up now is on for a storage in clear that the install allowed", async () => {
+    await open();
+    expect(el<HTMLButtonElement>("#backup-now").disabled).toBe(false);
+    expect(document.querySelector("#backup-now-off")).toBeNull();
+  });
+
+  it("no delete button without a known session, nor for an admin token (review of #338)", async () => {
+    await open(adminApi(), "db1", null);
+    expect(document.querySelector("#delete-3f2a9c0d1e4b5a67")).toBeNull();
+    expect(document.querySelector("#delete-9b1c2d3e4f5a6b7c")).toBeNull();
+    expect(document.querySelector("#backup-delete-role")).not.toBeNull();
+    reset();
+    await open(adminApi(), "db1", { principal: "token:tok_ci", tier: "admin" });
+    expect(document.querySelector("#delete-3f2a9c0d1e4b5a67")).toBeNull();
   });
 
   it("warns of guest disk content and of rights beyond the install (M1/M2 of #330)", async () => {

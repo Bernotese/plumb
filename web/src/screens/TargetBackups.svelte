@@ -85,8 +85,17 @@
   const byKind = (k: GuestBackup["kind"]) => items.filter((b) => b.kind === k);
   const running = $derived(list?.last?.result === "running");
   // D-409: the delete of one volume is for a person with the role admin, never a token.
+  // Without a known session the button stays hidden (review of #338).
   const canDelete = $derived(
-    can("deleteGuestBackup") && (me.session?.principal.startsWith("user:") ?? true),
+    can("deleteGuestBackup") && (me.session?.principal.startsWith("user:") ?? false),
+  );
+  // Review L1 of #338: no job on a refused storage, and say why.
+  const nowOff = $derived(
+    !list?.storage
+      ? "Off: the install named no guest backup storage."
+      : list.storage.state === "clear-refused"
+        ? "Off: the storage does not encrypt, and the install did not allow backups in clear text."
+        : "",
   );
 
   // --- Back up now (D-408) ---
@@ -308,12 +317,10 @@
           class="btn primary"
           type="submit"
           id="backup-now"
-          disabled={nowBusy || running || !list.storage}
-          aria-describedby={list.storage ? undefined : "backup-now-off"}>Back up now</button
+          disabled={nowBusy || running || nowOff !== ""}
+          aria-describedby={nowOff ? "backup-now-off" : undefined}>Back up now</button
         >
-        {#if !list.storage}<span class="muted" id="backup-now-off"
-            >Off: the install named no guest backup storage.</span
-          >{/if}
+        {#if nowOff}<span class="muted" id="backup-now-off">{nowOff}</span>{/if}
         <span role="status" class="muted"
           >{running ? "A backup runs." : nowStarted ? "The backup started." : ""}</span
         >
