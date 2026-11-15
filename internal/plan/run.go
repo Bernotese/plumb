@@ -1099,6 +1099,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 	if err := e.recoverBuilds(ctx); err != nil {
 		return err
 	}
+	e.keepRestoredSteps(ctx, runs) // D-427: before the steps fail
 	for _, run := range runs {
 		e.mu.Lock()
 		active := e.active[run.ID]
@@ -1125,7 +1126,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 			e.cfg.OnPlanDone(ctx, run.PlanID, false)
 		}
 	}
-	return nil
+	return e.recoverRestores(ctx) // D-427: the follow-up of a cut restore
 }
 
 // finishDeletes ends the delete steps that a crash cut off (D-211): when
