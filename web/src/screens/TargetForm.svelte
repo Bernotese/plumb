@@ -40,6 +40,7 @@
   import { smallestDisk } from "../lib/images";
   import { unfitText } from "../lib/blocks";
   import AgentCard from "../ui/AgentCard.svelte";
+  import { isSystemTree } from "../lib/disks";
   import ProblemBox from "../ui/ProblemBox.svelte";
   import { restored, RESTORED_WAIT } from "../lib/restored.svelte";
   import RawResources from "../ui/RawResources.svelte";
@@ -53,9 +54,8 @@
 
   // One schema source (D-043): the guest form comes from the Target schema.
   const specSchema = targetSchema.properties.spec;
-  // `nics` has its own form part (T-223). `disks` is planned (T-237
-  // contract): the server refuses it until T-238, and T-239 adds its own
-  // form part; so the generic form leaves both out.
+  // `nics` (T-223) and `disks` (T-239) have their own form parts, so the
+  // generic form leaves both out.
   const guestFields: Field[] = fieldsOf(specSchema.properties.guest).filter(
     (f) => f.name !== "nics" && f.name !== "disks",
   );
@@ -209,6 +209,116 @@
     };
   }
 
+  // --- Data disks (T-239, ARCHITECTURE §21, D-423, D-436) ---
+  const diskSchema = specSchema.properties.guest.properties.disks;
+  const MAX_DISKS = diskSchema.maxItems;
+  const SLOTS = Array.from({ length: MAX_DISKS }, (_x, i) => i + 1);
+  const DISK_MAX_GB = diskSchema.items.properties.size_gb.maximum;
+  const diskPathPattern = new RegExp(diskSchema.items.properties.path.pattern, "u");
+  type GuestDisk = NonNullable<TargetSpec["guest"]["disks"]>[number];
+  interface DiskRow {
+    key: number;
+    slot: number;
+    size: string;
+    path: string;
+    /** Added in this edit: never the stored disk of its slot (M1 of #366). */
+    added: boolean;
+  }
+  /** False: the document has no `disks`, so Plumb does not manage data disks (D-436). */
+  let disksManaged = $state(false);
+  let disks = $state<DiskRow[]>([]);
+  let diskErrors = $state<Record<string, string>>({});
+  /**
+   * The slots a new disk may take: not used by another row, and not the
+   * slot of a stored disk that this edit removes (that slot stays empty in
+   * this Plan, so the old disk is really removed; M1 of #366).
+   */
+  const freeSlots = (own?: number) =>
+    SLOTS.filter(
+      (s) =>
+        s === own || (!disks.some((r) => r.slot === s) && !removedDisks.some((d) => d.slot === s)),
+    );
+  function toDisk(d: GuestDisk): DiskRow {
+    return {
+      key: nextKey++,
+      slot: d.slot,
+      size: String(d.size_gb),
+      path: d.path ?? "",
+      added: false,
+    };
+  }
+  function fromDisk(r: DiskRow): GuestDisk {
+    return {
+      slot: r.slot,
+      size_gb: Number(r.size.trim()),
+      ...(kind === "lxc" ? { path: r.path.trim() } : {}),
+    };
+  }
+  async function addDisk() {
+    const slot = freeSlots()[0];
+    if (slot === undefined) return;
+    disksManaged = true;
+    disks = [...disks, { key: nextKey++, slot, size: "10", path: "", added: true }];
+    await tick();
+    document.getElementById(`disk-${disks.length}-size`)?.focus();
+  }
+  async function removeDisk(key: number) {
+    disks = disks.filter((d) => d.key !== key);
+    await tick();
+    document.getElementById("add-disk")?.focus();
+  }
+  function diskPathProblem(p: string): string {
+    if (!diskPathPattern.test(p))
+      return "Give an absolute path of letters, digits, _ . and -, with no . or .. part, for example /srv/data.";
+    const parts = p.slice(1).split("/");
+    const top = parts[0] ?? "";
+    if (isSystemTree(top))
+      return `/${top} is a system tree. Use for example /srv, /opt, /data, /mnt or /home.`;
+    return "";
+  }
+  function checkDisks(): Record<string, string> {
+    const e: Record<string, string> = {};
+    if (!disksManaged) return e;
+    const paths: { i: number; p: string }[] = [];
+    disks.forEach((d, idx) => {
+      const i = idx + 1;
+      const size = d.size.trim();
+      const stored = storedOf(d);
+      if (!(/^[0-9]+$/.test(size) && Number(size) >= 1 && Number(size) <= DISK_MAX_GB))
+        e[`${i}/size`] = `Give a size from 1 to ${DISK_MAX_GB} GiB.`;
+      else if (stored && Number(size) < stored.size_gb)
+        e[`${i}/size`] = `A disk only grows: at least ${stored.size_gb} GiB, the size it has now.`;
+      if (kind !== "lxc") return;
+      const p = d.path.trim();
+      const why =
+        p === "" ? "A container disk needs a path, for example /srv/data." : diskPathProblem(p);
+      if (why) {
+        e[`${i}/path`] = why;
+        return;
+      }
+      const other = paths.find(
+        (q) => p === q.p || p.startsWith(`${q.p}/`) || q.p.startsWith(`${p}/`),
+      );
+      if (other) e[`${i}/path`] = `${p} is at or inside the path ${other.p} of disk ${other.i}.`;
+      paths.push({ i, p });
+    });
+    if (removedDisks.length && existing?.status.power === "running" && !allowRestart)
+      e["remove"] =
+        `Removing a disk of a running guest needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below.`;
+    // D-437: a container disk is written only to a stopped container; the Run stops a running one.
+    if (
+      kind === "lxc" &&
+      existing?.status.power === "running" &&
+      !allowRestart &&
+      disks.some((d) => !storedOf(d))
+    )
+      e["add"] =
+        `Adding a container disk stops and starts the container: that needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below, or stop the container first.`;
+    return e;
+  }
+  const diskHint = (i: number, f: string) =>
+    diskErrors[`${i}/${f}`] ? `disk-${i}-${f}-error` : "";
+
   const nicHint = (i: number, f: string) => (nicErrors[`${i}/${f}`] ? `nic-${i}-${f}-error` : "");
   $effect(() => {
     api.getSettings().then(
@@ -244,6 +354,21 @@
   let images = $state<ImageView[]>([]);
   let blocks = $state<BlockView[]>([]);
   let existing = $state<TargetView | null>(null);
+  /** The disks of the stored Target: their slot, size floor and path are fixed. */
+  const storedDisks = $derived<GuestDisk[]>(existing?.document.spec.guest.disks ?? []);
+  const storedDisk = (slot: number) => storedDisks.find((d) => d.slot === slot);
+  /** The stored disk of a row; a row added in this edit has none. */
+  const storedOf = (r: DiskRow) => (r.added ? undefined : storedDisk(r.slot));
+  /** Stored disks that the form no longer lists: the Plan deletes them. */
+  const removedDisks = $derived(
+    disksManaged
+      ? storedDisks.filter((d) => !disks.some((r) => !r.added && r.slot === d.slot))
+      : [],
+  );
+  /** The stored Target has no `disks`: the guest may have disks a person added (M2 of #366). */
+  const neverManaged = $derived(
+    existing !== null && existing.document.spec.guest.disks === undefined,
+  );
   let loaded = $state(false);
   let loadError = $state<unknown>(null);
 
@@ -509,6 +634,8 @@
     if (typeof spec.image === "string") image = spec.image;
     guest = initialValues(guestFields, (spec.guest ?? {}) as Record<string, unknown>);
     nics = (spec.guest?.nics ?? []).map(toNic);
+    disksManaged = spec.guest?.disks !== undefined;
+    disks = (spec.guest?.disks ?? []).map(toDisk);
     loadBackup(spec.backup);
     allowRestart = spec.allow_restart === true;
     uses = (spec.blocks ?? []).map((u) => makeUse(u.use, u.id ?? "", u.params));
@@ -560,6 +687,7 @@
         power: `A stop needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below.`,
       };
     nicErrors = checkNics();
+    diskErrors = checkDisks();
     backupErrors = checkBackup();
     const seen: string[] = [];
     for (const u of uses) {
@@ -577,6 +705,7 @@
       Object.keys(e).length === 0 &&
       Object.keys(guestErrors).length === 0 &&
       Object.keys(nicErrors).length === 0 &&
+      Object.keys(diskErrors).length === 0 &&
       Object.keys(backupErrors).length === 0 &&
       uses.every((u) => Object.keys(u.errors).length === 0)
     );
@@ -605,6 +734,9 @@
     // D-399: no key without a card; removing every card removes the key.
     if (nics.length) guestSpec["nics"] = nics.map(fromNic);
     else delete guestSpec["nics"];
+    // D-436: no `disks` means "not managed"; removing the field deletes nothing.
+    if (disksManaged && !adopted) guestSpec["disks"] = disks.map(fromDisk);
+    else delete guestSpec["disks"];
     return {
       ...extra,
       type: kind,
@@ -1084,6 +1216,181 @@
               disabled={extraNets !== null && extraNets.length === 0}>Add network card</button
             >
           {/if}
+        {/if}
+      </fieldset>
+
+      <fieldset id="disks" aria-describedby="disks-hint">
+        <legend id="disks-legend">Data disks</legend>
+        <p class="hint" id="disks-hint">
+          The disk above is the main disk. Up to {MAX_DISKS} data disks more, each on the disk storage
+          named at install. The slot is the disk's fixed name: removing one disk never renames another.
+          A disk only grows.
+          {#if kind === "lxc"}
+            A container disk is added only while the container is stopped (D-437): the Run stops a
+            running container, adds the disk and starts it again; that needs '{forKind(
+              ALLOW_RESTART_LABEL,
+              kind,
+            )}' (disruptive). A stopped container gets the disk and stays stopped (reversible).
+            Proxmox makes a file system on a container disk and mounts it at its path; the path
+            cannot change later. Guest backups hold it.
+          {:else}
+            A VM gets a new disk live (reversible). A VM data disk is a raw block device with the
+            serial <code>plumb-N</code>: find it with
+            <code>lsblk -o NAME,SERIAL</code>, then format and mount it with a Block or by hand.
+          {/if}
+        </p>
+        {#if adopted}
+          <p class="muted" id="disks-adopted">
+            An adopted Target keeps the disks that the guest has. Plumb adds none.
+          </p>
+        {:else}
+          <div class="field checkbox">
+            <label>
+              <input type="checkbox" id="disks-managed" bind:checked={disksManaged} />
+              Plumb manages the data disks of this guest
+            </label>
+            <span class="hint" id="disks-managed-hint">
+              {#if disksManaged}
+                Plumb owns slots 1 to {MAX_DISKS}: a disk in a slot that the list does not name is
+                removed by the Plan, and a disk that a person adds is drift (its revert removes it;
+                a person approves).
+              {:else}
+                Off: Plumb does not touch data disks, and a disk that a person adds is no drift.
+                {#if storedDisks.length}Switching it off deletes nothing: the disks stay in the
+                  guest, no longer managed.{/if}
+              {/if}
+            </span>
+          </div>
+          {#if disksManaged && neverManaged}
+            <div class="banner warn" role="note" id="disks-unmanaged-note">
+              <p>
+                Plumb has not managed the data disks of this guest so far. Now it manages slots 1 to
+                {MAX_DISKS}. Read the Plan before you approve it.
+              </p>
+              {#if kind === "lxc"}
+                <p id="disks-unmanaged-lxc">
+                  A disk that a person added on the disk storage of the install counts as Plumb's:
+                  list it with its slot, size and path to keep it. If this list does not name its
+                  slot, the Plan removes it and its data (destructive). A disk on another storage,
+                  or a bind mount, Plumb did not make: if the list names its slot, Plumb refuses the
+                  Plan; else the Plan detaches it (destructive), and Plumb does not free it.
+                </p>
+              {:else}
+                <p id="disks-unmanaged-vm">
+                  A disk that a person added in Proxmox has no serial <code>plumb-N</code>, so Plumb
+                  did not make it and never takes it over. If this list names its slot, Plumb
+                  refuses the Plan (remove the disk in Proxmox, or use another slot). Else the Plan
+                  detaches it (destructive), and Plumb does not free it. To keep such a disk as it
+                  is, leave this box off.
+                </p>
+              {/if}
+            </div>
+          {/if}
+          {#if disksManaged}
+            {#each disks as d, idx (d.key)}
+              {@const i = idx + 1}
+              {@const stored = storedOf(d)}
+              <fieldset class="disk" aria-labelledby="disk-{i}-legend">
+                <legend id="disk-{i}-legend">Data disk in slot {d.slot}</legend>
+                <div class="field">
+                  <label for="disk-{i}-slot">Slot</label>
+                  {#if stored}
+                    <span id="disk-{i}-slot" class="mono"
+                      >{d.slot} ({kind === "lxc" ? `mp${d.slot}` : `scsi${d.slot}`})</span
+                    >
+                  {:else}
+                    <select id="disk-{i}-slot" bind:value={d.slot}>
+                      {#each freeSlots(d.slot) as sl (sl)}
+                        <option value={sl}>{sl} ({kind === "lxc" ? `mp${sl}` : `scsi${sl}`})</option
+                        >
+                      {/each}
+                    </select>
+                  {/if}
+                </div>
+                <div class="field">
+                  <label for="disk-{i}-size">Size (GiB)</label>
+                  <input
+                    id="disk-{i}-size"
+                    type="text"
+                    inputmode="numeric"
+                    bind:value={d.size}
+                    aria-invalid={!!diskErrors[`${i}/size`]}
+                    aria-describedby={diskHint(i, "size") || undefined}
+                  />
+                  {#if diskErrors[`${i}/size`]}<span class="error" id="disk-{i}-size-error"
+                      >{diskErrors[`${i}/size`]}</span
+                    >{/if}
+                </div>
+                {#if kind === "lxc"}
+                  <div class="field">
+                    <label for="disk-{i}-path">Mount path</label>
+                    {#if stored}
+                      <span id="disk-{i}-path" class="mono">{d.path}</span>
+                      <span class="hint">Create-only. To move the data, move it in the guest.</span>
+                    {:else}
+                      <input
+                        id="disk-{i}-path"
+                        type="text"
+                        class="mono"
+                        placeholder="/srv/data"
+                        bind:value={d.path}
+                        aria-invalid={!!diskErrors[`${i}/path`]}
+                        aria-describedby={diskHint(i, "path") || undefined}
+                      />
+                    {/if}
+                    {#if diskErrors[`${i}/path`]}<span class="error" id="disk-{i}-path-error"
+                        >{diskErrors[`${i}/path`]}</span
+                      >{/if}
+                  </div>
+                {/if}
+                <button type="button" class="btn danger" onclick={() => removeDisk(d.key)}
+                  >Remove the disk in slot {d.slot}</button
+                >
+              </fieldset>
+            {/each}
+            {#if removedDisks.length}
+              <div class="banner danger" role="note" id="disks-removed">
+                <p>
+                  <strong
+                    >The Plan deletes {removedDisks.length === 1 ? "this disk" : "these disks"}: the
+                    data is lost.</strong
+                  >
+                </p>
+                <ul>
+                  {#each removedDisks as r (r.slot)}<li>
+                      Slot {r.slot}: {r.size_gb} GiB{r.path ? ` at ${r.path}` : ""}
+                    </li>{/each}
+                </ul>
+                <p>
+                  The Plan shows it as destructive, and a person approves it. Plumb detaches the
+                  disk first, then frees its volume in a second step of the same Run.
+                </p>
+                {#if diskErrors["remove"]}<p class="error" id="disks-remove-error">
+                    {diskErrors["remove"]}
+                  </p>{/if}
+              </div>
+            {/if}
+            {#if diskErrors["add"]}<p class="error" id="disks-add-error">
+                {diskErrors["add"]}
+              </p>{/if}
+            {#if freeSlots().length}
+              <button type="button" class="btn" id="add-disk" onclick={addDisk}
+                >Add data disk</button
+              >
+            {/if}
+          {:else if !storedDisks.length}
+            <button type="button" class="btn" id="add-disk" onclick={addDisk}>Add data disk</button>
+          {/if}
+          <p class="note" id="disks-restore">
+            A restore of a backup made before a disk was added:
+            {#if kind === "lxc"}
+              a container loses the data on that disk.
+            {:else}
+              a VM keeps that disk as an unused volume (free it by hand); the next Run attaches a
+              new empty disk in its slot.
+            {/if}
+            The restore Plan names the disk, and the safety backup holds it.
+          </p>
         {/if}
       </fieldset>
 

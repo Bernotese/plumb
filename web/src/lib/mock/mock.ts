@@ -59,6 +59,7 @@ import { checkBlock } from "../blockCheck";
 import { usersOf } from "../blocks";
 import { secretName } from "../schemaForm";
 import { example, exampleItems } from "./examples";
+import { planDisks, restoreDiskNotes, type Disk } from "./disks";
 import { buildRuns, diskRefusal, GIB, seedImages, seedLxc, seedTargets } from "./imageSeed";
 
 /** Banner of a mock build. */
@@ -321,22 +322,34 @@ export function planTarget(
   power: string = "running",
   /** The Blocks of the base revision, when the proposal changes Blocks (T-096). */
   oldBlocks: Map<string, BlockDoc> = blocks,
+  /** The VMID of the guest, for the volume names of data disks. */
+  vmid = "9000",
 ): ResourcePlan[] {
   const out: ResourcePlan[] = [];
   const g = next.guest as Record<string, unknown>;
+  // Data disks (T-239, ARCHITECTURE §21): one line per slot, not the list.
+  const disks = planDisks(old, next, vmid, power);
+  if (disks.errors.length)
+    throw problem("validation", "Validation failed", 422, undefined, {
+      errors: disks.errors.map((e) => ({
+        pointer: `/put/0/spec/guest/disks${e.at}`,
+        message: e.message,
+      })),
+    });
   if (!old) {
     out.push(
-      resourcePlan(
-        "guest:config",
-        "create",
-        Object.entries(g).map(([attr, to]) => ({ attr, to, risk: "reversible" as Risk })),
-      ),
+      resourcePlan("guest:config", "create", [
+        ...Object.entries(g)
+          .filter(([attr]) => attr !== "disks")
+          .map(([attr, to]) => ({ attr, to, risk: "reversible" as Risk })),
+        ...disks.changes,
+      ]),
     );
   } else {
     const og = old.guest as Record<string, unknown>;
     const changes: Change[] = [];
     for (const attr of new Set([...Object.keys(og), ...Object.keys(g)])) {
-      if (same(og[attr], g[attr])) continue;
+      if (attr === "disks" || same(og[attr], g[attr])) continue;
       if ((CREATE_ONLY as readonly string[]).includes(attr)) {
         throw problem("validation", "Validation failed", 422, undefined, {
           errors: [
@@ -383,6 +396,7 @@ export function planTarget(
       power === "running" ? changes.filter((c) => c.attr === "cores" || c.attr === "memory") : [];
     if (!allow) for (const c of cold) Object.assign(c, { waits_for_restart: true });
     else if (cold.length) changes.push({ attr: "restart", risk: "disruptive" });
+    changes.push(...disks.changes);
     if ((old.allow_restart === true) !== allow) {
       changes.unshift({ attr: "allow_restart", from: !allow, to: allow, risk: "read" });
     }
@@ -954,7 +968,18 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
   if (db1) {
     db1.document.spec.backup = { schedule: "daily", time: "03:00", keep: 7 };
     db1.document.spec.guest.nics = [{ bridge: "vmbr2", tag: 20, ip: "10.20.0.20/24" }];
+    // T-239: one data disk, added after the oldest backups (so a restore of
+    // those names it as lacking, F3 of #359).
+    db1.document.spec.guest.disks = [{ slot: 1, size_gb: 50 }];
   }
+  // ct1: a container data disk at /srv/data.
+  const ct1 = targets.get("ct1");
+  if (ct1) ct1.document.spec.guest.disks = [{ slot: 1, size_gb: 10, path: "/srv/data" }];
+  /** When each data disk came into the guest (target → slot → time). */
+  const diskSince = new Map<string, Map<number, string>>([
+    ["db1", new Map([[1, "2026-11-14T12:00:00Z"]])],
+    ["ct1", new Map([[1, "2026-11-14T12:00:00Z"]])],
+  ]);
   const guestBackups = new Map<string, GuestBackup[]>([
     [
       "db1",
@@ -2265,13 +2290,11 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           );
         }
         const old = targets.get(t.name)?.document.spec;
-        let resources = planTarget(
-          old,
-          t.spec,
-          nextBlocks,
-          targets.get(t.name)?.status.power,
-          blocks,
-        );
+        const vmid = targets.get(t.name)?.status.guest_id ?? "9000";
+        const power = targets.get(t.name)?.status.power;
+        let resources = planTarget(old, t.spec, nextBlocks, power, blocks, vmid);
+        for (const w of planDisks(old, t.spec, vmid, power).warnings)
+          warnings.push(`${t.name}: ${w}`);
         const used = plannedSecrets(t.spec);
         const before = bindings(old);
         const fresh = [...bindings(t.spec)].filter((b) => !before.has(b));
@@ -2571,6 +2594,17 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           };
           view.status.last_run_id = run.id;
           view.status.applied_revision = head;
+          // A missing `disks` keeps the disks (not managed); a list sets them.
+          const want = t.spec.guest.disks;
+          if (want !== undefined) {
+            const since = diskSince.get(t.name) ?? new Map<number, string>();
+            for (const slot of [...since.keys()])
+              if (!want.some((d) => d.slot === slot)) since.delete(slot);
+            for (const d of want) if (!since.has(d.slot)) since.set(d.slot, now());
+            diskSince.set(t.name, since);
+          } else if (prev?.document.spec.guest.disks !== undefined) {
+            t.spec.guest.disks = prev.document.spec.guest.disks;
+          }
           targets.set(t.name, view);
         }
         // An ignore_rule Plan resolves its issue in applyRules below.
@@ -3333,6 +3367,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         : skip
           ? "skipped: the guest is broken already"
           : "first, of the guest as it is now";
+      // F3 of #359: the observed disks that the backup lacks (added later).
+      const since = diskSince.get(name);
+      const lacking = (t.document.spec.guest.disks ?? []).filter(
+        (d: Disk) => (since?.get(d.slot) ?? "") > b.time,
+      );
+      const diskNotes = restoreDiskNotes(
+        t.document.spec.type,
+        lacking,
+        t.status.guest_id ?? "9000",
+      );
       const p = newPlan({
         origin: "restore",
         issue_id: null,
@@ -3348,6 +3392,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
                 changes: [
                   { attr: "restore", to: `backup ${b.id} of ${b.time}`, risk: "destructive" },
                   { attr: "safety_backup", to: safety, risk: "destructive" },
+                  ...diskNotes.changes,
                 ],
               },
             ],
@@ -3356,6 +3401,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         // restoreNotes of internal/plan/restore_guest.go.
         warnings: [
           "Proxmox removes the guest's disks before it writes the backup: if the restore fails, the guest is left empty.",
+          ...diskNotes.warnings,
           "The guest goes back to the backup time: every change in the guest after it is lost.",
           "Access that a person removed after the backup comes back (authorized_keys lines, passwords, users).",
           "The desired state is not rolled back: the next Run converges the guest to the head revision.",

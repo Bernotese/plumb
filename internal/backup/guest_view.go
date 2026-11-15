@@ -179,6 +179,11 @@ func (g *Guests) Tick(ctx context.Context) {
 		g.cfg.Logger.Error("guest backup schedule", "err", err)
 		return
 	}
+	// T-248: check the tasks of jobs that ended without their volume (a
+	// read of Proxmox, no change; also in restored mode).
+	if _, err := g.settle(ctx, ""); err != nil && ctx.Err() == nil {
+		g.cfg.Logger.Warn("guest backup: check of the tasks", "err", err)
+	}
 	now := g.cfg.Now()
 	restored := g.cfg.Restored()
 	for _, t := range targets {
