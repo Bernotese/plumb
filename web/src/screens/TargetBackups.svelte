@@ -308,8 +308,12 @@
           class="btn primary"
           type="submit"
           id="backup-now"
-          disabled={nowBusy || running || !list.storage}>Back up now</button
+          disabled={nowBusy || running || !list.storage}
+          aria-describedby={list.storage ? undefined : "backup-now-off"}>Back up now</button
         >
+        {#if !list.storage}<span class="muted" id="backup-now-off"
+            >Off: the install named no guest backup storage.</span
+          >{/if}
         <span role="status" class="muted"
           >{running ? "A backup runs." : nowStarted ? "The backup started." : ""}</span
         >
@@ -409,22 +413,25 @@
     {#if byKind("older-guest").length}
       <h3 id="older-title">Backups of an older guest</h3>
       <p class="muted">
-        Plumb made these for an older guest of this name or of this VMID. Plumb never restores them
-        and its retention never deletes them. A person may delete them.
+        Plumb made these for an older guest of this Target, for example before the guest was made
+        again. Plumb never restores them and its retention never deletes them. A person may delete
+        them.
       </p>
       {@render table(byKind("older-guest"), "Backups of an older guest", canDelete)}
     {/if}
     {#if byKind("unmarked").length}
-      <h3 id="unmarked-title">Backups without a Plumb mark</h3>
+      <h3 id="unmarked-title">Backups that Plumb does not know</h3>
       <p class="muted">
-        Plumb did not make these, or could not mark them. Plumb never restores or deletes them. Use
-        Proxmox for them.
+        This Plumb has no record of these: a person made them, the mark failed or was copied, or the
+        record was lost with a restore of Plumb. Plumb never restores or deletes them. Use Proxmox
+        for them.
       </p>
-      {@render table(byKind("unmarked"), "Backups without a Plumb mark", false)}
+      {@render table(byKind("unmarked"), "Backups that Plumb does not know", false)}
     {/if}
     <p class="muted" id="backup-after-delete">
-      After a delete of the Target the backups stay in Proxmox. A new Target of this name sees them
-      as backups of an older guest. Remove them in Proxmox when you no longer need them.
+      After a delete of the Target the backups stay in Proxmox, and Plumb forgets them: a new Target
+      of this name never restores or deletes them. Remove them in Proxmox when you no longer need
+      them.
     </p>
   </section>
 

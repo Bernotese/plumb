@@ -87,7 +87,7 @@ describe("guest backups (mock)", () => {
     expect(await code(t.approvePlan(p.id))).toMatch(/^403 .*human-required/);
   });
 
-  it("a Target delete keeps the volumes as older-guest (D-397)", async () => {
+  it("a Target delete keeps the volumes, unknown to Plumb (D-397, M1 of #331)", async () => {
     const a = api();
     const p = await a.createPlan({ reason: "Gone.", delete: [{ kind: "Target", name: "db1" }] });
     await a.approvePlan(p.id);
@@ -110,7 +110,8 @@ describe("guest backups (mock)", () => {
     await a.idle();
     const l = await a.listGuestBackups("db1");
     expect(l.items.filter((b) => b.kind === "plumb")).toHaveLength(0);
-    expect(l.items.filter((b) => b.kind === "older-guest")).toHaveLength(4);
+    expect(l.items.filter((b) => b.kind !== "unmarked")).toHaveLength(0);
+    expect(l.items).toHaveLength(5);
     expect(l.last).toBeNull();
   });
 });

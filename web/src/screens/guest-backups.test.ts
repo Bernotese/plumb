@@ -84,6 +84,8 @@ describe("backups tab", () => {
     await open(withStorage(adminApi(), null));
     expect(document.querySelector("#backup-no-storage")).not.toBeNull();
     expect(el<HTMLButtonElement>("#backup-now").disabled).toBe(true);
+    expect(el("#backup-now").getAttribute("aria-describedby")).toBe("backup-now-off");
+    expect(text(el("#backup-now-off"))).toContain("no guest backup storage");
   });
 
   it("lists the volumes by kind; only this guest's can be restored; unmarked has no action", async () => {

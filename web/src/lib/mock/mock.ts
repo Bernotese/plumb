@@ -2425,10 +2425,9 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         for (const ref of proposal?.delete ?? []) {
           if (ref.kind === "Target") {
             targets.delete(ref.name);
-            // D-397, ARCH §20: the lineage rows go with the binding; the volumes stay
-            // in Proxmox, so a new Target of the name sees them as `older-guest`.
-            for (const b of guestBackups.get(ref.name) ?? [])
-              if (b.kind === "plumb") b.kind = "older-guest";
+            // D-397, ARCH §20, M1 of #331: the lineage and run records go with the
+            // binding; the volumes stay in Proxmox and are no longer known (`unmarked`).
+            for (const b of guestBackups.get(ref.name) ?? []) b.kind = "unmarked";
             guestBackupLast.delete(ref.name);
           }
           if (ref.kind === "Block") {
@@ -3146,7 +3145,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "not-plumb",
           "Not a Plumb backup",
           409,
-          "This volume has no Plumb marker. Plumb never touches it; delete it in Proxmox.",
+          "This backup has no Plumb marker: Plumb never deletes it. Delete it in Proxmox.",
         );
       guestBackups.set(
         name,

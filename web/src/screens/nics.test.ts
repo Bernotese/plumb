@@ -170,6 +170,24 @@ describe("backup schedule in the form", () => {
     expect(doc().spec).not.toHaveProperty("backup");
   });
 
+  it("says when the install named no backup storage (serve --dev)", async () => {
+    const api = adminApi();
+    const get = api.getSettings.bind(api);
+    vi.spyOn(api, "getSettings").mockImplementation(async () => {
+      const s = await get();
+      if (s.proxmox) s.proxmox.guest_backup = null;
+      return s;
+    });
+    await edit(api, "web1");
+    await until(() => document.querySelector("#backup-no-storage"));
+    expect(text(el("#backup-no-storage"))).toContain("a schedule makes no backup until it does");
+  });
+
+  it("no such note with a storage", async () => {
+    await edit(adminApi(), "web1");
+    expect(document.querySelector("#backup-no-storage")).toBeNull();
+  });
+
   it("writes a weekly schedule and checks time and keep", async () => {
     const { doc, createPlan } = await edit(adminApi(), "web1");
     el<HTMLInputElement>("#backup-on").click();

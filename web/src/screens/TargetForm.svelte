@@ -83,6 +83,8 @@
   let extraNets = $state<{ bridge: string; tag: number | null }[] | null>(null);
   /** M2 of #330: network rights of the token beyond the install. */
   let sdnExtra = $state<{ path: string; role: string }[]>([]);
+  /** False when the install named no guest backup storage; null when not known. */
+  let backupStorage = $state<boolean | null>(null);
   const extraBridges = $derived([...new Set((extraNets ?? []).map((n) => n.bridge))]);
   const tagsOf = (bridge: string) =>
     (extraNets ?? []).filter((n) => n.bridge === bridge).map((n) => n.tag);
@@ -211,6 +213,10 @@
     api.getSettings().then(
       (s) => {
         extraNets = s.proxmox?.extra_nets ?? null;
+        backupStorage =
+          s.proxmox && s.proxmox.guest_backup !== undefined
+            ? s.proxmox.guest_backup !== null
+            : null;
         sdnExtra = settingsRisks(s).aclExtra.filter((a) => a.path.startsWith("/sdn/"));
       },
       // Without the settings (a token, an older controller) the server checks the names.
@@ -1089,6 +1095,13 @@
               >Backups of {existing.document.name}</a
             >{/if}
         </p>
+        {#if backupStorage === false}
+          <p class="note" id="backup-no-storage">
+            The install named no guest backup storage: a schedule makes no backup until it does (<code
+              >--guest-backup-storage</code
+            >).
+          </p>
+        {/if}
         <div class="field">
           <label class="check">
             <input type="checkbox" id="backup-on" bind:checked={backupOn} />
