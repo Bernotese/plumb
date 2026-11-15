@@ -305,15 +305,15 @@
     if (removedDisks.length && existing?.status.power === "running" && !allowRestart)
       e["remove"] =
         `Removing a disk of a running guest needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below.`;
-    // ARCHITECTURE §21 (#365): a stopped container is started for an add and stopped again.
+    // D-437: a container disk is written only to a stopped container; the Run stops a running one.
     if (
       kind === "lxc" &&
-      existing?.status.power === "stopped" &&
+      existing?.status.power === "running" &&
       !allowRestart &&
       disks.some((d) => !storedOf(d))
     )
       e["add"] =
-        `The container is stopped: the Run starts it for the add and stops it again. That needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below, or start the container first.`;
+        `Adding a container disk stops and starts the container: that needs '${forKind(ALLOW_RESTART_LABEL, kind)}' below, or stop the container first.`;
     return e;
   }
   const diskHint = (i: number, f: string) =>
@@ -1226,10 +1226,13 @@
           named at install. The slot is the disk's fixed name: removing one disk never renames another.
           A disk only grows.
           {#if kind === "lxc"}
-            A running container gets a new disk live (reversible). A stopped container is started
-            for the add and stopped again: that needs '{forKind(ALLOW_RESTART_LABEL, kind)}'
-            (disruptive). Proxmox makes a file system on a container disk and mounts it at its path;
-            the path cannot change later. Guest backups hold it.
+            A container disk is added only while the container is stopped (D-437): the Run stops a
+            running container, adds the disk and starts it again; that needs '{forKind(
+              ALLOW_RESTART_LABEL,
+              kind,
+            )}' (disruptive). A stopped container gets the disk and stays stopped (reversible).
+            Proxmox makes a file system on a container disk and mounts it at its path; the path
+            cannot change later. Guest backups hold it.
           {:else}
             A VM gets a new disk live (reversible). A VM data disk is a raw block device with the
             serial <code>plumb-N</code>: find it with

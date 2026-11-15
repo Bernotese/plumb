@@ -215,7 +215,12 @@ describe("data disk list (VM)", () => {
 
 describe("data disk list (container)", () => {
   it("shows the stored path as create-only and checks a new path", async () => {
-    const { doc, plan } = await edit("ct1");
+    const api = adminApi();
+    const ct1 = await api.getTarget("ct1");
+    const view: TargetView = structuredClone(ct1);
+    view.document.spec.allow_restart = true; // D-437: the running container stops for the add
+    api.getTarget = async () => structuredClone(view);
+    const { doc, plan } = await edit("ct1", api);
     expect(el("#disk-1-path").tagName).toBe("SPAN");
     expect(el("#disk-1-path").textContent).toBe("/srv/data");
     expect(el("#disk-1-slot").textContent).toBe("1 (mp1)");
@@ -244,14 +249,31 @@ describe("data disk list (container)", () => {
       { slot: 2, size_gb: 10, path: "/opt/cache" },
     ]);
     expect(diskLines(p)).toEqual([
-      { attr: "disk2", to: "10 GiB at /opt/cache", risk: "reversible" },
+      { attr: "disk2", to: "10 GiB at /opt/cache", risk: "disruptive" },
     ]);
     expect(text(el("#disks-restore"))).toContain("a container loses the data on that disk");
   });
 });
 
-describe("adding a disk to a stopped container (#365)", () => {
-  it("needs allow_restart: the Run starts the container for the add", async () => {
+describe("adding a container disk (D-437)", () => {
+  it("a running container needs allow_restart: the Run stops it for the add", async () => {
+    const api = adminApi();
+    const ct1 = await api.getTarget("ct1");
+    const view: TargetView = structuredClone(ct1);
+    view.document.spec.allow_restart = false;
+    api.getTarget = async () => structuredClone(view);
+    const { createPlan } = await edit("ct1", api);
+    expect(text(el("#disks"))).toContain("added only while the container is stopped");
+    el<HTMLButtonElement>("#add-disk").click();
+    await until(() => document.querySelector("#disk-2-path"));
+    type("#disk-2-path", "/opt/cache");
+    type("#t-reason", "A cache disk.");
+    submit();
+    expect(el("#disks-add-error").textContent).toContain("stops and starts the container");
+    expect(createPlan).not.toHaveBeenCalled();
+  });
+
+  it("a stopped container gets the disk without allow_restart", async () => {
     const api = adminApi();
     const ct1 = await api.getTarget("ct1");
     const view: TargetView = structuredClone(ct1);
@@ -259,25 +281,13 @@ describe("adding a disk to a stopped container (#365)", () => {
     view.document.spec.allow_restart = false;
     api.getTarget = async () => structuredClone(view);
     const { createPlan } = await edit("ct1", api);
-    expect(text(el("#disks"))).toContain("A stopped container is started for the add");
     el<HTMLButtonElement>("#add-disk").click();
     await until(() => document.querySelector("#disk-2-path"));
     type("#disk-2-path", "/opt/cache");
     type("#t-reason", "A cache disk.");
     submit();
-    expect(el("#disks-add-error").textContent).toContain("The container is stopped");
-    expect(createPlan).not.toHaveBeenCalled();
-  });
-
-  it("a running container and a VM get the disk live", async () => {
-    await edit("ct1");
-    el<HTMLButtonElement>("#add-disk").click();
-    await until(() => document.querySelector("#disk-2-path"));
-    type("#disk-2-path", "/opt/cache");
-    type("#t-reason", "A cache disk.");
-    submit();
-    await planOpened();
     expect(document.querySelector("#disks-add-error")).toBeNull();
+    expect(createPlan).toHaveBeenCalled();
   });
 });
 

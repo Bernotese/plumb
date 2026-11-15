@@ -116,13 +116,13 @@ export function planDisks(
     const n = want[i];
     const attr = `disk${slot}`;
     if (!o && n) {
-      // #365 (ARCHITECTURE §21): a stopped container is started for the add
-      // and stopped again; a running one and a VM get the disk live.
-      const cold = next.type === "lxc" && power === "stopped";
+      // D-437: a container disk is written cold; the Run stops a running
+      // container for it. A VM gets the disk live.
+      const cold = next.type === "lxc" && power === "running";
       if (cold && next.allow_restart !== true)
         out.errors.push({
           at: `/${i}`,
-          message: "the container is stopped: start it first, or set allow_restart",
+          message: "adding a container disk stops and starts the container: set allow_restart",
         });
       out.changes.push({ attr, to: diskValue(n), risk: cold ? "disruptive" : "reversible" });
     } else if (o && n) {

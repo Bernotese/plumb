@@ -69,19 +69,22 @@ describe("planDisks", () => {
     expect(planDisks(spec("vm", vm1), spec("vm", []), "1", "stopped").errors).toEqual([]);
   });
 
-  it("#365: a stopped container is started for an add (allow_restart, disruptive)", () => {
+  it("D-437: a running container is stopped for an add (allow_restart, disruptive)", () => {
     const ct = [{ slot: 1, size_gb: 10, path: "/srv/data" }];
-    const no = planDisks(spec("lxc"), spec("lxc", ct), "9010", "stopped");
+    const no = planDisks(spec("lxc"), spec("lxc", ct), "9010", "running");
     expect(no.errors).toEqual([
-      { at: "/0", message: "the container is stopped: start it first, or set allow_restart" },
+      {
+        at: "/0",
+        message: "adding a container disk stops and starts the container: set allow_restart",
+      },
     ]);
-    const yes = planDisks(spec("lxc", undefined, true), spec("lxc", ct, true), "9010", "stopped");
+    const yes = planDisks(spec("lxc", undefined, true), spec("lxc", ct, true), "9010", "running");
     expect(yes.changes).toEqual([{ attr: "disk1", to: "10 GiB at /srv/data", risk: "disruptive" }]);
-    // A running container and a stopped VM: live, reversible.
-    expect(planDisks(spec("lxc"), spec("lxc", ct), "9010", "running").changes[0]?.risk).toBe(
+    // A stopped container stays stopped; a running VM gets the disk live.
+    expect(planDisks(spec("lxc"), spec("lxc", ct), "9010", "stopped").changes[0]?.risk).toBe(
       "reversible",
     );
-    const vm = planDisks(spec("vm"), spec("vm", [{ slot: 1, size_gb: 5 }]), "1", "stopped");
+    const vm = planDisks(spec("vm"), spec("vm", [{ slot: 1, size_gb: 5 }]), "1", "running");
     expect(vm).toEqual({
       changes: [{ attr: "disk1", to: "5 GiB", risk: "reversible" }],
       warnings: [],
