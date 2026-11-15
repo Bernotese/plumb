@@ -16,8 +16,10 @@ fi
 kinds=${LXD_KINDS:-container vm}
 tmp=$(mktemp -d)
 instances=()
+networks=() # LXD networks of a test (T-220), deleted after the instances
 cleanup() {
   for name in "${instances[@]}"; do lxc delete -f "$name" >/dev/null 2>&1 || true; done
+  for net in "${networks[@]}"; do lxc network delete "$net" >/dev/null 2>&1 || true; done
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -108,15 +110,20 @@ for image in images:debian/13 ubuntu:26.04; do
       fi
       inst env PLUMB_NETWORK_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestNetwork$'
       # T-220: a more NIC (D-403): a second virtio card with a MAC of
-      # Plumb's form, hot-plugged on the network of eth0; the resource finds
-      # it by that MAC and sets its address. Debian only: its netplan shape
-      # is the one above (no glob entry of the image names the new card).
+      # Plumb's form, hot-plugged; the resource finds it by that MAC and
+      # sets its address. Its own LXD bridge without addresses and DNS: a
+      # second card on eth0's network is refused by LXD (one instance DNS
+      # name per network, review M2 of #336). Debian only: its netplan
+      # shape is the one above (no glob entry of the image names the card).
       if [[ "$image" == images:debian/13 ]]; then
         nic_mac=02:5a:10:20:30:40
-        nic_net=$(lxc config device get "$name" eth0 network 2>/dev/null || lxc profile device get default eth0 network)
+        nic_net="plnic$((RANDOM % 10000))"
+        lxc network create "$nic_net" ipv4.address=none ipv6.address=none dns.mode=none >/dev/null
+        networks+=("$nic_net")
         lxc config device add "$name" plumbnic1 nic network="$nic_net" hwaddr="$nic_mac" >/dev/null
         inst env PLUMB_NETWORK_GUEST=1 PLUMB_NIC_MAC="$nic_mac" /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestNetworkNIC$'
         lxc config device remove "$name" plumbnic1 >/dev/null
+        lxc network delete "$nic_net" >/dev/null
       fi
       # T-181: live drift of ip/nft hand changes (D-367), as root (TestNetReadOnlyKernel needs it).
       inst env PLUMB_NETWATCH_GUEST=1 /root/agent.test -test.v -test.timeout=5m -test.run '^(TestGuestNetwatch|TestNetReadOnlyKernel)$'
