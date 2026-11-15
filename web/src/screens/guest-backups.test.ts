@@ -190,6 +190,100 @@ describe("restore wizard", () => {
     expect([p.origin, p.risk, p.human_only]).toEqual(["restore", "destructive", ["guest-restore"]]);
   });
 
+  it("says that Proxmox empties the guest first and that Plumb takes a safety backup (D-420)", async () => {
+    await open();
+    el<HTMLButtonElement>("#restore-3f2a9c0d1e4b5a67").click();
+    await until(() => document.querySelector("#restore"));
+    expect(text(el("#restore-disks"))).toContain("the guest is left empty");
+    expect(text(el("#restore-safety"))).toContain("Plumb takes a safety backup");
+    expect(text(el("#restore-safety"))).toContain("nothing is changed");
+    expect(text(el("#restore-lost"))).toContain("so you can undo the restore");
+    expect(text(el("#restore-lost"))).toContain("After a restore that worked, it replaces");
+    expect(el<HTMLInputElement>("#restore-skip-safety").checked).toBe(false);
+  });
+
+  it("the skip tick changes the step and is sent; the server refuses it for a guest with a disk", async () => {
+    const api = await open();
+    const restore = vi.spyOn(api, "restoreGuest");
+    el<HTMLButtonElement>("#restore-3f2a9c0d1e4b5a67").click();
+    await until(() => document.querySelector("#restore"));
+    el<HTMLInputElement>("#restore-skip-safety").click();
+    flushSync();
+    expect(text(el("#restore-safety"))).toContain("No safety backup first");
+    expect(text(el("#restore-lost"))).not.toContain("undo the restore");
+    el<HTMLInputElement>("#restore-ack").click();
+    type("#restore-reason", "No disk.");
+    el<HTMLFormElement>("#restore").requestSubmit();
+    await until(() => text().includes("only for a broken guest"));
+    expect(restore).toHaveBeenCalledWith("db1", {
+      backup: "3f2a9c0d1e4b5a67",
+      reason: "No disk.",
+      skip_safety_backup: true,
+    });
+  });
+
+  it("no skip tick for a token (human-only)", async () => {
+    await open(adminApi(), "db1", { principal: "token:ci", tier: "admin" });
+    el<HTMLButtonElement>("#restore-3f2a9c0d1e4b5a67").click();
+    await until(() => document.querySelector("#restore"));
+    expect(document.querySelector("#restore-skip-safety")).toBeNull();
+  });
+
+  it("after a failed restore: the banner, no tick, the safety backup stays (kept)", async () => {
+    const api = await open(adminApi(), "cache1");
+    const restore = vi.spyOn(api, "restoreGuest");
+    await until(() => document.querySelector("#restore-failed"));
+    expect(text(el("#restore-failed"))).toContain("The last restore of this guest failed.");
+    expect(text(el("#restore-failed"))).toContain("backup 7e6d5c4b3a291807");
+    expect(text(el("#backup-items"))).toContain("safety backup before a restore");
+    el<HTMLButtonElement>("#restore-2c3d4e5f60718293").click();
+    await until(() => document.querySelector("#restore"));
+    expect(document.querySelector("#restore-skip-safety")).toBeNull();
+    expect(text(el("#restore-safety"))).toContain("No new safety backup");
+    el<HTMLInputElement>("#restore-ack").click();
+    type("#restore-reason", "Try the nightly one.");
+    el<HTMLFormElement>("#restore").requestSubmit();
+    const id = await planOpened();
+    expect(restore.mock.calls[0]?.[1]).not.toHaveProperty("skip_safety_backup");
+    const p = await api.getPlan(id);
+    const ch = p.targets[0]?.resources[0]?.changes ?? [];
+    expect(ch.map((c) => [c.attr, "to" in c ? c.to : null])).toContainEqual([
+      "safety_backup",
+      "kept: the last restore failed; the safety backup from before it stays",
+    ]);
+  });
+
+  it("does not promise a safety backup when the issues cannot be read (review L2 of #350)", async () => {
+    const api = adminApi();
+    vi.spyOn(api, "listIssues").mockRejectedValue(new Error("down"));
+    await open(api);
+    el<HTMLButtonElement>("#restore-3f2a9c0d1e4b5a67").click();
+    await until(() => document.querySelector("#restore"));
+    expect(text(el("#restore-safety"))).toContain("Plumb decides");
+    expect(text(el("#restore-safety"))).toContain("of the Plan says which");
+    expect(text(el("#restore-safety"))).not.toContain(
+      "Plumb takes a safety backup of the guest as it is now",
+    );
+    expect(text(el("#restore-lost"))).not.toContain("undo the restore");
+    reset();
+    await open();
+    el<HTMLButtonElement>("#restore-3f2a9c0d1e4b5a67").click();
+    await until(() => document.querySelector("#restore"));
+    expect(document.querySelector("#restore-issues-unknown")).toBeNull();
+  });
+
+  it("opens the restore of the backup that the Issue names (?restore=)", async () => {
+    me.session = ADMIN as typeof me.session;
+    show(TargetBackups, { api: adminApi(), name: "cache1", restore: "7e6d5c4b3a291807" });
+    await until(() => document.querySelector("#restore"));
+    expect(text(el("#restore-title"))).toContain("Restore the backup of");
+    reset();
+    me.session = ADMIN as typeof me.session;
+    show(TargetBackups, { api: adminApi(), name: "cache1", restore: "0000000000000000" });
+    await until(() => document.querySelector("#restore-missing"));
+    expect(document.querySelector("#restore")).toBeNull();
+  });
+
   it("an adopted Target gets the install command, not a re-enrollment", async () => {
     const api = adminApi();
     const t = await api.getTarget("db1");

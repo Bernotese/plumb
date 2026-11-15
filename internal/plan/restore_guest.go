@@ -167,7 +167,7 @@ func pveText(err error) string {
 func failedWayBack(target string, safety *RestoreVolume) string {
 	t := " Proxmox removes the guest's disks before it writes the backup, so the guest may have no disk now. The way back: "
 	if safety != nil {
-		t += "restore the safety backup " + restoreText(*safety) + " (POST /targets/" + target + "/restore with backup " + safety.ID + "), or another backup"
+		t += "restore the safety " + restoreText(*safety) + " (POST /targets/" + target + "/restore with backup " + safety.ID + "), or another backup"
 	} else {
 		t += "restore another backup (POST /targets/" + target + "/restore)"
 	}
@@ -175,7 +175,7 @@ func failedWayBack(target string, safety *RestoreVolume) string {
 }
 
 // failedWayBackText is the way back of a further failure: the text of the
-// open Issue ("restore the safety backup backup <id> of <time>").
+// open Issue ("restore the safety backup <id> of <time>").
 func failedWayBackText(target, issueTo string) string {
 	t := " Proxmox removes the guest's disks before it writes the backup, so the guest may have no disk now. The way back: "
 	if issueTo != "" {
@@ -671,7 +671,7 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	// 5. The way back for the agent.
 	out := "restored " + text + "; the agent credential is revoked and the host key pins are dropped. "
 	if safety != nil {
-		out += "The safety backup " + restoreText(*safety) + " keeps the guest as it was before. "
+		out += "The safety " + restoreText(*safety) + " keeps the guest as it was before. "
 	}
 	if r.Adopted != nil {
 		if after.Power != driver.PowerRunning {
@@ -747,7 +747,7 @@ func (e *Engine) restoreRunningIssue(ctx context.Context, target string, safety 
 func (e *Engine) writeRestoreIssue(ctx context.Context, target string, safety *RestoreVolume, from string) error {
 	to := "restore another backup"
 	if safety != nil {
-		to = "restore the safety backup " + restoreText(*safety)
+		to = "restore the safety " + restoreText(*safety)
 	}
 	ch := []wire.Change{{Attr: "restore", From: from, To: to, Risk: wire.RiskDestructive}}
 	if safety != nil { // the way back as data, for the web (L1 of #350)

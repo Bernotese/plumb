@@ -5,6 +5,7 @@ package backup
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,21 @@ func TestGuestGoneEmptyList(t *testing.T) {
 	}
 	if err := e.g.Delete(ctx, "db1", "0123456789abcdef", "user:admin"); !errors.Is(err, ErrGuestBackupNotFound) {
 		t.Errorf("delete: %v", err)
+	}
+}
+
+// S4 of T-225: a job (scheduled or manual) for a gone guest is refused at
+// start and recorded; no vzdump runs.
+func TestGuestGoneJobRefused(t *testing.T) {
+	e := newJobEnv(t, nil)
+	ctx := context.Background()
+	e.g.cfg.Driver = goneDriver{e.d}
+	for _, trigger := range []string{TriggerScheduled, TriggerManual} {
+		if err := e.g.BackUp(ctx, "db1", trigger, "system"); !errors.Is(err, ErrGuestBackupRefused) || !strings.Contains(err.Error(), "the guest of the Target is gone") {
+			t.Errorf("%s: %v", trigger, err)
+		}
+	}
+	if e.d.seq != 0 {
+		t.Errorf("vzdump calls: %d", e.d.seq)
 	}
 }

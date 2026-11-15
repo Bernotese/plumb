@@ -243,6 +243,11 @@ func (g *Guests) start(ctx context.Context, target, trigger, actor string) (func
 	if free >= 0 && free < minFreePct {
 		return refuse(fmt.Sprintf("the storage has %d %% free, less than %d %%", free, minFreePct))
 	}
+	// A guest that left the pool: refused at once, as the list shows it
+	// (no backups), not a job that fails in Proxmox (S4 of T-225).
+	if _, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest); errors.Is(err, ErrGuestGone) {
+		return refuse("the guest of the Target is gone: it is not in the pool any more, so it has no backups here (D-411)")
+	}
 	marker, err := Marker{Install: g.cfg.InstallID, Target: t.Name, Lineage: lineage, Manual: trigger == TriggerManual, PreRestore: trigger == TriggerPreRestore}.String()
 	if err != nil {
 		return refuse("this controller has no install id, so its backups cannot be marked")

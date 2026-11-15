@@ -269,7 +269,7 @@
   {:else if route.name === "target-agent"}
     {#key route.target}<TargetAgent {api} name={route.target} />{/key}
   {:else if route.name === "target-backups"}
-    {#key route.target}<TargetBackups {api} name={route.target} />{/key}
+    {#key route.target}<TargetBackups {api} name={route.target} restore={route.restore} />{/key}
   {:else if route.name === "images"}
     <Images {api} />
   {:else if route.name === "image-new"}

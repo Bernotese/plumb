@@ -10,6 +10,7 @@ const routes: Route[] = [
   { name: "target-edit", target: "web1" },
   { name: "target-agent", target: "web1" },
   { name: "target-backups", target: "db1" },
+  { name: "target-backups", target: "db1", restore: "3f2a9c0d1e4b5a67" },
   { name: "images" },
   { name: "image-new" },
   { name: "image", image: "ubuntu-26.04" },
@@ -58,6 +59,11 @@ describe("router", () => {
     "#/revisions/7?from=x",
     "#/targets?target=web1",
     "#/plans/3?from=1",
+    "#/targets/db1/backups?restore=XYZ",
+    "#/targets/db1/backups?restore=3f2a9c0d1e4b5a6",
+    "#/targets/db1/backups?restore=3f2a9c0d1e4b5a67&x=1",
+    "#/targets/db1/backups?x=1",
+    "#/targets/db1/edit?restore=3f2a9c0d1e4b5a67",
   ])("%s is not found", (h) => {
     expect(parse(h).name).toBe("not-found");
   });

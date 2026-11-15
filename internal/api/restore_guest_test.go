@@ -304,7 +304,7 @@ func TestRestoreGuestFails(t *testing.T) {
 	// D-420: the honest text, no raw Proxmox text, the safety backup named.
 	if len(steps) != 1 || !strings.Contains(steps[0].Output, "the restore failed: Proxmox did not do it") ||
 		!strings.Contains(steps[0].Output, "the guest may have no disk now") ||
-		!strings.Contains(steps[0].Output, "restore the safety backup backup 5afe5afe5afe5afe") ||
+		!strings.Contains(steps[0].Output, "restore the safety backup 5afe5afe5afe5afe") ||
 		strings.Contains(steps[0].Output, "archive unreadable") {
 		t.Errorf("steps: %+v", steps)
 	}
