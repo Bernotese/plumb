@@ -65,7 +65,7 @@ func restoreTarget(name string, allowRestart bool) state.Doc {
 
 func TestRestoreGuestOverTheBoundGuest(t *testing.T) {
 	fr := &fakeRestorer{vols: map[string]plan.RestoreVolume{}}
-	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 	adm := e.admin()
 	e.seed(adm, "web1")
 	ctx := context.Background()
@@ -83,7 +83,7 @@ func TestRestoreGuestOverTheBoundGuest(t *testing.T) {
 	if err := e.st.FinishGuestBackupRun(ctx, run, "done", volid, 100, at.Unix(), ""); err != nil {
 		t.Fatal(err)
 	}
-	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: volid, Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
+	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: volid, Size: 100, Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
 	// Unmarked by the backup service (for example a replaced archive of
 	// another size), although its marker and run row look right: only
 	// the classification refuses it.
@@ -91,7 +91,7 @@ func TestRestoreGuestOverTheBoundGuest(t *testing.T) {
 	e.st.FinishGuestBackupRun(ctx, run2, "done", "plumb-backup:backup/x", 100, at.Unix(), "")
 	fr.vols["00000000000000aa"] = plan.RestoreVolume{ID: "00000000000000aa", Volid: "plumb-backup:backup/x", Kind: "unmarked", Notes: "plumb:iid:web1:" + lineage + ":m", Time: at}
 	// A forged copy of the marker: classified plumb by a broken adapter, but no run row.
-	fr.vols["00000000000000bb"] = plan.RestoreVolume{ID: "00000000000000bb", Volid: "plumb-backup:backup/forged", Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
+	fr.vols["00000000000000bb"] = plan.RestoreVolume{ID: "00000000000000bb", Volid: "plumb-backup:backup/forged", Size: 100, Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
 	pinned, err := e.st.PinFirstHostKeys(ctx, "web1", b.GuestKey(), []string{"SHA256:old"}, time.Now())
 	if err != nil || !pinned {
 		t.Fatalf("pin: %v %v", pinned, err)
@@ -212,7 +212,7 @@ func TestRestoreGuestOverTheBoundGuest(t *testing.T) {
 // approval and the Run is refused, nothing changes.
 func TestRestoreGuestRunChecksAgain(t *testing.T) {
 	fr := &fakeRestorer{vols: map[string]plan.RestoreVolume{}}
-	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 	adm := e.admin()
 	e.seed(adm, "web1")
 	e.approve(adm, "allow restart", restoreTarget("web1", true))
@@ -222,7 +222,7 @@ func TestRestoreGuestRunChecksAgain(t *testing.T) {
 	at := time.Date(2026, 11, 15, 3, 0, 12, 0, time.UTC)
 	run, _ := e.st.StartGuestBackupRun(ctx, "web1", lineage, "manual")
 	e.st.FinishGuestBackupRun(ctx, run, "done", "bk:v1", 100, at.Unix(), "")
-	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Kind: "plumb", Notes: "plumb:iid:web1:" + lineage + ":m", Time: at}
+	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Size: 100, Kind: "plumb", Notes: "plumb:iid:web1:" + lineage + ":m", Time: at}
 	code, body := adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r"})
 	if code != 201 {
 		t.Fatalf("propose: %d %s", code, body)
@@ -250,7 +250,7 @@ func TestRestoreGuestRunChecksAgain(t *testing.T) {
 // and its credential is revoked; no re-enroll Plan follows.
 func TestRestoreGuestFails(t *testing.T) {
 	fr := &fakeRestorer{vols: map[string]plan.RestoreVolume{}, fail: errors.New("archive unreadable")}
-	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 	adm := e.admin()
 	e.seed(adm, "web1")
 	e.approve(adm, "allow restart", restoreTarget("web1", true))
@@ -260,7 +260,7 @@ func TestRestoreGuestFails(t *testing.T) {
 	at := time.Date(2026, 11, 15, 3, 0, 12, 0, time.UTC)
 	run, _ := e.st.StartGuestBackupRun(ctx, "web1", lineage, "scheduled")
 	e.st.FinishGuestBackupRun(ctx, run, "done", "bk:v1", 100, at.Unix(), "")
-	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
+	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Size: 100, Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
 	code, body := adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r"})
 	if code != 201 {
 		t.Fatalf("propose: %d %s", code, body)
@@ -290,7 +290,7 @@ func TestRestoreGuestFails(t *testing.T) {
 // the disk is the restored one.
 func TestRestoreGuestFailsAfterTheRestore(t *testing.T) {
 	fr := &fakeRestorer{vols: map[string]plan.RestoreVolume{}}
-	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 	fr.after = func() { e.drv.Fail(fake.OpObserve, errors.New("proxmox answered 595")) }
 	adm := e.admin()
 	e.seed(adm, "web1")
@@ -301,7 +301,7 @@ func TestRestoreGuestFailsAfterTheRestore(t *testing.T) {
 	at := time.Date(2026, 11, 15, 3, 0, 12, 0, time.UTC)
 	run, _ := e.st.StartGuestBackupRun(ctx, "web1", lineage, "scheduled")
 	e.st.FinishGuestBackupRun(ctx, run, "done", "bk:v1", 100, at.Unix(), "")
-	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at, Size: 100}
+	fr.vols["3f2a9c0d1e4b5a67"] = plan.RestoreVolume{ID: "3f2a9c0d1e4b5a67", Volid: "bk:v1", Size: 100, Kind: "plumb", Notes: "plumb:iid:web1:" + lineage, Time: at}
 	code, body := adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "r"})
 	if code != 201 {
 		t.Fatalf("propose: %d %s", code, body)
