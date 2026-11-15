@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -142,4 +144,83 @@ func (e *Engine) endStaleConfigIssue(ctx context.Context, target string) {
 	if err := e.restoreIssue(ctx, target, wire.GuestConfigID, wire.StatusUnchanged, nil); err != nil {
 		e.log.Warn("end the guest config Issue after a restore", "target", target, "err", err)
 	}
+}
+
+// attrWayBack is the change of a guest:restore-failed Issue that carries
+// its way back as data: {"backup": <id>, "time": <RFC 3339>} (L1 of #350,
+// T-234). The API shows it as restore_way_back, not as a change.
+const attrWayBack = "way_back"
+
+// WayBack is the safety backup that a guest:restore-failed Issue names.
+type WayBack struct {
+	BackupID string
+	Time     time.Time
+}
+
+func wayBackChange(v RestoreVolume) wire.Change {
+	return wire.Change{Attr: attrWayBack, To: map[string]any{"backup": v.ID, "time": v.Time.UTC().Format(time.RFC3339)}, Risk: wire.RiskDestructive}
+}
+
+// RestoreWayBack returns the way back of a guest:restore-failed Issue from
+// its changes, or nil when it names none (no safety backup, or an Issue
+// opened before T-234), and the changes without the data change.
+func RestoreWayBack(changes []wire.Change) (*WayBack, []wire.Change) {
+	var w *WayBack
+	rest := make([]wire.Change, 0, len(changes))
+	for _, c := range changes {
+		if c.Attr != attrWayBack {
+			rest = append(rest, c)
+			continue
+		}
+		m, _ := c.To.(map[string]any)
+		id, _ := m["backup"].(string)
+		ts, _ := m["time"].(string)
+		at, err := time.Parse(time.RFC3339, ts)
+		if err == nil && isVolumeID(id) {
+			w = &WayBack{BackupID: id, Time: at.UTC()}
+		}
+	}
+	return w, rest
+}
+
+// isVolumeID: 16 lower-case hex digits (backup.VolumeID).
+func isVolumeID(s string) bool {
+	if len(s) != 16 {
+		return false
+	}
+	for _, r := range s {
+		if !('0' <= r && r <= '9' || 'a' <= r && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// ErrRestoreNotEnded: guest:restore-failed may not be ignored while the
+// guest has no disk (M1 of #352).
+var ErrRestoreNotEnded = errors.New("the guest of the Target has no disk")
+
+// RestoreFailedIgnoreNote is the text next to "ignore once" of
+// guest:restore-failed (M1 of #352): the web shows it in the confirm.
+const RestoreFailedIgnoreNote = "Ignore only after the guest has a disk again (a restore, or a repair in Proxmox): Plumb refuses it before. After the ignore, Plumb compares the guest again; do not revert an empty guest: a re-create gives the Target a new backup lineage, and its safety backup and every other backup can never be restored through Plumb again."
+
+// GuestHasDisk is the check before "ignore once" of guest:restore-failed
+// (M1 of #352): the bound guest exists and has a disk again. Ending the
+// Issue lifts the gate of T-234; on an empty guest the next poll would
+// offer a revert, whose re-create starts a new lineage, and every backup
+// of the guest (the safety backup too) becomes older-guest, never
+// restorable through Plumb.
+func (e *Engine) GuestHasDisk(ctx context.Context, target string) error {
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("%w: the Target has no guest; restore a backup first, or bring the guest back in Proxmox, then end this Issue", ErrRestoreNotEnded)
+	}
+	if err != nil {
+		return err
+	}
+	st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref))
+	if errors.Is(err, driver.ErrNotFound) || err == nil && st.Spec.DiskGB == 0 {
+		return fmt.Errorf("%w: restore a backup first, or bring the guest back in Proxmox; then end this Issue", ErrRestoreNotEnded)
+	}
+	return err
 }

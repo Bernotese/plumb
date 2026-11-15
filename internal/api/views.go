@@ -341,17 +341,25 @@ type issueView struct {
 	Actions   []string      `json:"actions"`
 	// ActionsBlockedBy: the open guest:restore-failed Issue of the Target
 	// that takes the actions away (T-234); ActionsNote says why.
-	ActionsBlockedBy *int64          `json:"actions_blocked_by"`
-	ActionsNote      string          `json:"actions_note"`
-	PlanID           *int64          `json:"plan_id"`
-	Resolution       *resolutionView `json:"resolution"`
-	Comments         []commentView   `json:"comments"`
-	Raw              bool            `json:"raw"`    // D-301; accept_mode == raw (D-362)
-	Source           *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
+	ActionsBlockedBy *int64 `json:"actions_blocked_by"`
+	ActionsNote      string `json:"actions_note"`
+	// RestoreWayBack: the safety backup that a guest:restore-failed Issue
+	// names as the way back (L1 of #350), else null.
+	RestoreWayBack *wayBackView    `json:"restore_way_back"`
+	PlanID         *int64          `json:"plan_id"`
+	Resolution     *resolutionView `json:"resolution"`
+	Comments       []commentView   `json:"comments"`
+	Raw            bool            `json:"raw"`    // D-301; accept_mode == raw (D-362)
+	Source         *sourceView     `json:"source"` // D-301; null for guest:* and agent:*
 	// What accept writes (D-362).
 	AcceptMode   string            `json:"accept_mode"`
 	AcceptReason string            `json:"accept_reason"`
 	AcceptParams []acceptParamView `json:"accept_params"`
+}
+
+type wayBackView struct {
+	BackupID string    `json:"backup_id"`
+	Time     time.Time `json:"time"`
 }
 
 type acceptParamView struct {
@@ -368,9 +376,22 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	v := issueView{ID: i.ID, Target: i.Target, Resource: i.Resource, Status: i.Status, Risk: wire.MaxRisk(ch),
 		OpenedAt: i.OpenedAt.UTC(), UpdatedAt: i.UpdatedAt.UTC(), Changes: changes(ch), Actions: []string{},
 		PlanID: nullID(i.PlanID), Comments: []commentView{}}
+	if i.Resource == plan.GuestRestoreFailedID {
+		w, rest := plan.RestoreWayBack(ch)
+		v.Changes = changes(rest)
+		if i.Status == store.IssueOpen {
+			v.ActionsNote = plan.RestoreFailedIgnoreNote // M1 of #352: for the confirm of ignore
+		}
+		if w != nil {
+			v.RestoreWayBack = &wayBackView{BackupID: w.BackupID, Time: w.Time}
+		}
+	}
 	if i.Status == store.IssueOpen && issue.IgnoreOnly(i.Resource) {
 		// ip is create-only: Plumb can neither revert nor accept (D-215).
-		v.Actions = append(v.Actions, "ignore_once", "ignore_rule")
+		v.Actions = append(v.Actions, "ignore_once")
+		if i.Resource != plan.GuestRestoreFailedID { // no Rule for it (M1 of #352)
+			v.Actions = append(v.Actions, "ignore_rule")
+		}
 	} else if i.Status == store.IssueOpen {
 		// A disk grown in Proxmox cannot be reverted: Proxmox cannot
 		// shrink it (D-299). Accept takes the bigger size.

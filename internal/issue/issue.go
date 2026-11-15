@@ -140,6 +140,15 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 					return err
 				}
 			}
+			if it.Resource == plan.GuestRestoreFailedID {
+				// T-234 (M1 of #352): no Rule and no earlier "ignore
+				// once" may keep the Issue of a failed restore from
+				// opening: it is the gate that protects the way back.
+				if err := s.openIssue(ctx, target, it); err != nil {
+					return err
+				}
+				continue
+			}
 			// Rules drop what they cover; the drop is recorded (D-092).
 			kept, dropped := filterRules(rules, target, it.Resource, it.Changes)
 			if err := s.recordDropped(ctx, target, it.Resource, dropped); err != nil {
@@ -268,6 +277,9 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	}
 	if IgnoreOnly(iss.Resource) && (action == ActionRevert || action == ActionAccept) {
 		return store.Plan{}, ErrAddressFix
+	}
+	if iss.Resource == plan.GuestRestoreFailedID && action == ActionIgnoreRule {
+		return store.Plan{}, ErrRestoreFailedRule
 	}
 	if err := s.restoreFailed(ctx, iss); err != nil {
 		return store.Plan{}, err
@@ -513,4 +525,27 @@ func (s *Service) restoreFailed(ctx context.Context, iss store.Issue) error {
 		return err
 	}
 	return fmt.Errorf("%w: Issue %d of %s says that the guest may have no disk; restore a backup first (POST /targets/%s/restore). Its actions come back after a restore that works", plan.ErrRestoreFailed, id, iss.Target, iss.Target)
+}
+
+// ErrRestoreFailedRule: the Issue of a failed restore cannot be ignored by
+// a Rule (M1 of #352): a Rule would keep every later one from opening.
+var ErrRestoreFailedRule = errors.New("issue: the Issue of a failed restore cannot be ignored by a rule; restore a backup, or end it with ignore once after the guest has a disk again")
+
+// openIssue opens or updates the Issue of one differing item, with no Rule
+// and no "ignore once" applied (guest:restore-failed, M1 of #352).
+func (s *Service) openIssue(ctx context.Context, target string, it wire.Item) error {
+	raw, err := json.Marshal(it.Changes)
+	if err != nil {
+		return err
+	}
+	iss, opened, err := s.st.UpsertIssue(ctx, target, it.Resource, raw)
+	if err != nil {
+		return err
+	}
+	typ := "issue.updated"
+	if opened {
+		typ = "issue.opened"
+	}
+	s.emit(ctx, typ, iss.ID, "system", map[string]any{"target": target, "resource": it.Resource, "risk": wire.MaxRisk(it.Changes)})
+	return nil
 }

@@ -95,6 +95,22 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	if r := s.issue(t, rf.ID); r.ActionsBlockedBy != nil || !slices.Contains(r.Actions, "ignore_once") {
 		t.Errorf("guest:restore-failed lost its own action: %+v", r)
 	}
+	// Its way back as data (L1 of #350): the safety backup of this Run.
+	code, body := s.adm.do("GET", "/api/v1/issues/"+itoa(rf.ID), nil)
+	var wb struct {
+		Changes        []struct{ Attr string }
+		RestoreWayBack *struct {
+			BackupID string `json:"backup_id"`
+			Time     string
+		} `json:"restore_way_back"`
+	}
+	json.Unmarshal(body, &wb)
+	if code != 200 || wb.RestoreWayBack == nil || wb.RestoreWayBack.BackupID != "5afe000000000001" || wb.RestoreWayBack.Time != "2026-11-15T04:00:12Z" || len(wb.Changes) != 1 || wb.Changes[0].Attr != "restore" {
+		t.Errorf("restore_way_back: %d %s", code, body)
+	}
+	if v := s.issue(t, pre.ID); v.ActionsBlockedBy == nil {
+		t.Errorf("drift Issue: %+v", v)
+	}
 	for _, a := range []string{"revert", "accept", "ignore_once", "ignore_rule"} {
 		if code, body := s.adm.do("POST", "/api/v1/issues/"+itoa(pre.ID)+"/resolve", map[string]any{"action": a}); code != 409 || problemType(body) != "restore-failed" {
 			t.Errorf("%s: %d %s", a, code, body)
@@ -127,7 +143,7 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 		}
 	}
 	// A delete of the Target is allowed, by a person only.
-	code, body := tok.do("POST", "/api/v1/plans", map[string]any{"reason": "gone", "delete": []map[string]any{{"kind": "Target", "name": "web1"}}})
+	code, body = tok.do("POST", "/api/v1/plans", map[string]any{"reason": "gone", "delete": []map[string]any{{"kind": "Target", "name": "web1"}}})
 	var del struct {
 		ID        int64
 		HumanOnly []string `json:"human_only"`
@@ -194,5 +210,131 @@ func TestRestoreFailedRefusesOlderPlan(t *testing.T) {
 	// An older delete Plan needs a person now.
 	if code, body := tok.do("POST", "/api/v1/plans/"+itoa(del.ID)+"/approve", nil); code != 403 || problemType(body) != "human-required" {
 		t.Fatalf("a token approved an older delete after a failed restore: %d %s", code, body)
+	}
+}
+
+// M1 of #352: ending guest:restore-failed lifts the gate, so only a human
+// admin session may, never while the guest has no disk, and never by a
+// Rule; a Rule does not keep the Issue from opening.
+func TestRestoreFailedIgnoreOnlyWithADisk(t *testing.T) {
+	s := newSafetyEnv(t)
+	e := s.e
+	gid := driver.GuestID(s.ref)
+	// A Rule that would ignore every guest:restore-failed.
+	e.approve(s.adm, "quiet", doc(state.KindRule, "quiet-restore", `{"action":"ignore","target":"*","resource":"guest:restore-failed"}`))
+	s.fr.fail = errors.New("proxmox: restore failed")
+	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
+	rf, err := e.st.OpenIssue(e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil {
+		t.Fatalf("%s %s; a Rule kept the Issue of a failed restore from opening: %v", status, out, err)
+	}
+	v := s.issue(t, rf.ID)
+	if !slices.Equal(v.Actions, []string{"ignore_once"}) || v.ActionsNote != plan.RestoreFailedIgnoreNote {
+		t.Fatalf("restore Issue view: %+v", v)
+	}
+	e.drv.Tamper(gid, func(g *driver.GuestSpec) { g.DiskGB = 0 })
+	ignore := func(c *client, action string) (int, string) {
+		code, body := c.do("POST", "/api/v1/issues/"+itoa(rf.ID)+"/resolve", map[string]any{"action": action})
+		return code, problemType(body)
+	}
+	if code, typ := ignore(e.token(TierApply, "disruptive"), "ignore_once"); code != 403 || typ != "human-required" {
+		t.Errorf("token: %d %s", code, typ)
+	}
+	if code, typ := ignore(s.adm, "ignore_rule"); code != 409 || typ != "action-not-allowed" {
+		t.Errorf("ignore by rule: %d %s", code, typ)
+	}
+	if code, typ := ignore(s.adm, "ignore_once"); code != 409 || typ != "restore-not-ended" {
+		t.Errorf("admin, no disk: %d %s", code, typ)
+	}
+	if !s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatal("the Issue ended while the guest has no disk")
+	}
+	// A person brought the guest back in Proxmox: now the admin may end it.
+	e.drv.Tamper(gid, func(g *driver.GuestSpec) { g.DiskGB = 10 })
+	if code, typ := ignore(s.adm, "ignore_once"); code != 200 {
+		t.Fatalf("admin, disk back: %d %s", code, typ)
+	}
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatal("the Issue stays after the ignore")
+	}
+}
+
+// M2 of #352: the Issue is open while Proxmox restores, so a controller
+// stop inside the call leaves the gate closed; a restore that works ends
+// it.
+func TestRestoreIssueOpenDuringTheCall(t *testing.T) {
+	s := newSafetyEnv(t)
+	e := s.e
+	var during issueOut
+	var open bool
+	s.fr.during = func() {
+		iss, err := e.st.OpenIssue(e.ctx, "web1", plan.GuestRestoreFailedID)
+		open = err == nil
+		if open {
+			var ch []wire.Change
+			json.Unmarshal(iss.Changes, &ch)
+			during.Status = iss.Status
+			for _, c := range ch {
+				if c.Attr == "restore" {
+					during.ActionsNote, _ = c.From.(string)
+				}
+			}
+			w, _ := plan.RestoreWayBack(ch)
+			if w == nil || w.BackupID != "5afe000000000001" {
+				t.Errorf("way back during the call: %+v", w)
+			}
+		}
+	}
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	if !open || !strings.HasPrefix(during.ActionsNote, "running: if this restore does not end") {
+		t.Fatalf("no Issue during the restore call: %v %+v", open, during)
+	}
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("the Issue stays after a restore that worked")
+	}
+	// A stop inside the call: the state that a restart finds is the Issue
+	// above with no running Run; the gate then holds (poll and Plans).
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: plan.GuestRestoreFailedID, Status: wire.StatusDiffers,
+		Changes: []wire.Change{{Attr: "restore", From: "running: if this restore does not end, the guest may have no disk", To: "restore another backup", Risk: wire.RiskDestructive}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	e.drv.Tamper(driver.GuestID(s.ref), func(g *driver.GuestSpec) { g.DiskGB, g.MemoryMB = 0, 512 })
+	s.poll(t)
+	if _, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID); err == nil {
+		t.Error("a drift Issue of the empty guest after the stop")
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}}); code != 409 || problemType(body) != "restore-failed" {
+		t.Errorf("a Plan after the stop: %d %s", code, body)
+	}
+}
+
+// The unbind of an adopted Target whose last restore failed is allowed,
+// for a person only (G6 of #352).
+func TestRestoreFailedAdoptedUnbind(t *testing.T) {
+	e := newEnv(t, true, withInstall)
+	adm := e.admin()
+	e.adoptWithAgent(adm, "wiki")
+	if err := e.iss.Intake(e.ctx, "wiki", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: plan.GuestRestoreFailedID, Status: wire.StatusDiffers,
+		Changes: []wire.Change{{Attr: "restore", From: "failed: the guest may have no disk", To: "restore another backup", Risk: wire.RiskDestructive}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	tok := e.token(TierApply, "disruptive")
+	code, body := tok.do("POST", "/api/v1/plans", map[string]any{"reason": "unbind", "delete": []map[string]any{{"kind": "Target", "name": "wiki"}}})
+	var p struct {
+		ID        int64
+		HumanOnly []string `json:"human_only"`
+		Targets   []struct{ Target string }
+	}
+	json.Unmarshal(body, &p)
+	if code != 201 || !slices.Contains(p.HumanOnly, plan.HumanOnlyRestoreFailed) || len(p.Targets) != 1 {
+		t.Fatalf("unbind: %d %s", code, body)
+	}
+	if code, body := tok.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 403 || problemType(body) != "human-required" {
+		t.Fatalf("a token approved the unbind: %d %s", code, body)
+	}
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("a person approves the unbind: %d %s", code, body)
 	}
 }

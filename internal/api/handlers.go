@@ -63,10 +63,12 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrIssueNotOpen):
 		problem(w, http.StatusConflict, "issue-not-open", "Issue is not open", "Another Plan resolves it, or it is resolved.")
 	case errors.Is(err, issue.ErrAcceptSensitive), errors.Is(err, issue.ErrAcceptImage), errors.Is(err, issue.ErrAddressFix),
-		errors.Is(err, issue.ErrAcceptFirewall), errors.Is(err, issue.ErrAcceptNIC):
+		errors.Is(err, issue.ErrAcceptFirewall), errors.Is(err, issue.ErrAcceptNIC), errors.Is(err, issue.ErrRestoreFailedRule):
 		problem(w, http.StatusConflict, "action-not-allowed", "Action not allowed", err.Error())
 	case errors.Is(err, plan.ErrRestoredMode):
 		problem(w, http.StatusConflict, "restored-mode", "Restored mode", err.Error())
+	case errors.Is(err, plan.ErrRestoreNotEnded): // M1 of #352
+		problem(w, http.StatusConflict, "restore-not-ended", "The guest has no disk", err.Error())
 	case errors.Is(err, plan.ErrRestoreFailed): // T-234
 		problem(w, http.StatusConflict, "restore-failed", "The last restore failed", strings.TrimPrefix(err.Error(), "plan: "))
 	case errors.Is(err, plan.ErrOffline):
@@ -832,6 +834,13 @@ func (s *Server) resolveIssue(w http.ResponseWriter, r *http.Request, p *princip
 		return
 	}
 	if req.Action == issue.ActionIgnoreOnce {
+		// M1 of #352: ending guest:restore-failed lifts the gate of T-234,
+		// so only a human admin session may, whatever its risk says.
+		if iss, err := s.st.GetIssue(r.Context(), id); err == nil && iss.Resource == plan.GuestRestoreFailedID && (!p.human() || p.tier != TierAdmin) {
+			problem(w, http.StatusForbidden, "human-required", "Human session required",
+				"Only a human admin session can end the Issue of a failed restore.")
+			return
+		}
 		s.ignoreOnce(w, r, p, id)
 		return
 	}

@@ -67,6 +67,11 @@ func (s *Service) headRules(ctx context.Context) ([]state.Rule, error) {
 // filterRules splits the changes of one resource into those that no rule
 // covers and, per rule, the attributes that it dropped (D-092).
 func filterRules(rules []state.Rule, target, resource string, changes []wire.Change) (kept []wire.Change, dropped map[string][]string) {
+	if resource == plan.GuestRestoreFailedID {
+		// No Rule covers the Issue of a failed restore (M1 of #352): it is
+		// the gate that protects the way back.
+		return changes, nil
+	}
 	for _, c := range changes {
 		matched := ""
 		for _, r := range rules {
@@ -151,6 +156,11 @@ func (s *Service) IgnoreOnce(ctx context.Context, id int64, principal string, ch
 	}
 	if err := s.restoreFailed(ctx, iss); err != nil {
 		return store.Issue{}, err
+	}
+	if iss.Resource == plan.GuestRestoreFailedID && s.plans != nil { // M1 of #352
+		if err := s.plans.GuestHasDisk(ctx, iss.Target); err != nil {
+			return store.Issue{}, err
+		}
 	}
 	var changes []wire.Change
 	if err := json.Unmarshal(iss.Changes, &changes); err != nil {
