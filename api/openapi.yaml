@@ -1156,8 +1156,8 @@ paths:
         changed). A manual backup is marked as such (`trigger: manual`). Retention keeps at most 2
         manual backups beside the `keep` scheduled ones and never deletes a scheduled backup because
         of a manual one (review M1 of #325), so repeated calls cannot push out the good backups. 409 `backup-running` (a job of this Target runs), 409 `backup-refused` (no storage, a
-        clear storage without `--guest-backup-clear`, less than 10 % free, or restored mode; the detail
-        says which). Events `guest_backup.started`, then `done`, `failed` or `warning` in `done` (the
+        clear storage without `--guest-backup-clear`, less than 10 % free, restored mode, or the guest is
+        gone from the pool; the detail says which). Events `guest_backup.started`, then `done`, `failed` or `warning` in `done` (the
         marker could not be read back: the volume is `unmarked`, D-407).
       security:
         - session: []
@@ -1996,6 +1996,9 @@ paths:
                     changes:
                       - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
                     actions: [accept, revert]
+                    actions_blocked_by: null
+                    actions_note: ""
+                    restore_way_back: null
                     plan_id: null
                     resolution: null
                     comments: []
@@ -2009,6 +2012,9 @@ paths:
                     changes:
                       - { attr: content, sensitive: true, risk: reversible }
                     actions: [revert]
+                    actions_blocked_by: null
+                    actions_note: ""
+                    restore_way_back: null
                     plan_id: null
                     resolution: null
                     comments: []
@@ -2022,6 +2028,9 @@ paths:
                     changes:
                       - { attr: ip, from: [192.0.2.107], to: 192.0.2.20, risk: read }
                     actions: [ignore_once, ignore_rule]
+                    actions_blocked_by: null
+                    actions_note: ""
+                    restore_way_back: null
                     plan_id: null
                     resolution: null
                     comments: []
@@ -2058,6 +2067,9 @@ paths:
                     to: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOm me@laptop"]
                     risk: reversible
                 actions: [accept, revert]
+                actions_blocked_by: null
+                actions_note: ""
+                restore_way_back: null
                 plan_id: null
                 resolution: null
                 comments:
@@ -2119,6 +2131,9 @@ paths:
                 changes:
                   - { attr: content, from: "Hand-edited\n", to: "Hello from Plumb\n", risk: reversible }
                 actions: []
+                actions_blocked_by: null
+                actions_note: ""
+                restore_way_back: null
                 plan_id: null
                 resolution: { action: ignore, by: "user:admin", at: "2026-11-10T09:16:00Z" }
                 comments: []
@@ -4195,12 +4210,15 @@ components:
             an adopted Target to `true`, or deletes an adopted Target that has it (D-388).
             `guest-restore`: a Plan of origin `restore` (D-410): it overwrites the guest with a
             backup.
+            `restore-failed`: the Plan deletes a Target whose last restore failed (an open
+            `guest:restore-failed`, T-234); every other Plan for such a Target is refused with 409
+            `restore-failed`, at the proposal and again at the approval.
             The server computes it from the content of the proposal, for every origin, and from
             the origin for `accept-guest-data` and `unverified-pin`; no client field sets or
             clears it.
           items:
             type: string
-            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off, repair, adopted-guest-delete, guest-restore]
+            enum: [secret-binding, rule-change, image-recipe, accept-guest-data, unverified-pin, firewall-off, repair, adopted-guest-delete, guest-restore, restore-failed]
         guest_data_issues:
           type: array
           description: |
@@ -4569,6 +4587,9 @@ components:
         - updated_at
         - changes
         - actions
+        - actions_blocked_by
+        - actions_note
+        - restore_way_back
         - plan_id
         - resolution
         - comments
@@ -4588,8 +4609,40 @@ components:
           items: { $ref: "#/components/schemas/Change" }
         actions:
           type: array
-          description: Actions allowed now. `accept` is missing for a sensitive change.
+          description: |
+            Actions allowed now. `accept` is missing for a sensitive change. Empty while
+            `actions_blocked_by` is set (T-234).
           items: { $ref: "#/components/schemas/IssueAction" }
+        actions_blocked_by:
+          $ref: "#/components/schemas/NullableId"
+          description: |
+            T-234: the open Issue `guest:restore-failed` of the Target, while the last restore
+            failed and the guest may have no disk. Then this Issue has no action, and every
+            resolve or ignore answers 409 `restore-failed`; the actions come back after a restore
+            that works. Null otherwise, and always for `guest:restore-failed` itself.
+        actions_note:
+          type: string
+          maxLength: 1024
+          description: |
+            Plumb's text on the actions (T-234): why `actions` is empty, or, on an open
+            `guest:restore-failed`, the rule of its "ignore once" for the confirm (M1 of #352: a
+            human admin session only; 409 `restore-not-ended` while the guest has no disk; no
+            "ignore by rule"; a revert of an empty guest would make every backup of it
+            unrestorable). "" otherwise.
+        restore_way_back:
+          description: |
+            Only for `guest:restore-failed` (L1 of #350, T-234): the safety backup that the Issue names
+            as the way back, as data (`backup_id` is the id for `POST /targets/{name}/restore`).
+            Null when there is none (no safety backup was taken, or the Issue is older) and for
+            every other Issue. Its carrier change (`way_back`) is not in `changes`.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [backup_id, time]
+              properties:
+                backup_id: { type: string, pattern: "^[0-9a-f]{16}$" }
+                time: { $ref: "#/components/schemas/Time" }
+            - type: "null"
         plan_id:
           $ref: "#/components/schemas/NullableId"
           description: The Plan that resolves it (`accept`, `revert`, `ignore_rule`).

@@ -83,6 +83,11 @@ export interface MockOptions {
    * apply → alice, plan → carol, read → bob (T-154).
    */
   role?: UserRole;
+  /**
+   * Targets whose guest has no disk now (M1 of #352): the end of their
+   * guest:restore-failed answers 409 restore-not-ended (#355).
+   */
+  guestsWithoutDisk?: string[];
 }
 
 export interface MockApi extends PlumbApi {
@@ -791,13 +796,36 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     const map = t
       ? acceptMapping(t.document.spec, blocks, i)
       : { accept_mode: "none" as const, accept_reason: "", accept_params: [] };
+    const blocked = i.status === "open" ? restoreFailedOf(i) : null;
     return {
       ...i,
       source,
       raw: source !== null && map.accept_mode === "raw",
       ...(source !== null ? map : {}),
+      ...(blocked !== null
+        ? {
+            actions: [],
+            actions_blocked_by: blocked,
+            actions_note: `The last restore of ${i.target} failed, and the guest may have no disk: Issue ${blocked} names the way back (a restore of the safety backup). The actions of this Issue come back after a restore that works.`,
+          }
+        : {}),
     };
   };
+  /** T-234: the open guest:restore-failed of i's Target that takes i's actions away. */
+  function restoreFailedOf(i: Issue): number | null {
+    if (i.resource === "guest:restore-failed") return null;
+    for (const o of issues.values())
+      if (o.target === i.target && o.resource === "guest:restore-failed" && o.status === "open")
+        return o.id;
+    return null;
+  }
+  const restoreFailedProblem = (target: string) =>
+    problem(
+      "restore-failed",
+      "The last restore failed",
+      409,
+      `the last restore of the Target failed: ${target}`,
+    );
   const docKey = (d: { kind: string; name: string }) => `${d.kind}/${d.name}`;
   const headDocs: Snapshot = new Map();
   for (const d of [
@@ -974,6 +1002,77 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       ],
     ],
   ]);
+  // cache1: its last restore failed (D-420); the safety backup is the way back.
+  // The Run left the guest stopped.
+  const cache1 = targets.get("cache1");
+  if (cache1) cache1.status.power = "stopped";
+  guestBackups.set("cache1", [
+    {
+      id: "7e6d5c4b3a291807",
+      time: "2026-11-15T09:20:31Z",
+      size: 412000000,
+      kind: "plumb",
+      trigger: "pre-restore",
+      mode: "stop",
+    },
+    {
+      id: "2c3d4e5f60718293",
+      time: "2026-11-15T03:00:05Z",
+      size: 409000000,
+      kind: "plumb",
+      trigger: "scheduled",
+      mode: "snapshot",
+    },
+  ]);
+  {
+    const id = Math.max(0, ...issues.keys()) + 1;
+    issues.set(id, {
+      id,
+      target: "cache1",
+      resource: "guest:restore-failed",
+      status: "open",
+      risk: "destructive",
+      opened_at: "2026-11-15T09:24:02Z",
+      updated_at: "2026-11-15T09:24:02Z",
+      // restoreFailedIssue of internal/plan/restore_guest.go (its text as sent).
+      changes: [
+        {
+          attr: "restore",
+          from: "failed: the guest may have no disk",
+          to: "restore the safety backup 7e6d5c4b3a291807 of 2026-11-15T09:20:31Z",
+          risk: "destructive",
+        },
+      ],
+      // T-234 (#352): no ignore by rule for this Issue; the note is the
+      // confirm text of its ignore; the way back as data.
+      actions: ["ignore_once"],
+      actions_blocked_by: null,
+      actions_note:
+        "Ignore only after the guest has a disk again (a restore, or a repair in Proxmox): Plumb refuses it before. After the ignore, Plumb compares the guest again; do not revert an empty guest: a re-create gives the Target a new backup lineage, and its safety backup and every other backup can never be restored through Plumb again.",
+      restore_way_back: { backup_id: "7e6d5c4b3a291807", time: "2026-11-15T09:20:31Z" },
+      plan_id: null,
+      resolution: null,
+      comments: [],
+    });
+    // A drift found before the restore failed: no action while it is open (T-234).
+    issues.set(id + 1, {
+      id: id + 1,
+      target: "cache1",
+      resource: "guest:config",
+      status: "open",
+      risk: "disruptive",
+      opened_at: "2026-11-15T08:10:00Z",
+      updated_at: "2026-11-15T08:10:00Z",
+      changes: [{ attr: "memory", from: 4096, to: 2048, risk: "disruptive" }],
+      actions: ["accept", "revert", "ignore_once", "ignore_rule"],
+      actions_blocked_by: null,
+      actions_note: "",
+      restore_way_back: null,
+      plan_id: null,
+      resolution: null,
+      comments: [],
+    });
+  }
   const guestBackupLast = new Map<string, NonNullable<GuestBackupList["last"]>>([
     ["db1", { at: "2026-11-15T03:00:12Z", result: "done", message: "" }],
   ]);
@@ -990,6 +1089,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       while (at.getUTCDay() !== want) at.setUTCDate(at.getUTCDate() + 1);
     }
     return at.toISOString();
+  }
+  /** sizeText of internal/plan/restore_guest.go. */
+  function sizeText(n: number): string {
+    if (n >= 2 ** 30) return `${(n / 2 ** 30).toFixed(1)} GiB`;
+    if (n >= 2 ** 20) return `${Math.floor(n / 2 ** 20)} MiB`;
+    if (n > 0) return `${Math.floor((n + 1023) / 1024)} KiB`;
+    return "the size of a backup of the guest";
   }
   /** Retention (review M1 of #325): newest `keep` scheduled and at most 2 manual plumb volumes. */
   function retainGuestBackups(name: string, keep: number) {
@@ -2581,6 +2687,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       need("resolveIssue");
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
+      if (issue.status === "open" && restoreFailedOf(issue) !== null)
+        throw restoreFailedProblem(issue.target);
+      if (issue.resource === "guest:restore-failed" && action === "ignore_rule")
+        throw problem(
+          "action-not-allowed",
+          "Action not allowed",
+          409,
+          "the Issue of a failed restore has no ignore rule",
+        );
       if (issue.status !== "open" || !issue.actions.includes(action)) {
         throw problem(
           "conflict",
@@ -2659,6 +2774,27 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       const s = need("resolveIssue");
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
+      if (issue.status === "open" && restoreFailedOf(issue) !== null)
+        throw restoreFailedProblem(issue.target);
+      // M1 of #352: only a human admin session ends the Issue of a failed restore.
+      if (issue.resource === "guest:restore-failed" && !(isPerson(s) && s.tier === "admin"))
+        throw problem(
+          "human-required",
+          "Human session required",
+          403,
+          "Only a human admin session can end the Issue of a failed restore.",
+        );
+      // ErrRestoreNotEnded of internal/plan/restore_failed.go.
+      if (
+        issue.resource === "guest:restore-failed" &&
+        (opts.guestsWithoutDisk ?? []).includes(issue.target)
+      )
+        throw problem(
+          "restore-not-ended",
+          "The guest has no disk",
+          409,
+          "the guest of the Target has no disk: restore a backup first, or bring the guest back in Proxmox; then end this Issue",
+        );
       // A person with role apply up to disruptive (ARCHITECTURE §17).
       if (isPerson(s) && s.tier !== "admin") {
         if (s.tier !== "apply" || issue.risk === "destructive")
@@ -3178,6 +3314,25 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           `${name}: the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first (D-194)`,
         );
       const adopted = t.document.spec.adopted !== undefined;
+      // D-420: after a failed restore no new safety backup ("kept"); a skip only for a
+      // broken guest. The mock knows no guest without a disk, so it allows the skip
+      // only with the open Issue (where "kept" wins anyway), as the server would.
+      const failedBefore = [...issues.values()].some(
+        (i) => i.target === name && i.resource === "guest:restore-failed" && i.status === "open",
+      );
+      const skip = req.skip_safety_backup === true;
+      if (skip && !failedBefore)
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `${name}: the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)`,
+        );
+      const safety = failedBefore
+        ? "kept: the last restore failed; the safety backup from before it stays"
+        : skip
+          ? "skipped: the guest is broken already"
+          : "first, of the guest as it is now";
       const p = newPlan({
         origin: "restore",
         issue_id: null,
@@ -3192,6 +3347,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
                 risk: "destructive",
                 changes: [
                   { attr: "restore", to: `backup ${b.id} of ${b.time}`, risk: "destructive" },
+                  { attr: "safety_backup", to: safety, risk: "destructive" },
                 ],
               },
             ],
@@ -3199,10 +3355,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         ],
         // restoreNotes of internal/plan/restore_guest.go.
         warnings: [
+          "Proxmox removes the guest's disks before it writes the backup: if the restore fails, the guest is left empty.",
           "The guest goes back to the backup time: every change in the guest after it is lost.",
           "Access that a person removed after the backup comes back (authorized_keys lines, passwords, users).",
           "The desired state is not rolled back: the next Run converges the guest to the head revision.",
           "The agent credential is revoked before the guest starts, and the host key pins are dropped.",
+          failedBefore
+            ? "No new safety backup: the last restore failed, so the guest may be empty. The safety backup from before that failure stays the way back."
+            : `Plumb first takes a safety backup of the guest as it is now (about ${sizeText(b.size)} on the backup storage, the free-space gate applies); if that backup fails, nothing is changed.`,
           adopted
             ? `The guest starts again without an agent: run the install command of ${name} (an adopted Target).`
             : "A re-enroll Plan follows: approve it to start the guest with a new agent credential.",

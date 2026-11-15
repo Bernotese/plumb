@@ -112,6 +112,9 @@ export function changeView(
 
 export const GUEST_CONFIG = "guest:config";
 
+/** D-420: the Issue of a restore that failed after Proxmox began; ignore only. */
+export const GUEST_RESTORE_FAILED = "guest:restore-failed";
+
 /** The label of spec.allow_restart (D-196). */
 export const ALLOW_RESTART_LABEL = "Plumb may restart this VM";
 
@@ -290,6 +293,12 @@ export function humanOnlyReasons(plan: Plan): string[] {
     if (reason === "guest-restore") {
       out.push(
         "It overwrites the guest with a backup (D-410): everything written after that backup is lost, and access that was removed since (SSH keys, passwords) comes back. The agent gets a new enrollment.",
+      );
+      continue;
+    }
+    if (reason === "restore-failed") {
+      out.push(
+        "It deletes a Target whose last restore failed (T-234): its guest may still come back with a restore of the safety backup.",
       );
       continue;
     }

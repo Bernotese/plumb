@@ -355,6 +355,9 @@ func (e *Engine) ProposeRepair(ctx context.Context, target, reason, acceptHostKe
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
 	}
+	if err := e.restoreFailedOne(ctx, target); err != nil { // T-234
+		return store.Plan{}, err
+	}
 	if err != nil {
 		return store.Plan{}, err
 	}

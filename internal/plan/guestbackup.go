@@ -139,10 +139,12 @@ func keepOf(b map[string]any) int {
 }
 
 // backupChange is the Plan-only change of spec.backup (D-408, D-417).
-// Whenever the new field makes the next job delete backups, the change is
-// destructive and its note says how many: the count comes from the jobs
-// (BackupKeepDeletes), also when the field comes back after a removal (M1
-// of #334: remove, then add again with keep 1, must not pass as read).
+// When the new field makes the next job delete more backups than the old
+// field would (T-233), the change is destructive and its note says how
+// many more: the counts come from the jobs (BackupKeepDeletes). An absent
+// old field deletes none, so a field that comes back after a removal is
+// counted in full (M1 of #334: remove, then add again with keep 1, must
+// not pass as read).
 // An unknown count (no jobs, no storage: -1) fails closed: a lower keep
 // than before, or a field that cannot be compared (it comes back, or was
 // not there), is destructive. newGuest: the guest does not exist yet, so
@@ -168,18 +170,26 @@ func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered
 	case newGuest:
 		// No guest yet: nothing to delete.
 	default:
-		n := -1
-		if e.cfg.BackupKeepDeletes != nil {
-			var err error
-			if n, err = e.cfg.BackupKeepDeletes(ctx, target, keepOf(nu)); err != nil {
+		// T-233: the Plan is destructive only for the deletes that it
+		// causes: the old field's next job deletes its own share anyway.
+		// An absent old field deletes none (0), so "remove, then add
+		// again with keep 1" stays destructive (M1 of #334).
+		nNew, err := e.keepDeletes(ctx, target, keepOf(nu))
+		if err != nil {
+			return nil, nil, err
+		}
+		nOld := 0
+		if old != nil && nNew >= 0 {
+			if nOld, err = e.keepDeletes(ctx, target, keepOf(old)); err != nil {
 				return nil, nil, err
 			}
 		}
 		switch {
-		case n > 0:
-			c.Risk = wire.RiskDestructive
-			notes = append(notes, fmt.Sprintf("Target %s: with keep %d the next backup job deletes %d backup(s).", target, keepOf(nu), n))
-		case n == 0:
+		case nNew >= 0 && nOld >= 0:
+			if more := nNew - nOld; more > 0 {
+				c.Risk = wire.RiskDestructive
+				notes = append(notes, fmt.Sprintf("Target %s: with keep %d the next backup job deletes %d backup(s), %d more than with the current field.", target, keepOf(nu), nNew, more))
+			}
 		case old != nil && keepOf(nu) >= keepOf(old):
 			// Unknown count, but keep is not lower: nothing more goes.
 		default: // unknown count, and keep is lower or cannot be compared: fail closed
@@ -197,4 +207,12 @@ func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered
 		}
 	}
 	return c, notes, nil
+}
+
+// keepDeletes is BackupKeepDeletes, or -1 (unknown) without the jobs.
+func (e *Engine) keepDeletes(ctx context.Context, target string, keep int) (int, error) {
+	if e.cfg.BackupKeepDeletes == nil {
+		return -1, nil
+	}
+	return e.cfg.BackupKeepDeletes(ctx, target, keep)
 }
