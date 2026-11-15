@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { PlumbApi } from "../lib/client";
-  import { can, canTakeRisk, roleNote } from "../lib/session.svelte";
+  import { can, canTakeRisk, me, roleNote } from "../lib/session.svelte";
   import { offersRaw } from "../lib/raw";
   import { go, href } from "../lib/router";
   import type { Issue, IssueAction } from "../lib/types";
@@ -13,7 +13,6 @@
     addressIssueText,
     formatTime,
     isSensitive,
-    restoreWayBack,
   } from "../lib/view";
   import ChangeTable from "../ui/ChangeTable.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
@@ -77,7 +76,16 @@
   );
 
   // D-420: a failed restore; the Issue names the backup to restore (ignore only).
-  const wayBack = $derived(issue?.resource === GUEST_RESTORE_FAILED ? restoreWayBack(issue) : null);
+  const wayBack = $derived(
+    issue?.resource === GUEST_RESTORE_FAILED ? (issue.restore_way_back ?? null) : null,
+  );
+  const restoreFailed = $derived(issue?.resource === GUEST_RESTORE_FAILED);
+  // T-234: while the last restore of the Target failed, its other Issues have no action.
+  const blockedBy = $derived(issue?.status === "open" ? (issue.actions_blocked_by ?? null) : null);
+  // M1 of #352: only a human admin session ends guest:restore-failed.
+  const adminPerson = $derived(
+    (me.session?.principal.startsWith("user:") ?? false) && me.session?.tier === "admin",
+  );
 
   // guest:address (D-215): the Proxmox config is right, the guest does not follow it.
   const isAddress = $derived(issue?.resource === GUEST_ADDRESS);
@@ -172,15 +180,19 @@
         A restore of this guest failed after Proxmox began. Proxmox removes the guest's disks before
         it writes the backup, so the guest may have no disk now.
         {#if wayBack}The way back: restore the safety backup of {formatTime(wayBack.time)} (backup
-          <span class="mono">{wayBack.id}</span>), or another backup.{:else}The way back: restore
-          another backup.{/if}
+          <span class="mono">{wayBack.backup_id}</span>), or another backup.{:else}The way back:
+          restore another backup.{/if}
         A restore that works ends this issue. Re-enroll the agent only after a restore that worked.
       </p>
       {#if issue.status === "open"}
         <p id="restore-way-back">
           {#if wayBack && can("restoreGuest")}
-            <a href={href({ name: "target-backups", target: issue.target, restore: wayBack.id })}
-              >Restore the safety backup of {formatTime(wayBack.time)}…</a
+            <a
+              href={href({
+                name: "target-backups",
+                target: issue.target,
+                restore: wayBack.backup_id,
+              })}>Restore the safety backup of {formatTime(wayBack.time)}…</a
             > ·
           {/if}
           <a href={href({ name: "target-backups", target: issue.target })}
@@ -222,8 +234,13 @@
     {/if}
     {#if ignored}
       <p class="banner ok" role="status">
-        Ignored once. The same drift opens no new issue until the resource matches again or a run
-        applies it.
+        {#if restoreFailed}
+          Ended. Plumb compares the guest again, and the actions of the other issues of this Target
+          come back.
+        {:else}
+          Ignored once. The same drift opens no new issue until the resource matches again or a run
+          applies it.
+        {/if}
       </p>
     {/if}
     {#if issue.resolution}
@@ -258,7 +275,7 @@
     </p>
   {/if}
 
-  {#if issue.status === "open" && nicDrift.length && !issue.actions.includes("accept")}
+  {#if issue.status === "open" && blockedBy === null && nicDrift.length && !issue.actions.includes("accept")}
     <p class="muted" id="accept-nic">
       Accept is not possible for a network card ({nicDrift.join(", ")}). Revert it, or change
       <span class="mono">guest.nics</span> in the
@@ -266,7 +283,12 @@
     </p>
   {/if}
 
-  {#if issue.status === "open" && !can("resolveIssue")}
+  {#if blockedBy !== null}
+    <p class="banner warn" role="note" id="actions-blocked">
+      {issue.actions_note}
+      <a href={href({ name: "issue", id: blockedBy })}>Open Issue {blockedBy}</a>
+    </p>
+  {:else if issue.status === "open" && !can("resolveIssue")}
     <p class="muted" id="resolve-role">{roleNote("plan")} You cannot resolve this issue.</p>
   {:else if issue.status === "open"}
     <section class="card" aria-labelledby="resolve-title">
@@ -324,22 +346,32 @@
 
       {#if canIgnore}
         <h3>Ignore</h3>
-        {#if issue.actions.includes("ignore_once") && canTakeRisk(issue.risk)}
+        {#if restoreFailed && issue.actions.includes("ignore_once") && !adminPerson}
+          <p class="muted" id="ignore-admin-only">
+            Only a person with the role admin can end this issue (an API token never can).
+          </p>
+        {:else if issue.actions.includes("ignore_once") && canTakeRisk(issue.risk)}
           <div class="option">
             {#if confirmIgnore}
               <div class="confirm" role="group" aria-labelledby="ignore-q">
-                <p id="ignore-q">
-                  <strong>Ignore this drift?</strong> The issue is resolved at once and no screen can
-                  undo it. The same drift opens no new issue until the resource matches again or a run
-                  applies it.
-                </p>
+                {#if restoreFailed}
+                  <p id="ignore-q">
+                    <strong>End the issue of the failed restore?</strong>
+                    {issue.actions_note}
+                  </p>
+                {:else}<p id="ignore-q">
+                    <strong>Ignore this drift?</strong> The issue is resolved at once and no screen can
+                    undo it. The same drift opens no new issue until the resource matches again or a run
+                    applies it.
+                  </p>{/if}
                 <div class="row">
                   <button
                     id="ignore-confirm"
                     class="btn"
                     type="button"
                     disabled={busy}
-                    onclick={ignoreOnce}>Ignore this drift</button
+                    onclick={ignoreOnce}
+                    >{restoreFailed ? "End the issue" : "Ignore this drift"}</button
                   >
                   <button class="btn" type="button" onclick={() => (confirmIgnore = false)}
                     >Cancel</button
@@ -351,7 +383,9 @@
                 Ignore once
               </button>
               <p class="muted">
-                {#if isAddress}
+                {#if restoreFailed}
+                  Ends this issue now, without a plan. Plumb refuses it while the guest has no disk.
+                {:else if isAddress}
                   Resolves this issue now, without a plan. When the reported list changes and the
                   configured address is still missing, the issue opens again.
                 {:else}

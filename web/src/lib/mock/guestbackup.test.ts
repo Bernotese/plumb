@@ -115,6 +115,33 @@ describe("guest backups (mock)", () => {
     }
   });
 
+  it("a failed restore takes the actions of the other Issues of its Target (T-234)", async () => {
+    const a = api();
+    const list = await a.listIssues({ target: "cache1", status: "open" });
+    const failed = list.find((i) => i.resource === "guest:restore-failed");
+    const other = list.find((i) => i.resource === "guest:config");
+    if (!failed || !other) throw new Error("the cache1 seed is missing");
+    expect(failed.actions).toEqual(["ignore_once"]);
+    expect(failed.restore_way_back).toEqual({
+      backup_id: "7e6d5c4b3a291807",
+      time: "2026-11-15T09:20:31Z",
+    });
+    expect([other.actions, other.actions_blocked_by]).toEqual([[], failed.id]);
+    expect(other.actions_note).toContain(`Issue ${failed.id} names the way back`);
+    expect(await code(a.resolveIssue(other.id, "revert"))).toMatch(/^409 .*restore-failed$/);
+    expect(await code(a.ignoreOnce(other.id))).toMatch(/^409 .*restore-failed$/);
+    expect(await code(a.resolveIssue(failed.id, "ignore_rule"))).toMatch(
+      /^409 .*action-not-allowed$/,
+    );
+    // M1 of #352: only a human admin session ends it.
+    expect(await code(api({ token: true }).ignoreOnce(failed.id))).toMatch(
+      /^403 .*human-required$/,
+    );
+    expect(await code(a.ignoreOnce(failed.id))).toBe("ok");
+    const back = await a.getIssue(other.id);
+    expect([back.actions_blocked_by, back.actions.includes("revert")]).toEqual([null, true]);
+  });
+
   it("a running guest without allow_restart is refused (D-194)", async () => {
     const a = api();
     const t = await a.getTarget("db1");

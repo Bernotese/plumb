@@ -791,13 +791,36 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
     const map = t
       ? acceptMapping(t.document.spec, blocks, i)
       : { accept_mode: "none" as const, accept_reason: "", accept_params: [] };
+    const blocked = i.status === "open" ? restoreFailedOf(i) : null;
     return {
       ...i,
       source,
       raw: source !== null && map.accept_mode === "raw",
       ...(source !== null ? map : {}),
+      ...(blocked !== null
+        ? {
+            actions: [],
+            actions_blocked_by: blocked,
+            actions_note: `The last restore of ${i.target} failed, and the guest may have no disk: Issue ${blocked} names the way back (a restore of the safety backup). The actions of this Issue come back after a restore that works.`,
+          }
+        : {}),
     };
   };
+  /** T-234: the open guest:restore-failed of i's Target that takes i's actions away. */
+  function restoreFailedOf(i: Issue): number | null {
+    if (i.resource === "guest:restore-failed") return null;
+    for (const o of issues.values())
+      if (o.target === i.target && o.resource === "guest:restore-failed" && o.status === "open")
+        return o.id;
+    return null;
+  }
+  const restoreFailedProblem = (target: string) =>
+    problem(
+      "restore-failed",
+      "The last restore failed",
+      409,
+      `the last restore of the Target failed: ${target}`,
+    );
   const docKey = (d: { kind: string; name: string }) => `${d.kind}/${d.name}`;
   const headDocs: Snapshot = new Map();
   for (const d of [
@@ -1022,6 +1045,24 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       actions_note:
         "Ignore only after the guest has a disk again (a restore, or a repair in Proxmox): Plumb refuses it before. After the ignore, Plumb compares the guest again; do not revert an empty guest: a re-create gives the Target a new backup lineage, and its safety backup and every other backup can never be restored through Plumb again.",
       restore_way_back: { backup_id: "7e6d5c4b3a291807", time: "2026-11-15T09:20:31Z" },
+      plan_id: null,
+      resolution: null,
+      comments: [],
+    });
+    // A drift found before the restore failed: no action while it is open (T-234).
+    issues.set(id + 1, {
+      id: id + 1,
+      target: "cache1",
+      resource: "guest:config",
+      status: "open",
+      risk: "disruptive",
+      opened_at: "2026-11-15T08:10:00Z",
+      updated_at: "2026-11-15T08:10:00Z",
+      changes: [{ attr: "memory", from: 4096, to: 2048, risk: "disruptive" }],
+      actions: ["accept", "revert", "ignore_once", "ignore_rule"],
+      actions_blocked_by: null,
+      actions_note: "",
+      restore_way_back: null,
       plan_id: null,
       resolution: null,
       comments: [],
@@ -2641,6 +2682,15 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       need("resolveIssue");
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
+      if (issue.status === "open" && restoreFailedOf(issue) !== null)
+        throw restoreFailedProblem(issue.target);
+      if (issue.resource === "guest:restore-failed" && action === "ignore_rule")
+        throw problem(
+          "action-not-allowed",
+          "Action not allowed",
+          409,
+          "the Issue of a failed restore has no ignore rule",
+        );
       if (issue.status !== "open" || !issue.actions.includes(action)) {
         throw problem(
           "conflict",
@@ -2719,6 +2769,16 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       const s = need("resolveIssue");
       const issue = issues.get(id);
       if (!issue) throw new ApiError(example("getIssue", 404));
+      if (issue.status === "open" && restoreFailedOf(issue) !== null)
+        throw restoreFailedProblem(issue.target);
+      // M1 of #352: only a human admin session ends the Issue of a failed restore.
+      if (issue.resource === "guest:restore-failed" && !(isPerson(s) && s.tier === "admin"))
+        throw problem(
+          "human-required",
+          "Human session required",
+          403,
+          "Only a human admin session can end the Issue of a failed restore.",
+        );
       // A person with role apply up to disruptive (ARCHITECTURE §17).
       if (isPerson(s) && s.tier !== "admin") {
         if (s.tier !== "apply" || issue.risk === "destructive")
