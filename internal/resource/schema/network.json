@@ -46,6 +46,24 @@
       "x-plumb-list": ",",
       "description": "Extra DNS search domains, comma separated."
     },
+    "mac": {
+      "type": "string",
+      "pattern": "^$|^02(:[0-9a-f]{2}){5}$",
+      "default": "",
+      "description": "Only the render sets it, never a Block or an override (D-419): the network card N of guest.nics, by the MAC that Plumb chose for it (D-400). With mac the resource sets that card instead of the main NIC: the agent finds it by the MAC (the permanent MAC when the kernel reports one, D-370), never the main NIC, and writes the file under the netplan entry that names that card, or its own entry plumb-<name> that matches the MAC. dhcp and gateway are only for such a card. No card with the MAC, or two, refuses the step with nothing changed (D-403)."
+    },
+    "dhcp": {
+      "type": "boolean",
+      "default": false,
+      "description": "Only with mac: DHCPv4 on the card (dhcp4 in the netplan entry; false is written too, so an entry of cloud-init cannot turn it on)."
+    },
+    "gateway": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^$|^[0-9a-fA-F:.]+$",
+      "default": "",
+      "description": "Only with mac and a static address: the default route over the card. Refused when the main NIC has the default route (DHCP or a gateway): two default routes could cut the agent link."
+    },
     "state": {
       "enum": [
         "present",

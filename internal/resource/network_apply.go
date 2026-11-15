@@ -56,6 +56,10 @@ type networkAttrs struct {
 	Nameservers string `json:"nameservers"`
 	Search      string `json:"search"`
 	State       string `json:"state"`
+	// A more NIC N (D-403, D-419): only the render sets them.
+	MAC     string `json:"mac"`
+	DHCP    *bool  `json:"dhcp"`
+	Gateway string `json:"gateway"`
 }
 
 // network is one network resource of a VM.
@@ -65,6 +69,13 @@ type network struct {
 	spec NetworkSpec
 	// content is the file that Prepare made for Apply.
 	content string
+	// nic is what Prepare found for a more NIC (nicMode): the view before,
+	// the key of the main entry and whether the NIC key is the own one.
+	nic struct {
+		before  map[string]npView
+		mainKey string
+		own     bool
+	}
 }
 
 func newNetwork(r wire.Resource, env Env) (Resource, error) {
@@ -107,15 +118,31 @@ func joinStrings[T fmt.Stringer](list []T, sep string) string {
 
 // attrs returns the desired values in the form that Observe reports.
 func (s NetworkSpec) attrs() map[string]string {
-	return map[string]string{
+	m := map[string]string{
 		"addresses":   joinStrings(s.Addresses, ","),
 		"routes":      joinStrings(s.Routes, ";"),
 		"nameservers": joinStrings(s.Nameservers, ","),
 		"search":      strings.Join(s.Search, ","),
 	}
+	if s.MAC != "" {
+		m["dhcp"] = strconv.FormatBool(s.DHCP)
+		m["gateway"] = ""
+		if s.Gateway.IsValid() {
+			m["gateway"] = s.Gateway.String()
+		}
+	}
+	return m
 }
 
 var networkAttrOrder = []string{"addresses", "routes", "nameservers", "search", networkAttrFile}
+
+// valueAttrs are the compared attributes of the resource, in order.
+func (n *network) valueAttrs() []string {
+	if n.nicMode() {
+		return []string{"addresses", "routes", "nameservers", "search", "dhcp", "gateway"}
+	}
+	return networkAttrOrder[:4]
+}
 
 // --- the netplan file ---
 
@@ -130,7 +157,15 @@ type npNameservers struct {
 	Search    []string `yaml:"search,omitempty"`
 }
 
+type npMatch struct {
+	Macaddress string `yaml:"macaddress"`
+}
+
 type npEntry struct {
+	// Match and DHCP4 only for a more NIC (D-403): Match only in the own
+	// entry, DHCP4 always there (an entry of cloud-init may hold another).
+	Match       *npMatch       `yaml:"match,omitempty"`
+	DHCP4       *bool          `yaml:"dhcp4,omitempty"`
 	Addresses   []string       `yaml:"addresses,omitempty"`
 	Routes      []npRoute      `yaml:"routes,omitempty"`
 	Nameservers *npNameservers `yaml:"nameservers,omitempty"`
@@ -143,14 +178,25 @@ type npFile struct {
 	} `yaml:"network"`
 }
 
-// fileContent is the netplan file of spec under the NIC key.
-func (n *network) fileContent(key string) (string, error) {
+// fileContent is the netplan file of spec under the NIC key. own: the
+// own entry of a more NIC, which matches its MAC.
+func (n *network) fileContent(key string, own bool) (string, error) {
 	var e npEntry
+	if n.nicMode() {
+		dhcp := n.spec.DHCP
+		e.DHCP4 = &dhcp
+		if own {
+			e.Match = &npMatch{Macaddress: n.spec.MAC}
+		}
+	}
 	for _, a := range n.spec.Addresses {
 		e.Addresses = append(e.Addresses, a.String())
 	}
 	for _, r := range n.spec.Routes {
 		e.Routes = append(e.Routes, npRoute{To: r.To.String(), Via: r.Via.String(), Metric: r.Metric})
+	}
+	if n.spec.Gateway.IsValid() {
+		e.Routes = append(e.Routes, npRoute{To: "default", Via: n.spec.Gateway.String()})
 	}
 	if len(n.spec.Nameservers)+len(n.spec.Search) > 0 {
 		e.Nameservers = &npNameservers{Search: n.spec.Search}
@@ -480,14 +526,19 @@ func (n *network) Observe(ctx context.Context) (State, error) {
 	}
 	st := State{wire.AttrState: wire.StatePresent, networkAttrFile: networkFileChanged}
 	if key, ok := fileKey(f.content); ok {
-		if want, err := n.fileContent(key); err == nil && want == f.content && f.mode&0o077 == 0 {
+		if want, err := n.fileContent(key, n.nicMode() && key == n.ownNICKey()); err == nil && want == f.content && f.mode&0o077 == 0 {
 			st[networkAttrFile] = networkFileOK
 		}
 	}
 	if n.a.State == wire.StateAbsent {
 		return st, nil
 	}
-	dev, _, err := n.mainLink(ctx, observeRouteWait)
+	var dev string
+	if n.nicMode() {
+		dev, err = n.nicLink(ctx)
+	} else {
+		dev, _, err = n.mainLink(ctx, observeRouteWait)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -537,6 +588,13 @@ func (n *network) Observe(ctx context.Context) (State, error) {
 	} else {
 		live.Search = n.spec.Search
 	}
+	if n.nicMode() {
+		// dhcp: as the file says (a lease is no proof); the gateway: live.
+		live.MAC, live.DHCP = n.spec.MAC, fileDHCP(f.content)
+		if n.spec.Gateway.IsValid() && nicLiveGateway(routes, n.spec.Gateway) {
+			live.Gateway = n.spec.Gateway
+		}
+	}
 	for k, v := range live.attrs() {
 		st[k] = v
 	}
@@ -557,14 +615,14 @@ func (n *network) Diff(observed State) []wire.Change {
 	var out []wire.Change
 	if !present {
 		out = append(out, change(wire.AttrState, wire.StateAbsent, wire.StatePresent, wire.RiskDisruptive))
-		for _, k := range networkAttrOrder[:4] {
+		for _, k := range n.valueAttrs() {
 			if want[k] != "" {
 				out = append(out, change(k, nil, want[k], wire.RiskDisruptive))
 			}
 		}
 		return n.finish(out)
 	}
-	for _, k := range networkAttrOrder[:4] {
+	for _, k := range n.valueAttrs() {
 		if from, ok := observed[k]; !ok || from != want[k] {
 			out = append(out, change(k, observed[k], want[k], wire.RiskDisruptive))
 		}
@@ -626,6 +684,17 @@ func (n *network) preflight(ctx context.Context, key string, before npView, own 
 	if err != nil {
 		return err
 	}
+	if n.nicMode() {
+		if err := nicPreflight(n, n.nic.before, view, n.nic.mainKey, key, n.nic.own); err != nil {
+			return err
+		}
+		if n.a.State != wire.StatePresent {
+			if _, err := n.run(ctx, "netplan", "generate", "--root-dir", tmp); err != nil {
+				return fmt.Errorf("preflight: netplan generate: %w", err)
+			}
+			return nil
+		}
+	}
 	after, ok := view[key]
 	if !ok {
 		return fmt.Errorf("preflight: the entry %s of the main NIC is gone", key)
@@ -644,6 +713,8 @@ func (n *network) preflight(ctx context.Context, key string, before npView, own 
 		return out
 	}
 	switch {
+	case n.nicMode():
+		// The main entry was checked by nicPreflight.
 	case !slices.Equal(mainOf(before, own), mainOf(after, own, n.spec.Addresses)):
 		return errors.New("preflight: the main address of the NIC would change")
 	case !slices.Equal(before.defaults(), after.defaults()):
@@ -700,20 +771,30 @@ func (n *network) Prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	mac, err := n.liveMAC(ctx, dev)
-	if err != nil {
-		return err
-	}
-	key, err := mainKey(view, dev, mac, main)
-	if err != nil {
-		return err
+	var key string
+	probeDev := dev
+	if n.nicMode() {
+		nicDev, nicKey, own, mk, err := n.nicPrepare(ctx, view, dev, main)
+		if err != nil {
+			return err
+		}
+		key, probeDev = nicKey, nicDev
+		n.nic.before, n.nic.mainKey, n.nic.own = view, mk, own
+	} else {
+		mac, err := n.liveMAC(ctx, dev)
+		if err != nil {
+			return err
+		}
+		if key, err = mainKey(view, dev, mac, main); err != nil {
+			return err
+		}
 	}
 	for i, a := range n.spec.Addresses {
 		if a.Addr() == main {
 			return fmt.Errorf("address %d is the main address of the Target", i+1)
 		}
 	}
-	if n.content, err = n.fileContent(key); err != nil {
+	if n.content, err = n.fileContent(key, n.nicMode() && n.nic.own); err != nil {
 		return err
 	}
 	cur, err := readManaged(n.env.Root, NetworkFile(n.a.Name))
@@ -724,7 +805,7 @@ func (n *network) Prepare(ctx context.Context) error {
 		return err
 	}
 	if n.a.State == wire.StatePresent {
-		live, err := n.liveAddrs(ctx, dev)
+		live, err := n.liveAddrs(ctx, probeDev)
 		if err != nil {
 			return err
 		}
@@ -735,7 +816,7 @@ func (n *network) Prepare(ctx context.Context) error {
 			}
 		}
 		if len(fresh) > 0 {
-			if err := networkProbe(ctx, dev, fresh); err != nil {
+			if err := networkProbe(ctx, probeDev, fresh); err != nil {
 				return err
 			}
 		}
