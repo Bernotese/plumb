@@ -59,7 +59,7 @@ var (
 // out (vzdump exclude-path, tar patterns anchored at the container root;
 // T-231). Exactly the secrets: the credential, the desired list (it can
 // hold sensitive values, D-037), the temp files of both, and a one-shot
-// repair token. agent.json and ca.pem stay: without them a restored
+// repair token with its temp file. agent.json and ca.pem stay: without them a restored
 // container can never re-enroll. A VM backup holds the whole disk; its
 // credential is revoked at a restore (D-410).
 var LXCBackupExclude = []string{
@@ -68,6 +68,7 @@ var LXCBackupExclude = []string{
 	"/var/lib/plumb-agent/desired.json",
 	"/var/lib/plumb-agent/.desired.json-*",
 	RepairTokenFile,
+	"/etc/plumb-agent/.enroll.token*", // its temp name in install.sh (F1 of #345)
 }
 
 // BackupExcluded reports whether a container backup leaves p out:
