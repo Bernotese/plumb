@@ -1015,7 +1015,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           risk: "destructive",
         },
       ],
-      actions: ["ignore_once", "ignore_rule"],
+      // T-234 (#352): no ignore by rule for this Issue; the note is the
+      // confirm text of its ignore; the way back as data.
+      actions: ["ignore_once"],
+      actions_blocked_by: null,
+      actions_note:
+        "Ignore only after the guest has a disk again (a restore, or a repair in Proxmox): Plumb refuses it before. After the ignore, Plumb compares the guest again; do not revert an empty guest: a re-create gives the Target a new backup lineage, and its safety backup and every other backup can never be restored through Plumb again.",
+      restore_way_back: { backup_id: "7e6d5c4b3a291807", time: "2026-11-15T09:20:31Z" },
       plan_id: null,
       resolution: null,
       comments: [],
