@@ -33,14 +33,16 @@ type fakeBackup struct {
 	forbidden     []string // forbidden vzdump parameters seen
 	restored      []string // "vmid volid storage" of each restore (T-222)
 	restoreFail   string   // non-empty: the restore task ends with this exit status (T-232)
+	restoreWipes  bool     // a failed restore task removed scsi0 first (T-241)
 	restoreRefuse bool     // the restore POST is refused with 403 (no task)
 }
 
 type fakeVol struct {
-	vmid  int
-	ctime int64
-	size  int64
-	notes string
+	vmid   int
+	ctime  int64
+	size   int64
+	notes  string
+	config string // the guest config in the archive (extractconfig, T-241)
 }
 
 func newFakeBackup() *fakeBackup {
@@ -65,6 +67,18 @@ var vzdumpForbidden = []string{"prune-backups", "protected", "bwlimit", "ionice"
 func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key string) bool {
 	b := f.backup
 	switch {
+	case r.Method == "GET" && path == "/nodes/"+f.node+"/vzdump/extractconfig":
+		v := b.vols[r.Form.Get("volume")]
+		if v == nil {
+			fail(w, 500, "unable to parse volume ID", nil)
+			return true
+		}
+		conf := v.config
+		if conf == "" {
+			conf = "cores: 1\nnet0: virtio=02:00:00:00:00:01,bridge=vmbr0\n"
+		}
+		reply(w, 200, conf)
+		return true
 	case r.Method == "GET" && path == "/storage":
 		list := append([]storageEntry{{Storage: b.storage, Type: b.typ, Content: b.content, EncryptionKey: b.encKey}}, b.others...)
 		reply(w, 200, list)
@@ -131,6 +145,9 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 			upid := f.task(key)
 			if b.restoreFail != "" {
 				f.tasks[upid].exit = b.restoreFail
+				if b.restoreWipes {
+					delete(vm.cfg, "scsi0") // the task removed the disk before it failed
+				}
 			}
 			reply(w, 200, upid)
 		}
