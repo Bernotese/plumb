@@ -31,6 +31,10 @@ func TestNetworkNICApplyCommit(t *testing.T) {
 	if !slices.Equal(*probed, []netip.Addr{netip.MustParseAddr("10.9.20.5")}) {
 		t.Errorf("probed %v", *probed)
 	}
+	// The card was down (no entry names it): up before the probe, once.
+	if !slices.Equal(f.upped, []string{"ens19"}) {
+		t.Errorf("brought up %v", f.upped)
+	}
 	if err := n.Apply(ctx, ch); err != nil {
 		t.Fatal(err)
 	}

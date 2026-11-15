@@ -136,6 +136,30 @@ func (n *network) nicPrepare(ctx context.Context, view map[string]npView, mainDe
 	return dev, key, own, mainKeyName, nil
 }
 
+// nicUp brings the card up when it is administratively down (a card that
+// no netplan entry names yet): the duplicate-address probe needs the link
+// (the VM job of #336: "network is down"). It sets no address; netplan
+// apply manages the card from then on.
+func (n *network) nicUp(ctx context.Context, dev string) error {
+	out, err := n.run(ctx, "ip", "-j", "link", "show", "dev", dev)
+	if err != nil {
+		return fmt.Errorf("ip link: %w", err)
+	}
+	var links []struct {
+		Flags []string `json:"flags"`
+	}
+	if err := json.Unmarshal(out, &links); err != nil || len(links) != 1 {
+		return fmt.Errorf("ip link: no single link %s", dev)
+	}
+	if slices.Contains(links[0].Flags, "UP") {
+		return nil
+	}
+	if _, err := n.run(ctx, "ip", "link", "set", "dev", dev, "up"); err != nil {
+		return fmt.Errorf("bring the network card %s up for the address probe: %w", dev, err)
+	}
+	return nil
+}
+
 // nicPreflight checks the merged result for a more NIC: the main entry
 // keeps its addresses, default routes, match and set-name; the NIC entry
 // keeps its match and set-name and has every value of the resource.

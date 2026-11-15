@@ -816,6 +816,11 @@ func (n *network) Prepare(ctx context.Context) error {
 			}
 		}
 		if len(fresh) > 0 {
+			if n.nicMode() {
+				if err := n.nicUp(ctx, probeDev); err != nil {
+					return err
+				}
+			}
 			if err := networkProbe(ctx, probeDev, fresh); err != nil {
 				return err
 			}
