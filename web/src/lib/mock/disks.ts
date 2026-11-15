@@ -2,6 +2,7 @@
 // checks of internal/state/disks.go (without the agent paths, which only
 // the server knows) and the Plan lines of the risk table. The mock has no
 // guest config, so the observed disks are the disks of the stored document.
+import { isSystemTree } from "../disks";
 import type { Change, Risk, TargetDoc } from "../types";
 
 export type Disk = NonNullable<TargetDoc["spec"]["guest"]["disks"]>[number];
@@ -10,20 +11,6 @@ export type Disk = NonNullable<TargetDoc["spec"]["guest"]["disks"]>[number];
 export const DISK_STORAGE = "local-lvm";
 export const MAX_DISKS = 3;
 
-const SYSTEM_TREES = new Set([
-  "bin",
-  "boot",
-  "dev",
-  "etc",
-  "proc",
-  "root",
-  "run",
-  "sbin",
-  "sys",
-  "usr",
-  "var",
-]);
-
 /** Why `p` cannot be the mount path of a container disk, or "" (diskPathProblem). */
 export function diskPathProblem(p: string): string {
   if (!p.startsWith("/") || p === "/") return "the path must be absolute and not /";
@@ -31,7 +18,7 @@ export function diskPathProblem(p: string): string {
   if (parts.some((x) => x === "" || x === "." || x === ".."))
     return `the path ${p} has an empty, . or .. part`;
   const top = parts[0] ?? "";
-  if (SYSTEM_TREES.has(top) || top.startsWith("lib"))
+  if (isSystemTree(top))
     return `the path ${p} is in the system tree /${top}; use for example /srv, /opt, /data, /mnt or /home`;
   return "";
 }
@@ -129,7 +116,15 @@ export function planDisks(
     const n = want[i];
     const attr = `disk${slot}`;
     if (!o && n) {
-      out.changes.push({ attr, to: diskValue(n), risk: "reversible" });
+      // #365 (ARCHITECTURE §21): a stopped container is started for the add
+      // and stopped again; a running one and a VM get the disk live.
+      const cold = next.type === "lxc" && power === "stopped";
+      if (cold && next.allow_restart !== true)
+        out.errors.push({
+          at: `/${i}`,
+          message: "the container is stopped: start it first, or set allow_restart",
+        });
+      out.changes.push({ attr, to: diskValue(n), risk: cold ? "disruptive" : "reversible" });
     } else if (o && n) {
       if (n.size_gb < o.size_gb)
         out.errors.push({

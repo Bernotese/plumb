@@ -102,6 +102,58 @@ describe("data disk list (VM)", () => {
     );
   });
 
+  it("a re-added slot is a new disk: the removed slot is not offered (M1 of #366)", async () => {
+    const { doc, plan } = await edit();
+    button("Remove the disk in slot 1")?.click();
+    await until(() => document.activeElement?.id === "add-disk");
+    el<HTMLButtonElement>("#add-disk").click();
+    await until(() => document.activeElement?.id === "disk-1-size");
+    // The new row takes slot 2, never the removed slot 1, and it is not fixed.
+    expect(el("#disk-1-slot").tagName).toBe("SELECT");
+    expect([...el<HTMLSelectElement>("#disk-1-slot").options].map((o) => o.value)).toEqual([
+      "2",
+      "3",
+    ]);
+    expect(text(el("#disks-removed"))).toContain("Slot 1: 50 GiB");
+    type("#disk-1-size", "5"); // a new disk has no size floor
+    type("#t-reason", "Replace the disk.");
+    submit();
+    const p = await plan();
+    expect(doc().spec.guest.disks).toEqual([{ slot: 2, size_gb: 5 }]);
+    expect(diskLines(p)).toEqual([
+      { attr: "disk1", from: "50 GiB", risk: "destructive" },
+      { attr: "disk2", to: "5 GiB", risk: "reversible" },
+    ]);
+  });
+
+  it("no add when every free slot is held or removed in this edit", async () => {
+    await edit();
+    button("Remove the disk in slot 1")?.click();
+    flushSync();
+    el<HTMLButtonElement>("#add-disk").click();
+    flushSync();
+    el<HTMLButtonElement>("#add-disk").click();
+    flushSync();
+    expect(document.querySelectorAll("fieldset.disk")).toHaveLength(2);
+    expect(document.querySelector("#add-disk")).toBeNull();
+  });
+
+  it("managing disks for the first time warns that unlisted disks go (M2 of #366)", async () => {
+    await edit("web1");
+    expect(document.querySelector("#disks-unmanaged-note")).toBeNull();
+    el<HTMLInputElement>("#disks-managed").click();
+    flushSync();
+    const note = text(el("#disks-unmanaged-note"));
+    expect(note).toContain("removed by the Plan (destructive)");
+    expect(note).toContain("Add such a disk to the list to keep it");
+    expect(el("#disks-managed-hint").textContent).toContain("its revert removes it");
+  });
+
+  it("no first-time note on a Target that manages its disks already", async () => {
+    await edit();
+    expect(document.querySelector("#disks-unmanaged-note")).toBeNull();
+  });
+
   it("a remove on a running guest needs allow_restart", async () => {
     const api = adminApi();
     const db1 = await api.getTarget("db1");
@@ -195,6 +247,37 @@ describe("data disk list (container)", () => {
       { attr: "disk2", to: "10 GiB at /opt/cache", risk: "reversible" },
     ]);
     expect(text(el("#disks-restore"))).toContain("a container loses the data on that disk");
+  });
+});
+
+describe("adding a disk to a stopped container (#365)", () => {
+  it("needs allow_restart: the Run starts the container for the add", async () => {
+    const api = adminApi();
+    const ct1 = await api.getTarget("ct1");
+    const view: TargetView = structuredClone(ct1);
+    view.status.power = "stopped";
+    view.document.spec.allow_restart = false;
+    api.getTarget = async () => structuredClone(view);
+    const { createPlan } = await edit("ct1", api);
+    expect(text(el("#disks"))).toContain("A stopped container is started for the add");
+    el<HTMLButtonElement>("#add-disk").click();
+    await until(() => document.querySelector("#disk-2-path"));
+    type("#disk-2-path", "/opt/cache");
+    type("#t-reason", "A cache disk.");
+    submit();
+    expect(el("#disks-add-error").textContent).toContain("The container is stopped");
+    expect(createPlan).not.toHaveBeenCalled();
+  });
+
+  it("a running container and a VM get the disk live", async () => {
+    await edit("ct1");
+    el<HTMLButtonElement>("#add-disk").click();
+    await until(() => document.querySelector("#disk-2-path"));
+    type("#disk-2-path", "/opt/cache");
+    type("#t-reason", "A cache disk.");
+    submit();
+    await planOpened();
+    expect(document.querySelector("#disks-add-error")).toBeNull();
   });
 });
 
