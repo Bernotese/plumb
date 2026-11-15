@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/backup"
+	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/state"
 	"github.com/Bernotese/plumb/internal/store"
 )
 
@@ -136,5 +138,106 @@ func TestGuestBackupRoutes(t *testing.T) {
 	}
 	if code, _ := rc.do(read, "GET", "/api/v1/targets/nope/backups", "/targets/{name}/backups", nil); code != 404 {
 		t.Fatalf("unknown Target: %d", code)
+	}
+}
+
+func targetWithBackup(name string, keep int) state.Doc {
+	return doc(state.KindTarget, name, `{"type":"vm","image":"ubuntu","guest":{"cores":2,"memory":1024,"disk":10,"bridge":"vmbr0"},`+
+		`"blocks":[{"use":"motd","params":{"text":"hello"}}],"backup":{"schedule":"daily","time":"03:00","keep":`+itoa(int64(keep))+`}}`)
+}
+
+// T-221 part B (D-406, D-417): the backup field in a Plan. A new field is
+// read risk with the storage note; a lower keep is destructive with the
+// count, so a token cannot approve it; removing the field deletes nothing.
+func TestBackupFieldPlans(t *testing.T) {
+	e := newEnv(t, true, func(c *plan.Config) {
+		// 6 recorded scheduled backups exist: keep k deletes 6+1-k (at most 6).
+		c.BackupKeepDeletes = func(_ context.Context, _ string, keep int) (int, error) { return min(max(7-keep, 0), 6), nil }
+		c.BackupStorageNote = func(context.Context) (string, error) { return "the storage keeps backups in clear", nil }
+	})
+	adm := e.admin()
+	e.seed(adm, "web1")
+	type planOut struct {
+		ID       int64
+		Risk     string
+		Warnings []string
+	}
+	propose := func(d state.Doc) planOut {
+		t.Helper()
+		code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "backup", "put": []state.Doc{d}})
+		var p planOut
+		json.Unmarshal(body, &p)
+		if code != 201 {
+			t.Fatalf("propose: %d %s", code, body)
+		}
+		return p
+	}
+	p := propose(targetWithBackup("web1", 7))
+	if p.Risk != "read" || !strings.Contains(strings.Join(p.Warnings, " "), "clear") {
+		t.Fatalf("new field: %+v", p)
+	}
+	if code, body := adm.do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	e.eng.Wait()
+	p = propose(targetWithBackup("web1", 3))
+	if p.Risk != "destructive" || !strings.Contains(strings.Join(p.Warnings, " "), "deletes 4 backup") {
+		t.Fatalf("lower keep: %+v", p)
+	}
+	if code, _ := e.token(TierApply, "disruptive").do("POST", "/api/v1/plans/"+itoa(p.ID)+"/approve", nil); code != 403 {
+		t.Fatalf("a token approved a destructive keep: %d", code)
+	}
+	adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil)
+	// A new Target with the field: the create Plan carries the note too.
+	if p := propose(targetWithBackup("web9", 3)); !strings.Contains(strings.Join(p.Warnings, " "), "clear") {
+		t.Fatalf("new Target: %+v", p)
+	} else {
+		adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil)
+	}
+	p = propose(targetDoc("web1", "hello"))
+	if p.Risk != "read" || !strings.Contains(strings.Join(p.Warnings, " "), "deletes none") {
+		t.Fatalf("removed: %+v", p)
+	}
+}
+
+// M1 of #334: a token removes the field (read, it may approve that), then
+// adds it again with keep 1: destructive by the count, the token gets 403.
+func TestBackupFieldRemoveThenReAdd(t *testing.T) {
+	e := newEnv(t, true, func(c *plan.Config) {
+		c.BackupKeepDeletes = func(_ context.Context, _ string, keep int) (int, error) { return min(max(7-keep, 0), 6), nil }
+	})
+	adm := e.admin()
+	e.seed(adm, "web1")
+	planTok, applyTok := e.token(TierPlan, ""), e.token(TierApply, "disruptive")
+	run := func(c *client, d state.Doc) (int64, string) {
+		t.Helper()
+		code, body := c.do("POST", "/api/v1/plans", map[string]any{"reason": "backup", "put": []state.Doc{d}})
+		var p struct {
+			ID   int64
+			Risk string
+		}
+		json.Unmarshal(body, &p)
+		if code != 201 {
+			t.Fatalf("propose: %d %s", code, body)
+		}
+		return p.ID, p.Risk
+	}
+	id, _ := run(adm, targetWithBackup("web1", 7))
+	adm.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil)
+	e.eng.Wait()
+	id, risk := run(planTok, targetDoc("web1", "hello")) // remove the field
+	if risk != "read" {
+		t.Fatalf("removal risk %s", risk)
+	}
+	if code, body := applyTok.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 202 {
+		t.Fatalf("token approves the removal: %d %s", code, body)
+	}
+	e.eng.Wait()
+	id, risk = run(planTok, targetWithBackup("web1", 1)) // add it again with keep 1
+	if risk != "destructive" {
+		t.Fatalf("re-added with keep 1: risk %s", risk)
+	}
+	if code, _ := applyTok.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 403 {
+		t.Fatalf("a token approved the re-add: %d", code)
 	}
 }

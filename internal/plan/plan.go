@@ -97,6 +97,9 @@ type Input struct {
 // of these as its changes (migration 0001: [{target, resources}]).
 type TargetPlan struct {
 	Target string `json:"target"`
+	// notes are Plan warnings of this Target (a backup field change,
+	// T-221); Propose moves them to the Plan's notes.
+	notes []string
 	// Guest is what happens to the guest: "create", "update", "delete",
 	// "reenroll", "adopt" (bind a guest a person made, D-386), "unbind"
 	// (the delete of an adopted Target that keeps the guest, D-388) or ""
@@ -179,6 +182,12 @@ type Config struct {
 	// network (serve --dev). T-219.
 	InstallID  string
 	NetAllowed func(bridge string, tag int) bool
+	// BackupKeepDeletes is the number of backups that the next job deletes
+	// when target's keep becomes keep (T-221, D-417); BackupStorageNote
+	// is the warning of the guest backup storage for a new backup field
+	// ("" none, D-406). nil without guest backups (serve --dev).
+	BackupKeepDeletes func(ctx context.Context, target string, keep int) (int, error)
+	BackupStorageNote func(ctx context.Context) (string, error)
 	// Secrets is the secret store. nil: no secret exists, and a target
 	// that refers to one cannot be planned.
 	Secrets *secret.Store

@@ -354,6 +354,9 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 		in.Proposal.Notes = append(in.Proposal.Notes, note)
 	}
 	in.Proposal.Notes = append(in.Proposal.Notes, startNotes(plans)...)
+	for _, tp := range plans { // T-221: the notes of a backup field change
+		in.Proposal.Notes = append(in.Proposal.Notes, tp.notes...)
+	}
 	markIgnored(next.Rules(), plans)
 	// The image part: builds of new or changed recipes and removals
 	// (D-199, D-209), and the Targets that cannot be made yet (D-200).
@@ -603,8 +606,17 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		if err != nil {
 			return tp, err
 		}
+		cchanges := createChanges(spec)
+		bc, bnotes, err := e.backupChange(ctx, nil, r, target, true) // T-221: the first backup Plan warns of a clear storage
+		if err != nil {
+			return tp, err
+		}
+		if bc != nil {
+			cchanges = append(cchanges, *bc)
+			tp.notes = append(tp.notes, bnotes...)
+		}
 		tp.Resources = append(tp.Resources, ResourceChange{Resource: wire.GuestConfigID, Action: wire.ActionCreate,
-			Risk: wire.RiskReversible, Changes: createChanges(spec)})
+			Risk: wire.MaxRisk(append(cchanges, wire.Change{Risk: wire.RiskReversible})), Changes: cchanges})
 		// Nobody can observe a guest that does not exist (D-066). The
 		// first apply may restart services, so the risk is disruptive.
 		for _, res := range r.Resources {
@@ -687,6 +699,12 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	}
 	if ac := allowRestartChange(before, r); ac != nil {
 		gchanges = append([]wire.Change{*ac}, gchanges...)
+	}
+	if bc, bnotes, err := e.backupChange(ctx, before, r, target, false); err != nil { // T-221, D-408, D-417
+		return tp, err
+	} else if bc != nil {
+		gchanges = append([]wire.Change{*bc}, gchanges...)
+		tp.notes = append(tp.notes, bnotes...)
 	}
 	if dc := deleteGuestChange(before, r); dc != nil {
 		gchanges = append([]wire.Change{*dc}, gchanges...)

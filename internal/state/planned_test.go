@@ -31,15 +31,9 @@ func TestPlannedFieldsRefused(t *testing.T) {
 	if _, err := Validate([]Doc{img, {Kind: KindTarget, Name: "web1", Spec: []byte(`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","nics":[{"bridge":"vmbr9","tag":20}]}}`)}}); err != nil {
 		t.Errorf("nics: %v", err)
 	}
-	for name, c := range map[string]struct{ spec, path string }{
-		"backup": {`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0"},"backup":{"schedule":"daily","time":"03:00","keep":7}}`, "/spec/backup"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := Validate([]Doc{img, {Kind: KindTarget, Name: "web1", Spec: []byte(c.spec)}})
-			if err == nil || !strings.Contains(err.Error(), c.path) || !strings.Contains(err.Error(), "planned") {
-				t.Fatalf("want a planned refusal at %s, got %v", c.path, err)
-			}
-		})
+	// T-221 serves backup: no longer refused.
+	if _, err := Validate([]Doc{img, {Kind: KindTarget, Name: "web1", Spec: []byte(`{"type":"vm","image":"deb","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0"},"backup":{"schedule":"daily","time":"03:00","keep":7}}`)}}); err != nil {
+		t.Errorf("backup: %v", err)
 	}
 	// The schema itself: a weekday with daily, a 4th extra NIC and a tag of 4095 are refused.
 	for name, spec := range map[string]string{
