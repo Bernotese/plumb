@@ -1204,7 +1204,6 @@ paths:
     post:
       tags: [targets]
       operationId: restoreGuest
-      x-plumb-planned: T-222
       x-plumb-rate: proposal
       summary: Propose a restore of the guest from a backup
       description: |
