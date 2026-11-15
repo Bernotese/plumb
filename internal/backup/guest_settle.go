@@ -32,16 +32,19 @@ const taskCheckFor = 24 * time.Hour
 const markerSkew = 2 * time.Minute
 
 // settle checks the jobs of target ("" every Target) whose task is still
-// to be checked. running reports a task of target that still runs.
-func (g *Guests) settle(ctx context.Context, target string) (running bool, err error) {
+// to be checked. running is the UPID of a task of target that still runs
+// (and has run for less than taskCheckFor), or "".
+func (g *Guests) settle(ctx context.Context, target string) (running string, err error) {
 	rows, err := g.cfg.Store.UncheckedGuestBackupTasks(ctx, target)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	var errs []error
 	for _, r := range rows {
 		run, err := g.settleOne(ctx, r.ID, r.Target, r.Lineage, r.Trigger, r.UPID, r.StartedAt, r.FinishedAt)
-		running = running || run
+		if run && running == "" {
+			running = r.UPID
+		}
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -76,6 +79,12 @@ func (g *Guests) settleOne(ctx context.Context, id int64, target, lineage, trigg
 		}
 		return false, fmt.Errorf("backup: check task of %s: %w", target, err)
 	case task.Running:
+		// M1 of #368: a hung task must not block the guest's jobs for
+		// ever (the safety backup of a restore too). After a day it is
+		// lost: Plumb no longer waits and never claims its volume.
+		if g.cfg.Now().Sub(started) > taskCheckFor {
+			return false, end("", 0, 0, "the job's Proxmox task "+upid+" still ran after a day; Plumb no longer waits for it and claims no volume of it. Stop it in Proxmox if it hangs"+stays)
+		}
 		return true, nil
 	}
 	vols, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest)

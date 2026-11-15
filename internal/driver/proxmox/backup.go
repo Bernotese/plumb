@@ -229,7 +229,7 @@ func (d *Driver) GuestBackupTask(ctx context.Context, storage, guest, upid strin
 	}
 	// UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:
 	f := strings.Split(upid, ":")
-	if len(f) < 8 || f[0] != "UPID" || f[1] != d.cfg.Node || f[5] != "vzdump" || f[6] != strconv.Itoa(id) {
+	if len(f) < 8 || f[0] != "UPID" || f[1] != d.cfg.Node || f[5] != "vzdump" || f[6] != strconv.Itoa(id) || !d.ownTaskUser(f[7]) {
 		return BackupTask{}, ErrNotGuestTask
 	}
 	path := "/nodes/" + url.PathEscape(d.cfg.Node) + "/tasks/" + url.PathEscape(upid)
@@ -273,6 +273,18 @@ func (d *Driver) GuestBackupTask(ctx context.Context, storage, guest, upid strin
 		out.Volid = match[0]
 	}
 	return out, nil
+}
+
+// ownTaskUser reports whether user (the user field of a UPID) is Plumb's
+// token: "user@realm!name", or its user "user@realm" (T-247 checks which
+// form PVE writes for a token's task; any other user is not Plumb's).
+func (d *Driver) ownTaskUser(user string) bool {
+	id := d.c.tokenID
+	if id == "" {
+		return false
+	}
+	u, _, _ := strings.Cut(id, "!")
+	return user == id || user == u
 }
 
 // archiveOf returns the archive of a vzdump log line "INFO: creating

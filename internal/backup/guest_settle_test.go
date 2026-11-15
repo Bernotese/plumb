@@ -218,6 +218,17 @@ func TestSettleRefusals(t *testing.T) {
 			t.Fatalf("%s %q", res, msg)
 		}
 	})
+	t.Run("marker of an older lineage", func(t *testing.T) {
+		e, id, upid, _ := settleEnv(t)
+		old, _ := Marker{Install: tInstall, Target: "db1", Lineage: "fedcba9876543210", Manual: true}.String()
+		vol := Volume{Volid: "plumb-backup:backup/vzdump-9001-rebound", Time: e.now, Notes: old}
+		e.d.vols["9001"] = append(e.d.vols["9001"], vol)
+		e.d.tasks[upid] = &GuestTask{OK: true, Volid: vol.Volid}
+		e.g.Tick(ctx)
+		if res, msg := runRow(t, e, id); res != "failed" || !strings.Contains(msg, "does not carry this job's marker") {
+			t.Fatalf("%s %q", res, msg)
+		}
+	})
 	t.Run("task of another guest", func(t *testing.T) {
 		e, id, _, _ := settleEnv(t)
 		e.t.Guest = "9050"
@@ -248,4 +259,36 @@ func TestSettleRefusals(t *testing.T) {
 			t.Fatalf("%s %q", res, msg)
 		}
 	})
+}
+
+// M1 of #368: a task that hangs in Proxmox blocks the guest's jobs (also
+// the safety backup of a restore) for a day at most. The refusal names the
+// task; after a day the task is lost, its volume is never claimed, and the
+// next job starts.
+func TestSettleHungTaskCap(t *testing.T) {
+	e, id, upid, marker := settleEnv(t)
+	ctx := context.Background()
+	err := e.g.BackUp(ctx, "db1", TriggerManual, "user:admin")
+	if !errors.Is(err, ErrGuestBackupRefused) || !strings.Contains(err.Error(), "the Proxmox task "+upid) || !strings.Contains(err.Error(), "Stop it in Proxmox") {
+		t.Fatalf("refusal: %v", err)
+	}
+	if _, err := e.g.SafetyBackup(ctx, "db1", "user:admin"); !errors.Is(err, ErrGuestBackupRefused) {
+		t.Fatalf("safety backup before the cap: %v", err)
+	}
+	r, _ := e.st.GuestBackupRun(ctx, id)
+	e.now = r.StartedAt.Add(taskCheckFor + time.Minute)
+	if _, err := e.g.SafetyBackup(ctx, "db1", "user:admin"); err != nil {
+		t.Fatalf("safety backup after the cap: %v", err)
+	}
+	if res, msg := runRow(t, e, id); res != "failed" || !strings.Contains(msg, "still ran after a day") {
+		t.Fatalf("%s %q", res, msg)
+	}
+	// The lost task ends later with a marked volume: never claimed.
+	vol := Volume{Volid: "plumb-backup:backup/vzdump-9001-lost", Time: e.now, Notes: marker}
+	e.d.vols["9001"] = append(e.d.vols["9001"], vol)
+	e.d.tasks[upid] = &GuestTask{OK: true, Volid: vol.Volid}
+	e.g.Tick(ctx)
+	if res, _ := runRow(t, e, id); res != "failed" {
+		t.Fatalf("a lost task was claimed: %s", res)
+	}
 }

@@ -272,8 +272,8 @@ func (g *Guests) start(ctx context.Context, target, trigger, actor string) (func
 	// schedule, "back up now" and the safety backup inside Plumb. A job
 	// that a controller stop cut off may still have its task in Proxmox:
 	// no new job starts while it runs.
-	if running, err := g.settle(ctx, t.Name); err == nil && running {
-		return refuse("the Proxmox task of an earlier backup job of this guest still runs; the next job starts when it ended")
+	if upid, err := g.settle(ctx, t.Name); err == nil && upid != "" {
+		return refuse("the Proxmox task " + upid + " of an earlier backup job of this guest still runs. Stop it in Proxmox (Datacenter, Tasks) if it hangs; after a day Plumb no longer waits for it")
 	}
 	id, err := g.cfg.Store.StartGuestBackupRun(ctx, t.Name, lineage, trigger)
 	if errors.Is(err, store.ErrGuestBackupRunning) {

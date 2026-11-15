@@ -116,7 +116,7 @@ type GuestBackupTaskRun struct {
 func (s *Store) UncheckedGuestBackupTasks(ctx context.Context, target string) ([]GuestBackupTaskRun, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, target, lineage, trigger, upid, started_at, finished_at FROM guest_backup_run
-		 WHERE check_task = 1 AND result <> 'running' AND (? = '' OR target = ?) ORDER BY id`, target, target)
+		 WHERE check_task = 1 AND result <> 'running' AND volid = '' AND (? = '' OR target = ?) ORDER BY id`, target, target)
 	if err != nil {
 		return nil, err
 	}
