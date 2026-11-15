@@ -15,14 +15,21 @@ Rules for every agent in this repo. Keep this file short; details live in `docs/
 | Agent | Model | Role | Typical work |
 |---|---|---|---|
 | `pl-lead` (tab ◆ Lead) | Claude Fable 5.2 (high) | Orchestrator, only one who talks to the user | Task cards, routing, merges, STATUS |
-| `pl-architect` | Claude Fable 5.2 (high) | Architecture + planning | ADRs, API/data contracts, task breakdown, scaffolding, research |
-| `pl-frontend` | Claude Opus 5.5 | Frontend engineer | UI, state, styling, accessibility – large features |
-| `pl-backend` | Claude Opus 5.5 | Backend engineer | API, DB, auth, jobs, infra – large features |
-| `pl-reviewer` | Claude Opus 5.5 | Security review | Review of the security-critical parts (D-394), threat model, OWASP, secrets, deps; fallback implementer |
+| `pl-architect` | Claude Fable 5.2 (high) | **Paused (D-438)** – was architecture + planning | Gets no tasks |
+| `pl-frontend` | Claude Opus 5.5 | **Paused (D-438)** – was frontend engineer | Gets no tasks |
+| `pl-backend` | Claude Opus 5.5 | Implementer for backend **and web** | API, DB, auth, jobs, infra, UI – features; plans and contracts when `pl-lead` asks |
+| `pl-reviewer` | Claude Opus 5.5 | Review | Every review, incl. the security-critical parts; checks plans and contracts; small fixes of its own findings |
 | `pl-codex-qa` | Codex GPT-6.1-Sol (medium) | QA | Tests (unit/e2e), bug repro, CI, acceptance checks |
 | `pl-codex-fix` | Codex GPT-6-Luna (medium) | Fixer | Small targeted fixes, lint/type errors, refactors, `audit` scans, review findings |
 
 Model rationale: Fable (strongest, most expensive) only where decisions are made and output is small (lead, architect). Opus does the bulk output. Codex: Sol for test quality, Luna for cheap small fixes to save the Codex limit. If a fix is not trivial for Luna, route it to `pl-reviewer` or the implementer instead.
+
+### Small team (D-438, user rule, 2026-11-16)
+- **Only three Claude agents are active: `pl-lead`, `pl-backend`, `pl-reviewer`.** `pl-architect` and `pl-frontend` are paused and get no new tasks.
+- `pl-lead` or `pl-backend` writes plans and contracts; `pl-reviewer` checks them.
+- Codex (`pl-codex-qa`, `pl-codex-fix`) only for small QA and fix tasks, and only while the Codex week budget is below 95 % (`codex-usage`).
+- **One task after the other** rather than much in parallel. Clear the context between independent tasks (`/clear`).
+- Review of code that `pl-reviewer` wrote: `pl-backend`. QA tests of `pl-backend`'s code: `pl-reviewer` (or Codex when small).
 
 ### Model split (budget rule)
 - The user has the large Claude plan. **Claude agents take the output-heavy work**: features, multi-file changes, plans, reviews.
@@ -46,12 +53,12 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 
 ## Flow
 1. `pl-lead` writes the card (goal, links, acceptance criteria, owner).
-2. Large/unclear: `pl-architect` plans first (adds a "Plan" section to the card).
+2. Large/unclear: `pl-lead` or `pl-backend` plans first (adds a "Plan" section to the card); `pl-reviewer` checks the plan.
 3. Implement: Claude implementer (big) or Codex (small).
 4. Verify: `pl-codex-qa` adds/extends tests and checks acceptance criteria.
-5. Review (split, D-394, user rule): any free agent reviews, mainly `pl-architect` and `pl-backend`, but never its own code. `pl-lead` names the reviewer in the card or when the PR is up. **Only security-critical parts stay with `pl-reviewer`:** token rights and ACLs, secrets and crypto, the installer, the repair path, auth and sessions. A PR with such a part and other parts gets two reviewers; `pl-reviewer` reads only the critical part. If `pl-reviewer` wrote a critical part, `pl-architect` reviews it. Findings → `pl-codex-fix` (small) or author (big).
+5. Review (split, D-394, user rule): with the small team (D-438) `pl-reviewer` reviews `pl-backend`'s code and `pl-backend` reviews `pl-reviewer`'s code; nobody reviews its own code. `pl-lead` names the reviewer in the card or when the PR is up. **Only security-critical parts stay with `pl-reviewer`:** token rights and ACLs, secrets and crypto, the installer, the repair path, auth and sessions. A PR with such a part and other parts gets two reviewers; `pl-reviewer` reads only the critical part. If `pl-reviewer` wrote a critical part, `pl-backend` reviews it and `pl-lead` reads the critical lines. Findings → `pl-codex-fix` (small) or author (big).
 6. Merge: only `pl-lead` merges into `main`, updates `docs/STATUS.md`, tells the user.
-- Run independent cards in parallel. Keep every agent busy; nobody waits for a plan they do not need.
+- One card after the other per agent (D-438). Nobody waits for a plan they do not need.
 
 ## Git
 - Remote: `origin` = https://github.com/Bernotese/plumb.git (public). Never commit secrets or `.env` files.
@@ -70,7 +77,7 @@ Model rationale: Fable (strongest, most expensive) only where decisions are made
 
 ## Autonomy and release (D-326, user rule)
 - **No release** until every open point of `docs/BRIEF.md` §5/§6 is done. Nobody starts the release workflow or pushes a tag.
-- **No waiting for the user between slices.** When a slice is done, `pl-architect` plans the next one, `pl-reviewer` checks the plan, the team builds it. For plan questions the recommendation of the team is the decision; `pl-lead` records it in `docs/DECISIONS.md` and sends the user a short note.
+- **No waiting for the user between slices.** When a slice is done, `pl-lead` or `pl-backend` plans the next one, `pl-reviewer` checks the plan, the team builds it. For plan questions the recommendation of the team is the decision; `pl-lead` records it in `docs/DECISIONS.md` and sends the user a short note.
 - **Agents with little load prepare the coming topics:** facts from the test host, spikes, plan drafts, risks. Only in plan files (`docs/plans/`) or spike branches; nothing reaches `main` without review.
 - **Still ask the user (through `pl-lead`), also when the answer looks clear:** new token rights or ACLs (D-081), public steps (release, repo settings), everything outside the test host `pve-dev`, changes to the user's own installation.
 - Unchanged: review and QA for everything, acceptance on the real host per slice, no force-push.

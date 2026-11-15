@@ -89,6 +89,8 @@ func (g guestRestorer) RestoreGuest(ctx context.Context, ref string, v plan.Rest
 // (M1 of #346): never the raw answer.
 func notStartedReason(err error) string {
 	switch {
+	case errors.Is(err, proxmox.ErrNetworkRefused):
+		return "Proxmox refused it before it changed anything: a NIC of the backup is on a bridge or VLAN tag that the install does not name (no SDN.Use). Run install.sh with that network (a repair run), or restore another backup"
 	case errors.Is(err, proxmox.ErrBackupChanged):
 		return "the backup volume changed since it was checked"
 	case errors.Is(err, proxmox.ErrBackupNotFound):
@@ -118,6 +120,13 @@ func (g guestRestorer) SafetyBackup(ctx context.Context, target string) (plan.Re
 	return plan.RestoreVolume{ID: c.ID, Volid: c.Volid, Kind: c.Kind, Notes: c.Notes, Time: c.Time, Size: c.Size}, nil
 }
 
+// BackupConfig reads the guest config inside a backup volume of the guest
+// ref (vzdump/extractconfig, T-244 R2), for the checks before a restore
+// stops the guest (T-241 networks, T-238 data disks).
+func (g guestRestorer) BackupConfig(ctx context.Context, ref string, v plan.RestoreVolume) (map[string]string, error) {
+	return g.d.BackupConfig(ctx, g.storage, ref, v.Volid)
+}
+
 // DropSafetyBackups deletes the older pre-restore volumes (D-420).
 func (g guestRestorer) DropSafetyBackups(ctx context.Context, target, keep string) error {
 	jobs := g.guests()
@@ -127,4 +136,7 @@ func (g guestRestorer) DropSafetyBackups(ctx context.Context, target, keep strin
 	return jobs.DropSafetyBackups(ctx, target, keep, "system")
 }
 
-var _ plan.GuestRestorer = guestRestorer{}
+var (
+	_ plan.GuestRestorer      = guestRestorer{}
+	_ plan.BackupConfigReader = guestRestorer{}
+)
