@@ -81,11 +81,13 @@ func diskPathProblem(p string) string {
 			return fmt.Sprintf("the path %s has an empty, . or .. part", p)
 		}
 	}
+	// N1 of the #360 re-check: a mount at or over an agent path hides it,
+	// checked directly (not only through the system trees).
+	if wire.HoldsAgentPath(p) {
+		return fmt.Sprintf("the path %s is, or holds, a path of the Plumb agent", p)
+	}
 	if top := parts[0]; systemTrees[top] || strings.HasPrefix(top, "lib") {
 		return fmt.Sprintf("the path %s is in the system tree /%s; use for example /srv, /opt, /data, /mnt or /home", p, top)
-	}
-	if wire.IsAgentPath(p) {
-		return fmt.Sprintf("the path %s is a path of the Plumb agent", p)
 	}
 	return ""
 }

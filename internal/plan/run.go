@@ -852,10 +852,21 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	write := driverChanges(recorded)
 	grow := driver.Grow(write)
 	write = slices.DeleteFunc(write, func(c wire.Change) bool { return c.Attr == driver.AttrDisk })
+	var disks []wire.Change // T-238: own steps, after the rest
+	write = slices.DeleteFunc(write, func(c wire.Change) bool {
+		if driver.DiskIndex(c.Attr) > 0 {
+			disks = append(disks, c)
+			return true
+		}
+		return false
+	})
 	if len(write) > 0 {
 		if err := e.cfg.Driver.Update(ctx, id, write, boot); err != nil {
 			return res, err
 		}
+	}
+	if err := e.diskSteps(ctx, tp.Target, id, disks); err != nil {
+		return res, err
 	}
 	after, err := e.cfg.Driver.Observe(ctx, id)
 	if err != nil {

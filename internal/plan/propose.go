@@ -599,6 +599,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		if _, err := e.docNICs(target, r); err != nil { // D-404
 			return tp, err
 		}
+		if _, _, err := docDisks(target, r); err != nil { // T-238, as D-404
+			return tp, err
+		}
 		tp.Resources = append(tp.Resources, ResourceChange{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
 			Risk: wire.RiskReversible, Changes: []wire.Change{{Attr: attrAdopted, From: nil, To: adoptedText(*r.Adopted), Risk: wire.RiskReversible}}})
 		// No agent yet: its resources apply after the install command.
@@ -671,6 +674,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		return tp, &ProposalError{Target: target, Msg: "cannot read the guest: " + err.Error(), Err: err}
 	}
 	gchanges, err := e.cfg.Driver.Diff(desired, observed)
+	if de := diskDiffError(target, r, err); de != nil { // T-238: 422 at the disk
+		return tp, de
+	}
 	var oe *driver.OutsideError
 	if errors.As(err, &oe) {
 		return tp, &ProposalError{Target: target, Err: ErrOutside, Msg: outsideText(bind.Ref, observed)}
@@ -707,6 +713,11 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	if err != nil {
 		return tp, &ProposalError{Target: target, Msg: err.Error()}
 	}
+	var dnotes []string
+	if gchanges, dnotes, err = e.diskPlan(ctx, target, r, observed, gchanges); err != nil { // T-238
+		return tp, err
+	}
+	tp.notes = append(tp.notes, dnotes...)
 	if ac := allowRestartChange(before, r); ac != nil {
 		gchanges = append([]wire.Change{*ac}, gchanges...)
 	}
@@ -819,6 +830,9 @@ func createChanges(s driver.GuestSpec) []wire.Change {
 	for i, n := range s.NICs { // T-219
 		c = append(c, wire.Change{Attr: driver.AttrNIC(i + 1), To: n.Value(), Risk: wire.RiskReversible})
 	}
+	for _, dk := range s.Disks { // T-238: written with the create (a container's cold)
+		c = append(c, wire.Change{Attr: driver.AttrDiskN(dk.Slot), To: dk.Value(), Risk: wire.RiskReversible})
+	}
 	if s.Power == driver.PowerStopped {
 		// Created, enrolled and applied, then stopped (D-299).
 		c = append(c, wire.Change{Attr: driver.AttrPower, From: string(driver.PowerRunning), To: string(driver.PowerStopped), Risk: driver.PowerRisk(driver.PowerStopped)})
@@ -897,6 +911,9 @@ func (e *Engine) guestSpec(target string, r *state.Rendered) (driver.GuestSpec, 
 		spec.Features = driver.CTFeatures // D-227: nesting only
 	}
 	if spec.NICs, err = e.docNICs(target, r); err != nil { // T-219
+		return spec, err
+	}
+	if spec.Disks, spec.DisksSet, err = docDisks(target, r); err != nil { // T-238
 		return spec, err
 	}
 	return spec, nil
