@@ -143,7 +143,7 @@ func TestRestoreFailsThenSafetyBackupRestores(t *testing.T) {
 	s.fr.fail = errors.New("proxmox: task UPID:pve:0001:0002:0003:qmrestore:9001:plumb@pve!plumb: failed: command 'zstd -d /var/lib/plumb-guest-backup/dump/x.vma.zst' failed: Restored data doesn't match checksum")
 	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
 	want := []string{"the agent credential is revoked; the restore failed: the Proxmox task UPID:pve:0001:0002:0003:qmrestore:9001:plumb@pve!plumb: failed (see its log in Proxmox)",
-		"the guest may have no disk now", "restore the safety backup backup 5afe000000000001 of 2026-11-15T04:00:12Z (POST /targets/web1/restore with backup 5afe000000000001)",
+		"the guest may have no disk now", "restore the safety backup 5afe000000000001 of 2026-11-15T04:00:12Z (POST /targets/web1/restore with backup 5afe000000000001)",
 		"re-enroll only after a restore that worked"}
 	for _, w := range want {
 		if !strings.Contains(out, w) {
@@ -210,7 +210,7 @@ func TestRestoreSecondFailureKeepsTheGoodBackup(t *testing.T) {
 		return string(iss.Changes)
 	}
 	first := issueText()
-	if !strings.Contains(first, "restore the safety backup backup 5afe000000000001") {
+	if !strings.Contains(first, "restore the safety backup 5afe000000000001") {
 		t.Fatalf("the Issue: %s", first)
 	}
 	// The second Plan says that the old safety backup stays.
@@ -223,7 +223,7 @@ func TestRestoreSecondFailureKeepsTheGoodBackup(t *testing.T) {
 	if status != "failed" || s.fr.safeties != 1 {
 		t.Fatalf("second restore: %s, safety backups %d (want still 1)", status, s.fr.safeties)
 	}
-	if !strings.Contains(out, "the restore failed again") || !strings.Contains(out, "restore the safety backup backup 5afe000000000001") {
+	if !strings.Contains(out, "the restore failed again") || !strings.Contains(out, "restore the safety backup 5afe000000000001") {
 		t.Errorf("second failure text: %s", out)
 	}
 	if got := issueText(); got != first {
@@ -335,7 +335,7 @@ func TestRestoreOlderPlanAfterAFailure(t *testing.T) {
 	}
 	r, _ := s.e.st.RunOfPlan(s.e.ctx, second)
 	steps, _ := s.e.st.Steps(s.e.ctx, r.ID)
-	if !strings.Contains(steps[0].Output, "restore the safety backup backup 5afe000000000001") {
+	if !strings.Contains(steps[0].Output, "restore the safety backup 5afe000000000001") {
 		t.Errorf("second Run: %s", steps[0].Output)
 	}
 }
