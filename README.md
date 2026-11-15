@@ -68,8 +68,8 @@ Two kinds of options are off unless you name them:
   bridge, untagged. `--extra-vlan <bridge>:<tag>[,<tag>…]` allows these VLAN tags on a VLAN-aware
   bridge. Repeat each option for more. A Target can use only the bridges and tags named here.
 - **Guest backups:** `--guest-backup-storage <storage>` names the one storage for backups of your
-  guests. It must take backups and nothing else: no guest disks (`images`, `rootdir`) and no
-  `snippets`. A Proxmox Backup Server storage with an encryption key keeps the backups encrypted.
+  guests. The installer refuses a storage that can also hold guest disks or snippets (content
+  `images`, `rootdir` or `snippets`). A Proxmox Backup Server storage with an encryption key keeps the backups encrypted.
   On any other storage, Plumb makes guest backups only when you add `--guest-backup-clear`: the
   backups are then **not encrypted**, and each one holds the whole guest disk with every secret in
   it.
@@ -183,8 +183,9 @@ full list of rights.
        two entries name it.
      - A VM card gets a gateway only while the first card has no default route (also none from
        DHCP).
-     - A running VM gets or loses a card without a restart. The agent removes the netplan file of a
-       removed card. A card that comes back gets the same MAC address.
+     - A running VM gets or loses a card without a restart while network hot-plug is on (the
+       Proxmox default); else the change waits for a restart. The agent removes the netplan file of
+       a removed card. A card that comes back gets the same MAC address.
      - Plumb refuses the Plan for a bridge or a VLAN tag that the install did not name. The message
        names the installer option (`--extra-bridge`, `--extra-vlan`); run the installer again with
        it (see "Updates and repair").
@@ -420,7 +421,8 @@ With `--guest-backup-storage` at the install, Plumb backs up the guests of your 
 **Guest backups** on a Target: daily or weekly, a time (UTC), and how many backups to keep (1 to
 30). A backup does not change the guest. It is a snapshot: a VM without the QEMU guest agent is
 backed up like after a power cut, so open files can be half written. A container backup leaves out
-the agent's own files.
+only the agent's secrets (its credential, a left-over enroll token and its desired list); its
+config stays.
 
 The **Backups** page of a Target shows:
 
