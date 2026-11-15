@@ -55,7 +55,7 @@ describe("restored, re-enroll refused (D-439)", () => {
     expect(propose).toBeDefined();
     propose?.click();
     await until(() => spy.mock.calls.length > 0);
-    expect(spy.mock.calls[0][0]).toBe("web1");
+    expect(spy.mock.calls[0]?.[0]).toBe("web1");
   });
 
   it("a read session sees the state but no button", async () => {
