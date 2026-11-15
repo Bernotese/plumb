@@ -217,21 +217,7 @@ func (e *Engine) diskSteps(ctx context.Context, target string, id driver.GuestID
 	if len(changes) == 0 {
 		return nil
 	}
-	var need int
-	for _, c := range changes {
-		from, _ := driver.ParseDiskValue(c.From)
-		to, err := driver.ParseDiskValue(c.To)
-		if err != nil {
-			return err
-		}
-		switch {
-		case to != nil && from == nil:
-			need += to.SizeGB
-		case to != nil && to.SizeGB > from.SizeGB:
-			need += to.SizeGB - from.SizeGB
-		}
-	}
-	if need > 0 {
+	if need := dataDiskGrowth(changes); need > 0 {
 		release, err := e.disk.Reserve(ctx, DiskBytes(need), fmt.Sprintf("the %d GiB of data disks of %s", need, target))
 		if err != nil {
 			return fmt.Errorf("%w; no data disk was added or grown: free space on the storage or use less", err)
@@ -269,4 +255,48 @@ func (e *Engine) diskSteps(ctx context.Context, target string, id driver.GuestID
 		}
 	}
 	return nil
+}
+
+// dataDiskGrowth is the GiB that the data disk changes add to the storage
+// (adds and grows); the gate counts them (D-219, M1 of #360).
+func dataDiskGrowth(changes []wire.Change) int {
+	gb := 0
+	for _, c := range changes {
+		if driver.DiskIndex(c.Attr) == 0 {
+			continue
+		}
+		from, err1 := driver.ParseDiskValue(c.From)
+		to, err2 := driver.ParseDiskValue(c.To)
+		switch {
+		case err1 != nil || err2 != nil || to == nil:
+		case from == nil:
+			gb += to.SizeGB
+		case to.SizeGB > from.SizeGB:
+			gb += to.SizeGB - from.SizeGB
+		}
+	}
+	return gb
+}
+
+// deleteDiskNotes names each observed data disk of a guest that a Target
+// delete removes (M1 of #360): the guest config, not the document, so a
+// missing disks field hides nothing. A guest that cannot be read gets no
+// note (the delete step reports it).
+func (e *Engine) deleteDiskNotes(ctx context.Context, ref string) []string {
+	st, err := e.cfg.Driver.Observe(ctx, driver.GuestID(ref))
+	if err != nil {
+		return nil
+	}
+	var notes []string
+	for _, d := range st.Spec.Disks {
+		if d.Foreign {
+			notes = append(notes, fmt.Sprintf("Disk %d (%s, not made by Plumb) is lost with the guest.", d.Slot, d.Raw))
+		} else {
+			notes = append(notes, fmt.Sprintf("Disk %d (%s, %d GiB) is lost with the guest.", d.Slot, d.Volume, d.SizeGB))
+		}
+	}
+	for _, u := range st.Spec.Unused {
+		notes = append(notes, fmt.Sprintf("The unused volume %s of the guest is lost with it.", u))
+	}
+	return notes
 }

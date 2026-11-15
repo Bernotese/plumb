@@ -110,3 +110,19 @@ func (d *Driver) diskChange(id driver.GuestID, g *guest, run, next *driver.Guest
 	run.Disks, next.Disks = withDisk(run.Disks, n, &dk), withDisk(next.Disks, n, &dk)
 	return nil
 }
+
+// GrowDisk makes the Plumb data disk in slot n of a guest gb GiB big, in
+// both views (a person grew it in Proxmox).
+func (d *Driver) GrowDisk(id driver.GuestID, n, gb int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	g := d.guests[id]
+	for _, v := range []*driver.GuestSpec{&g.spec, &g.next} {
+		if dk := v.DiskAt(n); dk != nil {
+			x := *dk
+			x.SizeGB = gb
+			v.Disks = withDisk(v.Disks, n, &x)
+		}
+	}
+	g.gen++
+}

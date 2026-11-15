@@ -588,6 +588,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 			tp.Guest = "delete"
 			tp.Resources = []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionDelete, Risk: wire.RiskDestructive,
 				Changes: []wire.Change{{Attr: wire.AttrState, From: wire.StatePresent, To: wire.StateAbsent, Risk: wire.RiskDestructive}}}}
+			tp.notes = append(tp.notes, e.deleteDiskNotes(ctx, bind.Ref)...) // T-238, M1 of #360
 		}
 		return tp, nil
 
@@ -1021,6 +1022,12 @@ func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPl
 					total = addBytes(total, DiskBytes(to-from))
 					grows++
 				}
+				if rc.Resource == wire.GuestConfigID { // T-238: data disk adds and grows
+					if gb := dataDiskGrowth(rc.Changes); gb > 0 {
+						total = addBytes(total, DiskBytes(gb))
+						grows++
+					}
+				}
 			}
 			continue
 		}
@@ -1036,6 +1043,11 @@ func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPl
 			continue
 		}
 		total = addBytes(total, DiskBytes(disk))
+		if dk, _, err := docDisks(tp.Target, r); err == nil { // T-238
+			for _, d := range dk {
+				total = addBytes(total, DiskBytes(d.SizeGB))
+			}
+		}
 		n++
 	}
 	if n == 0 && grows == 0 {
