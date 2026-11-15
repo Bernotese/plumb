@@ -24,6 +24,14 @@ import (
 // ErrGuestRunning: a restore needs a stopped guest; the caller stops it.
 var ErrGuestRunning = errors.New("proxmox: the guest runs; a restore needs it stopped")
 
+// ErrRestoreNotStarted wraps every error before Proxmox began the restore:
+// a check of the driver, or an HTTP refusal of the POST. The guest's disks
+// are as before (M1 of #346). A failed task, or a call whose answer was
+// lost, is not wrapped: then the disks may be gone.
+var ErrRestoreNotStarted = errors.New("proxmox: the restore did not start")
+
+func notStarted(err error) error { return fmt.Errorf("%w: %w", ErrRestoreNotStarted, err) }
+
 // ErrBackupChanged: the volume has another size or time than the one the
 // caller checked (a replaced archive, F2 of #331, review L1 of #335).
 var ErrBackupChanged = errors.New("proxmox: the backup volume changed since it was checked")
@@ -34,28 +42,39 @@ var ErrBackupChanged = errors.New("proxmox: the backup volume changed since it w
 func (d *Driver) RestoreGuest(ctx context.Context, storage, guest, volid string, size, ctime int64) error {
 	id, m, err := d.own(ctx, guest)
 	if err != nil {
-		return err
+		return notStarted(err)
 	}
 	st, err := d.Observe(ctx, driver.GuestID(guest))
 	if err != nil {
-		return err
+		return notStarted(err)
 	}
 	if st.Power != driver.PowerStopped {
-		return ErrGuestRunning
+		return notStarted(ErrGuestRunning)
 	}
 	vols, err := d.listBackups(ctx, storage, id)
 	if err != nil {
-		return err
+		return notStarted(err)
 	}
 	i := slices.IndexFunc(vols, func(v BackupVolume) bool { return v.Volid == volid })
 	if i < 0 {
-		return ErrBackupNotFound
+		return notStarted(ErrBackupNotFound)
 	}
 	if vols[i].Size != size || vols[i].CTime != ctime {
-		return ErrBackupChanged
+		return notStarted(ErrBackupChanged)
 	}
 	params, path := restoreParams(d.cfg.Node, d.cfg.DiskStorage, m.Type == typeCT, id, volid)
-	if err := d.c.MaybeTask(ctx, d.cfg.Node, "POST", path, params); err != nil {
+	upid, err := d.c.start(ctx, "POST", path, params)
+	if err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) { // Proxmox answered and refused: no task
+			return notStarted(err)
+		}
+		return fmt.Errorf("proxmox: restore of %s over %d: %w", volid, id, err)
+	}
+	if upid == "" {
+		return nil
+	}
+	if err := d.c.WaitTask(ctx, d.cfg.Node, upid); err != nil {
 		return fmt.Errorf("proxmox: restore of %s over %d: %w", volid, id, err)
 	}
 	return nil

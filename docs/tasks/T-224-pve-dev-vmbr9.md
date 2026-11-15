@@ -1,7 +1,7 @@
 # T-224 – `pve-dev`: make the isolated bridge `vmbr9` (D-379, D-414)
 
 - **Owner:** pl-backend (the one agent on the host)   · **Reviewer:** pl-reviewer (reads the log)   · **QA:** –
-- **Size:** S   · **Depends on:** **the user confirms a console path to `pve-dev`** (asked by pl-lead; do not start before pl-lead says so)
+- **Size:** S   · **Depends on:** – (the user confirmed a console path to `pve-dev` on 2026-11-16 and allowed the run; if SSH fails, report to `pl-lead` at once: the user helps over the console)
 
 ## Goal
 Slice 7 needs a second bridge for the real proof of more NICs and VLAN tags. The user allowed exactly this one change of the network config of `pve-dev` (D-379). It must not touch `vmbr0`, the SSH path of the host.

@@ -321,7 +321,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		AddrStable:          devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
 		InstallID: os.Getenv("PLUMB_INSTALL_ID"), NetAllowed: netAllowed, // T-219 (D-400, D-401)
-		GuestRestore: guestRestorerOf(rawDrv, st, extras, os.Getenv("PLUMB_INSTALL_ID"), restore.Active), // T-222
+		GuestRestore: guestRestorerOf(rawDrv, st, extras, os.Getenv("PLUMB_INSTALL_ID"), restore.Active, func() *backup.Guests { return guests }), // T-222, D-420
 		// T-221 (D-406, D-417): the backup notes of a Plan; nil guests
 		// (no Proxmox) → no note, no count.
 		BackupKeepDeletes: func(ctx context.Context, target string, keep int) (int, error) {
