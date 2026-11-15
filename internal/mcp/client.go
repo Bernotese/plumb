@@ -129,6 +129,12 @@ func (e *APIError) Error() string {
 // when not nil. A 2xx answer is returned (cut at MaxResult); every other
 // status is an *APIError.
 func (c *Client) Do(ctx context.Context, method, path string, query url.Values, body any) (Answer, error) {
+	return c.do(ctx, method, path, query, body, MaxResult)
+}
+
+// do is Do with its own cut: the prompt explain_issue reads more and cuts
+// the parts itself (T-249).
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, limit int) (Answer, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := c.request(ctx, method, path, query, body)
@@ -140,7 +146,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		return Answer{}, fmt.Errorf("call %s %s: %w", method, path, redact(err, c.token))
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, MaxResult+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return Answer{}, fmt.Errorf("read %s %s: %w", method, path, err)
 	}
@@ -148,8 +154,8 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		return Answer{}, problemOf(resp, b)
 	}
 	a := Answer{Status: resp.StatusCode, Body: b}
-	if len(b) > MaxResult {
-		a.Body, a.Truncated = b[:MaxResult], true
+	if len(b) > limit {
+		a.Body, a.Truncated = b[:limit], true
 	}
 	return a, nil
 }
