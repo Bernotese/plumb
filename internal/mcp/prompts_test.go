@@ -514,3 +514,38 @@ func TestExplainIssueRunListsMarked(t *testing.T) {
 		}
 	}
 }
+
+// capList: when items must be dropped after the per-item cut, a token's
+// comment goes before a person's, the oldest of each first. The items
+// hold numbers, which no string cut makes smaller.
+func TestCapListDropsTokensFirst(t *testing.T) {
+	nums := make([]any, 200)
+	for i := range nums {
+		nums[i] = json.Number("123456")
+	}
+	item := func(author string, i int) any {
+		return map[string]any{"author": author, "id": json.Number(fmt.Sprint(i)), "n": nums}
+	}
+	items := []any{item("user:admin", 1), item("token:a", 2), item("system", 3), item("token:b", 4), item("token:c", 5)}
+	size := len(encode(items[0]))
+	kept, left := capList(items, 3*size+10, true, person)
+	var ids []string
+	for _, k := range kept {
+		ids = append(ids, fmt.Sprint(k.(map[string]any)["id"]))
+	}
+	if left != 2 || strings.Join(ids, ",") != "1,3,5" {
+		t.Fatalf("kept %v, left %d; want the people (1, 3) and the newest token (5)", ids, left)
+	}
+	// The comments part passes person to capList.
+	many := []any{item("user:admin", 1)}
+	for i := range 19 {
+		many = append(many, item("token:t", i+2))
+	}
+	b, err := encodePart(part{"comments", map[string]any{"items": many}})
+	if err != nil || !strings.Contains(string(b), `"author":"user:admin"`) || !strings.Contains(string(b), `"left_out"`) {
+		t.Fatalf("comments part dropped the person's comment: %.200s", b)
+	}
+	if _, left := capList(items, 1, true, person); left != len(items) {
+		t.Fatalf("a budget of 1 byte keeps %d", len(items)-left)
+	}
+}
