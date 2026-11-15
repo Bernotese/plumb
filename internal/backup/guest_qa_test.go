@@ -76,7 +76,7 @@ func TestQAForeignVolumeSameNamePattern(t *testing.T) {
 	e.g.BackUp(ctx, "db1", TriggerScheduled, "system")
 	rec := e.d.vols["9001"][0]
 	e.d.vols["9001"] = append([]Volume{
-		{Volid: "plumb-backup:backup/vzdump-9001-000", Time: e.now.Add(-48 * time.Hour)},                         // no notes
+		{Volid: "plumb-backup:backup/vzdump-9001-000", Time: e.now.Add(-48 * time.Hour)},                          // no notes
 		{Volid: "plumb-backup:backup/vzdump-9001-0000", Time: e.now.Add(-24 * time.Hour), Notes: "my own backup"}, // a person's notes
 	}, e.d.vols["9001"]...)
 	// The recorded volume replaced by another archive (F2 of #331): same
