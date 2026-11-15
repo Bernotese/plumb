@@ -71,6 +71,9 @@ func (e *Engine) Approve(ctx context.Context, planID int64, principal string, ch
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return store.Run{}, err
 	}
+	if err := e.checkPlanNICs(targets); err != nil { // D-401 again at approval (T-219)
+		return store.Run{}, err
+	}
 	// The approver approves the planned values: another version or a
 	// missing secret makes the Plan stale (D-089).
 	if err := e.checkPlannedVersions(ctx, targets); err != nil {
