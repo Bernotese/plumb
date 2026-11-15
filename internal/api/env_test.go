@@ -62,6 +62,10 @@ type env struct {
 	bearers  []string // every token created
 	mu       sync.Mutex
 	seen     [][]byte // every response body, for the secret scan
+	// logs is the whole log at debug level, and secrets the secret
+	// values that the cleanup looks for in it (D-431, logscan_test.go).
+	logs    *lockedBuf
+	secrets map[logKind][]string
 	// buildAgents (image builds): the tuning of new build agents.
 	buildTune func(*linktest.Agent)
 	buildLoop bool
@@ -119,13 +123,14 @@ func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
-	log := envLog
+	logs := &lockedBuf{}
+	log := envLogger(logs)
 	copyMigrated(t, filepath.Join(dir, "plumb.db"))
 	st, err := store.Open(ctx, filepath.Join(dir, "plumb.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, ctx: ctx, dir: dir, st: st, events: event.New(st), drv: fake.New(), agents: map[string]*linktest.Agent{}}
+	e := &env{t: t, ctx: ctx, dir: dir, st: st, events: event.New(st), drv: fake.New(), agents: map[string]*linktest.Agent{}, logs: logs}
 	var eng *plan.Engine
 	var iss *issue.Service
 	e.key = secret.NewKey()
@@ -148,6 +153,9 @@ func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {
 	for _, o := range opts {
 		o(&cfg)
 	}
+	if cfg.Repair.Tokens != nil {
+		cfg.Repair.Tokens = noteTokens{RepairTokens: cfg.Repair.Tokens, e: e}
+	}
 	eng, err = plan.New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -168,10 +176,12 @@ func newEnv(t *testing.T, dev bool, opts ...func(*plan.Config)) *env {
 		KeepAlive: 50 * time.Millisecond, Logger: log})
 	e.h = e.srv.Handler()
 	t.Cleanup(func() {
+		secrets := e.logSecrets()
 		cancel()
 		e.backups.Wait()
 		eng.Close()
 		st.Close()
+		scanLog(t, []byte(e.logs.String()), secrets)
 	})
 	return e
 }
@@ -213,6 +223,7 @@ func (e *env) token(tier string, risk wire.Risk) *client {
 	}
 	_, sec, _ := strings.Cut(b, ".")
 	e.bearers = append(e.bearers, sec)
+	e.note(kindBearer, b)
 	return &client{e: e, bearer: b}
 }
 
@@ -240,6 +251,7 @@ func (e *env) login(user, password string) *client {
 	for _, ck := range rec.Result().Cookies() {
 		if ck.Name == e.srv.cookieName() {
 			c.cookie = ck
+			e.note(kindSessionCookie, ck.Value)
 		}
 	}
 	return c
@@ -253,9 +265,11 @@ func (c *client) raw(method, path string, body any) *httptest.ResponseRecorder {
 	case nil:
 	case []byte:
 		r = bytes.NewReader(b)
+		c.e.noteBody(path, b, false)
 	default:
 		raw, _ := json.Marshal(b)
 		r = bytes.NewReader(raw)
+		c.e.noteBody(path, raw, false)
 	}
 	req := httptest.NewRequest(method, path, r)
 	req.Host = host
@@ -282,6 +296,7 @@ func (c *client) raw(method, path string, body any) *httptest.ResponseRecorder {
 	c.e.mu.Lock()
 	c.e.seen = append(c.e.seen, rec.Body.Bytes()) // bodies only: Set-Cookie of a login holds the session id by design
 	c.e.mu.Unlock()
+	c.e.noteBody(path, rec.Body.Bytes(), true)
 	return rec
 }
 
