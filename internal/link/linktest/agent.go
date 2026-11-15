@@ -605,6 +605,9 @@ func (a *Agent) observeAll(resources []wire.Resource) []wire.Item {
 func (a *Agent) observe(r wire.Resource) wire.Item {
 	have, exists := a.guest[r.ID]
 	item := wire.Item{Resource: r.ID, Status: wire.StatusUnchanged}
+	if !exists && r.Attrs[wire.AttrState] == wire.StateAbsent {
+		return item // absent and not there: nothing to do, as on a real agent (T-220)
+	}
 	if !exists {
 		item.Changes = append(item.Changes, wire.Change{Attr: wire.AttrState, From: wire.StateAbsent, To: wire.StatePresent, Risk: wire.RiskReversible})
 	}

@@ -141,7 +141,6 @@ func TestNetworkNICRefusals(t *testing.T) {
 	}
 }
 
-
 // Review M1 of #336: the render's absent nic<N> (no mac) removes the file
 // of a removed card, also one under cloud-init's key; the main NIC stays.
 func TestNetworkNICAbsentRemovesFile(t *testing.T) {
