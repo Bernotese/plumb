@@ -266,3 +266,41 @@ func TestGuestBackupNowGuestGone(t *testing.T) {
 		t.Fatalf("list after: %d %s", code, body)
 	}
 }
+
+// T-233 (host observation S1 of T-225): at the keep limit, a Plan that only
+// moves the backup time causes no delete (the old field deletes the same
+// backups at its next slot): read, and a token may approve it.
+func TestBackupFieldTimeOnlyAtTheLimit(t *testing.T) {
+	e := newEnv(t, true, func(c *plan.Config) {
+		c.BackupKeepDeletes = func(_ context.Context, _ string, keep int) (int, error) { return min(max(7-keep, 0), 6), nil }
+	})
+	adm := e.admin()
+	e.seed(adm, "web1")
+	propose := func(d state.Doc) (int64, string) {
+		t.Helper()
+		code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "backup", "put": []state.Doc{d}})
+		var p struct {
+			ID   int64
+			Risk string
+		}
+		json.Unmarshal(body, &p)
+		if code != 201 {
+			t.Fatalf("propose: %d %s", code, body)
+		}
+		return p.ID, p.Risk
+	}
+	id, _ := propose(targetWithBackup("web1", 3)) // the next job deletes 4
+	adm.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil)
+	e.eng.Wait()
+	later := doc(state.KindTarget, "web1", strings.Replace(string(targetWithBackup("web1", 3).Spec), `"03:00"`, `"04:30"`, 1))
+	if !strings.Contains(string(later.Spec), `"04:30"`) {
+		t.Fatal("the time did not change")
+	}
+	id, risk := propose(later)
+	if risk != "read" {
+		t.Fatalf("time only at the limit: risk %s", risk)
+	}
+	if code, body := e.token(TierApply, "disruptive").do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 202 {
+		t.Fatalf("a token may approve a time change: %d %s", code, body)
+	}
+}
