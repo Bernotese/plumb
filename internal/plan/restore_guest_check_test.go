@@ -71,9 +71,12 @@ func TestRestoreVolumeSecondCheck(t *testing.T) {
 	if err := check(good); !errors.Is(err, ErrNotRestorable) {
 		t.Errorf("deleted: %v", err)
 	}
-	// No install id in the engine: nothing is restorable.
-	e := &Engine{st: st, cfg: Config{GuestRestore: oneVolume{manual}}}
-	if _, err := e.restoreVolume(ctx, "db1", b, manual.ID); !errors.Is(err, ErrNotRestorable) {
+	// No install id in the engine: nothing is restorable, also a marker
+	// with an empty install field.
+	empty := manual
+	empty.Notes = "plumb::db1:" + lineage + ":m"
+	e := &Engine{st: st, cfg: Config{GuestRestore: oneVolume{empty}}}
+	if _, err := e.restoreVolume(ctx, "db1", b, empty.ID); !errors.Is(err, ErrNotRestorable) {
 		t.Errorf("no install id: %v", err)
 	}
 }
