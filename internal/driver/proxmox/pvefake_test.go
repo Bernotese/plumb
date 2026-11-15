@@ -71,6 +71,9 @@ type fakePVE struct {
 	// lockReads: the config of a VM shows "lock: create" for this many
 	// more reads, and a DELETE fails meanwhile (a stopped create task).
 	lockReads map[int]int
+	// backup: the guest backup storage model (T-221, pvefake_backup_test.go);
+	// nil: not modelled.
+	backup *fakeBackup
 
 	// Start-up check (T-053): the version, statuses that /version answers
 	// first (503, 595 …), the storages of the node, a status for the node
@@ -82,6 +85,10 @@ type fakePVE struct {
 	storageStatus int
 	noPool        bool
 	perms         map[string]map[string]int
+	// hotplugFails: a netN write (N ≥ 1) on a running VM stays pending.
+	hotplugFails bool
+	// dropNICWrite: a netN write ends nowhere (neither running nor pending).
+	dropNICWrite bool
 	// storageConfigs: the answer of GET /storage (nil: 500).
 	storageConfigs []map[string]any
 	authFails      int    // requests refused with 401
@@ -389,6 +396,9 @@ func (f *fakePVE) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	if f.backup != nil && f.serveBackup(w, r, path, key) {
+		return
 	}
 	switch {
 	case r.Method == "GET" && path == "/version":
@@ -721,6 +731,14 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 				continue
 			}
 			switch {
+			case f.dropNICWrite && nicUpdateKeys[k]:
+				// Proxmox answers OK but the NIC is in no view.
+			case vm.running && f.hotplugFails && nicUpdateKeys[k]:
+				// a failed hot-plug: Proxmox keeps the NIC pending (D-402)
+				if vm.pending == nil {
+					vm.pending = map[string]string{}
+				}
+				vm.pending[k] = v[0]
 			case vm.running && coldKeys[k] && vm.cfg[k] != v[0]:
 				if vm.pending == nil {
 					vm.pending = map[string]string{}

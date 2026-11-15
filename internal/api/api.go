@@ -37,6 +37,8 @@ type Config struct {
 	// Backups writes and lists the backups (T-112). nil: the backup
 	// routes answer 503.
 	Backups *backup.Service
+	// GuestBackups runs the guest backup jobs (T-221); nil without Proxmox.
+	GuestBackups *backup.Guests
 	// Proxmox returns the read-only Proxmox view of GET /settings (D-361).
 	// nil: the controller runs without Proxmox (serve --dev).
 	Proxmox func(context.Context) *ProxmoxView
@@ -253,6 +255,9 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/targets/{name}/adopt", planTier, s.adoptTarget)
 	route("POST /api/v1/targets/{name}/install-command", admin, s.createInstallCommand)
 	route("POST /api/v1/guests/unmanaged/{vmid}/forget-agent", admin, s.forgetAgent)
+	route("GET /api/v1/targets/{name}/backups", read, s.listGuestBackups)
+	route("POST /api/v1/targets/{name}/backups", apply, s.backUpGuestNow)
+	route("DELETE /api/v1/targets/{name}/backups/{backup}", admin, s.deleteGuestBackup)
 
 	route("GET /api/v1/settings", read, s.getSettings)
 	route("PATCH /api/v1/settings", admin, s.changeSettings)

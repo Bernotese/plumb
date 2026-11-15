@@ -6,9 +6,12 @@ package driver
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
+	"strings"
 
 	"github.com/Bernotese/plumb/internal/wire"
 )
@@ -89,6 +92,120 @@ type GuestSpec struct {
 	Mounts   []string // AttrMounts: "mp0=<value>", sorted
 	Devices  []string // AttrDevices: "dev0=<value>", sorted
 	RawLXC   []string // AttrRawLXC: "lxc.<key>: <value>", in config order
+
+	// NICs are the more NICs net1 … net3 (D-399): NICs[i] is net<i+1>. An
+	// entry with an empty Bridge is a gap (Observe: no net<i+1>).
+	NICs []NIC // AttrNIC(1) … AttrNIC(MaxNICs)
+}
+
+// MaxNICs is the number of more NICs after net0 (D-399).
+const MaxNICs = 3
+
+// NIC is one more NIC of a guest (D-399 … D-403).
+type NIC struct {
+	Bridge string
+	Tag    int // 1 … 4094; 0: untagged
+	// IP and Gateway are set only for a container: Proxmox sets them
+	// through netN (D-403). A VM gets its address through the agent's
+	// network resource, so its NIC has neither. IP is "dhcp", a CIDR, or
+	// empty: up without an address.
+	IP, Gateway string
+	MAC         string // Plumb's MAC (NICMAC), lower case
+}
+
+// AttrNIC is the guest:config attribute of NIC n (1 … MaxNICs).
+func AttrNIC(n int) string { return "nic" + strconv.Itoa(n) }
+
+// NICIndex returns n of an attribute AttrNIC(n), or 0.
+func NICIndex(attr string) int {
+	n, err := strconv.Atoi(strings.TrimPrefix(attr, "nic"))
+	if !strings.HasPrefix(attr, "nic") || err != nil || n < 1 || n > MaxNICs || attr != AttrNIC(n) {
+		return 0
+	}
+	return n
+}
+
+// NICMAC is Plumb's MAC of NIC n of a Target (D-400): "02:" and the first
+// five bytes of SHA-256(install id ‖ target ‖ n), a locally administered
+// unicast address. The parts are joined with NUL bytes, so no two inputs
+// give the same text. The agent's network resource matches the NIC by
+// this MAC (D-403, T-220).
+func NICMAC(installID, target string, n int) string {
+	sum := sha256.Sum256([]byte(installID + "\x00" + target + "\x00" + strconv.Itoa(n)))
+	b := append([]byte{0x02}, sum[:5]...)
+	parts := make([]string, len(b))
+	for i, x := range b {
+		parts[i] = fmt.Sprintf("%02x", x)
+	}
+	return strings.Join(parts, ":")
+}
+
+// Value is the change value of the NIC: "bridge=B[,tag=T][,ip=I][,gw=G],mac=M",
+// or nil for a gap. ParseNICValue reads it back.
+func (n NIC) Value() any {
+	if n.Bridge == "" {
+		return nil
+	}
+	v := "bridge=" + n.Bridge
+	if n.Tag != 0 {
+		v += ",tag=" + strconv.Itoa(n.Tag)
+	}
+	if n.IP != "" {
+		v += ",ip=" + n.IP
+	}
+	if n.Gateway != "" {
+		v += ",gw=" + n.Gateway
+	}
+	return v + ",mac=" + strings.ToLower(n.MAC)
+}
+
+// ParseNICValue reads a value of NIC.Value. nil is a gap: ok with an empty
+// NIC.
+func ParseNICValue(v any) (NIC, error) {
+	if v == nil {
+		return NIC{}, nil
+	}
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return NIC{}, fmt.Errorf("driver: bad NIC value %v", v)
+	}
+	var n NIC
+	for _, kv := range strings.Split(s, ",") {
+		k, val, ok := strings.Cut(kv, "=")
+		if !ok || val == "" {
+			return NIC{}, fmt.Errorf("driver: bad NIC value %q", s)
+		}
+		switch k {
+		case "bridge":
+			n.Bridge = val
+		case "tag":
+			t, err := strconv.Atoi(val)
+			if err != nil || t < 1 || t > 4094 {
+				return NIC{}, fmt.Errorf("driver: bad NIC tag %q", val)
+			}
+			n.Tag = t
+		case "ip":
+			n.IP = val
+		case "gw":
+			n.Gateway = val
+		case "mac":
+			n.MAC = val
+		default:
+			return NIC{}, fmt.Errorf("driver: bad NIC value %q", s)
+		}
+	}
+	if n.Bridge == "" || n.MAC == "" {
+		return NIC{}, fmt.Errorf("driver: NIC value %q without bridge or mac", s)
+	}
+	return n, nil
+}
+
+// NICAt returns NIC n (1 … MaxNICs) of s, or an empty NIC (a gap).
+func (s GuestSpec) NICAt(n int) NIC {
+	if n < 1 || n > len(s.NICs) {
+		return NIC{}
+	}
+	return s.NICs[n-1]
 }
 
 // Attribute names of guest:config changes.
