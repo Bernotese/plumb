@@ -40,6 +40,7 @@ type fakeNet struct {
 	// "ip -j link show" without a device lists them after the main NIC.
 	cards [][2]string
 	upped []string // cards that "ip link set dev X up" brought up
+	downs []string // cards that "ip link set dev X down" brought down
 }
 
 func (f *fakeNet) live() (addrs []string, routes []liveRoute, dns, search []string) {
@@ -104,6 +105,12 @@ func (f *fakeNet) Run(ctx context.Context, name string, args ...string) ([]byte,
 	case name == "ip" && len(args) == 5 && slices.Equal(args[:3], []string{"link", "set", "dev"}) && args[4] == "up":
 		f.mu.Lock()
 		f.upped = append(f.upped, args[3])
+		f.mu.Unlock()
+		return nil, nil
+	case name == "ip" && len(args) == 5 && slices.Equal(args[:3], []string{"link", "set", "dev"}) && args[4] == "down":
+		f.mu.Lock()
+		f.downs = append(f.downs, args[3])
+		f.upped = slices.DeleteFunc(f.upped, func(s string) bool { return s == args[3] })
 		f.mu.Unlock()
 		return nil, nil
 	case name == "ip" && slices.Equal(args[:3], []string{"-j", "link", "show"}):

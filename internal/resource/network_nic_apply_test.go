@@ -192,3 +192,56 @@ func TestNetworkNICAbsentRemovesFile(t *testing.T) {
 		t.Fatalf("absent without a file: %+v", ch)
 	}
 }
+
+// Review R1 of #336: a card that Prepare brought up for the probe goes
+// down again when Prepare refuses or the change is restored; Commit
+// keeps it up.
+func TestNetworkNICUpUndone(t *testing.T) {
+	ctx := context.Background()
+	// The probe refuses: the card is down again, nothing changed.
+	env, f, _ := newNetEnv(t)
+	f.cards = [][2]string{{"ens19", nicMAC}}
+	networkProbe = func(context.Context, string, []netip.Addr) error { return errors.New("another host uses it") }
+	n := netRes(t, env, map[string]any{"mac": nicMAC, "addresses": "10.9.20.5/24"})
+	if err := n.Prepare(ctx); err == nil {
+		t.Fatal("Prepare passed")
+	}
+	if !slices.Equal(f.downs, []string{"ens19"}) || len(f.upped) != 0 {
+		t.Fatalf("after a refused Prepare: up %v, down %v", f.upped, f.downs)
+	}
+	// Restore after the apply: down again.
+	env, f, _ = newNetEnv(t)
+	f.cards = [][2]string{{"ens19", nicMAC}}
+	n = netRes(t, env, map[string]any{"mac": nicMAC, "addresses": "10.9.20.5/24"})
+	if err := n.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Apply(ctx, diffOf(t, n)); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(f.downs, []string{"ens19"}) {
+		t.Fatalf("after Restore: down %v", f.downs)
+	}
+	// Commit keeps it up.
+	env, f, _ = newNetEnv(t)
+	f.cards = [][2]string{{"ens19", nicMAC}}
+	n = netRes(t, env, map[string]any{"mac": nicMAC, "addresses": "10.9.20.5/24"})
+	if err := n.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Apply(ctx, diffOf(t, n)); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.downs) != 0 {
+		t.Fatalf("a committed card went down: %v", f.downs)
+	}
+}

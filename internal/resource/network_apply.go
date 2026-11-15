@@ -70,11 +70,14 @@ type network struct {
 	// content is the file that Prepare made for Apply.
 	content string
 	// nic is what Prepare found for a more NIC (nicMode): the view before,
-	// the key of the main entry and whether the NIC key is the own one.
+	// the key of the main entry, whether the NIC key is the own one, and
+	// the card that nicUp brought up (it goes down on a refusal or a
+	// Restore; Commit keeps it up).
 	nic struct {
 		before  map[string]npView
 		mainKey string
 		own     bool
+		upped   string
 	}
 }
 
@@ -759,7 +762,14 @@ func (n *network) preflight(ctx context.Context, key string, before npView, own 
 // (D-348, D-349): the main NIC, the file, the preflight, the probe of new
 // addresses, the confirmed copy and the rollback timer. Nothing live
 // changes; an error leaves the guest as it was.
-func (n *network) Prepare(ctx context.Context) error {
+func (n *network) Prepare(ctx context.Context) (err error) {
+	// A card that nicUp brought up goes down again when Prepare refuses:
+	// "nothing changed" holds (review R1 of #336).
+	defer func() {
+		if err != nil {
+			n.nicDownIfUpped(ctx)
+		}
+	}()
 	if n.env.StateDir == "" {
 		return errors.New("network needs the agent state dir")
 	}
@@ -962,6 +972,7 @@ func (n *network) Apply(ctx context.Context, changes []wire.Change) error {
 
 // Commit keeps the new state: the timer stops and the confirmed copy goes.
 func (n *network) Commit(ctx context.Context) error {
+	n.nic.upped = "" // the card stays up: netplan manages it now
 	disarmRollback(ctx, n.env, "network")
 	if err := os.Remove(networkConfirmed(n.env, n.a.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -971,7 +982,9 @@ func (n *network) Commit(ctx context.Context) error {
 
 // Restore puts the confirmed file back live.
 func (n *network) Restore(ctx context.Context) error {
-	return restoreNetworkFile(ctx, n.env, n.a.Name)
+	err := restoreNetworkFile(ctx, n.env, n.a.Name)
+	n.nicDownIfUpped(ctx) // the card is down again, as before Prepare (R1 of #336)
+	return err
 }
 
 // restoreNetworkFile writes the confirmed copy of name back (or removes

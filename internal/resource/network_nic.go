@@ -157,7 +157,18 @@ func (n *network) nicUp(ctx context.Context, dev string) error {
 	if _, err := n.run(ctx, "ip", "link", "set", "dev", dev, "up"); err != nil {
 		return fmt.Errorf("bring the network card %s up for the address probe: %w", dev, err)
 	}
+	n.nic.upped = dev
 	return nil
+}
+
+// nicDownIfUpped brings the card that nicUp brought up down again (a
+// refused Prepare, a Restore). Best effort: the step already fails.
+func (n *network) nicDownIfUpped(ctx context.Context) {
+	if n.nic.upped == "" {
+		return
+	}
+	_, _ = n.run(context.WithoutCancel(ctx), "ip", "link", "set", "dev", n.nic.upped, "down")
+	n.nic.upped = ""
 }
 
 // nicPreflight checks the merged result for a more NIC: the main entry
