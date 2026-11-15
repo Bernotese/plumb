@@ -21,6 +21,7 @@ type apiGuestDriver struct {
 	mu   sync.Mutex
 	vols []backup.Volume
 	seq  int
+	gone bool // the guest left the pool (S4 of T-225)
 }
 
 func (d *apiGuestDriver) BackUpGuest(_ context.Context, storage, guest, notes string, _ []string) (string, bool, error) {
@@ -35,6 +36,9 @@ func (d *apiGuestDriver) BackUpGuest(_ context.Context, storage, guest, notes st
 func (d *apiGuestDriver) ListGuestBackups(context.Context, string, string) ([]backup.Volume, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.gone {
+		return nil, backup.ErrGuestGone
+	}
 	return append([]backup.Volume(nil), d.vols...), nil
 }
 
@@ -239,5 +243,26 @@ func TestBackupFieldRemoveThenReAdd(t *testing.T) {
 	}
 	if code, _ := applyTok.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 403 {
 		t.Fatalf("a token approved the re-add: %d", code)
+	}
+}
+
+// S4 of T-225: "back up now" for a Target whose guest is gone is a 409
+// at once, as the list shows it (no backups), not a 202 and a job that
+// fails in Proxmox. The refusal is recorded as the last job.
+func TestGuestBackupNowGuestGone(t *testing.T) {
+	e := newEnv(t, true)
+	_, d := withGuestBackups(t, e)
+	d.gone = true
+	apply := e.token(TierApply, "disruptive")
+	code, body := apply.do("POST", "/api/v1/targets/db1/backups", map[string]any{"reason": "r"})
+	if code != 409 || problemType(body) != "backup-refused" || !strings.Contains(string(body), "the guest of the Target is gone") {
+		t.Fatalf("back up now, guest gone: %d %s", code, body)
+	}
+	if d.seq != 0 {
+		t.Errorf("vzdump calls: %d", d.seq)
+	}
+	code, body = e.token(TierRead, "").do("GET", "/api/v1/targets/db1/backups", nil)
+	if code != 200 || !strings.Contains(string(body), `"items":[]`) || !strings.Contains(string(body), `"result":"refused"`) || !strings.Contains(string(body), "the guest of the Target is gone") {
+		t.Fatalf("list after: %d %s", code, body)
 	}
 }
