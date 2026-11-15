@@ -62,6 +62,20 @@ It makes:
 - a pool `plumb` for your guests, a user `plumb@pve` with an API token, and roles for it;
 - the storages `plumb-snippets` and `plumb-images` (two directories on the host).
 
+Two kinds of options are off unless you name them:
+
+- **More networks for guests:** `--extra-bridge <bridge>` lets a guest network card use one more
+  bridge, untagged. `--extra-vlan <bridge>:<tag>[,<tag>…]` allows these VLAN tags on a VLAN-aware
+  bridge. Repeat each option for more. A Target can use only the bridges and tags named here.
+- **Guest backups:** `--guest-backup-storage <storage>` names the one storage for backups of your
+  guests. It must take backups and nothing else: no guest disks (`images`, `rootdir`) and no
+  `snippets`. A Proxmox Backup Server storage with an encryption key keeps the backups encrypted.
+  On any other storage, Plumb makes guest backups only when you add `--guest-backup-clear`: the
+  backups are then **not encrypted**, and each one holds the whole guest disk with every secret in
+  it.
+
+The dry run lists each right that these options add.
+
 ### 4. The recovery key
 
 During the install, Plumb shows a **recovery key** once. Plumb does not store it.
@@ -77,6 +91,12 @@ Plumb never gets root access to Proxmox. Its token may:
 - create, change, start, stop and delete guests in the pool `plumb`;
 - use space on the disk storage and on `plumb-snippets`, and connect guests to the guest bridge;
 - download images and templates into `plumb-images`.
+- with `--extra-bridge` or `--extra-vlan`: connect guests to exactly those bridges and VLAN tags;
+- with `--guest-backup-storage`: back up the guests of the pool to that storage, and use its space.
+
+With guest backups on, the token itself can back up, restore over and delete the backups of every
+guest in the pool directly at the Proxmox API. Plumb's own rules (for example "only a person
+restores a guest") hold only inside Plumb, not for somebody who holds the token.
 
 It can also read, but never change, data of the whole host. It needs this right (`Sys.Audit` on
 `/`) to see the free space of the disk storage, and Proxmox gives no narrower right for it. So
@@ -132,7 +152,8 @@ full list of rights.
    "Add" copies one into your Blocks. When your copy differs from the catalogue, "Show difference"
    shows how, and "Update from the catalogue" replaces your copy. Both make a normal Plan. Plumb
    never adds or changes a Block by itself. Change the Blocks or write your own.
-   - The `firewall` Block drops incoming traffic except the ports you list. SSH always stays open.
+   - The `firewall` Block drops incoming traffic except the ports you list, on every network card of
+     the guest. SSH always stays open.
    - The `network` Block adds addresses, routes, name servers and search domains to the network
      card of a VM. The main address, the gateway and DHCP do not change.
    - When a `firewall` or `network` change cuts the guest off from Plumb, the agent puts the old
@@ -152,6 +173,12 @@ full list of rights.
    - **Tags:** the Proxmox tags of the guest. Plumb keeps exactly these. With no entry, Plumb does
      not touch the tags of the guest.
    - **Disk:** it only grows. Proxmox cannot make a disk smaller, so a grow cannot be undone.
+   - **More network cards:** up to 3 more, each on a bridge, or a bridge with a VLAN tag, that the
+     install named. Each card has no address, DHCP, or a static address; at most one card has a
+     gateway. Plumb chooses the MAC addresses. Adding or removing a card, or changing its bridge or
+     tag, is disruptive: the Plan says so.
+   - **Guest backups:** daily or weekly at a time (UTC), and how many to keep. See "Guest backups"
+     below.
 
    ![Targets list with four Targets: app1 in Plumb; db1, web1 and web2 out of Plumb; each with image, size, address and agent version](docs/screenshots/readme-targets.png)
    <br>*The Targets: one is in Plumb, three have drift.*
@@ -186,6 +213,8 @@ full list of rights.
      raw resource of this Target, and the Issue says why.
    - A Plan that removes the `firewall` of a Target always needs a person, because it opens every
      port at once.
+   - A network card changed in Proxmox (bridge, tag, MAC, a card added or removed) cannot be
+     accepted. Revert it, or change the network cards of the Target.
 
    ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
    <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
@@ -266,6 +295,12 @@ the install. The same run repairs a broken install. Try `--dry-run` first.
 
 Agents in the guests update through a Plan: Plumb proposes it, you approve it.
 
+New rights come only with an installer run. To use more networks or guest backups on an existing
+install, run the installer again with your usual options and the new ones (`--extra-bridge`,
+`--extra-vlan`, `--guest-backup-storage`). Until then Plumb refuses such a network card and every
+guest backup, and says why. Give these options again at every later run: a run without one of them
+removes its rights.
+
 - An agent that does not reach Plumb within 5 minutes after the update goes back to its old
   version by itself.
 
@@ -294,6 +329,9 @@ leaves the guest as it was.
   (`apt-get install -y curl`). Every error line of the command and of the install script starts
   with `plumb-install:`. Without `curl`, or when the download fails or is cut, the command stops
   with one such line, installs nothing and leaves no file; you can run the same command again.
+- The shell keeps a pasted command, with the token, in root's history. Run `unset HISTFILE` before
+  you paste it, or `history -c` after it. After a failed try, the token stays valid until its time
+  ends.
 
 ![Agent page of web3: repair over SSH is ready, the pinned host key, and the button Propose repair](docs/screenshots/readme-repair.png)
 <br>*A dead agent: Plumb can install it again over SSH, after a person approves the plan.*
@@ -306,6 +344,7 @@ first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a 
 - The list shows each free guest of the pool, and why a guest cannot be adopted (for example more
   than one disk, a VLAN tag, a privileged container).
 - The new Target has the Proxmox name of the guest; rename the guest in Proxmox to change it.
+- An adopted Target keeps one network card: Plumb adds no more cards to it.
 - Adopting is a Plan that only a person can approve. Plumb writes nothing to Proxmox for it.
 - The guest is **not sealed**: its SSH host keys, machine-id and root users stay as they are.
   Plumb never keeps or shows its password, SSH keys, description or container environment.
@@ -361,7 +400,60 @@ A backup is encrypted. Only your recovery key opens it.
 - It holds: every Image, Block, Target, rule and revision, the history, the Issues, the users and
   tokens, which guest belongs to which Target, and the identities of the agents.
 - It does not hold: the recovery key, the Proxmox token of Plumb (the installer makes a new one),
-  and the guests themselves. Back up the guests with Proxmox.
+  and the guests themselves. Back up the guests with Plumb's guest backups (below) or with Proxmox.
+
+### Guest backups
+
+With `--guest-backup-storage` at the install, Plumb backs up the guests of your Targets. Set
+**Guest backups** on a Target: daily or weekly, a time (UTC), and how many backups to keep (1 to
+30). A backup does not change the guest. It is a snapshot: a VM without the QEMU guest agent is
+backed up like after a power cut, so open files can be half written. A container backup leaves out
+the agent's own files.
+
+The **Backups** page of a Target shows:
+
+- the storage, whether it encrypts, and its free space. Below 10 % free, Plumb refuses new
+  backups;
+- the schedule, the next and the last backup;
+- **Back up now** (role apply or admin). Plumb keeps at most 2 of these beside the scheduled ones,
+  so they never push out a scheduled backup;
+- the backups, in three groups:
+  - **this guest:** Plumb made them. Plumb keeps the newest scheduled ones as set, restores them
+    and deletes the oldest;
+  - **an older guest of this Target**, for example before the guest was made again: Plumb never
+    restores them and never deletes them by itself;
+  - **not known to Plumb:** a person made them, the mark failed, or the record was lost with a
+    restore of Plumb. Plumb never touches them. Delete them in Proxmox.
+
+A person with the role admin can delete one backup of the first two groups, after a confirm.
+
+Lowering "keep" deletes backups: that Plan is destructive and says how many go. Removing the
+backup setting stops the backups and deletes none.
+
+![Backups page of db1: an unencrypted storage with the warning, the schedule, Back up now, and the backups in three groups](docs/screenshots/readme-guest-backups.png)
+<br>*The backups of one guest: the storage state, the schedule and the backups by group.*
+
+**Restore.** "Restore…" on a backup of this guest opens a wizard. It makes a Plan with the risk
+destructive, and only a person with the role admin can approve it; an API token never can. The Run:
+
+1. stops the guest. A running guest needs "Plumb may restart this VM" (for a container: "this
+   container") on the Target, or stop it yourself first;
+2. revokes the agent credential and drops the pinned SSH host keys, before the guest starts again;
+3. lets Proxmox overwrite the whole guest with the backup;
+4. then Plumb proposes a re-enrollment of the agent (the guest stays stopped until you approve it).
+   An adopted guest starts without an agent: run an install command from its agent page.
+
+Everything written in the guest after the backup is lost. Access comes back as it was then: SSH
+keys, passwords and users that a person removed later work again. The Target is not rolled back:
+the next Run sets the guest to the current Target again.
+
+![Restore wizard: only a person can approve, the steps of the Run, what is lost, a confirm box and the reason](docs/screenshots/readme-guest-restore.png)
+<br>*The restore wizard says what is lost before it makes the Plan.*
+
+- Plumb restores only over the same guest. For a guest that is gone, restore the backup in Proxmox
+  into the pool `plumb`, then adopt the guest ("Adopt a guest").
+- After a delete of the Target the backups stay in Proxmox, and Plumb forgets them. Delete them in
+  Proxmox when you no longer need them.
 
 ### Copy the backups off the host
 
@@ -407,7 +499,10 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
    ```
 
    The installer reuses the kept backup storage. It asks for the recovery key and checks the
-   file before it changes anything. A wrong key stops the run.
+   file before it changes anything. A wrong key stops the run. Give `--extra-bridge`,
+   `--extra-vlan` and `--guest-backup-storage` (and `--guest-backup-clear`) of the old install
+   again: without them the restored Plumb has no rights for those networks, and guest backups are
+   off.
 
 ### After a restore
 
@@ -421,6 +516,8 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
 - Guests that were made after the backup are listed as unknown guests. Plumb never changes or
   deletes them. A guest that was deleted after the backup gets an Issue; Plumb does not make it
   again by itself.
+- Guest backups made after the backup of Plumb show as "not known to Plumb": Plumb never deletes
+  them. Delete them in Proxmox when you no longer need them.
 
 ### Export and import
 
@@ -441,8 +538,9 @@ Keep the recovery key in any case.
   this VM" on the Target if Plumb may restart it.
 - One Proxmox host only. No clusters.
 - A restored Plumb needs the same address as before.
-- A guest has one network card. The `network` Block adds addresses and routes on it; more cards
-  come later.
+- A guest has at most 4 network cards, on the bridges and VLAN tags named at install. An adopted
+  Target keeps one. The `network` Block adds addresses and routes on the first card.
+- Plumb restores a guest backup only over the same guest, not after the guest is gone.
 - A change by hand with `ip` or `nft` in a guest that uses the `network` or `firewall` Block is seen
   within seconds. When the agent cannot watch it live, its agent page says so, and the change is
   seen at the full check every 15 minutes.
