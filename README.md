@@ -208,8 +208,17 @@ full list of rights.
        it. A running guest needs "Plumb may restart this VM" (for a container: "this container").
        The Run detaches the disk first, then frees its volume in a second step.
      - With the box off, Plumb does not touch data disks, and a disk that a person adds is no
-       drift. Switching it off deletes nothing. Switching it on manages slots 1 to 3: a disk in a
-       slot that the list does not name is removed by the Plan, so add the disks you want to keep.
+       drift. Switching it off deletes nothing. Switching it on manages slots 1 to 3. Read that Plan
+       before you approve it:
+       - A disk of a slot that the list does not name is removed, or detached when Plumb did not
+         make it.
+       - **A disk that a person added to a VM** has no serial `plumb-N`, so Plumb never takes it
+         over. If the list names its slot, Plumb refuses the Plan (remove the disk in Proxmox, or use
+         another slot); else the Plan detaches it and does not free it. To keep it as it is, leave
+         the box off.
+       - **A disk that a person added to a container** on the disk storage of the install counts as
+         Plumb's: list it with its slot, size and path to keep it. A disk on another storage, or a
+         bind mount, Plumb did not make: as for a VM, the Plan refuses or detaches it.
      - Every disk counts for the 85 % gate of the disk storage. A user or token with the role
        apply can approve an add (up to 3 × 4096 GiB per Target), but no remove.
      - An adopted Target keeps the disks that the guest has; Plumb adds none.
@@ -221,6 +230,9 @@ full list of rights.
 
    ![Edit page of Target web2: configured and reported address, image, type, and the guest settings cores, memory, disk, bridge and power](docs/screenshots/readme-target.png)
    <br>*One Target: its address, its Image and its guest settings.*
+
+   ![Data disks of the VM db1: the box "Plumb manages the data disks of this guest", disk 1 of 50 GiB in its fixed slot scsi1, a new disk 2 of 20 GiB with a slot choice, and the restore note](docs/screenshots/readme-target-disks.png)
+   <br>*The data disks of a VM: the slot is the disk's fixed name, and a disk only grows.*
 
 7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
    each step. A Run can end as "succeeded, N warnings": then read the steps marked `warning`. The
