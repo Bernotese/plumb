@@ -17,6 +17,10 @@ func (o oneVolume) FindBackup(context.Context, string, string, string) (RestoreV
 	return o.v, nil
 }
 func (oneVolume) RestoreGuest(context.Context, string, RestoreVolume) error { return nil }
+func (oneVolume) SafetyBackup(context.Context, string) (RestoreVolume, error) {
+	return RestoreVolume{}, nil
+}
+func (oneVolume) DropSafetyBackups(context.Context, string, string) error { return nil }
 
 // T-229: restoreVolume checks every field against the recorded row itself;
 // one field off is refused, the right volume passes.

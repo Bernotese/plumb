@@ -140,6 +140,13 @@ var (
 	ErrManyNew = errors.New("backup: not exactly one new backup volume")
 	// ErrGuestBackupBusy: a job of this Target runs.
 	ErrGuestBackupBusy = errors.New("backup: a guest backup of this Target runs")
+	// ErrGuestGone: the Target's guest is not in the pool any more (the
+	// driver's list cannot read it). Its backups are invisible to the
+	// token (T-214 FACT 1): the list is empty, never an error (S3 of T-225).
+	ErrGuestGone = errors.New("backup: the guest of the Target is gone")
+	// ErrSafetyBackup: the safety backup before a restore did not give a
+	// marked volume (D-420).
+	ErrSafetyBackup = errors.New("backup: the safety backup before the restore failed")
 )
 
 // excludeLXC: the agent's files stay out of a container archive (L1 of
@@ -214,7 +221,7 @@ func (g *Guests) Start(ctx context.Context, target, trigger, actor string) (run 
 	if free >= 0 && free < minFreePct {
 		return refuse(fmt.Sprintf("the storage has %d %% free, less than %d %%", free, minFreePct))
 	}
-	marker, err := Marker{Install: g.cfg.InstallID, Target: t.Name, Lineage: lineage, Manual: trigger == TriggerManual}.String()
+	marker, err := Marker{Install: g.cfg.InstallID, Target: t.Name, Lineage: lineage, Manual: trigger == TriggerManual, PreRestore: trigger == TriggerPreRestore}.String()
 	if err != nil {
 		return refuse("this controller has no install id, so its backups cannot be marked")
 	}
@@ -359,4 +366,86 @@ func (g *Guests) emit(ctx context.Context, typ, target, actor string, data map[s
 	if _, err := g.cfg.Events.Emit(ctx, typ, "target:"+target, actor, data); err != nil {
 		g.cfg.Logger.Error("event "+typ, "err", err)
 	}
+}
+
+// SafetyBackup takes the backup of a guest as it is, right before a
+// restore over it (D-420). It runs like "back up now" (the same refusals:
+// restored mode, storage, clear storage, free space, one job per Target)
+// with the trigger pre-restore, and waits. It returns the marked volume, or
+// an error with Plumb's own text: then the restore stops before it changes
+// anything.
+func (g *Guests) SafetyBackup(ctx context.Context, target, actor string) (Classified, error) {
+	if err := g.BackUp(ctx, target, TriggerPreRestore, actor); err != nil {
+		return Classified{}, err
+	}
+	last, err := g.cfg.Store.LastGuestBackupRun(ctx, target)
+	if err != nil {
+		return Classified{}, err
+	}
+	if last.Trigger != TriggerPreRestore || last.Result != "done" {
+		msg := last.Message
+		if msg == "" {
+			msg = "the backup ended " + last.Result
+		}
+		return Classified{}, fmt.Errorf("%w: %s", ErrSafetyBackup, msg)
+	}
+	vols, err := g.classified(ctx, target)
+	if err != nil {
+		return Classified{}, err
+	}
+	for _, c := range vols {
+		if c.Volid == last.Volid && c.Kind == KindPlumb && c.Trigger == TriggerPreRestore {
+			return c, nil
+		}
+	}
+	return Classified{}, fmt.Errorf("%w: the new volume is not listed as Plumb's", ErrSafetyBackup)
+}
+
+// DropSafetyBackups deletes the Target's pre-restore volumes of the current
+// lineage except keep (a volid): a restore that worked keeps only its own
+// safety backup (D-420). An error of one delete is logged; the rest go on.
+func (g *Guests) DropSafetyBackups(ctx context.Context, target, keep, actor string) error {
+	t, err := g.cfg.Target(ctx, target)
+	if err != nil {
+		return err
+	}
+	vols, err := g.classified(ctx, target)
+	if err != nil {
+		return err
+	}
+	for _, c := range vols {
+		if c.Kind != KindPlumb || c.Trigger != TriggerPreRestore || c.Volid == keep {
+			continue
+		}
+		if err := g.cfg.Driver.DeleteGuestBackup(ctx, g.cfg.Storage, t.Guest, c.Volid); err != nil {
+			g.cfg.Logger.Warn("delete an older safety backup", "target", target, "backup", c.ID, "err", err)
+			continue
+		}
+		if err := g.markDeleted(ctx, t.Name, c.Volid); err != nil {
+			g.cfg.Logger.Error("an older safety backup is deleted but not marked", "target", target, "backup", c.ID, "err", err)
+		}
+		g.emit(ctx, "guest_backup.deleted", t.Name, actor, map[string]any{"backup": c.ID, "reason": "a newer safety backup after a restore"})
+	}
+	return nil
+}
+
+// classified lists the Target's volumes as Classify sees them.
+func (g *Guests) classified(ctx context.Context, target string) ([]Classified, error) {
+	t, err := g.cfg.Target(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	lineage, err := g.cfg.Store.BackupLineage(ctx, t.Name, t.Gen)
+	if err != nil {
+		return nil, err
+	}
+	vols, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := g.recorded(ctx, t.Name)
+	if err != nil {
+		return nil, err
+	}
+	return Classify(vols, g.cfg.InstallID, t.Name, lineage, rec), nil
 }

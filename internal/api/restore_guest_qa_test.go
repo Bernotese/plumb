@@ -49,6 +49,13 @@ func (f *phasedRestorer) FindBackup(context.Context, string, string, string) (pl
 	return f.good, nil
 }
 
+// SafetyBackup and DropSafetyBackups (D-420, T-232): a fixed volume.
+func (f *phasedRestorer) SafetyBackup(context.Context, string) (plan.RestoreVolume, error) {
+	return plan.RestoreVolume{ID: "5afe5afe5afe5afe", Volid: "bk:safety", Kind: "plumb"}, nil
+}
+
+func (f *phasedRestorer) DropSafetyBackups(context.Context, string, string) error { return nil }
+
 func (f *phasedRestorer) RestoreGuest(context.Context, string, plan.RestoreVolume) error {
 	f.mu.Lock()
 	f.restored++
@@ -105,7 +112,7 @@ func (e *env) helloWith(cred string) int {
 // one.
 func TestRestoreQATwoAgents(t *testing.T) {
 	fr := &phasedRestorer{}
-	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+	e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 	adm := e.admin()
 	e.seed(adm, "web1")
 	e.approve(adm, "allow restart", restoreTarget("web1", true))
@@ -162,7 +169,7 @@ func TestRestoreQARunRefusesChangedVolume(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fr := &phasedRestorer{from: 3} // 1 propose, 2 approve, 3 the Run
-			e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+			e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 			adm := e.admin()
 			e.seed(adm, "web1")
 			e.approve(adm, "allow restart", restoreTarget("web1", true))
@@ -204,7 +211,7 @@ func TestRestoreQAAdopted(t *testing.T) {
 	for _, startFails := range []bool{false, true} {
 		t.Run(map[bool]string{false: "start ok", true: "start fails"}[startFails], func(t *testing.T) {
 			fr := &phasedRestorer{}
-			e := newEnv(t, true, withInstall, func(c *plan.Config) { c.GuestRestore = fr })
+			e := newEnv(t, true, withInstall, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 			adm := e.admin()
 			vmid, _ := e.adoptWithAgent(adm, "wiki")
 			ctx := context.Background()
@@ -275,7 +282,7 @@ func TestRestoreQAWayBackAfterRevoke(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fr := &phasedRestorer{}
-			e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+			e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr; c.InstallID = "iid" })
 			adm := e.admin()
 			e.seed(adm, "web1")
 			e.approve(adm, "allow restart", restoreTarget("web1", true))

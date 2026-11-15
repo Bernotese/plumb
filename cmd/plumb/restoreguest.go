@@ -23,16 +23,19 @@ type guestRestorer struct {
 	// readOnly is restored mode: the raw driver has no guard, so the
 	// restore checks it itself (D-303).
 	readOnly func() bool
+	// guests is the job runner (T-221): the safety backup runs as one of
+	// its jobs (D-420). A func: serve makes the runner after the engine.
+	guests func() *backup.Guests
 }
 
 // guestRestorerOf returns the restorer, or nil without Proxmox or without
 // a guest backup storage: then every restore is refused.
-func guestRestorerOf(drv driver.Driver, st *store.Store, x proxmox.InstallExtras, install string, readOnly func() bool) plan.GuestRestorer {
+func guestRestorerOf(drv driver.Driver, st *store.Store, x proxmox.InstallExtras, install string, readOnly func() bool, guests func() *backup.Guests) plan.GuestRestorer {
 	pd, ok := drv.(*proxmox.Driver)
 	if !ok || x.GuestBackupStorage == "" || install == "" {
 		return nil
 	}
-	return guestRestorer{d: pd, st: st, storage: x.GuestBackupStorage, install: install, readOnly: readOnly}
+	return guestRestorer{d: pd, st: st, storage: x.GuestBackupStorage, install: install, readOnly: readOnly, guests: guests}
 }
 
 func (g guestRestorer) FindBackup(ctx context.Context, target, ref, id string) (plan.RestoreVolume, error) {
@@ -48,6 +51,9 @@ func (g guestRestorer) FindBackup(ctx context.Context, target, ref, id string) (
 		return plan.RestoreVolume{}, err
 	}
 	vols, err := guestDriver{g.d}.ListGuestBackups(ctx, g.storage, ref)
+	if errors.Is(err, backup.ErrGuestGone) {
+		return plan.RestoreVolume{}, plan.ErrGuestGone // S3 of T-225
+	}
 	if err != nil {
 		return plan.RestoreVolume{}, err
 	}
@@ -76,6 +82,28 @@ func (g guestRestorer) RestoreGuest(ctx context.Context, ref string, v plan.Rest
 		return plan.ErrBackupNotFound
 	}
 	return err
+}
+
+// SafetyBackup runs the pre-restore job of the Target (D-420).
+func (g guestRestorer) SafetyBackup(ctx context.Context, target string) (plan.RestoreVolume, error) {
+	jobs := g.guests()
+	if jobs == nil {
+		return plan.RestoreVolume{}, errors.New("this controller has no guest backup jobs")
+	}
+	c, err := jobs.SafetyBackup(ctx, target, "system")
+	if err != nil {
+		return plan.RestoreVolume{}, err
+	}
+	return plan.RestoreVolume{ID: c.ID, Volid: c.Volid, Kind: c.Kind, Notes: c.Notes, Time: c.Time, Size: c.Size}, nil
+}
+
+// DropSafetyBackups deletes the older pre-restore volumes (D-420).
+func (g guestRestorer) DropSafetyBackups(ctx context.Context, target, keep string) error {
+	jobs := g.guests()
+	if jobs == nil {
+		return nil
+	}
+	return jobs.DropSafetyBackups(ctx, target, keep, "system")
 }
 
 var _ plan.GuestRestorer = guestRestorer{}
