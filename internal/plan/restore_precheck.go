@@ -29,6 +29,7 @@ type BackupNIC struct {
 	NIC    int
 	Bridge string // "" when the NIC names none
 	Tag    int    // 0: untagged
+	Trunks []int  // the VLANs of trunks= (PVE checks SDN.Use for each)
 }
 
 var reNetKey = regexp.MustCompile(`^net([0-9]{1,2})$`)
@@ -59,6 +60,12 @@ func backupNICs(conf map[string]string) ([]BackupNIC, error) {
 					return nil, fmt.Errorf("net%d has a bad tag %q", n, v)
 				}
 				nic.Tag = t
+			case "trunks":
+				ts, err := parseTrunks(v)
+				if err != nil {
+					return nil, fmt.Errorf("net%d has bad trunks %q", n, v)
+				}
+				nic.Trunks = ts
 			}
 		}
 		out = append(out, nic)
@@ -67,34 +74,64 @@ func backupNICs(conf map[string]string) ([]BackupNIC, error) {
 	return out, nil
 }
 
+// parseTrunks reads PVE's trunks value: VLAN ids and ranges split by ";"
+// ("20;30;40-42").
+func parseTrunks(v string) ([]int, error) {
+	var out []int
+	for _, p := range strings.Split(v, ";") {
+		lo, hi, isRange := strings.Cut(p, "-")
+		a, err := strconv.Atoi(lo)
+		if err != nil || a < 1 || a > 4094 {
+			return nil, fmt.Errorf("bad VLAN %q", p)
+		}
+		b := a
+		if isRange {
+			if b, err = strconv.Atoi(hi); err != nil || b < a || b > 4094 {
+				return nil, fmt.Errorf("bad VLAN range %q", p)
+			}
+		}
+		for t := a; t <= b; t++ {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
 // checkBackupNetworks refuses the restore of v when a NIC of the backup is
-// on a network that the install does not name. A config that cannot be
-// read is no refusal (PVE refuses before it touches a disk, T-244 R1): the
-// error is logged and the restore goes on.
+// on a network that the install does not name (its bridge with its tag,
+// and with each trunk VLAN). A config that cannot be read is no refusal
+// (PVE guards it; the error is logged), but a config that Plumb reads and
+// cannot parse is one (L1 of #369): the restore stops before the guest is
+// stopped.
 func (e *Engine) checkBackupNetworks(ctx context.Context, target, ref string, v RestoreVolume) error {
 	rd, ok := e.cfg.GuestRestore.(BackupConfigReader)
 	if !ok {
 		return nil
 	}
 	conf, err := rd.BackupConfig(ctx, ref, v)
-	var nics []BackupNIC
-	if err == nil {
-		nics, err = backupNICs(conf)
-	}
 	if err != nil {
 		e.log.Warn("restore pre-check: the backup's config cannot be read; PVE checks the networks itself", "target", target, "backup", v.ID, "err", err)
 		return nil
 	}
+	nics, err := backupNICs(conf)
+	if err != nil {
+		return notRestorable(target, fmt.Sprintf("the network config of backup %s cannot be checked (%v); Plumb does not restore it. Nothing was changed", v.ID, err))
+	}
 	for _, n := range nics {
-		if n.Bridge == "" || e.netAllowed(n.Bridge, n.Tag) {
+		if n.Bridge == "" {
 			continue
 		}
-		what, flag := "bridge "+n.Bridge, "--extra-bridge "+n.Bridge
-		if n.Tag != 0 {
-			what, flag = fmt.Sprintf("bridge %s tag %d", n.Bridge, n.Tag), fmt.Sprintf("--extra-vlan %s:%d", n.Bridge, n.Tag)
+		for _, tag := range append([]int{n.Tag}, n.Trunks...) {
+			if e.netAllowed(n.Bridge, tag) {
+				continue
+			}
+			what, flag := "bridge "+n.Bridge, "--extra-bridge "+n.Bridge
+			if tag != 0 {
+				what, flag = fmt.Sprintf("bridge %s tag %d", n.Bridge, tag), fmt.Sprintf("--extra-vlan %s:%d", n.Bridge, tag)
+			}
+			return notRestorable(target, fmt.Sprintf("NIC %d of backup %s is on %s, which the install does not name; Proxmox would refuse this restore. "+
+				"Run install.sh with %s (a repair run), or restore another backup. Nothing was changed", n.NIC, v.ID, what, flag))
 		}
-		return notRestorable(target, fmt.Sprintf("NIC %d of backup %s is on %s, which the install does not name; Proxmox would refuse this restore. "+
-			"Run install.sh with %s (a repair run), or restore another backup. Nothing was changed", n.NIC, v.ID, what, flag))
 	}
 	return nil
 }

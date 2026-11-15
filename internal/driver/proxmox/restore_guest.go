@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"strconv"
@@ -62,6 +63,15 @@ func (d *Driver) RestoreGuest(ctx context.Context, storage, guest, volid string,
 	if vols[i].Size != size || vols[i].CTime != ctime {
 		return notStarted(ErrBackupChanged)
 	}
+	// H1 of #369: a VM's disks before the restore, to prove a refusal by
+	// state. T-244 R1 proved PVE's order (SDN check before any disk) for a
+	// VM only; a container stays on the normal failure path (T-247).
+	var before map[string]string
+	if m.Type != typeCT {
+		if before, err = d.vmDisks(ctx, id); err != nil {
+			return notStarted(err)
+		}
+	}
 	params, path := restoreParams(d.cfg.Node, d.cfg.DiskStorage, m.Type == typeCT, id, volid)
 	upid, err := d.c.start(ctx, "POST", path, params)
 	if err != nil {
@@ -75,10 +85,13 @@ func (d *Driver) RestoreGuest(ctx context.Context, storage, guest, volid string,
 		return nil
 	}
 	if err := d.c.WaitTask(ctx, d.cfg.Node, upid); err != nil {
-		if sdnRefused(err) {
+		if before != nil && sdnRefused(err) {
 			// T-244 R1: PVE checks SDN.Use of the backup's networks in the
-			// task, before it touches a disk; the guest is as before.
-			return notStarted(fmt.Errorf("%w: %w", ErrNetworkRefused, err))
+			// task, before it touches a disk. "Not started" only when the
+			// VM's disk volumes read back the same as before.
+			if after, rerr := d.vmDisks(ctx, id); rerr == nil && maps.Equal(before, after) {
+				return notStarted(fmt.Errorf("%w: %w", ErrNetworkRefused, err))
+			}
 		}
 		return fmt.Errorf("proxmox: restore of %s over %d: %w", volid, id, err)
 	}

@@ -33,7 +33,11 @@ func TestBackupNICs(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v %v", got, err)
 	}
-	for _, bad := range []string{"bridge=vmbr0,tag=0", "bridge=vmbr0,tag=4095", "bridge=vmbr0,tag=x"} {
+	if got, err := backupNICs(map[string]string{"net0": "virtio=x,bridge=vmbr9,trunks=20;30-32"}); err != nil || !reflect.DeepEqual(got[0].Trunks, []int{20, 30, 31, 32}) {
+		t.Errorf("trunks: %+v %v", got, err)
+	}
+	for _, bad := range []string{"bridge=vmbr0,tag=0", "bridge=vmbr0,tag=4095", "bridge=vmbr0,tag=x",
+		"bridge=vmbr0,trunks=0", "bridge=vmbr0,trunks=20;x", "bridge=vmbr0,trunks=30-20", "bridge=vmbr0,trunks=4090-4095"} {
 		if _, err := backupNICs(map[string]string{"net0": bad}); err == nil {
 			t.Errorf("%s: no error", bad)
 		}
@@ -70,6 +74,20 @@ func TestCheckBackupNetworks(t *testing.T) {
 	}
 	if err := check(configVolume{conf: map[string]string{"net1": "virtio=y,bridge=vmbr9,tag=30"}}); !strings.Contains(err.Error(), "--extra-vlan vmbr9:30") {
 		t.Errorf("flag: %v", err)
+	}
+	// L2 of #369: each trunk VLAN must be named too.
+	for conf, want := range map[string]string{
+		"virtio=y,bridge=vmbr9,tag=20,trunks=20;30": "bridge vmbr9 tag 30",
+		"virtio=y,bridge=vmbr0,trunks=20":           "bridge vmbr0 tag 20",
+	} {
+		if err := check(configVolume{conf: map[string]string{"net1": conf}}); !errors.Is(err, ErrNotRestorable) || !strings.Contains(err.Error(), want) {
+			t.Errorf("trunks %s: %v", conf, err)
+		}
+	}
+	// L1 of #369: a config that cannot be parsed refuses (before the stop).
+	if err := check(configVolume{conf: map[string]string{"net0": "virtio=x,bridge=vmbr0,tag=9999"}}); !errors.Is(err, ErrNotRestorable) ||
+		!strings.Contains(err.Error(), "cannot be checked") {
+		t.Errorf("bad tag: %v", err)
 	}
 	if err := check(configVolume{err: errors.New("proxmox: 500")}); err != nil {
 		t.Errorf("an unreadable config refuses: %v", err)

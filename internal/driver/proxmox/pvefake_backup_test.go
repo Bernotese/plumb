@@ -33,6 +33,7 @@ type fakeBackup struct {
 	forbidden     []string // forbidden vzdump parameters seen
 	restored      []string // "vmid volid storage" of each restore (T-222)
 	restoreFail   string   // non-empty: the restore task ends with this exit status (T-232)
+	restoreWipes  bool     // a failed restore task removed scsi0 first (T-241)
 	restoreRefuse bool     // the restore POST is refused with 403 (no task)
 }
 
@@ -144,6 +145,9 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 			upid := f.task(key)
 			if b.restoreFail != "" {
 				f.tasks[upid].exit = b.restoreFail
+				if b.restoreWipes {
+					delete(vm.cfg, "scsi0") // the task removed the disk before it failed
+				}
 			}
 			reply(w, 200, upid)
 		}

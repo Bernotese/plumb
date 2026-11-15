@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -17,19 +18,37 @@ import (
 // in the restore task before it touches a disk, so nothing changed.
 var ErrNetworkRefused = errors.New("proxmox: the restore was refused: a network of the backup is not allowed for the token")
 
-// sdnRefused reports a restore task that ended with PVE's SDN.Use
-// permission error ("403 Permission check failed (/sdn/…, SDN.Use)").
+// reSDNRefused is PVE's exact end status of a restore that the token may
+// not do for a network of the backup (T-244 R1).
+var reSDNRefused = regexp.MustCompile(`^403 Permission check failed \(/sdn/zones/[^,()\s]+, SDN\.Use\)$`)
+
+// sdnRefused reports a task that ended with PVE's own SDN.Use permission
+// error. Only the task's exit status counts, never a log line: a
+// container restore writes file names of the guest's archive into the
+// log (H1 of #369).
 func sdnRefused(err error) bool {
 	var te *TaskError
-	if !errors.As(err, &te) {
-		return false
+	return errors.As(err, &te) && reSDNRefused.MatchString(te.ExitStatus)
+}
+
+// reDiskKey are the config keys that hold a VM's volumes.
+var reDiskKey = regexp.MustCompile(`^(scsi|sata|ide|virtio|unused|efidisk|tpmstate)[0-9]+$`)
+
+// vmDisks returns the volumes of a VM's config by key (the volume part of
+// each value), to prove later that a refused restore changed no disk.
+func (d *Driver) vmDisks(ctx context.Context, id int) (map[string]string, error) {
+	cfg, err := d.config(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	for _, l := range append([]string{te.ExitStatus}, te.Log...) {
-		if strings.Contains(l, "Permission check failed (/sdn/") && strings.Contains(l, "SDN.Use") {
-			return true
+	out := map[string]string{}
+	for k, v := range cfg {
+		if reDiskKey.MatchString(k) {
+			vol, _, _ := strings.Cut(v, ",")
+			out[k] = vol
 		}
 	}
-	return false
+	return out, nil
 }
 
 // BackupConfig returns the guest config in a backup volume of a pool
