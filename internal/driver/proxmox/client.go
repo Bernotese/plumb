@@ -49,6 +49,7 @@ func (c ClientConfig) LogValue() slog.Value { return slog.StringValue(c.String()
 type Client struct {
 	base        string
 	auth        string // holds the secret: never print a Client
+	tokenID     string // user@realm!name, no secret: the user of the token's tasks
 	http        *http.Client
 	poll        time.Duration
 	taskTimeout time.Duration
@@ -90,6 +91,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	c := &Client{
 		base:        strings.TrimSuffix(cfg.URL, "/") + "/api2/json",
 		auth:        "PVEAPIToken=" + cfg.TokenID + "=" + cfg.Secret,
+		tokenID:     cfg.TokenID,
 		http:        hc,
 		poll:        cfg.TaskPoll,
 		taskTimeout: cfg.TaskTimeout,

@@ -80,12 +80,89 @@ func (s *Store) RefusedGuestBackupRun(ctx context.Context, target, lineage, trig
 }
 
 // FinishGuestBackupRun ends a running job. size and ctime are the made
-// volume's, from the read-back list (F2 of #331).
+// volume's, from the read-back list (F2 of #331). A job that ends without
+// a volume but with a Proxmox task keeps that task to be checked
+// (check_task, T-248); a job with a volume needs no check.
 func (s *Store) FinishGuestBackupRun(ctx context.Context, id int64, result, volid string, size, ctime int64, message string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE guest_backup_run SET result = ?, volid = ?, size = ?, ctime = ?, message = ?, finished_at = ? WHERE id = ? AND result = 'running'`,
-		result, volid, size, ctime, clipText(message, 1024), s.now(), id)
+		`UPDATE guest_backup_run SET result = ?, volid = ?, size = ?, ctime = ?, message = ?, finished_at = ?,
+		 check_task = CASE WHEN ? = '' AND upid <> '' THEN 1 ELSE 0 END WHERE id = ? AND result = 'running'`,
+		result, volid, size, ctime, clipText(message, 1024), s.now(), volid, id)
 	return err
+}
+
+// SetGuestBackupTask records the Proxmox task of a running job (T-248),
+// right after the task started: a controller stop then still knows it.
+func (s *Store) SetGuestBackupTask(ctx context.Context, id int64, upid string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE guest_backup_run SET upid = ? WHERE id = ? AND result = 'running'`, clipText(upid, 256), id)
+	return err
+}
+
+// GuestBackupTaskRun is a finished job whose task is still to be checked.
+type GuestBackupTaskRun struct {
+	ID         int64
+	Target     string
+	Lineage    string
+	Trigger    string
+	UPID       string
+	StartedAt  time.Time
+	FinishedAt time.Time
+}
+
+// UncheckedGuestBackupTasks returns the finished jobs that ended without a
+// volume and whose Proxmox task is not checked yet, oldest first. target
+// "" returns those of every Target.
+func (s *Store) UncheckedGuestBackupTasks(ctx context.Context, target string) ([]GuestBackupTaskRun, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, target, lineage, trigger, upid, started_at, finished_at FROM guest_backup_run
+		 WHERE check_task = 1 AND result <> 'running' AND volid = '' AND (? = '' OR target = ?) ORDER BY id`, target, target)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GuestBackupTaskRun
+	for rows.Next() {
+		var r GuestBackupTaskRun
+		var started string
+		var finished sql.NullString
+		if err := rows.Scan(&r.ID, &r.Target, &r.Lineage, &r.Trigger, &r.UPID, &started, &finished); err != nil {
+			return nil, err
+		}
+		if r.StartedAt, err = parseTime(started); err != nil {
+			return nil, err
+		}
+		if r.FinishedAt, err = nullTime(finished); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SettleGuestBackupTask ends the check of a job's task (T-248). With a
+// volid the job's own task proved the volume: the row becomes "done" with
+// it, so the volume counts as Plumb's (RecordedGuestBackups). Without, the
+// row keeps its result and only gets message. Only a row still to be
+// checked changes; it reports whether it did.
+func (s *Store) SettleGuestBackupTask(ctx context.Context, id int64, volid string, size, ctime int64, message string) (bool, error) {
+	var res sql.Result
+	var err error
+	if volid != "" {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE guest_backup_run SET result = 'done', volid = ?, size = ?, ctime = ?, message = ?, check_task = 0
+			 WHERE id = ? AND check_task = 1 AND result <> 'running' AND volid = ''`,
+			volid, size, ctime, clipText(message, 1024), id)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE guest_backup_run SET message = ?, check_task = 0 WHERE id = ? AND check_task = 1 AND result <> 'running'`,
+			clipText(message, 1024), id)
+	}
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // MarkGuestBackupDeleted marks the record of a volume that Plumb deleted
@@ -108,6 +185,18 @@ func (s *Store) LastGuestBackupRun(ctx context.Context, target string) (GuestBac
 	return runs[0], nil
 }
 
+// GuestBackupRun returns one job, or ErrNotFound.
+func (s *Store) GuestBackupRun(ctx context.Context, id int64) (GuestBackupRun, error) {
+	runs, err := s.guestBackupRuns(ctx, `WHERE id = ?`, id)
+	if err != nil {
+		return GuestBackupRun{}, err
+	}
+	if len(runs) == 0 {
+		return GuestBackupRun{}, ErrNotFound
+	}
+	return runs[0], nil
+}
+
 // GuestBackupRunOfVolume returns the job that made volid, or ErrNotFound.
 func (s *Store) GuestBackupRunOfVolume(ctx context.Context, target, volid string) (GuestBackupRun, error) {
 	runs, err := s.guestBackupRuns(ctx, `WHERE target = ? AND volid = ? ORDER BY id DESC LIMIT 1`, target, volid)
@@ -121,10 +210,12 @@ func (s *Store) GuestBackupRunOfVolume(ctx context.Context, target, volid string
 }
 
 // EndRunningGuestBackups marks every running job as failed (a controller
-// start: no job survives a restart).
+// start: no job survives a restart). A job whose task had started keeps
+// the task to be checked (T-248): it may still have made its volume.
 func (s *Store) EndRunningGuestBackups(ctx context.Context, message string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE guest_backup_run SET result = 'failed', message = ?, finished_at = ? WHERE result = 'running'`,
+		`UPDATE guest_backup_run SET result = 'failed', message = ?, finished_at = ?,
+		 check_task = CASE WHEN upid <> '' THEN 1 ELSE 0 END WHERE result = 'running'`,
 		clipText(message, 1024), s.now())
 	return err
 }
