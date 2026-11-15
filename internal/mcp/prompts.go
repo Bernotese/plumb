@@ -40,7 +40,15 @@ const (
 	lastComments = 20       // comments of the Issue
 	runPages     = 4        // pages of GET /runs searched for the Target's Runs
 	runPageSize  = 50
+	maxStepsRun  = 20 // steps of one Run that did not apply
+	// maxRead is the most bytes of one API answer that the prompt reads
+	// (T-249 F1): it cuts the parts itself, so a big Issue (a big file
+	// drift) is cut, not refused. Above it the part says so.
+	maxRead = 8 << 20
 )
+
+// errTooLong: an API answer is longer than maxRead.
+var errTooLong = errors.New("too long")
 
 // dropOrder is the order in which parts are dropped when the message is
 // over maxMessage. The guidance and the issue part are never dropped.
@@ -102,17 +110,26 @@ func explainIssue(ctx context.Context, c *Client, arg string) (*mcp.GetPromptRes
 		return nil, err
 	}
 	issue, err := getJSON(ctx, c, "/api/v1/issues/"+arg, nil)
-	if err != nil {
+	if errors.Is(err, errTooLong) {
+		// T-249 F1: still a prompt, with nothing of the Issue but its id:
+		// no action is listed, so the guidance offers none.
+		id, _ := strconv.ParseInt(arg, 10, 64)
+		issue = map[string]any{"id": id, "actions": []any{},
+			"unavailable": fmt.Sprintf("the Issue is longer than %d bytes; Plumb shows none of it here. Read it in Plumb", maxRead)}
+	} else if err != nil {
 		return nil, err
 	}
 	im, ok := issue.(map[string]any)
 	if !ok {
 		return nil, errors.New("explain_issue: the API answer is no Issue")
 	}
-	comments, _ := im["comments"].([]any)
+	all, _ := im["comments"].([]any)
 	delete(im, "comments") // its own part
-	if len(comments) > lastComments {
-		comments = comments[len(comments)-lastComments:]
+	kept, older := pickComments(all)
+	comments := map[string]any{"items": kept}
+	if older > 0 {
+		comments["left_out"] = older
+		comments["kept"] = fmt.Sprintf("the newest %d comments, those of people and of Plumb before those of tokens and agents", lastComments)
 	}
 	target, _ := im["target"].(string)
 	parts := []part{{"issue", im}}
@@ -135,6 +152,42 @@ func explainIssue(ctx context.Context, c *Client, arg string) (*mcp.GetPromptRes
 		Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: text}}}}, nil
 }
 
+// person reports a comment of a person or of Plumb itself (author
+// "user:…" or "system"), which outranks a token's or an agent's when a
+// comment must be left out (T-249 F2: 20 short comments of a plan token
+// must not push a person's warning out).
+func person(c any) bool {
+	m, _ := c.(map[string]any)
+	a, _ := m["author"].(string)
+	return strings.HasPrefix(a, "user:") || a == "system"
+}
+
+// pickComments keeps at most lastComments of all (oldest first): the
+// newest of people and Plumb first, then the newest of the others, in
+// their order. It returns how many it left out.
+func pickComments(all []any) ([]any, int) {
+	if len(all) <= lastComments {
+		return all, 0
+	}
+	keep := make([]bool, len(all))
+	n := 0
+	for _, want := range []bool{true, false} {
+		for i := len(all) - 1; i >= 0 && n < lastComments; i-- {
+			if !keep[i] && person(all[i]) == want {
+				keep[i] = true
+				n++
+			}
+		}
+	}
+	var out []any
+	for i, c := range all {
+		if keep[i] {
+			out = append(out, c)
+		}
+	}
+	return out, len(all) - len(out)
+}
+
 // needPlanTier refuses a read token, as comment_issue does (§21).
 func needPlanTier(ctx context.Context, c *Client) error {
 	v, err := getJSON(ctx, c, "/api/v1/session", nil)
@@ -152,12 +205,12 @@ func needPlanTier(ctx context.Context, c *Client) error {
 // getJSON calls GET and decodes the answer. A cut answer is an error: cut
 // JSON is no JSON.
 func getJSON(ctx context.Context, c *Client, path string, q url.Values) (any, error) {
-	a, err := c.Do(ctx, "GET", path, q, nil)
+	a, err := c.do(ctx, "GET", path, q, nil, maxRead)
 	if err != nil {
 		return nil, err
 	}
 	if a.Truncated {
-		return nil, fmt.Errorf("explain_issue: the answer of %s is longer than %d bytes", path, MaxResult)
+		return nil, fmt.Errorf("explain_issue: the answer of %s is longer than %d bytes: %w", path, maxRead, errTooLong)
 	}
 	d := json.NewDecoder(bytes.NewReader(a.Body))
 	d.UseNumber()
@@ -209,6 +262,8 @@ func targetRuns(ctx context.Context, c *Client, target string) any {
 	res := map[string]any{"items": out}
 	if len(out) < lastRuns {
 		res["searched"] = fmt.Sprintf("the last %d Runs of the install", pages*runPageSize)
+	} else {
+		res["note"] = fmt.Sprintf("only the last %d Runs of the Target; older Runs are not shown", lastRuns)
 	}
 	return res
 }
@@ -233,8 +288,13 @@ func runOf(it any, target string) any {
 			failed = append(failed, map[string]any{"resource": sm["resource"], "action": sm["action"],
 				"status": sm["status"], "output": sm["output"]})
 		}
-		return map[string]any{"id": r["id"], "plan_id": r["plan_id"], "status": tm["status"],
+		out := map[string]any{"id": r["id"], "plan_id": r["plan_id"], "status": tm["status"],
 			"started_at": r["started_at"], "finished_at": r["finished_at"], "steps_not_applied": failed}
+		if len(failed) > maxStepsRun {
+			out["steps_not_applied"] = failed[:maxStepsRun]
+			out["steps_left_out"] = len(failed) - maxStepsRun
+		}
+		return out
 	}
 	return nil
 }
@@ -294,32 +354,30 @@ func encodePart(p part) ([]byte, error) {
 	v := cutStrings(p.v, maxRunes)
 	switch p.kind {
 	case "comments", "runs":
-		var items []any
+		// Both are {"items": [...], notes}: comments oldest first, Runs
+		// newest first. A comment of a person or of Plumb goes last.
+		x, _ := v.(map[string]any)
 		wrap := map[string]any{}
-		oldestFirst := true
-		switch x := v.(type) {
-		case []any: // comments: oldest first
-			items = x
-		case map[string]any: // runs: newest first, with notes
-			oldestFirst = false
-			items, _ = x["items"].([]any)
-			for k, val := range x {
-				if k != "items" {
-					wrap[k] = val
-				}
-			}
+		for k, val := range x {
+			wrap[k] = val
 		}
-		items, left := capList(items, maxListPart-256, oldestFirst)
+		items, _ := x["items"].([]any)
+		var keep func(any) bool
+		if p.kind == "comments" {
+			keep = person
+		}
+		items, left := capList(items, maxListPart-512, p.kind == "comments", keep)
 		wrap["items"] = items
 		if left > 0 {
-			wrap["left_out"] = left
+			before, _ := wrap["left_out"].(int)
+			wrap["left_out"] = before + left
 		}
 		return encode(wrap), nil
 	case "issue":
 		// L3 of #367: the changes are a list too.
 		if m, ok := v.(map[string]any); ok {
 			if ch, ok := m["changes"].([]any); ok {
-				kept, left := capList(ch, 2*maxListPart, true)
+				kept, left := capList(ch, 2*maxListPart, true, nil)
 				m["changes"] = kept
 				if left > 0 {
 					m["changes_left_out"] = left
@@ -331,9 +389,10 @@ func encodePart(p part) ([]byte, error) {
 }
 
 // capList fits items into budget bytes (encoded): each item into an equal
-// share first, then it drops the oldest items. It returns the kept items
-// and how many were dropped.
-func capList(items []any, budget int, oldestFirst bool) ([]any, int) {
+// share first, then it drops the oldest items; with keep, the oldest item
+// that keep does not hold goes first. It returns the kept items and how
+// many were dropped.
+func capList(items []any, budget int, oldestFirst bool, keep func(any) bool) ([]any, int) {
 	if len(items) == 0 {
 		return items, 0
 	}
@@ -345,11 +404,23 @@ func capList(items []any, budget int, oldestFirst bool) ([]any, int) {
 	size := func() int { return len(encode(out)) }
 	left := 0
 	for size() > budget && len(out) > 0 {
-		if oldestFirst {
-			out = out[1:]
-		} else {
-			out = out[:len(out)-1]
+		order := make([]int, len(out)) // the oldest first
+		for i := range out {
+			order[i] = i
+			if !oldestFirst {
+				order[i] = len(out) - 1 - i
+			}
 		}
+		drop := order[0]
+		if keep != nil {
+			for _, i := range order {
+				if !keep(out[i]) {
+					drop = i
+					break
+				}
+			}
+		}
+		out = slices.Delete(out, drop, drop+1)
 		left++
 	}
 	return out, left
@@ -418,12 +489,14 @@ func cutStrings(v any, n int) any {
 		}
 		slices.Sort(keys)
 		for _, k := range keys {
-			ck := cutString(k, n)
+			// A key is cut at maxRunes only: fitItem's shorter cuts are
+			// for values, and must not change the keys of the API.
+			ck := cutString(k, maxRunes)
 			for i := 2; ; i++ {
 				if _, dup := out[ck]; !dup {
 					break
 				}
-				ck = cutString(k, n) + fmt.Sprintf(" (cut key %d)", i)
+				ck = cutString(k, maxRunes) + fmt.Sprintf(" (cut key %d)", i)
 			}
 			out[ck] = cutStrings(x[k], n)
 		}
