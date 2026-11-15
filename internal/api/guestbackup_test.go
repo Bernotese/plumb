@@ -187,6 +187,12 @@ func TestBackupFieldPlans(t *testing.T) {
 		t.Fatalf("a token approved a destructive keep: %d", code)
 	}
 	adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil)
+	// A new Target with the field: the create Plan carries the note too.
+	if p := propose(targetWithBackup("web9", 3)); !strings.Contains(strings.Join(p.Warnings, " "), "clear") {
+		t.Fatalf("new Target: %+v", p)
+	} else {
+		adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil)
+	}
 	p = propose(targetDoc("web1", "hello"))
 	if p.Risk != "read" || !strings.Contains(strings.Join(p.Warnings, " "), "deletes none") {
 		t.Fatalf("removed: %+v", p)
