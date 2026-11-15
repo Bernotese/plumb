@@ -325,7 +325,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		// (no Proxmox) → no note, no count.
 		BackupKeepDeletes: func(ctx context.Context, target string, keep int) (int, error) {
 			if guests == nil {
-				return 0, nil
+				return -1, nil // unknown: the Plan fails closed
 			}
 			return guests.KeepDeletes(ctx, target, keep)
 		},

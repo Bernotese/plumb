@@ -562,7 +562,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 			return tp, err
 		}
 		cchanges := createChanges(spec)
-		bc, bnotes, err := e.backupChange(ctx, nil, r, target) // T-221: the first backup Plan warns of a clear storage
+		bc, bnotes, err := e.backupChange(ctx, nil, r, target, true) // T-221: the first backup Plan warns of a clear storage
 		if err != nil {
 			return tp, err
 		}
@@ -655,7 +655,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	if ac := allowRestartChange(before, r); ac != nil {
 		gchanges = append([]wire.Change{*ac}, gchanges...)
 	}
-	if bc, bnotes, err := e.backupChange(ctx, before, r, target); err != nil { // T-221, D-408, D-417
+	if bc, bnotes, err := e.backupChange(ctx, before, r, target, false); err != nil { // T-221, D-408, D-417
 		return tp, err
 	} else if bc != nil {
 		gchanges = append([]wire.Change{*bc}, gchanges...)

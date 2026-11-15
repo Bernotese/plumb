@@ -143,10 +143,12 @@ func keepOf(b map[string]any) int {
 // destructive and its note says how many: the count comes from the jobs
 // (BackupKeepDeletes), also when the field comes back after a removal (M1
 // of #334: remove, then add again with keep 1, must not pass as read).
-// Without a count (no jobs) a lower keep than before is the fallback.
-// Removing the field deletes nothing. A new field gets the storage note
-// (D-406).
-func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered, target string) (*wire.Change, []string, error) {
+// An unknown count (no jobs, no storage: -1) fails closed: a lower keep
+// than before, or a field that cannot be compared (it comes back, or was
+// not there), is destructive. newGuest: the guest does not exist yet, so
+// no Plumb backup of it can exist (count 0). Removing the field deletes
+// nothing. A new field gets the storage note (D-406).
+func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered, target string, newGuest bool) (*wire.Change, []string, error) {
 	var old, nu map[string]any
 	if before != nil {
 		old = before.Backup
@@ -163,18 +165,27 @@ func (e *Engine) backupChange(ctx context.Context, before, after *state.Rendered
 	switch {
 	case nu == nil:
 		notes = append(notes, fmt.Sprintf("Target %s: Plumb stops its backups; it deletes none. Its backups stay until a person deletes them.", target))
-	case e.cfg.BackupKeepDeletes != nil:
-		n, err := e.cfg.BackupKeepDeletes(ctx, target, keepOf(nu))
-		if err != nil {
-			return nil, nil, err
+	case newGuest:
+		// No guest yet: nothing to delete.
+	default:
+		n := -1
+		if e.cfg.BackupKeepDeletes != nil {
+			var err error
+			if n, err = e.cfg.BackupKeepDeletes(ctx, target, keepOf(nu)); err != nil {
+				return nil, nil, err
+			}
 		}
-		if n > 0 {
+		switch {
+		case n > 0:
 			c.Risk = wire.RiskDestructive
 			notes = append(notes, fmt.Sprintf("Target %s: with keep %d the next backup job deletes %d backup(s).", target, keepOf(nu), n))
+		case n == 0:
+		case old != nil && keepOf(nu) >= keepOf(old):
+			// Unknown count, but keep is not lower: nothing more goes.
+		default: // unknown count, and keep is lower or cannot be compared: fail closed
+			c.Risk = wire.RiskDestructive
+			notes = append(notes, fmt.Sprintf("Target %s: Plumb cannot count its backups now; with keep %d the next backup job may delete the oldest above %d.", target, keepOf(nu), keepOf(nu)))
 		}
-	case old != nil && keepOf(nu) < keepOf(old): // no count: the fallback
-		c.Risk = wire.RiskDestructive
-		notes = append(notes, fmt.Sprintf("Target %s: keep %d → %d deletes the oldest backups above %d at the next backup job.", target, keepOf(old), keepOf(nu), keepOf(nu)))
 	}
 	if old == nil && nu != nil && e.cfg.BackupStorageNote != nil {
 		note, err := e.cfg.BackupStorageNote(ctx)

@@ -462,3 +462,23 @@ func TestGuestBackupDeletedVolidComesBack(t *testing.T) {
 		}
 	}
 }
+
+// Review of #334 (fail closed): without a storage the count is unknown
+// (-1), not 0; a Target without a guest has nothing to delete (0).
+func TestGuestBackupKeepDeletesUnknown(t *testing.T) {
+	ctx := context.Background()
+	e := newJobEnv(t, func(c *GuestConfig) { c.Storage = "" })
+	if n, err := e.g.KeepDeletes(ctx, "db1", 1); err != nil || n != -1 {
+		t.Fatalf("no storage: %d %v", n, err)
+	}
+	if n, err := e.g.KeepDeletes(ctx, "nope", 1); err != nil || n != 0 {
+		t.Fatalf("no guest: %d %v", n, err)
+	}
+	e2 := newJobEnv(t, nil)
+	for range 3 {
+		e2.g.BackUp(ctx, "db1", TriggerScheduled, "system")
+	}
+	if n, _ := e2.g.KeepDeletes(ctx, "db1", 1); n != 3 {
+		t.Fatalf("3 recorded, keep 1: %d, want 3", n)
+	}
+}

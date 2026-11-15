@@ -212,18 +212,20 @@ func (g *Guests) StartSchedule(interval time.Duration) {
 }
 
 // KeepDeletes is the number of the Target's backups that the next job's
-// retention deletes with newKeep (a Plan's note and risk, D-417).
+// retention deletes with newKeep (a Plan's note and risk, D-417), or -1
+// when it cannot be known (no storage that can be read): the Plan then
+// fails closed (review of #334).
 func (g *Guests) KeepDeletes(ctx context.Context, target string, newKeep int) (int, error) {
 	t, err := g.cfg.Target(ctx, target)
 	if errors.Is(err, store.ErrNotFound) {
-		return 0, nil // a new Target has no backups
+		return 0, nil // no bound guest: no Plumb backup can exist
 	}
 	if err != nil {
 		return 0, err
 	}
 	if _, _, err := g.storageState(ctx); err != nil {
 		if errors.Is(err, ErrGuestBackupRefused) {
-			return 0, nil
+			return -1, nil
 		}
 		return 0, err
 	}
