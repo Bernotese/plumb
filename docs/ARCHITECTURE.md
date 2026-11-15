@@ -536,4 +536,4 @@ The desired state is not rolled back. A restore brings back what the guest held 
 - `guest_backup_lineage` and `guest_backup_run` (T-221) go in the `DeleteBinding` transaction (Target delete, unbind of an adopted Target). After a Target delete the old volumes have no record any more: a new Target of the name, or on a reused VMID, sees them as `unmarked` (never touched; a person removes them in Proxmox; the delete route answers 409 `not-plumb`). A new guest of the same Target (a new binding generation, M3 of #325) starts a new lineage and sees the old guest's volumes as `older-guest` (their rows stay).
 - `guest_backup_run` stores the trigger (`scheduled`, `manual`) next to the marker suffix, so the kind survives a lost run row (a controller restore).
 - The Proxmox volumes stay after a delete (README: remove them in Proxmox).
-- Planned until its card: `guest.nics` (T-219) and `backup` (T-221) pass the schema but are refused by `state.Validate` (`plannedFields`), so no document holds a field that Plumb would ignore.
+- `guest.nics` (T-219, T-220) and `backup` (T-221) are served; `plannedFields` refuses no slice 7 field any more.
