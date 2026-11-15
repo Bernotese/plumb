@@ -179,6 +179,9 @@ type Config struct {
 	// network (serve --dev). T-219.
 	InstallID  string
 	NetAllowed func(bridge string, tag int) bool
+	// GuestRestore finds and restores guest backups (T-222); nil: no guest
+	// backups, a restore is refused.
+	GuestRestore GuestRestorer
 	// Secrets is the secret store. nil: no secret exists, and a target
 	// that refers to one cannot be planned.
 	Secrets *secret.Store
