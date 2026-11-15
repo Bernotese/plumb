@@ -127,7 +127,7 @@
             "nics": {
               "type": "array",
               "maxItems": 3,
-              "description": "More network cards after the first one (bridge, ip and gateway above), at most 3. Plumb chooses their MAC addresses. Each bridge, and each bridge with a VLAN tag, must be named when Plumb is installed. Adding, removing or moving a card is disruptive. Not for an adopted Target. At most one gateway in total. Planned: refused until slice 7 serves it (T-219).",
+              "description": "More network cards after the first one (bridge, ip and gateway above), at most 3. Plumb chooses their MAC addresses. Each bridge, and each bridge with a VLAN tag, must be named when Plumb is installed. Adding, removing or moving a card is disruptive. Not for an adopted Target. At most one gateway in total.",
               "items": {
                 "type": "object",
                 "required": [

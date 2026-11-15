@@ -974,6 +974,53 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       ],
     ],
   ]);
+  // cache1: its last restore failed (D-420); the safety backup is the way back.
+  // The Run left the guest stopped.
+  const cache1 = targets.get("cache1");
+  if (cache1) cache1.status.power = "stopped";
+  guestBackups.set("cache1", [
+    {
+      id: "7e6d5c4b3a291807",
+      time: "2026-11-15T09:20:31Z",
+      size: 412000000,
+      kind: "plumb",
+      trigger: "pre-restore",
+      mode: "stop",
+    },
+    {
+      id: "2c3d4e5f60718293",
+      time: "2026-11-15T03:00:05Z",
+      size: 409000000,
+      kind: "plumb",
+      trigger: "scheduled",
+      mode: "snapshot",
+    },
+  ]);
+  {
+    const id = Math.max(0, ...issues.keys()) + 1;
+    issues.set(id, {
+      id,
+      target: "cache1",
+      resource: "guest:restore-failed",
+      status: "open",
+      risk: "destructive",
+      opened_at: "2026-11-15T09:24:02Z",
+      updated_at: "2026-11-15T09:24:02Z",
+      // restoreFailedIssue of internal/plan/restore_guest.go (its text as sent).
+      changes: [
+        {
+          attr: "restore",
+          from: "failed: the guest may have no disk",
+          to: "restore the safety backup backup 7e6d5c4b3a291807 of 2026-11-15T09:20:31Z",
+          risk: "destructive",
+        },
+      ],
+      actions: ["ignore_once", "ignore_rule"],
+      plan_id: null,
+      resolution: null,
+      comments: [],
+    });
+  }
   const guestBackupLast = new Map<string, NonNullable<GuestBackupList["last"]>>([
     ["db1", { at: "2026-11-15T03:00:12Z", result: "done", message: "" }],
   ]);
@@ -990,6 +1037,13 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       while (at.getUTCDay() !== want) at.setUTCDate(at.getUTCDate() + 1);
     }
     return at.toISOString();
+  }
+  /** sizeText of internal/plan/restore_guest.go. */
+  function sizeText(n: number): string {
+    if (n >= 2 ** 30) return `${(n / 2 ** 30).toFixed(1)} GiB`;
+    if (n >= 2 ** 20) return `${Math.floor(n / 2 ** 20)} MiB`;
+    if (n > 0) return `${Math.floor((n + 1023) / 1024)} KiB`;
+    return "the size of a backup of the guest";
   }
   /** Retention (review M1 of #325): newest `keep` scheduled and at most 2 manual plumb volumes. */
   function retainGuestBackups(name: string, keep: number) {
@@ -3178,6 +3232,25 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           `${name}: the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first (D-194)`,
         );
       const adopted = t.document.spec.adopted !== undefined;
+      // D-420: after a failed restore no new safety backup ("kept"); a skip only for a
+      // broken guest. The mock knows no guest without a disk, so it allows the skip
+      // only with the open Issue (where "kept" wins anyway), as the server would.
+      const failedBefore = [...issues.values()].some(
+        (i) => i.target === name && i.resource === "guest:restore-failed" && i.status === "open",
+      );
+      const skip = req.skip_safety_backup === true;
+      if (skip && !failedBefore)
+        throw problem(
+          "validation",
+          "Validation failed",
+          422,
+          `${name}: the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)`,
+        );
+      const safety = failedBefore
+        ? "kept: the last restore failed; the safety backup from before it stays"
+        : skip
+          ? "skipped: the guest is broken already"
+          : "first, of the guest as it is now";
       const p = newPlan({
         origin: "restore",
         issue_id: null,
@@ -3192,6 +3265,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
                 risk: "destructive",
                 changes: [
                   { attr: "restore", to: `backup ${b.id} of ${b.time}`, risk: "destructive" },
+                  { attr: "safety_backup", to: safety, risk: "destructive" },
                 ],
               },
             ],
@@ -3199,10 +3273,14 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
         ],
         // restoreNotes of internal/plan/restore_guest.go.
         warnings: [
+          "Proxmox removes the guest's disks before it writes the backup: if the restore fails, the guest is left empty.",
           "The guest goes back to the backup time: every change in the guest after it is lost.",
           "Access that a person removed after the backup comes back (authorized_keys lines, passwords, users).",
           "The desired state is not rolled back: the next Run converges the guest to the head revision.",
           "The agent credential is revoked before the guest starts, and the host key pins are dropped.",
+          failedBefore
+            ? "No new safety backup: the last restore failed, so the guest may be empty. The safety backup from before that failure stays the way back."
+            : `Plumb first takes a safety backup of the guest as it is now (about ${sizeText(b.size)} on the backup storage, the free-space gate applies); if that backup fails, nothing is changed.`,
           adopted
             ? `The guest starts again without an agent: run the install command of ${name} (an adopted Target).`
             : "A re-enroll Plan follows: approve it to start the guest with a new agent credential.",

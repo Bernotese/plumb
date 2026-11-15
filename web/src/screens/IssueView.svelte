@@ -9,9 +9,11 @@
     ADDRESS_HINT,
     GUEST_ADDRESS,
     GUEST_CONFIG,
+    GUEST_RESTORE_FAILED,
     addressIssueText,
     formatTime,
     isSensitive,
+    restoreWayBack,
   } from "../lib/view";
   import ChangeTable from "../ui/ChangeTable.svelte";
   import ProblemBox from "../ui/ProblemBox.svelte";
@@ -73,6 +75,9 @@
   const source = $derived(
     issue?.resource === "guest:config" ? "Proxmox" : "the agent in the guest",
   );
+
+  // D-420: a failed restore; the Issue names the backup to restore (ignore only).
+  const wayBack = $derived(issue?.resource === GUEST_RESTORE_FAILED ? restoreWayBack(issue) : null);
 
   // guest:address (D-215): the Proxmox config is right, the guest does not follow it.
   const isAddress = $derived(issue?.resource === GUEST_ADDRESS);
@@ -162,6 +167,27 @@
         backup). Plumb never makes it again by itself. Delete the Target, or delete it and add it
         again by a Plan.
       </p>
+    {:else if issue.resource === GUEST_RESTORE_FAILED}
+      <p class="hint-box" id="restore-hint">
+        A restore of this guest failed after Proxmox began. Proxmox removes the guest's disks before
+        it writes the backup, so the guest may have no disk now.
+        {#if wayBack}The way back: restore the safety backup of {formatTime(wayBack.time)} (backup
+          <span class="mono">{wayBack.id}</span>), or another backup.{:else}The way back: restore
+          another backup.{/if}
+        A restore that works ends this issue. Re-enroll the agent only after a restore that worked.
+      </p>
+      {#if issue.status === "open"}
+        <p id="restore-way-back">
+          {#if wayBack && can("restoreGuest")}
+            <a href={href({ name: "target-backups", target: issue.target, restore: wayBack.id })}
+              >Restore the safety backup of {formatTime(wayBack.time)}…</a
+            > ·
+          {/if}
+          <a href={href({ name: "target-backups", target: issue.target })}
+            >Backups of {issue.target}</a
+          >
+        </p>
+      {/if}
     {:else if issue.resource === "agent:silent"}
       <p class="hint-box" id="restore-hint">
         After a restore: the guest runs, but its agent did not say hello within 10 minutes. It may

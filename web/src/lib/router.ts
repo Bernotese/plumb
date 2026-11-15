@@ -8,7 +8,7 @@ export type Route =
   | { name: "target-adopt" }
   | { name: "target-edit"; target: string }
   | { name: "target-agent"; target: string }
-  | { name: "target-backups"; target: string }
+  | { name: "target-backups"; target: string; restore?: string }
   | { name: "images" }
   | { name: "image-new" }
   | { name: "image"; image: string }
@@ -51,13 +51,20 @@ export function isRouteHash(hash: string): boolean {
 
 export function parse(hash: string): Route {
   const full = hash.replace(/^#/, "") || "/targets";
-  // A query only on the routes that take one (T-153): issues?target=, revisions/n?from=.
+  // A query only on the routes that take one (T-153): issues?target=, revisions/n?from=,
+  // targets/x/backups?restore= (D-420: the way back of a failed restore).
   const q = full.indexOf("?");
   const path = q < 0 ? full : full.slice(0, q);
   const query = new URLSearchParams(q < 0 ? "" : full.slice(q + 1));
   const parts = path.split("/").filter(Boolean);
   const id = (s: string | undefined) => (s && /^[1-9][0-9]{0,15}$/.test(s) ? Number(s) : undefined);
-  if (q >= 0 && !(parts[0] === "issues" && parts.length === 1) && parts[0] !== "revisions")
+  const backups = parts.length === 3 && parts[0] === "targets" && parts[2] === "backups";
+  if (
+    q >= 0 &&
+    !(parts[0] === "issues" && parts.length === 1) &&
+    parts[0] !== "revisions" &&
+    !backups
+  )
     return { name: "not-found", path: full };
   const [a, b, c] = parts;
   if (parts.length === 0) return { name: "targets" };
@@ -73,7 +80,11 @@ export function parse(hash: string): Route {
     return { name: "target-agent", target: b };
   }
   if (parts.length === 3 && a === "targets" && b && NAME.test(b) && c === "backups") {
-    return { name: "target-backups", target: b };
+    const restore = query.get("restore");
+    if (restore === null && q < 0) return { name: "target-backups", target: b };
+    if (restore !== null && /^[0-9a-f]{16}$/.test(restore) && [...query.keys()].length === 1)
+      return { name: "target-backups", target: b, restore };
+    return { name: "not-found", path: full };
   }
   if (parts.length === 1 && a === "images") return { name: "images" };
   if (parts.length === 2 && a === "images" && b === "new") return { name: "image-new" };
@@ -130,7 +141,7 @@ export function href(r: Route): string {
     case "target-agent":
       return `#/targets/${encodeURIComponent(r.target)}/agent`;
     case "target-backups":
-      return `#/targets/${encodeURIComponent(r.target)}/backups`;
+      return `#/targets/${encodeURIComponent(r.target)}/backups${r.restore ? `?restore=${r.restore}` : ""}`;
     case "images":
       return "#/images";
     case "image-new":
