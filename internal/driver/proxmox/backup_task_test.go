@@ -45,7 +45,7 @@ func TestGuestBackupTask(t *testing.T) {
 func TestArchiveOfAndNames(t *testing.T) {
 	for line, want := range map[string]string{
 		"INFO: creating vzdump archive '/var/lib/vz/dump/vzdump-qemu-101-2026_11_15-10_00_00.vma.zst'": "/var/lib/vz/dump/vzdump-qemu-101-2026_11_15-10_00_00.vma.zst",
-		"INFO: creating Proxmox Backup Server archive 'vm/101/2026-11-15T10:00:00Z'":                    "vm/101/2026-11-15T10:00:00Z",
+		"INFO: creating Proxmox Backup Server archive 'vm/101/2026-11-15T10:00:00Z'":                   "vm/101/2026-11-15T10:00:00Z",
 		"INFO: creating vzdump archive ''":     "",
 		"creating vzdump archive '/x/y.vma'":   "",
 		"INFO: starting new backup job":        "",
