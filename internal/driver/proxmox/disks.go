@@ -1,6 +1,10 @@
 package proxmox
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -115,3 +119,206 @@ func vmDiskValue(storage string, n, gb int) string {
 func ctDiskValue(storage string, gb int, path string) string {
 	return storage + ":" + strconv.Itoa(gb) + ",mp=" + path + ",backup=1"
 }
+
+// addDiskParams adds the data disks of a new guest to its create (or
+// first configure) params. A new container is not started yet, so its
+// mount points are written cold (D-437).
+func addDiskParams(params url.Values, kind wire.Kind, storage string, disks []driver.Disk) {
+	for _, dk := range disks {
+		if dk.Slot < 1 || dk.Slot > driver.MaxDisks || dk.Foreign {
+			continue
+		}
+		if kind == wire.KindLXC {
+			params.Set(diskKey(kind, dk.Slot), ctDiskValue(storage, dk.SizeGB, dk.Path))
+		} else {
+			params.Set(diskKey(kind, dk.Slot), vmDiskValue(storage, dk.Slot, dk.SizeGB))
+		}
+	}
+}
+
+// diskChanges applies the data disk changes of an Update, one Proxmox
+// call per step with the digest of a fresh read (D-436, D-437). It runs
+// after the other settings. A VM disk is hot-added and hot-removed; a
+// container disk is added, removed or detached while the container is
+// stopped (D-437): a running one is stopped and started again (the Plan
+// holds allow_restart for it).
+func (d *Driver) diskChanges(ctx context.Context, id int, kind wire.Kind, changes []wire.Change) error {
+	var stopped bool // a container this call stopped
+	path := vmPath(d, id)
+	if kind == wire.KindLXC {
+		path = ctPath(d, id)
+	}
+	read := func() (map[string]string, error) {
+		if kind == wire.KindLXC {
+			return d.ctConfig(ctx, id, true)
+		}
+		return d.readConfig(ctx, id, true)
+	}
+	write := func(params url.Values) error {
+		method := "POST"
+		if kind == wire.KindLXC {
+			method = "PUT"
+		}
+		for k := range params {
+			if k != "digest" && k != "delete" && !reDiskWriteKey.MatchString(k) {
+				return fmt.Errorf("proxmox: a disk step must not write %q", k)
+			}
+		}
+		return d.c.MaybeTask(ctx, d.cfg.Node, method, path+"/config", params)
+	}
+	stopCT := func() error {
+		if kind != wire.KindLXC || stopped {
+			return nil
+		}
+		var st struct {
+			Status string `json:"status"`
+		}
+		if err := d.c.Get(ctx, path+"/status/current", nil, &st); err != nil {
+			return notFound(err)
+		}
+		if st.Status != "running" {
+			return nil
+		}
+		if err := d.c.Task(ctx, d.cfg.Node, "POST", path+"/status/shutdown", url.Values{
+			"timeout": {strconv.Itoa(int(d.cfg.ShutdownTimeout.Seconds()))}, "forceStop": {"1"},
+		}); err != nil {
+			return fmt.Errorf("proxmox: stop the container for its disk change: %w", err)
+		}
+		stopped = true
+		return nil
+	}
+	start := func() error { return d.c.Task(ctx, d.cfg.Node, "POST", path+"/status/start", nil) }
+	// free detaches the volume of slot n and frees it by its id (never by
+	// the unused index alone): a Plumb disk only.
+	free := func(n int, vol string) error {
+		cfg, err := read()
+		if err != nil {
+			return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: err}
+		}
+		key := unusedKeyOf(cfg, vol)
+		if key == "" {
+			return nil // Proxmox freed it with the detach
+		}
+		if err := write(url.Values{"digest": {cfg["digest"]}, "delete": {key}}); err != nil {
+			return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: err}
+		}
+		if cfg, err = read(); err == nil && unusedKeyOf(cfg, vol) != "" {
+			return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: errors.New("it is still in the config")}
+		}
+		return nil
+	}
+	err := func() error {
+		for _, c := range changes {
+			n := driver.DiskIndex(c.Attr)
+			cfg, err := read()
+			if err != nil {
+				return err
+			}
+			have := withDisks(driver.GuestSpec{Kind: kind}, cfg, d.cfg.DiskStorage, id).DiskAt(n)
+			want, err := driver.ParseDiskValue(c.To)
+			if err != nil {
+				return err
+			}
+			key := diskKey(kind, n)
+			switch {
+			case want == nil && have == nil:
+			case want == nil: // remove a Plumb disk, or detach a foreign volume
+				if err := stopCT(); err != nil {
+					return err
+				}
+				if cfg, err = read(); err != nil {
+					return err
+				}
+				if err := write(url.Values{"digest": {cfg["digest"]}, "delete": {key}}); err != nil {
+					return fmt.Errorf("proxmox: remove disk %d: %w", n, err)
+				}
+				if after, err := read(); err == nil && after[key] != "" {
+					return fmt.Errorf("proxmox: disk %d is still attached after the remove (it waits for a stop and start)", n)
+				}
+				if !have.Foreign {
+					if err := free(n, have.Volume); err != nil {
+						return err
+					}
+				}
+			case have == nil: // add
+				if kind == wire.KindLXC && !reAbsPath.MatchString(want.Path) {
+					return fmt.Errorf("proxmox: disk %d needs a mount path", n)
+				}
+				if err := stopCT(); err != nil {
+					return err
+				}
+				if cfg, err = read(); err != nil {
+					return err
+				}
+				v := vmDiskValue(d.cfg.DiskStorage, n, want.SizeGB)
+				if kind == wire.KindLXC {
+					v = ctDiskValue(d.cfg.DiskStorage, want.SizeGB, want.Path)
+				}
+				if err := write(url.Values{"digest": {cfg["digest"]}, key: {v}}); err != nil {
+					return fmt.Errorf("proxmox: add disk %d: %w", n, err)
+				}
+				if !stopped {
+					continue
+				}
+				if err := start(); err != nil {
+					return d.undoCTAdd(ctx, n, want.Path, read, write, free, start)
+				}
+				stopped = false
+			case have.Foreign:
+				return &driver.DiskForeignError{Slot: n, Raw: have.Raw}
+			default: // grow
+				if want.Path != have.Path {
+					return &driver.DiskPathError{Slot: n, Have: have.Path, Want: want.Path}
+				}
+				gb, err := growTo(want.SizeGB, have.SizeGB)
+				if err != nil {
+					var se *driver.ShrinkError
+					if errors.As(err, &se) {
+						se.Slot = n
+					}
+					return err
+				}
+				if gb > 0 {
+					if err := d.resize(ctx, path, key, gb); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	}()
+	if stopped {
+		if serr := start(); serr != nil && err == nil {
+			err = fmt.Errorf("proxmox: start the container after its disk change: %w", serr)
+		}
+	}
+	return err
+}
+
+// undoCTAdd removes a container disk whose start failed (D-437 (2)):
+// detach it (stopped: it becomes unusedM at once), free it by its id, and
+// start the container again.
+func (d *Driver) undoCTAdd(ctx context.Context, n int, path string, read func() (map[string]string, error),
+	write func(url.Values) error, free func(int, string) error, start func() error) error {
+	cfg, err := read()
+	if err != nil {
+		return err
+	}
+	vol := parseProps(cfg["mp"+strconv.Itoa(n)])[""]
+	if err := write(url.Values{"digest": {cfg["digest"]}, "delete": {"mp" + strconv.Itoa(n)}}); err != nil {
+		return &driver.VolumeLeftError{Slot: n, Volume: vol, Err: err}
+	}
+	ferr := free(n, vol)
+	if err := start(); err != nil {
+		return fmt.Errorf("proxmox: the container did not start with disk %d at %s, and it did not start again after Plumb removed the disk: %w", n, path, err)
+	}
+	if ferr != nil {
+		return ferr
+	}
+	return &driver.DiskStartError{Slot: n, Path: path}
+}
+
+var (
+	reDiskWriteKey = regexp.MustCompile(`^(scsi|mp)[1-3]$`)
+	reAbsPath      = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
+)

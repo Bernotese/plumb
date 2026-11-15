@@ -196,3 +196,31 @@ func diskErrors(desired GuestSpec, observed GuestState) error {
 	}
 	return nil
 }
+
+// DiskStartError: a container did not start with the new data disk in
+// slot Slot (D-437). The driver removed the disk again and started the
+// container as before. The text is Plumb's own and never quotes the
+// guest (ARCHITECTURE §21).
+type DiskStartError struct {
+	Slot int
+	Path string
+}
+
+func (e *DiskStartError) Error() string {
+	return fmt.Sprintf("the container did not start with disk %d at %s; Plumb removed the disk again, and the guest runs as before", e.Slot, e.Path)
+}
+
+// VolumeLeftError: a data disk volume of the guest could not be freed
+// (D-437 (4), the remove step of D-436). The volume stays on the disk
+// storage until a person frees it or the Target is deleted.
+type VolumeLeftError struct {
+	Slot   int
+	Volume string
+	Err    error
+}
+
+func (e *VolumeLeftError) Error() string {
+	return fmt.Sprintf("the volume %s of disk %d could not be freed (%v); it stays on the disk storage: a person runs `pvesm free %s` as root, or a Plumb Target delete frees it", e.Volume, e.Slot, e.Err, e.Volume)
+}
+
+func (e *VolumeLeftError) Unwrap() error { return e.Err }

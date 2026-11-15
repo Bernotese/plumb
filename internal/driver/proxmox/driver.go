@@ -812,7 +812,8 @@ func (d *Driver) configureWith(ctx context.Context, id int, spec driver.GuestSpe
 		"nameserver":   {strings.Join(d.cfg.Nameservers, " ")},
 		"searchdomain": {d.cfg.SearchDomain},
 	}
-	addNICParams(params, spec.NICs, false) // T-219
+	addNICParams(params, spec.NICs, false)                            // T-219
+	addDiskParams(params, wire.KindVM, d.cfg.DiskStorage, spec.Disks) // D-436
 	if len(spec.SSHKeys) > 0 {
 		params.Set("sshkeys", sshKeysParam(spec.SSHKeys))
 	}
@@ -1109,7 +1110,12 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 	params := url.Values{"digest": {cfg["digest"]}} // refuse when the config changed meanwhile
 	grow := 0
 	var nicDels []string
+	var disks []wire.Change
 	for _, c := range changes {
+		if driver.DiskIndex(c.Attr) > 0 { // D-436: own steps, after the rest
+			disks = append(disks, c)
+			continue
+		}
 		if driver.NICIndex(c.Attr) > 0 { // T-219
 			if err := d.nicChange(params, &nicDels, c, false); err != nil {
 				return err
@@ -1176,7 +1182,12 @@ func (d *Driver) Update(ctx context.Context, gid driver.GuestID, changes []wire.
 		}
 	}
 	if grow > 0 {
-		return d.resize(ctx, vmPath(d, id), "scsi0", grow)
+		if err := d.resize(ctx, vmPath(d, id), "scsi0", grow); err != nil {
+			return err
+		}
+	}
+	if len(disks) > 0 {
+		return d.diskChanges(ctx, id, wire.KindVM, disks)
 	}
 	return nil
 }

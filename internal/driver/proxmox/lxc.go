@@ -259,7 +259,8 @@ func (d *Driver) createFromFile(ctx context.Context, spec driver.GuestSpec, boot
 		// The form encoding sends "=" as %3D, as Proxmox needs (host C2).
 		"env": {tokenPrefix + boot.Token},
 	}
-	addNICParams(params, spec.NICs, true) // T-219
+	addNICParams(params, spec.NICs, true)                              // T-219
+	addDiskParams(params, wire.KindLXC, d.cfg.DiskStorage, spec.Disks) // D-436, D-437: cold
 	if len(spec.SSHKeys) > 0 {
 		params.Set("ssh-public-keys", strings.Join(spec.SSHKeys, "\n"))
 	}
@@ -443,7 +444,12 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 	params := url.Values{"digest": {cfg["digest"]}}
 	grow := 0
 	var nicDels []string
+	var disks []wire.Change
 	for _, c := range changes {
+		if driver.DiskIndex(c.Attr) > 0 { // D-436, D-437: own steps, after the rest
+			disks = append(disks, c)
+			continue
+		}
 		if driver.IsCreateOnly(c.Attr) {
 			return &driver.CreateOnlyError{Attr: c.Attr}
 		}
@@ -528,7 +534,12 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 		}
 	}
 	if grow > 0 {
-		return d.resize(ctx, ctPath(d, id), "rootfs", grow)
+		if err := d.resize(ctx, ctPath(d, id), "rootfs", grow); err != nil {
+			return err
+		}
+	}
+	if len(disks) > 0 {
+		return d.diskChanges(ctx, id, wire.KindLXC, disks)
 	}
 	return nil
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // guestConfig reads the current config of a pool guest of either type. A
@@ -297,6 +298,7 @@ func (d *Driver) cloneCT(ctx context.Context, spec driver.GuestSpec, boot driver
 		"description":  {ctDescription(driver.GuestSpec{ImageName: spec.ImageName, ImageVersion: spec.ImageVersion})},
 		"env":          {tokenPrefix + boot.Token},
 	}
+	addDiskParams(params, wire.KindLXC, d.cfg.DiskStorage, spec.Disks) // D-436, D-437: cold, before the start
 	if tags, err := tagsParam(spec.Tags); err != nil {
 		return fail(err)
 	} else if tags != "" {
