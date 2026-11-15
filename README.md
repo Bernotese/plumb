@@ -433,7 +433,8 @@ The **Backups** page of a Target shows:
 
 A person with the role admin can delete one backup of the first two groups, after a confirm.
 
-Lowering "keep" deletes backups: that Plan is destructive and says how many go. Removing the
+When a lower "keep" would delete backups at the next job, that Plan is destructive and says how
+many go. Removing the
 backup setting stops the backups and deletes none.
 
 ![Backups page of db1: an unencrypted storage with the warning, the schedule, Back up now, and the backups in three groups](docs/screenshots/readme-guest-backups.png)
@@ -444,9 +445,11 @@ destructive, and only a person with the role admin can approve it; an API token 
 
 1. stops the guest. A running guest needs "Plumb may restart this VM" (for a container: "this
    container") on the Target, or stop it yourself first;
-2. revokes the agent credential and drops the pinned SSH host keys, before the guest starts again;
-3. lets Proxmox overwrite the whole guest with the backup;
-4. then Plumb proposes a re-enrollment of the agent (the guest stays stopped until you approve it).
+2. takes a safety backup of the guest as it is now (see below). If that backup fails, nothing is
+   changed, and a guest that ran starts again;
+3. revokes the agent credential and drops the pinned SSH host keys, before the guest starts again;
+4. lets Proxmox overwrite the whole guest with the backup;
+5. then Plumb proposes a re-enrollment of the agent (the guest stays stopped until you approve it).
    An adopted guest starts without an agent: run an install command from its agent page.
 
 Everything written in the guest after the backup is lost. Access comes back as it was then: SSH
@@ -454,14 +457,25 @@ keys, passwords and users that a person removed later work again. The Target is 
 the next Run sets the guest to the current Target again.
 
 **Safety backup.** Proxmox removes the guest's disks before it writes the backup. If the restore
-fails, the guest is left empty. So Plumb first takes a safety backup of the guest as it is now. It
-shows in the list as "safety backup before a restore". If the restore fails, Plumb opens an Issue
-that names this safety backup; restore it to get the guest back. Two cases need no new safety
-backup:
+fails, the guest is left empty. So the Run first takes a safety backup of the guest. It shows in
+the list as "safety backup before a restore", and "keep" never counts or deletes it. After a
+restore that worked, it stays, so you can undo the restore; it replaces the older safety backup of
+the guest.
 
-- the last restore failed: the safety backup from before it stays, and the Plan says so;
-- the guest is broken already (no disk, or such an Issue is open): a person may tick "skip the
-  safety backup" in the wizard. An API token never can.
+If the restore fails, the Run says that the guest may have no disk, and Plumb opens the Issue
+`guest:restore-failed` (only "ignore"). It names the safety backup; its link opens the restore of
+that backup. A restore that works ends the Issue. Re-enroll the agent only after a restore that
+worked. Two cases take no new safety backup:
+
+- the last restore failed: the guest may be empty, so the safety backup from before stays the way
+  back. The Plan says so;
+- the guest has no disk: a person may tick "The guest is broken already: skip the safety backup" in
+  the wizard. Plumb checks it and refuses for a guest with a disk. An API token never can.
+
+**What a backup holds.** A container backup leaves out the agent's secrets (its credential and
+its desired list); a restored container starts its agent and re-enrolls. A VM backup holds the
+whole disk, also the agent credential. Plumb revokes that credential at the restore, and every
+re-enroll makes the credential in older backups useless.
 
 ![Restore wizard: only a person can approve, the steps of the Run, what is lost, a confirm box and the reason](docs/screenshots/readme-guest-restore.png)
 <br>*The restore wizard says what is lost before it makes the Plan.*
