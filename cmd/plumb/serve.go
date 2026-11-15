@@ -320,6 +320,7 @@ func runServer(ctx context.Context, f serveFlags, stdout io.Writer, log *slog.Lo
 		AddrStable:          devAddrStable(f.devDemo), DiskLimitPercent: limit,
 		Agent: servedAgent(), ReservedAddrs: plan.HostAddrs(f.hosts, os.Getenv("PLUMB_PVE_URL")),
 		InstallID: os.Getenv("PLUMB_INSTALL_ID"), NetAllowed: netAllowed, // T-219 (D-400, D-401)
+		GuestRestore: guestRestorerOf(rawDrv, st, extras, os.Getenv("PLUMB_INSTALL_ID"), restore.Active), // T-222
 		// The transport comes with T-191; without it a repair is not ready.
 		Repair: repairConfig(ctx, log, rep, lk, agentURL(f.hosts, f.agentListen)),
 	})

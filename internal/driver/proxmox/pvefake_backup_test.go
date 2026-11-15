@@ -31,6 +31,7 @@ type fakeBackup struct {
 	notesFail  bool // vzdump writes no notes and ends with a warning
 	failVzdump string
 	forbidden  []string // forbidden vzdump parameters seen
+	restored   []string // "vmid volid storage" of each restore (T-222)
 }
 
 type fakeVol struct {
@@ -104,6 +105,27 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 		}
 		delete(b.vols, volid)
 		reply(w, 200, nil)
+		return true
+	case r.Method == "POST" && (path == "/nodes/"+f.node+"/qemu" && r.Form.Has("archive") || path == "/nodes/"+f.node+"/lxc" && r.Form.Get("restore") == "1"):
+		// A restore over a guest (T-222): like PVE, force=1 is needed for
+		// an existing VMID, and the guest must be stopped.
+		volid := r.Form.Get("archive")
+		if volid == "" {
+			volid = r.Form.Get("ostemplate")
+		}
+		vmid, _ := strconv.Atoi(r.Form.Get("vmid"))
+		vm, v := f.vms[vmid], b.vols[volid]
+		switch {
+		case vm == nil || v == nil || v.vmid != vmid:
+			fail(w, 500, "restore: guest or volume not found", nil)
+		case r.Form.Get("force") != "1":
+			fail(w, 500, fmt.Sprintf("unable to restore VM %d - VM %d already exists", vmid, vmid), nil)
+		case vm.running:
+			fail(w, 500, "restore: the guest runs", nil)
+		default:
+			b.restored = append(b.restored, fmt.Sprintf("%d %s %s", vmid, volid, r.Form.Get("storage")))
+			reply(w, 200, f.task(key))
+		}
 		return true
 	case r.Method == "POST" && path == "/nodes/"+f.node+"/vzdump":
 		for _, p := range vzdumpForbidden {
