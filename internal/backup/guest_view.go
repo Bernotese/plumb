@@ -60,6 +60,9 @@ func (g *Guests) List(ctx context.Context, target string) (GuestList, error) {
 		return GuestList{}, err
 	}
 	vols, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest)
+	if errors.Is(err, ErrGuestGone) {
+		return out, nil // the guest left the pool: its backups are invisible (S3 of T-225)
+	}
 	if err != nil {
 		return GuestList{}, err
 	}
@@ -101,6 +104,9 @@ func (g *Guests) Delete(ctx context.Context, target, id, actor string) error {
 		return err
 	}
 	vols, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest)
+	if errors.Is(err, ErrGuestGone) {
+		return ErrGuestBackupNotFound // the guest left the pool: no volume of it is visible
+	}
 	if err != nil {
 		return err
 	}

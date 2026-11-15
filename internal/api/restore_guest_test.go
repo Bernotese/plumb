@@ -28,6 +28,27 @@ type fakeRestorer struct {
 	restored []string                      // "ref volid"
 	fail     error
 	after    func() // runs after a restore that succeeded
+	// safety makes the safety backup (D-420); nil: a fixed volume.
+	safety   func() (plan.RestoreVolume, error)
+	safeties int
+	dropped  []string // keep of each DropSafetyBackups
+}
+
+func (f *fakeRestorer) SafetyBackup(context.Context, string) (plan.RestoreVolume, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.safeties++
+	if f.safety != nil {
+		return f.safety()
+	}
+	return plan.RestoreVolume{ID: "5afe5afe5afe5afe", Volid: "bk:safety", Kind: "plumb", Time: time.Date(2026, 11, 15, 4, 0, 0, 0, time.UTC)}, nil
+}
+
+func (f *fakeRestorer) DropSafetyBackups(_ context.Context, _, keep string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dropped = append(f.dropped, keep)
+	return nil
 }
 
 func (f *fakeRestorer) FindBackup(_ context.Context, _, _, id string) (plan.RestoreVolume, error) {
@@ -276,8 +297,11 @@ func TestRestoreGuestFails(t *testing.T) {
 		t.Fatalf("run: %+v %v", r, err)
 	}
 	steps, _ := e.st.Steps(ctx, r.ID)
-	if len(steps) != 1 || !strings.Contains(steps[0].Output, "the guest is stopped and its agent credential is revoked; the restore failed: archive unreadable") ||
-		!strings.Contains(steps[0].Output, "The way back: re-enroll the Target (POST /targets/web1/reenroll)") {
+	// D-420: the honest text, no raw Proxmox text, the safety backup named.
+	if len(steps) != 1 || !strings.Contains(steps[0].Output, "the restore failed: Proxmox did not do it") ||
+		!strings.Contains(steps[0].Output, "the guest may have no disk now") ||
+		!strings.Contains(steps[0].Output, "restore the safety backup backup 5afe5afe5afe5afe") ||
+		strings.Contains(steps[0].Output, "archive unreadable") {
 		t.Errorf("steps: %+v", steps)
 	}
 	if re, _ := e.st.PendingPlans(ctx, plan.OriginReenroll); len(re) != 0 {

@@ -1217,6 +1217,14 @@ paths:
         - then makes a re-enroll Plan (a Plumb-made Target) or shows the install command (an adopted
           Target).
 
+        **Safety backup first (D-420):** Proxmox removes the guest's disks before it writes the backup,
+        so a failed restore leaves the guest empty. The Run first takes a backup of the guest as it is
+        (`trigger: pre-restore`; retention never counts or deletes it; a restore that works deletes the
+        older ones). If that backup fails, nothing is changed. If the restore then fails, the Run says
+        that the guest may have no disk, names the safety backup as the way back, and opens the Issue
+        `guest:restore-failed` (ignore only; a restore that works resolves it). `skip_safety_backup`
+        only for a broken guest. Step texts are Plumb's own (a Proxmox task id, no task log).
+
         The desired state is not rolled back: the next Run converges the guest to the head. A restore
         brings back what the guest held at the backup time, also access that a person removed later
         (`authorized_keys` lines, passwords); the Plan says so (review L1 of #325). The Target keeps
@@ -5162,7 +5170,7 @@ components:
         kind: { type: string, enum: [plumb, older-guest, unmarked] }
         trigger:
           type: string
-          enum: [scheduled, manual, unknown]
+          enum: [scheduled, manual, pre-restore, unknown]
           description: |
             From the marker (`…:m` for a manual backup, review M1 of #325): `scheduled` by the Target's
             `backup` schedule, `manual` by "Back up now". `unknown` for a volume without a Plumb marker.
@@ -5179,6 +5187,12 @@ components:
       properties:
         backup: { type: string, pattern: "^[0-9a-f]{16}$", description: "`GuestBackup.id` of a `kind: plumb` volume." }
         reason: { type: string, minLength: 1, maxLength: 2000 }
+        skip_safety_backup:
+          type: boolean
+          default: false
+          description: |
+            D-420: no safety backup of the guest before the restore. Allowed only for a broken guest
+            (no disk, or an open Issue `guest:restore-failed`); else 422.
     RepairKeyView:
       type: object
       additionalProperties: false

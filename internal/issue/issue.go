@@ -32,7 +32,7 @@ const (
 // restore (D-303), and agent:values of the copy rule (D-331).
 func IgnoreOnly(resource string) bool {
 	return resource == wire.GuestAddressID || resource == plan.GuestMissingID || resource == plan.AgentSilentID ||
-		resource == GuestValuesID
+		resource == GuestValuesID || resource == plan.GuestRestoreFailedID
 }
 
 // ErrAcceptSensitive is returned for accept on a sensitive change: the
@@ -227,7 +227,7 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 // of a restore: only the controller sends these resources (the link
 // refuses them from an agent), so the text is ours.
 func systemReason(it wire.Item) string {
-	if it.Resource != plan.GuestMissingID && it.Resource != plan.AgentSilentID {
+	if it.Resource != plan.GuestMissingID && it.Resource != plan.AgentSilentID && it.Resource != plan.GuestRestoreFailedID {
 		return ""
 	}
 	return it.Output

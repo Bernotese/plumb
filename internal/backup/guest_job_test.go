@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Bernotese/plumb/internal/wire"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -282,8 +284,15 @@ func TestGuestBackupExcludes(t *testing.T) {
 	e.g.BackUp(ctx, "db1", TriggerManual, "x")
 	e.t.LXC = true
 	e.g.BackUp(ctx, "db1", TriggerManual, "x")
-	if len(e.d.excludes[0]) != 0 || len(e.d.excludes[1]) != 2 {
+	if len(e.d.excludes[0]) != 0 || !slices.Equal(e.d.excludes[1], wire.LXCBackupExclude) {
 		t.Fatalf("%v", e.d.excludes)
+	}
+	// T-231: the agent's config stays in a container backup, so a
+	// restored container can re-enroll; the credential stays out.
+	for _, p := range e.d.excludes[1] {
+		if p == "/etc/plumb-agent" || p == "/var/lib/plumb-agent" {
+			t.Fatalf("a whole agent directory is excluded: %v", e.d.excludes[1])
+		}
 	}
 }
 

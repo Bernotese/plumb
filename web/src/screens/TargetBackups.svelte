@@ -62,7 +62,12 @@
     failed: { tone: "danger", label: "failed" },
     refused: { tone: "danger", label: "refused" },
   } as const;
-  const TRIGGER = { scheduled: "scheduled", manual: "back up now", unknown: "–" } as const;
+  const TRIGGER = {
+    scheduled: "scheduled",
+    manual: "back up now",
+    "pre-restore": "safety backup before a restore",
+    unknown: "–",
+  } as const;
   const MODE = { snapshot: "snapshot", stop: "stop", suspend: "suspend", unknown: "–" } as const;
   const WEEKDAY = {
     mon: "Monday",
