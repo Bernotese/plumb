@@ -67,7 +67,7 @@ func (s *Service) headRules(ctx context.Context) ([]state.Rule, error) {
 // filterRules splits the changes of one resource into those that no rule
 // covers and, per rule, the attributes that it dropped (D-092).
 func filterRules(rules []state.Rule, target, resource string, changes []wire.Change) (kept []wire.Change, dropped map[string][]string) {
-	if resource == plan.GuestRestoreFailedID {
+	if resource == plan.GuestRestoreFailedID || resource == plan.GuestVolumeLeftID { // T-238: no Rule hides a left volume
 		// No Rule covers the Issue of a failed restore (M1 of #352): it is
 		// the gate that protects the way back.
 		return changes, nil

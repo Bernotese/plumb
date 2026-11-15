@@ -27,7 +27,7 @@ func TestBackUpGuest(t *testing.T) {
 	f, d := backupFake(t)
 	ctx := context.Background()
 	old := f.backup.addVol(9001, "made by a person", 1)
-	res, err := d.BackUpGuest(ctx, "plumb-backup", "9001", testMarker, []string{"/etc/plumb-agent"})
+	res, err := d.BackUpGuest(ctx, "plumb-backup", "9001", testMarker, []string{"/etc/plumb-agent"}, nil)
 	if err != nil || res.Warned || res.Volid == "" || res.Volid == old {
 		t.Fatalf("%+v %v", res, err)
 	}
@@ -47,7 +47,7 @@ func TestBackUpGuest(t *testing.T) {
 		t.Fatalf("marker not listed: %+v", vols)
 	}
 	// A container: the agent paths are left out (L1 of #321).
-	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9002", testMarker, []string{"/etc/plumb-agent", "/var/lib/plumb-agent"}); err != nil {
+	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9002", testMarker, []string{"/etc/plumb-agent", "/var/lib/plumb-agent"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.lastParams("POST /nodes/pve/vzdump")["exclude-path"]; len(got) != 2 {
@@ -60,7 +60,7 @@ func TestBackUpGuest(t *testing.T) {
 func TestBackUpGuestNotesWarning(t *testing.T) {
 	f, d := backupFake(t)
 	f.backup.notesFail = true
-	res, err := d.BackUpGuest(context.Background(), "plumb-backup", "9001", testMarker, nil)
+	res, err := d.BackUpGuest(context.Background(), "plumb-backup", "9001", testMarker, nil, nil)
 	if err != nil || !res.Warned {
 		t.Fatalf("%+v %v", res, err)
 	}
@@ -70,7 +70,7 @@ func TestBackUpGuestNotesWarning(t *testing.T) {
 	}
 	// A real failure stays an error.
 	f.backup.failVzdump = "job errors"
-	if _, err := d.BackUpGuest(context.Background(), "plumb-backup", "9001", testMarker, nil); err == nil {
+	if _, err := d.BackUpGuest(context.Background(), "plumb-backup", "9001", testMarker, nil, nil); err == nil {
 		t.Fatal("a failed vzdump passed")
 	}
 }
@@ -79,10 +79,10 @@ func TestBackUpGuestRefusals(t *testing.T) {
 	f, d := backupFake(t)
 	ctx := context.Background()
 	f.addVM(9050, "other", map[string]string{"name": "x"}, true)
-	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9050", testMarker, nil); !errors.Is(err, driver.ErrNotFound) {
+	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9050", testMarker, nil, nil); !errors.Is(err, driver.ErrNotFound) {
 		t.Fatalf("a guest outside the pool: %v", err)
 	}
-	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9001", "plumb:{{guestname}}", nil); err == nil {
+	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9001", "plumb:{{guestname}}", nil, nil); err == nil {
 		t.Fatal("notes with a template name passed")
 	}
 	if n := f.count("POST /nodes/pve/vzdump"); n != 0 {
@@ -138,7 +138,7 @@ func TestBackUpGuestCancelStopsTask(t *testing.T) {
 	f.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9001", testMarker, nil); err == nil {
+	if _, err := d.BackUpGuest(ctx, "plumb-backup", "9001", testMarker, nil, nil); err == nil {
 		t.Fatal("a cancelled vzdump passed")
 	}
 	f.mu.Lock()

@@ -22,9 +22,9 @@ func TestDiskRules(t *testing.T) {
 		{"duplicate slot", "vm", `[{"slot":2,"size_gb":1},{"slot":2,"size_gb":5}]`, "slot 2 is also used by disk 0"},
 		{"vm with path", "vm", `[{"slot":1,"size_gb":1,"path":"/srv/a"}]`, "a VM data disk has no path"},
 		{"lxc without path", "lxc", `[{"slot":1,"size_gb":1}]`, "needs a path"},
-		{"etc", "lxc", `[{"slot":1,"size_gb":1,"path":"/etc"}]`, "system tree /etc"},
+		{"etc", "lxc", `[{"slot":1,"size_gb":1,"path":"/etc"}]`, "holds, a path of the Plumb agent"},
 		{"var below", "lxc", `[{"slot":1,"size_gb":1,"path":"/var/lib/mysql"}]`, "system tree /var"},
-		{"usr local", "lxc", `[{"slot":1,"size_gb":1,"path":"/usr/local"}]`, "system tree /usr"},
+		{"usr local", "lxc", `[{"slot":1,"size_gb":1,"path":"/usr/local"}]`, "holds, a path of the Plumb agent"},
 		{"lib64", "lxc", `[{"slot":1,"size_gb":1,"path":"/lib64"}]`, "system tree /lib64"},
 		{"root", "lxc", `[{"slot":1,"size_gb":1,"path":"/root/x"}]`, "system tree /root"},
 		{"same path", "lxc", `[{"slot":1,"size_gb":1,"path":"/srv/a"},{"slot":2,"size_gb":1,"path":"/srv/a"}]`, "at or inside the path /srv/a of disk 0"},
@@ -39,15 +39,14 @@ func TestDiskRules(t *testing.T) {
 		})
 	}
 	// A prefix that is not a parent is no conflict; allowed trees pass the
-	// rules (only the planned refusal remains).
+	// rules.
 	for _, disks := range []string{
 		`[{"slot":1,"size_gb":1,"path":"/srv/a"},{"slot":2,"size_gb":1,"path":"/srv/ab"}]`,
 		`[{"slot":3,"size_gb":1,"path":"/opt/x"},{"slot":1,"size_gb":1,"path":"/home/u"},{"slot":2,"size_gb":1,"path":"/mnt/.cache"}]`,
 		`[{"slot":1,"size_gb":1,"path":"/data/..."},{"slot":2,"size_gb":1,"path":"/varnish"}]`,
 	} {
-		_, err := Validate([]Doc{img, ctImg, target("lxc", disks)})
-		if err == nil || len(err.(Errors)) != 1 || !strings.Contains(err.Error(), "planned (T-238)") {
-			t.Errorf("%s: want only the planned refusal, got %v", disks, err)
+		if _, err := Validate([]Doc{img, ctImg, target("lxc", disks)}); err != nil {
+			t.Errorf("%s: want valid, got %v", disks, err)
 		}
 	}
 	// "." and ".." parts: the schema refuses them, and the code again.
@@ -68,6 +67,21 @@ func TestDiskRules(t *testing.T) {
 	for _, p := range []string{"/srv/data", "/opt/app", "/data", "/mnt/x", "/home/u", "/srv/.hidden", "/srv/..x"} {
 		if msg := diskPathProblem(p); msg != "" {
 			t.Errorf("%s: %s", p, msg)
+		}
+	}
+}
+
+// N1 of the #360 re-check: a mount path that is a parent of an agent path
+// is refused for that reason directly, not only as a system tree.
+func TestDiskPathHoldsAgentPath(t *testing.T) {
+	for _, p := range []string{"/etc", "/var/lib", "/var", "/usr/local", "/usr/local/bin", "/usr/local/sbin", "/etc/systemd", "/run/systemd", "/var/run", "/etc/plumb-agent", "/var/lib/plumb-agent/x"} {
+		if msg := diskPathProblem(p); !strings.Contains(msg, "Plumb agent") {
+			t.Errorf("%s: %q", p, msg)
+		}
+	}
+	for _, p := range []string{"/srv/data", "/opt/etc", "/home/u/var/lib", "/mnt/plumb-agent"} {
+		if msg := diskPathProblem(p); msg != "" {
+			t.Errorf("%s: %q", p, msg)
 		}
 	}
 }

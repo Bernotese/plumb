@@ -230,6 +230,14 @@ func RevertShrinks(changes []wire.Change) bool {
 		if c.Attr == driver.AttrDisk && err1 == nil && err2 == nil && to < from {
 			return true
 		}
+		// A data disk grown in Proxmox (T-238): revert would shrink it.
+		if driver.DiskIndex(c.Attr) > 0 {
+			f, err1 := driver.ParseDiskValue(c.From)
+			t, err2 := driver.ParseDiskValue(c.To)
+			if err1 == nil && err2 == nil && f != nil && t != nil && t.SizeGB < f.SizeGB {
+				return true
+			}
+		}
 	}
 	return false
 }

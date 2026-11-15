@@ -24,13 +24,20 @@ type apiGuestDriver struct {
 	gone bool // the guest left the pool (S4 of T-225)
 }
 
-func (d *apiGuestDriver) BackUpGuest(_ context.Context, storage, guest, notes string, _ []string) (string, bool, error) {
+func (d *apiGuestDriver) BackUpGuest(_ context.Context, storage, guest, notes string, _ []string, _ func(string)) (string, bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.seq++
 	v := backup.Volume{Volid: fmt.Sprintf("%s:backup/vzdump-qemu-%s-%d.vma.zst", storage, guest, d.seq), Time: time.Now().Add(time.Duration(d.seq) * time.Second), Notes: notes, Size: 42}
 	d.vols = append(d.vols, v)
 	return v.Volid, false, nil
+}
+
+// GuestBackupTask: this fake reports no task (onTask is never called), so
+// no job of the API tests has a task to check (T-248 is tested in
+// internal/backup).
+func (d *apiGuestDriver) GuestBackupTask(context.Context, string, string, string) (backup.GuestTask, error) {
+	return backup.GuestTask{}, backup.ErrNotGuestTask
 }
 
 func (d *apiGuestDriver) ListGuestBackups(context.Context, string, string) ([]backup.Volume, error) {

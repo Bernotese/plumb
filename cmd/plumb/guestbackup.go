@@ -18,12 +18,25 @@ import (
 // guestDriver adapts the Proxmox driver to backup.GuestDriver.
 type guestDriver struct{ d *proxmox.Driver }
 
-func (g guestDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, exclude []string) (string, bool, error) {
-	r, err := g.d.BackUpGuest(ctx, storage, guest, notes, exclude)
+func (g guestDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, exclude []string, onTask func(string)) (string, bool, error) {
+	r, err := g.d.BackUpGuest(ctx, storage, guest, notes, exclude, onTask)
 	if errors.Is(err, proxmox.ErrManyNewVolumes) {
 		err = fmt.Errorf("%w: %w", backup.ErrManyNew, err)
 	}
 	return r.Volid, r.Warned, err
+}
+
+func (g guestDriver) GuestBackupTask(ctx context.Context, storage, guest, upid string) (backup.GuestTask, error) {
+	t, err := g.d.GuestBackupTask(ctx, storage, guest, upid)
+	switch {
+	case errors.Is(err, proxmox.ErrNotGuestTask):
+		return backup.GuestTask{}, fmt.Errorf("%w: %w", backup.ErrNotGuestTask, err)
+	case errors.Is(err, driver.ErrNotFound):
+		return backup.GuestTask{}, fmt.Errorf("%w: %w", backup.ErrGuestGone, err)
+	case err != nil:
+		return backup.GuestTask{}, err
+	}
+	return backup.GuestTask{Running: t.Running, OK: t.OK, Volid: t.Volid}, nil
 }
 
 func (g guestDriver) ListGuestBackups(ctx context.Context, storage, guest string) ([]backup.Volume, error) {

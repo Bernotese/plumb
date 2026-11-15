@@ -344,11 +344,18 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	if reason == "" {
 		reason = "restore " + target + " from " + restoreText(v)
 	}
+	named := map[int]bool{}
+	if dk, _, err := docDisks(target, r); err == nil {
+		for _, d := range dk {
+			named[d.Slot] = true
+		}
+	}
+	diskChanges, diskNotes := e.restoreDiskChanges(ctx, b, v, st, named) // T-238
 	tp := TargetPlan{Target: target, Resources: []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
-		Risk: wire.RiskDestructive, Changes: []wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive},
-			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety, failedBefore), Risk: wire.RiskDestructive}}}}}
+		Risk: wire.RiskDestructive, Changes: append([]wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive},
+			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety, failedBefore), Risk: wire.RiskDestructive}}, diskChanges...)}}}
 	changes, _ := json.Marshal([]TargetPlan{tp})
-	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: restoreNotes(target, r.Adopted != nil, skipSafety || failedBefore, failedBefore, v.Size)})
+	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: append(restoreNotes(target, r.Adopted != nil, skipSafety || failedBefore, failedBefore, v.Size), diskNotes...)})
 	p, err := e.st.CreatePlan(ctx, store.Plan{BaseRevision: head.ID, Origin: OriginRestore, Proposal: proposal,
 		Changes: changes, Risk: string(wire.RiskDestructive), Reason: reason, Author: author,
 		HumanOnly: []string{HumanOnlyGuestRestore}})
@@ -412,8 +419,15 @@ func restorePlanned(p store.Plan) (TargetPlan, string, string, error) {
 	if err := json.Unmarshal(p.Changes, &tps); err != nil {
 		return TargetPlan{}, "", "", err
 	}
-	if len(tps) != 1 || len(tps[0].Resources) != 1 || len(tps[0].Resources[0].Changes) < 1 || len(tps[0].Resources[0].Changes) > 2 {
+	if len(tps) != 1 || len(tps[0].Resources) != 1 || len(tps[0].Resources[0].Changes) < 1 {
 		return TargetPlan{}, "", "", errors.New("plan: a restore Plan has one Target and the restore change")
+	}
+	// After the restore change: the safety backup, and the data disks that
+	// the backup lacks (T-238). Nothing else.
+	for i, c := range tps[0].Resources[0].Changes[1:] {
+		if (i > 0 || c.Attr != AttrSafetyBackup) && driver.DiskIndex(c.Attr) == 0 {
+			return TargetPlan{}, "", "", fmt.Errorf("plan: a restore Plan has no change %q", c.Attr)
+		}
 	}
 	c := tps[0].Resources[0].Changes[0]
 	text, _ := c.To.(string)

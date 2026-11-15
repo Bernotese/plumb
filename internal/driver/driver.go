@@ -96,6 +96,17 @@ type GuestSpec struct {
 	// NICs are the more NICs net1 … net3 (D-399): NICs[i] is net<i+1>. An
 	// entry with an empty Bridge is a gap (Observe: no net<i+1>).
 	NICs []NIC // AttrNIC(1) … AttrNIC(MaxNICs)
+
+	// Disks are the data disks (D-423, D-436), sorted by slot; only the
+	// slots that hold a disk. DisksSet says that the desired state manages
+	// them (a missing disks field manages nothing); Observe always sets it.
+	// A container's mp1 … mp3 that is a host path or a device stays in
+	// Mounts: it is never a data disk.
+	Disks    []Disk // AttrDiskN(1) … AttrDiskN(MaxDisks)
+	DisksSet bool
+	// Unused are the volumes of the guest's unusedN keys (Observe only):
+	// a restore of an older backup leaves a VM disk there (T-244 D9).
+	Unused []string
 }
 
 // MaxNICs is the number of more NICs after net0 (D-399).
@@ -507,10 +518,14 @@ func (e *CreateOnlyError) Error() string {
 // ShrinkError is returned by Diff when the desired disk is smaller than
 // the disk of the guest: Proxmox cannot shrink a disk (D-291, D-299).
 type ShrinkError struct {
+	Slot       int // 0: the main disk; 1 … MaxDisks: a data disk
 	Have, Want int // GiB
 }
 
 func (e *ShrinkError) Error() string {
+	if e.Slot > 0 {
+		return fmt.Sprintf("driver: disk %d has %d GiB and the desired state has %d GiB; Proxmox cannot shrink a disk", e.Slot, e.Have, e.Want)
+	}
 	return fmt.Sprintf("driver: the disk has %d GiB and the desired state has %d GiB; Proxmox cannot shrink a disk", e.Have, e.Want)
 }
 

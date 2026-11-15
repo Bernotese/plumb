@@ -437,7 +437,12 @@ func TestCTOutsideAdditions(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := st.Spec
-	if s.Features != "keyctl=1,nesting=1" || !reflect.DeepEqual(s.Mounts, []string{"mp0=/srv/data,mp=/data", "mp1=local-lvm:vm-9000-disk-1,mp=/var,size=2G"}) ||
+	// mp1 is a volume of the CT on the disk storage: a data disk (D-436),
+	// not a mount point; mp0 (a host path) stays the person's mount.
+	if want := []driver.Disk{{Slot: 1, SizeGB: 2, Path: "/var", Volume: "local-lvm:vm-9000-disk-1"}}; !reflect.DeepEqual(s.Disks, want) || !s.DisksSet {
+		t.Fatalf("disks %+v", s.Disks)
+	}
+	if s.Features != "keyctl=1,nesting=1" || !reflect.DeepEqual(s.Mounts, []string{"mp0=/srv/data,mp=/data"}) ||
 		!reflect.DeepEqual(s.Devices, []string{"dev0=/dev/fuse"}) || !reflect.DeepEqual(s.RawLXC, []string{"lxc.apparmor.profile: unconfined", "lxc.cap.drop: "}) {
 		t.Fatalf("observed %+v", s)
 	}
