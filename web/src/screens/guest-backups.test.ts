@@ -198,6 +198,7 @@ describe("restore wizard", () => {
     expect(text(el("#restore-safety"))).toContain("Plumb takes a safety backup");
     expect(text(el("#restore-safety"))).toContain("nothing is changed");
     expect(text(el("#restore-lost"))).toContain("so you can undo the restore");
+    expect(text(el("#restore-lost"))).toContain("After a restore that worked, it replaces");
     expect(el<HTMLInputElement>("#restore-skip-safety").checked).toBe(false);
   });
 
@@ -250,6 +251,25 @@ describe("restore wizard", () => {
       "safety_backup",
       "kept: the last restore failed; the safety backup from before it stays",
     ]);
+  });
+
+  it("does not promise a safety backup when the issues cannot be read (review L2 of #350)", async () => {
+    const api = adminApi();
+    vi.spyOn(api, "listIssues").mockRejectedValue(new Error("down"));
+    await open(api);
+    el<HTMLButtonElement>("#restore-3f2a9c0d1e4b5a67").click();
+    await until(() => document.querySelector("#restore"));
+    expect(text(el("#restore-safety"))).toContain("Plumb decides");
+    expect(text(el("#restore-safety"))).toContain("of the Plan says which");
+    expect(text(el("#restore-safety"))).not.toContain(
+      "Plumb takes a safety backup of the guest as it is now",
+    );
+    expect(text(el("#restore-lost"))).not.toContain("undo the restore");
+    reset();
+    await open();
+    el<HTMLButtonElement>("#restore-3f2a9c0d1e4b5a67").click();
+    await until(() => document.querySelector("#restore"));
+    expect(document.querySelector("#restore-issues-unknown")).toBeNull();
   });
 
   it("opens the restore of the backup that the Issue names (?restore=)", async () => {

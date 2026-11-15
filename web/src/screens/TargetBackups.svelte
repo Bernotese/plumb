@@ -32,6 +32,8 @@
   let list = $state<GuestBackupList | null>(null);
   /** D-420: the open Issue of a failed restore of this guest, if any. */
   let failed = $state<Issue | null>(null);
+  /** Review L2 of #350: the open Issues could not be read, so "kept" is not known here. */
+  let issuesUnknown = $state(false);
   let error = $state<unknown>(null);
   // M2 of #321, M1/M2 of #330: what the token could do beyond the install (person only).
   let risks = $state<SettingsRisks | null>(null);
@@ -44,13 +46,14 @@
           api.getTarget(name),
           api.listGuestBackups(name),
           // Extra information; the page works without it (the server checks the restore).
-          api.listIssues({ target: name, status: "open" }).catch(() => [] as Issue[]),
+          api.listIssues({ target: name, status: "open" }).catch(() => null),
         ]),
       subscribe: (onEvent, onOpen) => api.events(undefined, onEvent, onOpen),
       onSnapshot: ([t, l, iss]) => {
         target = t;
         list = l;
-        failed = iss.find((i) => i.resource === GUEST_RESTORE_FAILED) ?? null;
+        issuesUnknown = iss === null;
+        failed = iss?.find((i) => i.resource === GUEST_RESTORE_FAILED) ?? null;
       },
       onError: (e) => (error = e),
       onEvent: (e, l) => {
@@ -528,6 +531,13 @@
           {:else if skipSafety}
             No safety backup first: you say the guest is broken already. If the restore fails, only
             another backup brings the guest back.
+          {:else if issuesUnknown}
+            <span id="restore-issues-unknown"
+              >Plumb decides: a safety backup of the guest as it is now, or it keeps the last one
+              (when the last restore failed). Plumb could not read the issues of this Target, so the
+              line <span class="mono">safety_backup</span> of the Plan says which. If Plumb takes a safety
+              backup and it fails, nothing is changed.</span
+            >
           {:else}
             Plumb takes a safety backup of the guest as it is now (about {bytesText(b.size)} on the backup
             storage; below 10 % free Plumb refuses it). If that backup fails, nothing is changed, and
@@ -560,10 +570,11 @@
           Access comes back as it was then: SSH keys, passwords and users that a person removed
           later work again.
         </li>
-        {#if !failed && !skipSafety}
+        {#if !failed && !skipSafety && !issuesUnknown}
           <li>
             The safety backup stays in the list ("safety backup before a restore"), so you can undo
-            the restore. It replaces the older safety backup of this guest.
+            the restore. After a restore that worked, it replaces the older safety backup of this
+            guest.
           </li>
         {/if}
         <li>
