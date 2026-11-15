@@ -213,6 +213,7 @@ func (s *Server) Handler() http.Handler {
 	route("POST /api/v1/targets/{name}/reenroll", planTier, s.reenroll)
 	route("POST /api/v1/targets/{name}/agent-update", planTier, s.agentUpdate)
 	route("POST /api/v1/targets/{name}/repair", planTier, s.repairTarget)
+	route("POST /api/v1/targets/{name}/restore", planTier, s.restoreGuest) // T-222
 
 	route("GET /api/v1/plans", read, s.listPlans)
 	route("POST /api/v1/plans", planTier, s.createPlan)

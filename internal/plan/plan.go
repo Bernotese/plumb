@@ -182,6 +182,9 @@ type Config struct {
 	// network (serve --dev). T-219.
 	InstallID  string
 	NetAllowed func(bridge string, tag int) bool
+	// GuestRestore finds and restores guest backups (T-222); nil: no guest
+	// backups, a restore is refused.
+	GuestRestore GuestRestorer
 	// BackupKeepDeletes is the number of backups that the next job deletes
 	// when target's keep becomes keep (T-221, D-417); BackupStorageNote
 	// is the warning of the guest backup storage for a new backup field
@@ -258,6 +261,10 @@ type Config struct {
 type Engine struct {
 	cfg Config
 	st  *store.Store
+	// restored holds the restore Plans whose restore call succeeded
+	// (T-222): afterRestore makes their re-enroll Plan also after a failed
+	// later step.
+	restored sync.Map
 	// parkMu orders the park write of a delete Run and a late unbind
 	// result (T-210 M1): either order ends the park. lateOK holds a
 	// confirmed late unbind that found no park yet: target → agent id and
