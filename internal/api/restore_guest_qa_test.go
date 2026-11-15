@@ -8,9 +8,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -235,6 +237,71 @@ func TestRestoreQAAdopted(t *testing.T) {
 			}
 			if re, _ := e.st.PendingPlans(ctx, plan.OriginReenroll); len(re) != 0 {
 				t.Fatalf("a re-enroll Plan for an adopted Target: %v", re)
+			}
+		})
+	}
+}
+
+// failWrites makes writes to a table fail, through a second connection
+// to the env's database (an SQLite trigger): the store has no fault hook.
+func (e *env) failWrites(t *testing.T, op, table string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(e.dir, "plumb.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	q := "CREATE TRIGGER qa_fail_" + strings.ToLower(op) + "_" + table + " BEFORE " + op + " ON " + table + " BEGIN SELECT RAISE(ABORT, 'qa: the write fails'); END"
+	if _, err := db.Exec(q); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every failure point after the revoke names the way back (review F1 of
+// #335): the drop of the host key pins and the binding write after the
+// restore.
+func TestRestoreQAWayBackAfterRevoke(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		setup      func(t *testing.T, e *env, fr *phasedRestorer)
+		reenroll   int
+	}{
+		{"pins cannot be dropped", "the host key pins could not be dropped", func(t *testing.T, e *env, _ *phasedRestorer) {
+			e.failWrites(t, "DELETE", "guest_host_key")
+		}, 0},
+		{"binding cannot be written", "restored, but the binding could not be written", func(t *testing.T, e *env, fr *phasedRestorer) {
+			fr.after = func() { e.failWrites(t, "UPDATE", "binding") }
+		}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := &phasedRestorer{}
+			e := newEnv(t, true, func(c *plan.Config) { c.GuestRestore = fr })
+			adm := e.admin()
+			e.seed(adm, "web1")
+			e.approve(adm, "allow restart", restoreTarget("web1", true))
+			ctx := context.Background()
+			b, _ := e.st.GetBinding(ctx, state.KindTarget, "web1")
+			if ok, err := e.st.PinFirstHostKeys(ctx, "web1", b.GuestKey(), []string{"SHA256:old"}, time.Now()); err != nil || !ok {
+				t.Fatalf("pin: %v %v", ok, err)
+			}
+			fr.good = recordedVolume(t, e, "web1")
+			id := e.proposeRestore(adm, "web1", fr.good.ID)
+			tc.setup(t, e, fr)
+			if code, body := adm.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 202 {
+				t.Fatalf("approve: %d %s", code, body)
+			}
+			e.eng.Wait()
+			r, _ := e.st.RunOfPlan(ctx, id)
+			steps, _ := e.st.Steps(ctx, r.ID)
+			if r.Status != "failed" || len(steps) != 1 || !strings.Contains(steps[0].Output, tc.want) ||
+				!strings.Contains(steps[0].Output, "The way back: re-enroll the Target (POST /targets/web1/reenroll)") {
+				t.Fatalf("run %s, steps %+v", r.Status, steps)
+			}
+			if _, err := e.st.AgentByTarget(ctx, "web1"); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("the credential after a failure after the revoke: %v", err)
+			}
+			if re, _ := e.st.PendingPlans(ctx, plan.OriginReenroll); len(re) != tc.reenroll {
+				t.Fatalf("re-enroll plans %d, want %d (restored disk: %v)", len(re), tc.reenroll, tc.reenroll == 1)
 			}
 		})
 	}
