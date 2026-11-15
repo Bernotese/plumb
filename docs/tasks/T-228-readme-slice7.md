@@ -22,4 +22,8 @@ Slice 7, child card **C12** of T-215. The user README covers slice 7.
 - Other rows. A restore after the guest is gone (D-411). Any release step. The user's own installation (U7).
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-frontend/T-228-readme-slice7` · PR to main · `make lint test` ok (README only; no lint covers it).
+- README: install options (`--extra-bridge`, `--extra-vlan`, `--guest-backup-storage`, `--guest-backup-clear`), the new token rights and the token's own power at the PVE API, U7, more NICs (VM netplan by MAC, gateway rule, hot-plug, refusals), Issues (no Accept for a NIC), the history hint, adopted = one card.
+- New section "Guest backups": storage, encryption, groups, delete, keep rule (T-233), restore wizard, safety backup (D-420), failed restore and its gate (T-234), what a backup holds (T-231), gone guest, Target delete.
+- Known limits: 4 cards, restore only over the same guest, an Image delete leaves templates/files in Proxmox (stock Image); `--remove` hint fixed.
+- Pictures from the mock: `readme-guest-backups.png`, `readme-guest-restore.png`. Checked against main after T-225 passed.
