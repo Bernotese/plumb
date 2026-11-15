@@ -41,7 +41,8 @@ type fakePVE struct {
 	// refuseTags: a config write with tags (or a delete of them) is 403,
 	// as with a datacenter user-tag-access other than free (D-299).
 	refuseTags bool
-	resizes    []string // "<vmid> <disk> <size>" of each resize
+	resizes    []string  // "<vmid> <disk> <size>" of each resize
+	disks      diskState // T-238
 	// failCloudinit: the next PUT …/cloudinit (regenerate) fails.
 	failCloudinit bool
 	taskPolls     int      // polls before a task stops
@@ -712,6 +713,13 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 			return
 		}
 		for _, k := range strings.Split(r.Form.Get("delete"), ",") {
+			if ok, err := f.diskDelete(vm, k); ok {
+				if err != nil {
+					fail(w, 500, err.Error(), nil)
+					return
+				}
+				continue
+			}
 			if k != "" {
 				if driveKey.MatchString(k) && strings.Contains(vm.cfg[k], "-cloudinit") {
 					vm.ci = nil // Proxmox removes the cloud-init volume, no unused line
@@ -722,7 +730,7 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 		}
 		newCI := false
 		for k, v := range r.Form {
-			if k == "digest" || k == "delete" {
+			if k == "digest" || k == "delete" || f.diskWrite(vm, id, k, v[0]) {
 				continue
 			}
 			if st, ok := strings.CutSuffix(v[0], ":cloudinit"); ok && driveKey.MatchString(k) {
@@ -769,12 +777,16 @@ func (f *fakePVE) qemu(w http.ResponseWriter, r *http.Request, key string, id in
 		reply(w, 200, nil)
 	case r.Method == "PUT" && sub == "/resize":
 		want := r.Form.Get("size")
-		have := parseProps(vm.cfg["scsi0"])["size"]
+		disk := r.Form.Get("disk")
+		if !reFakeDataDisk.MatchString(disk) {
+			disk = "scsi0"
+		}
+		have := parseProps(vm.cfg[disk])["size"]
 		if sizeGB(want) < sizeGB(have) {
 			fail(w, 500, "shrinking disks is not supported", nil)
 			return
 		}
-		vm.cfg["scsi0"] = replaceProp(vm.cfg["scsi0"], "size", want)
+		vm.cfg[disk] = replaceProp(vm.cfg[disk], "size", want)
 		f.resizes = append(f.resizes, fmt.Sprintf("%d %s %s", id, r.Form.Get("disk"), want))
 		reply(w, 200, f.task(key))
 	case r.Method == "POST" && sub == "/template":

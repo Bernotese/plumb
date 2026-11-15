@@ -2,6 +2,7 @@ package wire
 
 import (
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -258,4 +259,34 @@ func resolvedForms(p string, links map[string]string) []string {
 		}
 	}
 	return forms
+}
+
+// HoldsAgentPath reports whether a mount over p hides an agent path: p is
+// an agent path, or a parent of one (N1 of the #360 re-check, T-238). p is
+// cleaned first; the aliases of pathAliases count.
+func HoldsAgentPath(p string) bool {
+	if !strings.HasPrefix(p, "/") {
+		return false
+	}
+	p = path.Clean(p)
+	if p == "/" || IsAgentPath(p) {
+		return true
+	}
+	var roots []string
+	roots = append(roots, agentDirs...)
+	roots = append(roots, agentFiles...)
+	roots = append(roots, unitDirs...)
+	for _, a := range pathAliases {
+		for _, r := range slices.Clone(roots) {
+			if r == a[1] || strings.HasPrefix(r, a[1]+"/") {
+				roots = append(roots, a[0]+r[len(a[1]):])
+			}
+		}
+	}
+	for _, r := range roots {
+		if strings.HasPrefix(r, p+"/") {
+			return true
+		}
+	}
+	return false
 }

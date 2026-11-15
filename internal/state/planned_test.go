@@ -54,8 +54,8 @@ func TestPlannedFieldsRefused(t *testing.T) {
 	}
 }
 
-// T-237: guest.disks passes the schema but is refused as planned until
-// T-238 serves it; the schema itself refuses the shapes that must never
+// T-237, T-238: guest.disks passes the schema and is served (the planned
+// guard is gone); the schema itself refuses the shapes that must never
 // reach the driver (a 4th disk, a bad slot or size, a storage, mount
 // options, a host path that is not absolute).
 func TestPlannedDisks(t *testing.T) {
@@ -72,10 +72,9 @@ func TestPlannedDisks(t *testing.T) {
 		"vm":  target("vm", `[{"slot":1,"size_gb":20},{"slot":3,"size_gb":4096}]`),
 		"lxc": target("lxc", `[{"slot":2,"size_gb":8,"path":"/srv/data"}]`),
 	} {
-		t.Run("planned "+name, func(t *testing.T) {
-			_, err := Validate([]Doc{img, ctImg, d})
-			if err == nil || !strings.Contains(err.Error(), "/spec/guest/disks") || !strings.Contains(err.Error(), "planned (T-238)") {
-				t.Fatalf("want the planned refusal, got %v", err)
+		t.Run("served "+name, func(t *testing.T) {
+			if _, err := Validate([]Doc{img, ctImg, d}); err != nil {
+				t.Fatalf("guest.disks is served (T-238): %v", err)
 			}
 		})
 	}

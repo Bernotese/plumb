@@ -106,6 +106,9 @@ func DiffGuest(desired GuestSpec, observed GuestState) ([]wire.Change, error) {
 	if have := max(observed.Spec.DiskGB, observed.Next().DiskGB); desired.DiskGB < have {
 		return nil, &ShrinkError{Have: have, Want: desired.DiskGB}
 	}
+	if err := diskErrors(desired, observed); err != nil {
+		return nil, err
+	}
 	return changes, nil
 }
 
@@ -152,7 +155,7 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 				risk = wire.RiskReversible
 			}
 			out = append(out, wire.Change{Attr: attr, From: p, To: d, Risk: risk, Pending: true})
-		case equal(p, d) && (IsColdStart(attr) || attr == AttrFeatures || NICIndex(attr) > 0):
+		case equal(p, d) && (IsColdStart(attr) || attr == AttrFeatures || NICIndex(attr) > 0 || DiskIndex(attr) > 0):
 			// waits for a restart: a state, not drift (D-195); a container
 			// takes its features at the next start (host C/D4)
 		default:
@@ -183,6 +186,20 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 			add(AttrNIC(n), have.NICAt(n).Value(), next.NICAt(n).Value(), desired.NICAt(n).Value(), nicRisk, false)
 		}
 	}
+	// Data disks (D-436): only when the desired state manages them, never
+	// on an adopted guest (refused as disks-not-adoptable). The risk
+	// depends on the direction (DiskRisk); a remove keeps it also as a
+	// pending value.
+	if desired.DisksSet && !desired.Adopted {
+		for n := 1; n <= MaxDisks; n++ {
+			r, p, d := have.DiskAt(n), next.DiskAt(n), desired.DiskAt(n)
+			from := r
+			if from == nil {
+				from = p
+			}
+			add(AttrDiskN(n), r.Value(), p.Value(), d.Value(), DiskRisk(from, d), d == nil)
+		}
+	}
 	if desired.TagsSet { // missing tags: not managed
 		add(AttrTags, list(NormTags(have.Tags)), list(NormTags(next.Tags)), list(NormTags(desired.Tags)), guestRisk[AttrTags], false)
 	}
@@ -197,7 +214,8 @@ func DriftGuest(desired GuestSpec, observed GuestState) []wire.Change {
 	if !desired.Adopted { // D-391: an adopted container keeps its features
 		add(AttrFeatures, have.Features, next.Features, desired.Features, wire.RiskDestructive, true)
 	}
-	add(AttrMounts, list(have.Mounts), list(next.Mounts), list(desired.Mounts), wire.RiskDestructive, true)
+	managed := desired.DisksSet && !desired.Adopted
+	add(AttrMounts, list(mountsOf(have, managed)), list(mountsOf(next, managed)), list(desired.Mounts), wire.RiskDestructive, true)
 	add(AttrDevices, list(have.Devices), list(next.Devices), list(desired.Devices), wire.RiskDestructive, true)
 	add(AttrRawLXC, list(have.RawLXC), list(next.RawLXC), list(desired.RawLXC), wire.RiskDestructive, true)
 	return out

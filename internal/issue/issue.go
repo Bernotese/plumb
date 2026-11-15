@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +34,7 @@ const (
 // restore (D-303), and agent:values of the copy rule (D-331).
 func IgnoreOnly(resource string) bool {
 	return resource == wire.GuestAddressID || resource == plan.GuestMissingID || resource == plan.AgentSilentID ||
-		resource == GuestValuesID || resource == plan.GuestRestoreFailedID
+		resource == GuestValuesID || resource == plan.GuestRestoreFailedID || resource == plan.GuestVolumeLeftID
 }
 
 // ErrAcceptSensitive is returned for accept on a sensitive change: the
@@ -72,6 +74,10 @@ func AcceptRefused(resource string, changes []wire.Change) error {
 			return ErrAcceptOutside
 		case resource == wire.GuestConfigID && nicAttrs[c.Attr]:
 			return ErrAcceptNIC
+		case resource == wire.GuestConfigID && diskAttrs[c.Attr]:
+			if _, _, ok := diskGrowAccept(c); !ok {
+				return ErrAcceptDisk
+			}
 		}
 	}
 	return nil
@@ -81,6 +87,64 @@ func AcceptRefused(resource string, changes []wire.Change) error {
 // (driver.AttrNIC(1) … AttrNIC(3), T-219); this package does not import
 // the driver (ARCHITECTURE §2).
 var nicAttrs = map[string]bool{"nic1": true, "nic2": true, "nic3": true}
+
+// diskAttrs are the guest:config attributes of the data disks
+// (driver.AttrDiskN(1) … AttrDiskN(3), T-238).
+var diskAttrs = map[string]bool{"disk1": true, "disk2": true, "disk3": true}
+
+// ErrAcceptDisk is returned for accept of a data disk change other than a
+// Plumb disk that grew in Proxmox (ARCHITECTURE §21): a foreign volume, an
+// added or removed disk is never taken into the document.
+var ErrAcceptDisk = errors.New("issue: accept is possible for a data disk only when Plumb's disk grew in Proxmox; revert it, or change guest.disks in the Target")
+
+// reDiskValue is a Plumb data disk value ("<n> GiB", "<n> GiB at <path>"),
+// as driver.Disk.Value writes it.
+var reDiskValue = regexp.MustCompile(`^([1-9][0-9]*) GiB(?: at (/.*))?$`)
+
+// diskGrowAccept reports whether c is a Plumb data disk that is bigger in
+// the guest (from) than desired (to), with the same path; size is the
+// guest's size.
+func diskGrowAccept(c wire.Change) (slot, size int, ok bool) {
+	f, _ := c.From.(string)
+	t, _ := c.To.(string)
+	mf, mt := reDiskValue.FindStringSubmatch(f), reDiskValue.FindStringSubmatch(t)
+	if mf == nil || mt == nil || mf[2] != mt[2] {
+		return 0, 0, false
+	}
+	from, _ := strconv.Atoi(mf[1])
+	to, _ := strconv.Atoi(mt[1])
+	slot, _ = strconv.Atoi(strings.TrimPrefix(c.Attr, "disk"))
+	return slot, from, from > to
+}
+
+// acceptDisks writes the grown sizes of Plumb data disks into
+// guest.disks of spec and returns the other changes.
+func acceptDisks(spec map[string]any, changes []wire.Change) ([]wire.Change, error) {
+	var rest []wire.Change
+	for _, c := range changes {
+		if !diskAttrs[c.Attr] {
+			rest = append(rest, c)
+			continue
+		}
+		slot, size, ok := diskGrowAccept(c)
+		if !ok {
+			return nil, ErrAcceptDisk
+		}
+		guest, _ := spec["guest"].(map[string]any)
+		list, _ := guest["disks"].([]any)
+		found := false
+		for _, item := range list {
+			m, _ := item.(map[string]any)
+			if s, err := strconv.Atoi(fmt.Sprint(m["slot"])); err == nil && s == slot {
+				m["size_gb"], found = size, true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("issue: guest.disks of the head names no disk %d", slot)
+		}
+	}
+	return rest, nil
+}
 
 // ErrAcceptNIC is returned for accept of a more NIC (nic1 … nic3, D-418):
 // the bridge, tag and MAC of a hand change are not taken into the
@@ -140,8 +204,8 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 					return err
 				}
 			}
-			if it.Resource == plan.GuestRestoreFailedID {
-				// T-234 (M1 of #352): no Rule and no earlier "ignore
+			if it.Resource == plan.GuestRestoreFailedID || it.Resource == plan.GuestVolumeLeftID {
+				// T-234 (M1 of #352); guest:volume-left (D-437) likewise: no Rule and no earlier "ignore
 				// once" may keep the Issue of a failed restore from
 				// opening: it is the gate that protects the way back.
 				if err := s.openIssue(ctx, target, it); err != nil {
@@ -236,7 +300,7 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 // of a restore: only the controller sends these resources (the link
 // refuses them from an agent), so the text is ours.
 func systemReason(it wire.Item) string {
-	if it.Resource != plan.GuestMissingID && it.Resource != plan.AgentSilentID && it.Resource != plan.GuestRestoreFailedID {
+	if it.Resource != plan.GuestMissingID && it.Resource != plan.AgentSilentID && it.Resource != plan.GuestRestoreFailedID && it.Resource != plan.GuestVolumeLeftID {
 		return ""
 	}
 	return it.Output
@@ -393,6 +457,11 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 			return state.Doc{}, err
 		}
 		return state.Doc{Kind: doc.Kind, Name: doc.Name, Spec: spec}, nil
+	}
+	if iss.Resource == wire.GuestConfigID { // T-238: a grown data disk goes into guest.disks
+		if changes, err = acceptDisks(doc.Spec, changes); err != nil {
+			return state.Doc{}, err
+		}
 	}
 	overrides, _ := doc.Spec["overrides"].(map[string]any)
 	if overrides == nil {
