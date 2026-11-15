@@ -56,7 +56,6 @@ func (s *safetyEnv) issue(t *testing.T, id int64) issueOut {
 	return v
 }
 
-
 func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	s := newSafetyEnv(t)
 	e := s.e
