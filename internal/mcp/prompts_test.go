@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -547,5 +548,41 @@ func TestCapListDropsTokensFirst(t *testing.T) {
 	}
 	if _, left := capList(items, 1, true, person); left != len(items) {
 		t.Fatalf("a budget of 1 byte keeps %d", len(items)-left)
+	}
+}
+
+// H1 of #372: the list cut is linear. 20 000 changes (a guest-made Issue
+// of about 2 MiB, below maxRead) cost a bounded number of encodes and
+// little time; the old cut encoded the whole list again for every drop
+// (2600 changes: 3.6 s; 10 000: 58 s).
+func TestCapListLinear(t *testing.T) {
+	var ch []any
+	for i := range 20000 {
+		ch = append(ch, map[string]any{"attr": fmt.Sprintf("a%05d", i), "from": strings.Repeat("x", 80), "to": "y", "risk": "reversible"})
+	}
+	issue := map[string]any{"id": json.Number("7"), "changes": ch}
+	before := encodeCalls.Load()
+	start := time.Now()
+	b, err := encodePart(part{"issue", issue})
+	calls, took := encodeCalls.Load()-before, time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxItems := 2 * maxListPart / minItemBytes
+	if limit := int64(10*maxItems + 100); calls > limit {
+		t.Errorf("%d encodes for 20 000 changes; a linear cut needs at most %d", calls, limit)
+	}
+	if took > 3*time.Second {
+		t.Errorf("the cut took %v", took)
+	}
+	var is struct {
+		Changes []any
+		Left    int `json:"changes_left_out"`
+	}
+	if err := json.Unmarshal(b, &is); err != nil || len(is.Changes)+is.Left != 20000 || len(is.Changes) == 0 {
+		t.Fatalf("issue part: %d changes kept, %d left out, %v", len(is.Changes), is.Left, err)
+	}
+	if !strings.Contains(string(b), `"a19999"`) || strings.Contains(string(b), `"a00000"`) {
+		t.Error("the cut did not keep the newest and drop the oldest")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -389,42 +390,76 @@ func encodePart(p part) ([]byte, error) {
 }
 
 // capList fits items into budget bytes (encoded): each item into an equal
-// share first, then it drops the oldest items; with keep, the oldest item
-// that keep does not hold goes first. It returns the kept items and how
-// many were dropped.
+// share first, then it drops the oldest items; with keep, the items that
+// keep does not hold go first (the oldest first). It returns the kept
+// items, in their order, and how many were dropped.
+//
+// It is linear in the items (H1 of #372): the drop order is fixed once,
+// the count is capped before any item is encoded (an item takes at least
+// minItemBytes), each kept item is encoded a bounded number of times, and
+// a drop subtracts that item's size instead of encoding the list again.
 func capList(items []any, budget int, oldestFirst bool, keep func(any) bool) ([]any, int) {
-	if len(items) == 0 {
+	n := len(items)
+	if n == 0 {
 		return items, 0
 	}
-	share := max(budget/len(items), 512)
-	out := make([]any, len(items))
-	for i, it := range items {
-		out[i] = fitItem(it, share)
-	}
-	size := func() int { return len(encode(out)) }
-	left := 0
-	for size() > budget && len(out) > 0 {
-		order := make([]int, len(out)) // the oldest first
-		for i := range out {
-			order[i] = i
+	// The drop order: the items that keep does not hold first, the oldest
+	// of each group first.
+	order := make([]int, 0, n)
+	for pass := 0; pass < 2; pass++ {
+		for k := range n {
+			i := k
 			if !oldestFirst {
-				order[i] = len(out) - 1 - i
+				i = n - 1 - k
+			}
+			held := keep != nil && keep(items[i])
+			if (pass == 0) != held {
+				order = append(order, i)
 			}
 		}
-		drop := order[0]
-		if keep != nil {
-			for _, i := range order {
-				if !keep(out[i]) {
-					drop = i
-					break
-				}
-			}
-		}
-		out = slices.Delete(out, drop, drop+1)
+	}
+	dropped := make([]bool, n)
+	left, next := 0, 0
+	drop := func() int {
+		i := order[next]
+		next++
+		dropped[i] = true
 		left++
+		return i
+	}
+	for n-left > max(budget/minItemBytes, 1) {
+		drop()
+	}
+	share := max(budget/(n-left), 512)
+	fitted := make([]any, n)
+	size := make([]int, n)
+	total := 2 // the brackets
+	for i := range n {
+		if dropped[i] {
+			continue
+		}
+		fitted[i] = fitItem(items[i], share)
+		size[i] = len(encode(fitted[i])) + 1 // its comma
+		total += size[i]
+	}
+	for total-1 > budget && next < n {
+		total -= size[drop()]
+	}
+	var out []any
+	for i := range n {
+		if !dropped[i] {
+			out = append(out, fitted[i])
+		}
 	}
 	return out, left
 }
+
+// encodeCalls counts the calls of encode (a test bounds the work).
+var encodeCalls atomic.Int64
+
+// minItemBytes is the least that one encoded list item takes; capList
+// drops the items above budget/minItemBytes before it encodes any.
+const minItemBytes = 32
 
 // fitItem cuts the strings of an item shorter until it fits into budget
 // bytes, down to 16 runes per string.
@@ -445,6 +480,7 @@ func fitItem(it any, budget int) any {
 // characters, U+2028/9) escaped, so that no such rune reaches the client
 // raw (L1 of #367). Outside strings the encoding has no such rune.
 func encode(v any) []byte {
+	encodeCalls.Add(1)
 	var buf bytes.Buffer
 	e := json.NewEncoder(&buf)
 	e.SetEscapeHTML(false)
