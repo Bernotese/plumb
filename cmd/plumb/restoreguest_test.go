@@ -15,14 +15,14 @@ import (
 // id; in restored mode the raw driver is never written.
 func TestGuestRestorerOf(t *testing.T) {
 	x := proxmox.InstallExtras{GuestBackupStorage: "plumb-backup"}
-	if guestRestorerOf(fake.New(), nil, x, "iid", nil) != nil {
+	if guestRestorerOf(fake.New(), nil, x, "iid", nil, nil) != nil {
 		t.Error("a restorer for the fake driver")
 	}
 	pd := &proxmox.Driver{}
-	if guestRestorerOf(pd, nil, proxmox.InstallExtras{}, "iid", nil) != nil || guestRestorerOf(pd, nil, x, "", nil) != nil {
+	if guestRestorerOf(pd, nil, proxmox.InstallExtras{}, "iid", nil, nil) != nil || guestRestorerOf(pd, nil, x, "", nil, nil) != nil {
 		t.Error("a restorer without storage or install id")
 	}
-	g := guestRestorerOf(pd, nil, x, "iid", func() bool { return true })
+	g := guestRestorerOf(pd, nil, x, "iid", func() bool { return true }, nil)
 	if g == nil {
 		t.Fatal("no restorer")
 	}

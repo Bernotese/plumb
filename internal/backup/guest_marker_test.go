@@ -12,7 +12,7 @@ const (
 )
 
 func TestMarkerRoundTrip(t *testing.T) {
-	for _, m := range []Marker{{tInstall, "db1", tLineage, false}, {tInstall, "web.lan", tLineage, true}} {
+	for _, m := range []Marker{{tInstall, "db1", tLineage, false, false}, {tInstall, "web.lan", tLineage, true, false}} {
 		s, err := m.String()
 		if err != nil {
 			t.Fatal(err)
@@ -23,11 +23,11 @@ func TestMarkerRoundTrip(t *testing.T) {
 		}
 	}
 	for _, bad := range []Marker{
-		{"", "db1", tLineage, false},                 // dev mode: no install id → no marker, no backup
-		{tInstall, "{{guestname}}", tLineage, false}, // a template name
-		{tInstall, "db1\\n", tLineage, false},
-		{tInstall, "db1", "short", false},
-		{"a:b", "db1", tLineage, false},
+		{"", "db1", tLineage, false, false},                 // dev mode: no install id → no marker, no backup
+		{tInstall, "{{guestname}}", tLineage, false, false}, // a template name
+		{tInstall, "db1\\n", tLineage, false, false},
+		{tInstall, "db1", "short", false, false},
+		{"a:b", "db1", tLineage, false, false},
 	} {
 		if _, err := bad.String(); err == nil {
 			t.Errorf("marker %+v accepted", bad)
@@ -57,10 +57,10 @@ func marker(t *testing.T, m Marker) string {
 // lineage is plumb; retention keeps keep scheduled + 2 manual and touches
 // nothing else.
 func TestClassifyAndRetention(t *testing.T) {
-	own := marker(t, Marker{tInstall, "db1", tLineage, false})
-	ownM := marker(t, Marker{tInstall, "db1", tLineage, true})
-	oldLineage := marker(t, Marker{tInstall, "db1", "fedcba9876543210", false})
-	otherInstall := marker(t, Marker{"7f1c2a9e-3b4d-4e5f-8a7b-0c1d2e3f4a5b", "db1", tLineage, false})
+	own := marker(t, Marker{tInstall, "db1", tLineage, false, false})
+	ownM := marker(t, Marker{tInstall, "db1", tLineage, true, false})
+	oldLineage := marker(t, Marker{tInstall, "db1", "fedcba9876543210", false, false})
+	otherInstall := marker(t, Marker{"7f1c2a9e-3b4d-4e5f-8a7b-0c1d2e3f4a5b", "db1", tLineage, false, false})
 	var vols []Volume
 	for i := range 5 {
 		vols = append(vols, vol(i, own)) // days 1–5 scheduled
@@ -142,7 +142,7 @@ func TestClassifyAndRetention(t *testing.T) {
 // recorded volume; a record whose trigger or Target the marker does not
 // match is never Plumb's (n1: classify by Target name).
 func TestClassifyForgedMarkers(t *testing.T) {
-	own := marker(t, Marker{tInstall, "db1", tLineage, false})
+	own := marker(t, Marker{tInstall, "db1", tLineage, false, false})
 	var vols []Volume
 	rec := map[string]Recorded{}
 	for i := range 3 {
@@ -153,9 +153,9 @@ func TestClassifyForgedMarkers(t *testing.T) {
 	for i := 10; i < 13; i++ { // newer forgeries, not recorded
 		vols = append(vols, vol(i, own))
 	}
-	trig := vol(20, marker(t, Marker{tInstall, "db1", tLineage, true})) // marker says manual, record says scheduled
+	trig := vol(20, marker(t, Marker{tInstall, "db1", tLineage, true, false})) // marker says manual, record says scheduled
 	rec[trig.Volid] = recOf(trig, tLineage, TriggerScheduled)
-	other := vol(21, marker(t, Marker{tInstall, "db2", tLineage, false})) // another Target's name, recorded here
+	other := vol(21, marker(t, Marker{tInstall, "db2", tLineage, false, false})) // another Target's name, recorded here
 	rec[other.Volid] = recOf(other, tLineage, TriggerScheduled)
 	vols = append(vols, trig, other)
 	c := Classify(vols, tInstall, "db1", tLineage, rec)
@@ -193,7 +193,7 @@ func recOf(v Volume, lineage, trigger string) Recorded {
 // archive) is not Plumb's; n2: notes changed to another lineage are not
 // Plumb's either.
 func TestClassifyReplacedContent(t *testing.T) {
-	own := marker(t, Marker{tInstall, "db1", tLineage, false})
+	own := marker(t, Marker{tInstall, "db1", tLineage, false, false})
 	v := vol(1, own)
 	v.Size = 100
 	rec := map[string]Recorded{v.Volid: recOf(v, tLineage, TriggerScheduled)}
@@ -205,7 +205,7 @@ func TestClassifyReplacedContent(t *testing.T) {
 	later := v
 	later.Time = v.Time.Add(time.Second)
 	relined := v
-	relined.Notes = marker(t, Marker{tInstall, "db1", "fedcba9876543210", false})
+	relined.Notes = marker(t, Marker{tInstall, "db1", "fedcba9876543210", false, false})
 	for name, x := range map[string]Volume{"size": bigger, "time": later, "lineage": relined} {
 		if c := Classify([]Volume{x}, tInstall, "db1", tLineage, rec); c[0].Kind != KindUnmarked {
 			t.Errorf("%s changed: %s", name, c[0].Kind)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Bernotese/plumb/internal/backup"
+	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/proxmox"
 	"github.com/Bernotese/plumb/internal/plan"
 )
@@ -27,6 +28,9 @@ func (g guestDriver) BackUpGuest(ctx context.Context, storage, guest, notes stri
 
 func (g guestDriver) ListGuestBackups(ctx context.Context, storage, guest string) ([]backup.Volume, error) {
 	vols, err := g.d.ListGuestBackups(ctx, storage, guest)
+	if errors.Is(err, driver.ErrNotFound) {
+		return nil, fmt.Errorf("%w: %w", backup.ErrGuestGone, err) // S3 of T-225
+	}
 	if err != nil {
 		return nil, err
 	}
