@@ -28,8 +28,20 @@ Owner: pl-backend. Reviewer: pl-reviewer. Log: `docs/tasks/T-244.log.md`. A fact
 - D9: on a VM restore Plumb finds the newer disk as `unusedN`. C2 must decide: re-attach it, or free it in the next Run. It must not make a new empty disk beside it. On an LXC the data is gone: the restore Plan must say so.
 - D10: make the C2 `mpN` managed before slice 8 ships. For a hand-made `mpN`, C5 must open an Issue (or name it in the Run) when the re-enroll is refused.
 
+### D13 – LXC mount path through a symlink (L2 of the #360 review)
+In the test CT: `/srv/lnk → /opt/t244` and `/srv/islink → /opt/t244/real` (harmless targets). PVE **never follows** a symlink in an `mp` path:
+- Hot-add on a running CT, path crosses a symlink (`/srv/lnk/real`) or is one (`/srv/islink`): **400** "unable to hotplug mpN: symlink encountered at: //srv/lnk". Shown: the token's `PUT …/config`.
+- **But the refused hot-add leaks its volume.** PVE allocated `vm-<id>-disk-N` before the check. The volume is in no config and is not `unusedN`. The token **cannot** free it: `DELETE …/storage/local-lvm/content/<volid>` → 403 (needs `Datastore.Allocate`, which Plumb lacks on purpose). Shown: `pvesm list`.
+- Cold add (CT stopped), same path: accepted (200). The **next start fails**: "Failed to run lxc.hook.pre-start", task `ERROR`; the CT stays down until the `mpN` is removed (then `unused0`, freed with the token).
+- For T-238: the lexical check is not enough against a Block-made symlink, but PVE refuses it, so a mount over `/etc` by a symlink does not happen. The cost is a failed Run, and either a leaked volume (hot) or a CT that does not start (cold). Proposal: before an add, the driver/agent reads the real path (`lstat` of every part) and refuses a symlink. A failed hot-add of an `mpN` must be a Run error that names the leaked volume; only root frees it.
+
 ## Part 2 – the unproven list of #331
-(pending)
+| Item | Result | How shown |
+|---|---|---|
+| vzdump `WARNINGS` exit | **Not caused.** All vzdump tasks on the host (T-221 … T-244, 30) ended `OK`, or "interrupted by signal" (T-225's controller stop). A warning needs a host change (a notes failure, T-214 FACT 1). The `WARNINGS` branch stays proven by the fake tests only. | token `GET …/tasks?typefilter=vzdump` |
+| `/status` free space of a dir storage | **Proven.** `total` = `df` size and `avail` = `df` avail (without the root reserve) of the storage's path, to a few KiB. `free_pct = avail/total` is right. The dir storages share the root file system: the backup storage's free space falls with every image or ISO on `local`. | token `GET …/storage/<s>/status` vs `df -B1` |
+| Two vzdumps of one VMID | Proven, **with a finding (F1)**. A hand vzdump (token, no notes) and a Plumb "back up now" at the same time: PVE runs them one after the other. Plumb's job ends `failed` with "another backup of this guest ran at the same time; Plumb's volume stays and is listed when its record is complete". Its volume **has** the Plumb marker, but it stays `unmarked` (checked after 6 min). Cause: on `ErrManyNew`, `guest_job.go` (l. 282) records `Volume{}`, so the marker has no job record, and nothing ever completes it. The text is wrong, and Plumb refuses to delete its own volume (409 `not-plumb`): it piles up. Fix: on `ErrManyNew`, record the one new volume whose marker is this job's. | `GET /targets/<n>/backups`; token content list (notes) |
+| Snapshot backup of a stopped guest | **Proven.** `--mode snapshot` on a stopped VM and a stopped CT: vzdump says "status = stopped", "backup mode: stop", exit `OK`; the guest stays stopped. Small finding (F2): Plumb lists the volume as `mode: snapshot` (the requested mode, not the one PVE used). | task log; `GET /targets/<n>/backups` |
 
 ## Part 3 – #335 L3 (a)
 - `vzdump/extractconfig` works with the token (D5). Restore with a missing bridge: (pending)
