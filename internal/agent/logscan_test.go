@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -193,6 +195,24 @@ func logScanRun(t *testing.T, root, path string, r resource.Runner) (string, map
 	return logs.String(), values
 }
 
+// agentLogForms are the forms of a value in a text or JSON log: the
+// value, its Go-quoted and its JSON-escaped form, and each line of a
+// multi-line value (as logForms in internal/api; review M1 of #363).
+func agentLogForms(v string) []string {
+	forms := func(s string) []string {
+		q := strconv.Quote(s)
+		j, _ := json.Marshal(s)
+		return []string{s, q[1 : len(q)-1], string(j[1 : len(j)-1])}
+	}
+	out := forms(v)
+	for _, line := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		if line != v {
+			out = append(out, forms(line)...)
+		}
+	}
+	return out
+}
+
 // logScanCheck fails for a kind without a value, a value shorter than
 // logScanNeedleMin and every value in the log.
 func logScanCheck(t interface {
@@ -217,8 +237,11 @@ func logScanCheck(t interface {
 			if len(v) < logScanNeedleMin {
 				t.Errorf("a value of %s has %d bytes; the scan needs %d or more", kind, len(v), logScanNeedleMin)
 			}
-			if strings.Contains(log, v) {
-				t.Errorf("the agent log holds a value of the secret kind %q", kind)
+			for _, f := range agentLogForms(v) {
+				if len(f) >= logScanNeedleMin && strings.Contains(log, f) {
+					t.Errorf("the agent log holds a value of the secret kind %q", kind)
+					break
+				}
 			}
 		}
 	}
@@ -265,6 +288,31 @@ func TestAgentLogScanFindsPlant(t *testing.T) {
 		logScanCheck(p, "msg=x err="+values[k][0], values)
 		if len(p.errs) != 1 || !strings.Contains(p.errs[0], k) {
 			t.Errorf("planted %s: %v", k, p.errs)
+		}
+	}
+	// A multi-line value with a quote, in a text log (quoted) and a JSON
+	// log (escaped), also one line of it.
+	multi := logScanValue() + "\n\"" + logScanValue() + "\"\n" + logScanValue()
+	mv := map[string][]string{}
+	for _, k := range agentSecretKinds {
+		mv[k] = []string{logScanValue()}
+	}
+	mv[agentSecretKinds[3]] = []string{multi}
+	for _, h := range []func(io.Writer) slog.Handler{
+		func(w io.Writer) slog.Handler { return slog.NewTextHandler(w, nil) },
+		func(w io.Writer) slog.Handler { return slog.NewJSONHandler(w, nil) },
+	} {
+		for _, v := range []string{multi, "x " + strings.Split(multi, "\n")[1]} {
+			var buf strings.Builder
+			slog.New(h(&buf)).Info("m", "v", v)
+			if strings.Contains(buf.String(), multi) {
+				t.Fatal("the handler did not escape the value")
+			}
+			p := &logScanProbe{}
+			logScanCheck(p, buf.String(), mv)
+			if len(p.errs) != 1 || !strings.Contains(p.errs[0], agentSecretKinds[3]) {
+				t.Errorf("escaped plant %q: %v", buf.String(), p.errs)
+			}
 		}
 	}
 	delete(values, agentSecretKinds[0])

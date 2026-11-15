@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
@@ -16,10 +19,12 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Bernotese/plumb/internal/backup"
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/driver/proxmox"
 	"github.com/Bernotese/plumb/internal/link"
@@ -36,6 +41,18 @@ import (
 // had no value in any test (TestMain, logScanCoverage), so a new kind
 // fails until a test makes a value of it. The agent side has its own list
 // (internal/agent/logscan_test.go).
+//
+// The list is the rule. A tripwire fails for a new secret field of the
+// API (TestLogScanKnowsContractSecrets) and for a logger in the Proxmox
+// driver (TestProxmoxDriverHasNoLogger), but a new internal secret (a new
+// key type, a new token that no API field carries) fails nowhere: its
+// author adds a kind here, with the place where a test makes its value.
+//
+// slog quotes a string with a newline, a quote or a backslash, and the
+// JSON handler escapes it, so the scan looks for each value in its raw,
+// its Go-quoted and its JSON-escaped form, and for each line of a
+// multi-line value (logForms). Byte keys are looked for in the forms that
+// fmt, slog and the usual encodings give them (byteForms).
 //
 // Values shorter than logScanMin bytes are not looked for: the log holds
 // random ids, and a short needle can occur in them by chance (the T-213
@@ -62,6 +79,8 @@ const (
 	kindTLSKey         logKind = "link TLS private key"
 	kindProxmoxSecret  logKind = "Proxmox API token secret"
 	kindBackupPassword logKind = "backup passphrase"
+	kindMasterKey      logKind = "master key"
+	kindDerivedKey     logKind = "key derived from the master key"
 )
 
 // logSecretKinds: every kind of D-431, with where its values come from.
@@ -87,9 +106,14 @@ var logSecretKinds = []struct {
 	{kind: kindCAKey, from: "link/ca.key (each line of the PEM body)"},
 	{kind: kindTLSKey, from: "link/agent-link.key (each line of the PEM body)"},
 	{kind: kindProxmoxSecret, elsewhere: "TestProxmoxDriverHasNoLogger: the driver logs nothing; " +
-		"internal/driver/proxmox leakscan_test.go scans its errors, and ClientConfig redacts itself in a log"},
+		"internal/driver/proxmox leakscan_test.go scans its errors, and ClientConfig redacts itself in a log; " +
+		"at the start cmd/plumb never quotes PLUMB_PVE_SECRET (TestPVESettings) and serve prints it nowhere (TestServeWithProxmox)"},
 	{kind: kindBackupPassword, elsewhere: "Plumb has no backup passphrase: a backup is sealed with a key " +
-		"derived from the master key (secret.Key.BackupDataKey), whose form for people is the recovery key"},
+		"derived from the master key (kindDerivedKey), whose form for people is the recovery key"},
+	{kind: kindMasterKey, from: "the key file of e.key (secret.WriteKeyFile), in byteForms; secret.Key itself " +
+		"never prints its bytes (internal/secret TestKeyNeverPrintsBytes)"},
+	{kind: kindDerivedKey, from: "HKDF of the purposes secret-store and guest-value, and the BackupDataKey " +
+		"of every backup file of the env, in byteForms"},
 }
 
 // secretFields are the JSON fields of API bodies that hold a secret. The
@@ -147,6 +171,47 @@ func (e *env) noteBody(path string, body []byte, response bool) {
 		}
 		e.note(kind, v)
 	}
+}
+
+// keyBytes returns the bytes of a master key through its key file.
+func keyBytes(k secret.Key) []byte {
+	dir, err := os.MkdirTemp("", "plumb-logscan-key-")
+	if err != nil {
+		return nil
+	}
+	defer os.RemoveAll(dir)
+	p := filepath.Join(dir, "master.key")
+	if secret.WriteKeyFile(p, k) != nil {
+		return nil
+	}
+	b, _ := os.ReadFile(p)
+	return b
+}
+
+// byteForms are the forms of a byte key in a log: the bytes, base64 (std,
+// raw, URL), hex in both cases, and the decimal list of fmt and %v.
+func byteForms(b []byte) []string {
+	h := hex.EncodeToString(b)
+	return []string{string(b), base64.StdEncoding.EncodeToString(b), base64.RawStdEncoding.EncodeToString(b),
+		base64.URLEncoding.EncodeToString(b), h, strings.ToUpper(h), strings.Trim(fmt.Sprint(b), "[]")}
+}
+
+// logForms are the forms of a value in a text or JSON log: the value,
+// its Go-quoted and its JSON-escaped form without the outer quotes, and
+// each line of a multi-line value (each in the same three forms).
+func logForms(v string) []string {
+	forms := func(s string) []string {
+		q := strconv.Quote(s)
+		j, _ := json.Marshal(s)
+		return []string{s, q[1 : len(q)-1], string(j[1 : len(j)-1])}
+	}
+	out := forms(v)
+	if strings.ContainsAny(v, "\n\r") {
+		for _, line := range strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == '\r' }) {
+			out = append(out, forms(line)...)
+		}
+	}
+	return out
 }
 
 // pemLines are the lines of the PEM bodies of a key file.
@@ -209,6 +274,26 @@ func (e *env) logSecrets() map[logKind][]string {
 				base64.StdEncoding.EncodeToString(priv))
 		}
 	}
+	if raw := keyBytes(e.key); raw != nil {
+		e.note(kindMasterKey, byteForms(raw)...)
+		for _, purpose := range []string{secret.PurposeSecretStore, secret.PurposeGuestValue} {
+			if d, err := hkdf.Key(sha256.New, raw, nil, purpose, 32); err == nil {
+				e.note(kindDerivedKey, byteForms(d)...)
+			}
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(e.dir, backup.DirName, "*"))
+	for _, f := range files {
+		r, err := os.Open(f)
+		if err != nil {
+			continue
+		}
+		h, _, err := backup.ReadHeader(r)
+		r.Close()
+		if salt, derr := base64.StdEncoding.DecodeString(h.Salt); err == nil && derr == nil {
+			e.note(kindDerivedKey, byteForms(e.key.BackupDataKey(salt))...)
+		}
+	}
 	e.note(kindCAKey, pemLines(filepath.Join(e.dir, "link", "ca.key"))...)
 	e.note(kindTLSKey, pemLines(filepath.Join(e.dir, "link", "agent-link.key"))...)
 	e.mu.Lock()
@@ -241,10 +326,13 @@ func scanLog(t logScanT, log []byte, values map[logKind][]string) {
 			}
 		}
 	}) {
+	value:
 		for _, v := range values[k] {
-			if len(v) >= logScanMin && bytes.Contains(log, []byte(v)) {
-				t.Errorf("the controller log holds a value of the secret kind %q (D-431)", k)
-				break
+			for _, f := range logForms(v) {
+				if len(f) >= logScanMin && bytes.Contains(log, []byte(f)) {
+					t.Errorf("the controller log holds a value of the secret kind %q (D-431)", k)
+					break value
+				}
 			}
 		}
 	}
@@ -452,3 +540,72 @@ func TestProxmoxDriverHasNoLogger(t *testing.T) {
 
 // Reset empties the buffer.
 func (l *lockedBuf) Reset() { l.mu.Lock(); defer l.mu.Unlock(); l.b.Reset() }
+
+// Review M1 of #363: slog quotes a multi-line value (TextHandler) or
+// escapes it (JSONHandler), so a raw search misses it. The scan finds an
+// SSH private key in both, also one line of it. Review M2: the master key
+// and its derived keys (purpose keys, the data key of a backup file) are
+// found in the forms that fmt, slog and the encodings give them.
+func TestLogScanFindsEscapedAndKeyForms(t *testing.T) {
+	e := newEnv(t, true)
+	ssh := "-----BEGIN OPENSSH PRIVATE KEY-----\n" +
+		"b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n" +
+		"QyNTUxOQAAACD1f6uZb2l3dmNk0Ow9mE\"quoted\"\\x7Zp1Q3r0aXJmS1NnTmxkZmN2\n" +
+		"-----END OPENSSH PRIVATE KEY-----\n"
+	if _, err := e.sec.Put(e.ctx, "deploy-key", ssh, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.backups.RunNow(e.ctx, "test", "api"); err != nil {
+		t.Fatal(err)
+	}
+	e.backups.Wait()
+	values := e.logSecrets()
+	files, _ := filepath.Glob(filepath.Join(e.dir, backup.DirName, "*"))
+	var dataKey []byte
+	for _, f := range files {
+		r, err := os.Open(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, _, err := backup.ReadHeader(r)
+		r.Close()
+		if err == nil {
+			salt, _ := base64.StdEncoding.DecodeString(h.Salt)
+			dataKey = e.key.BackupDataKey(salt)
+		}
+	}
+	if dataKey == nil {
+		t.Fatal("no backup file to take a data key from")
+	}
+	raw := keyBytes(e.key)
+	store, _ := hkdf.Key(sha256.New, raw, nil, secret.PurposeSecretStore, 32)
+	lines := strings.Split(ssh, "\n")
+	for name, c := range map[string]struct {
+		kind logKind
+		v    any
+	}{
+		"ssh key":         {kindSecretValue, ssh},
+		"one line of it":  {kindSecretValue, "line " + lines[2]},
+		"master key raw":  {kindMasterKey, raw},
+		"master key hex":  {kindMasterKey, fmt.Sprintf("%x", raw)},
+		"master key %v":   {kindMasterKey, fmt.Sprint(raw)},
+		"store key b64":   {kindDerivedKey, base64.RawStdEncoding.EncodeToString(store)},
+		"backup data key": {kindDerivedKey, hex.EncodeToString(dataKey)},
+	} {
+		for hname, h := range map[string]func(io.Writer) slog.Handler{
+			"text": func(w io.Writer) slog.Handler { return slog.NewTextHandler(w, nil) },
+			"json": func(w io.Writer) slog.Handler { return slog.NewJSONHandler(w, nil) },
+		} {
+			var buf bytes.Buffer
+			slog.New(h(&buf)).Info("plant", "v", c.v)
+			if name == "ssh key" && strings.Contains(buf.String(), ssh) {
+				t.Fatalf("%s: the handler did not escape the value; the test proves nothing", hname)
+			}
+			p := &logScanProbe{}
+			scanLog(p, buf.Bytes(), values)
+			if len(p.errs) != 1 || !strings.Contains(p.errs[0], string(c.kind)) {
+				t.Errorf("%s in the %s log: %v", name, hname, p.errs)
+			}
+		}
+	}
+}
