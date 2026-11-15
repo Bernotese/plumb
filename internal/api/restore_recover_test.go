@@ -276,3 +276,56 @@ func TestSystemResolutionsHaveComments(t *testing.T) {
 		t.Fatalf("only %d system resolutions; the sweep proves little", n)
 	}
 }
+
+// proofState writes a guest:restore-failed Issue of web1 in the "restored,
+// re-enroll refused" state that names a Run with a guest:config step of
+// target with output, made for a Plan of origin.
+func proofState(t *testing.T, s *safetyEnv, origin, target, output string) {
+	t.Helper()
+	e := s.e
+	head, _ := e.st.Head(e.ctx)
+	docs, _ := e.st.RevisionDocs(e.ctx, head.ID)
+	p, err := e.st.CreatePlan(e.ctx, store.Plan{BaseRevision: head.ID, Origin: origin, Risk: "destructive", Author: "user:admin", Changes: json.RawMessage("[]")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, run, err := e.st.ApprovePlan(e.ctx, p.ID, "user:admin", store.NewRevision{Author: "user:admin", Docs: docs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seq, _ := e.st.AddStep(e.ctx, store.Step{RunID: run.ID, Target: target, Resource: wire.GuestConfigID, Status: "running"})
+	e.st.UpdateStep(e.ctx, run.ID, seq, "applied", nil, output)
+	e.st.FinishRun(e.ctx, run.ID, "succeeded", 0)
+	ch := []wire.Change{
+		{Attr: "restore", From: plan.RestoredRefusedPrefix + "the re-enroll Plan was refused", To: "remove the addition in Proxmox, then POST /targets/web1/reenroll", Risk: wire.RiskDisruptive},
+		{Attr: plan.AttrRestoreRun, To: run.ID, Risk: wire.RiskRead},
+	}
+	if err := e.iss.Intake(e.ctx, "web1", wire.Report{Type: wire.ReportDrift, Items: []wire.Item{{Resource: plan.GuestRestoreFailedID, Status: wire.StatusDiffers, Changes: ch}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// L1 of the #374 review: the gate's proof comes only from a restore Run
+// of this Target. A "restored" step of a Plan that is no restore, or of
+// another Target, never opens it.
+func TestRestoredProofOnlyFromThisTargetsRestore(t *testing.T) {
+	for name, c := range map[string]struct{ origin, target string }{
+		"not a restore Plan": {plan.OriginReenroll, "web1"},
+		"another Target":     {plan.OriginRestore, "web2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSafetyEnv(t)
+			proofState(t, s, c.origin, c.target, "restored backup 3f2a9c0d1e4b5a67 of 2026-11-15T03:00:12Z")
+			code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "r"})
+			if code != 409 || problemType(body) != "restore-failed" {
+				t.Errorf("re-enroll through the gate: %d %s", code, body)
+			}
+		})
+	}
+	// The control: a restore Run of this Target opens it.
+	s := newSafetyEnv(t)
+	proofState(t, s, plan.OriginRestore, "web1", "restored backup 3f2a9c0d1e4b5a67 of 2026-11-15T03:00:12Z")
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "r"}); code != 201 {
+		t.Errorf("the proven case: %d %s", code, body)
+	}
+}
