@@ -975,3 +975,16 @@ func cutRunes(s string, n int) string {
 func restoredOutput(out string) bool {
 	return strings.HasPrefix(out, restoredMark) || strings.HasPrefix(out, "restored, but")
 }
+
+// RestoredNote is the actions note of a guest:restore-failed Issue in the
+// "restored" state (D-439), or "": the state and the way out.
+func RestoredNote(ch []wire.Change) string {
+	for _, c := range ch {
+		from, _ := c.From.(string)
+		to, _ := c.To.(string)
+		if c.Attr == "restore" && strings.HasPrefix(from, "restored") {
+			return from + ". Way out: " + to + ". Only a re-enroll Plan of this Target, a new restore or a delete is allowed until then."
+		}
+	}
+	return ""
+}
