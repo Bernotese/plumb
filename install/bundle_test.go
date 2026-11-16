@@ -41,7 +41,8 @@ func newBundle(t *testing.T, version string) *bundle {
 	}
 	b := &bundle{dir: dir, version: version}
 	b.write(t, "install.sh", stamped)
-	b.write(t, "plumb", []byte("#!/bin/sh\necho plumb "+version+"\n"))
+	// It marks every run, so a test sees a use before the check.
+	b.write(t, "plumb", []byte("#!/bin/sh\n[ -z \"$PLUMB_TEST_USED\" ] || touch \"$PLUMB_TEST_USED\"\necho plumb "+version+"\n"))
 	b.write(t, "plumb-agent", []byte("#!/bin/sh\necho plumb-agent "+version+"\n"))
 	b.writeSums(t, b.sums(t, "plumb", "plumb-agent", "install.sh"))
 	return b
@@ -136,7 +137,7 @@ func TestBundleCheckRefuses(t *testing.T) {
 		want   string
 	}{
 		"damaged plumb": {change: func(t *testing.T, b *bundle) {
-			b.write(t, "plumb", []byte("#!/bin/sh\necho evil\n"))
+			b.write(t, "plumb", []byte("#!/bin/sh\n[ -z \"$PLUMB_TEST_USED\" ] || touch \"$PLUMB_TEST_USED\"\necho evil\n"))
 		}, want: "plumb does not match SHA256SUMS"},
 		"damaged install.sh": {change: func(t *testing.T, b *bundle) {
 			f, _ := os.OpenFile(filepath.Join(b.dir, "install.sh"), os.O_APPEND|os.O_WRONLY, 0)
@@ -222,13 +223,17 @@ func TestBundleCheckRefuses(t *testing.T) {
 			if tc.binary != nil {
 				bin = tc.binary(b)
 			}
+			used := filepath.Join(t.TempDir(), "used")
 			for _, mode := range [][]string{{"--dry-run"}, {"--yes"}} {
-				code, out, errOut := h.runBundle(b, nil, append(mode, "--plumb-binary", bin)...)
+				code, out, errOut := h.runBundle(b, []string{"PLUMB_TEST_USED=" + used}, append(mode, "--plumb-binary", bin)...)
 				if code == 0 || !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, "Nothing was changed") {
 					t.Fatalf("%v: %d, want %q\n%s\n%s", mode, code, tc.want, out, errOut)
 				}
 				if strings.Contains(out, "plumb version:") {
 					t.Errorf("%v: the binary was used before the check failed:\n%s", mode, out)
+				}
+				if _, err := os.Stat(used); err == nil {
+					t.Errorf("%v: a plumb ran before the check failed", mode)
 				}
 			}
 			h.noHostChange(t)
