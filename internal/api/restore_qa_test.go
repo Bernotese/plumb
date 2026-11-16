@@ -233,3 +233,34 @@ func TestQARestoreNotStartedLeavesNoGate(t *testing.T) {
 		t.Errorf("the gate is closed after a restore that did not start: %s", body)
 	}
 }
+
+// From the restored state, a restore that does not start (Proxmox proved
+// that it changed nothing) puts the restored state back: the old proof is
+// true again (the disks are still the restored ones), so the re-enroll
+// passes; a document Plan stays 409.
+func TestQARestoreNotStartedFromRestoredState(t *testing.T) {
+	s := newSafetyEnv(t)
+	var oldIP string
+	s.fr.after = func() {
+		s.e.drv.Tamper(driver.GuestID(s.ref), func(g *driver.GuestSpec) { oldIP, g.IP = g.IP, "192.0.2.99/24" })
+	}
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	s.fr.after = nil
+	s.e.drv.Tamper(driver.GuestID(s.ref), func(g *driver.GuestSpec) { g.IP = oldIP })
+	s.fr.fail = fmt.Errorf("%w: proxmox refused the restore before it began", plan.ErrRestoreNotStarted)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "failed" || !strings.Contains(out, "did not start") {
+		t.Fatalf("the restore that did not start: %s %s", status, out)
+	}
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil || !strings.Contains(string(iss.Changes), plan.RestoredRefusedPrefix) || !strings.Contains(string(iss.Changes), plan.AttrRestoreRun) {
+		t.Fatalf("the Issue after it: %s %v", iss.Changes, err)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "qa"}); code != 201 {
+		t.Errorf("the re-enroll after a restore that did not start: %d %s", code, body)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "qa", "put": []any{restoreTarget("web1", false)}}); code != 409 {
+		t.Errorf("a document Plan: %d %s", code, body)
+	}
+}
