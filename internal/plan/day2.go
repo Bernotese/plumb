@@ -25,7 +25,9 @@ const (
 		"The bigger disk stays (it cannot shrink). Fix the cause in the guest, then plan again: the Plan then grows the root file system"
 	textStartedNote = "%s is stopped and the Run starts it: its resources were not observed, so the Plan shows them as unverified; the agent applies them after the start"
 	textStoppedSkip = "Target stopped"
-	textNotStopped  = "not stopped: %s; the guest keeps running. Plan again"
+	// textRestoredWaitsSkip: D-440, the agent comes with the re-enroll.
+	textRestoredWaitsSkip = "restored, the agent is not enrolled yet: the re-enroll Run does the agent steps"
+	textNotStopped        = "not stopped: %s; the guest keeps running. Plan again"
 )
 
 // AttrRootFS is the Plan-only change of guest:config that sends the agent
@@ -229,6 +231,14 @@ func RevertShrinks(changes []wire.Change) bool {
 		to, err2 := driver.IntValue(c.To)
 		if c.Attr == driver.AttrDisk && err1 == nil && err2 == nil && to < from {
 			return true
+		}
+		// A data disk grown in Proxmox (T-238): revert would shrink it.
+		if driver.DiskIndex(c.Attr) > 0 {
+			f, err1 := driver.ParseDiskValue(c.From)
+			t, err2 := driver.ParseDiskValue(c.To)
+			if err1 == nil && err2 == nil && f != nil && t != nil && t.SizeGB < f.SizeGB {
+				return true
+			}
 		}
 	}
 	return false

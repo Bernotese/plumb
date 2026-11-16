@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +34,7 @@ const (
 // restore (D-303), and agent:values of the copy rule (D-331).
 func IgnoreOnly(resource string) bool {
 	return resource == wire.GuestAddressID || resource == plan.GuestMissingID || resource == plan.AgentSilentID ||
-		resource == GuestValuesID || resource == plan.GuestRestoreFailedID
+		resource == GuestValuesID || resource == plan.GuestRestoreFailedID || resource == plan.GuestVolumeLeftID
 }
 
 // ErrAcceptSensitive is returned for accept on a sensitive change: the
@@ -72,6 +74,10 @@ func AcceptRefused(resource string, changes []wire.Change) error {
 			return ErrAcceptOutside
 		case resource == wire.GuestConfigID && nicAttrs[c.Attr]:
 			return ErrAcceptNIC
+		case resource == wire.GuestConfigID && diskAttrs[c.Attr]:
+			if _, _, ok := diskGrowAccept(c); !ok {
+				return ErrAcceptDisk
+			}
 		}
 	}
 	return nil
@@ -81,6 +87,64 @@ func AcceptRefused(resource string, changes []wire.Change) error {
 // (driver.AttrNIC(1) … AttrNIC(3), T-219); this package does not import
 // the driver (ARCHITECTURE §2).
 var nicAttrs = map[string]bool{"nic1": true, "nic2": true, "nic3": true}
+
+// diskAttrs are the guest:config attributes of the data disks
+// (driver.AttrDiskN(1) … AttrDiskN(3), T-238).
+var diskAttrs = map[string]bool{"disk1": true, "disk2": true, "disk3": true}
+
+// ErrAcceptDisk is returned for accept of a data disk change other than a
+// Plumb disk that grew in Proxmox (ARCHITECTURE §21): a foreign volume, an
+// added or removed disk is never taken into the document.
+var ErrAcceptDisk = errors.New("issue: accept is possible for a data disk only when Plumb's disk grew in Proxmox; revert it, or change guest.disks in the Target")
+
+// reDiskValue is a Plumb data disk value ("<n> GiB", "<n> GiB at <path>"),
+// as driver.Disk.Value writes it.
+var reDiskValue = regexp.MustCompile(`^([1-9][0-9]*) GiB(?: at (/.*))?$`)
+
+// diskGrowAccept reports whether c is a Plumb data disk that is bigger in
+// the guest (from) than desired (to), with the same path; size is the
+// guest's size.
+func diskGrowAccept(c wire.Change) (slot, size int, ok bool) {
+	f, _ := c.From.(string)
+	t, _ := c.To.(string)
+	mf, mt := reDiskValue.FindStringSubmatch(f), reDiskValue.FindStringSubmatch(t)
+	if mf == nil || mt == nil || mf[2] != mt[2] {
+		return 0, 0, false
+	}
+	from, _ := strconv.Atoi(mf[1])
+	to, _ := strconv.Atoi(mt[1])
+	slot, _ = strconv.Atoi(strings.TrimPrefix(c.Attr, "disk"))
+	return slot, from, from > to
+}
+
+// acceptDisks writes the grown sizes of Plumb data disks into
+// guest.disks of spec and returns the other changes.
+func acceptDisks(spec map[string]any, changes []wire.Change) ([]wire.Change, error) {
+	var rest []wire.Change
+	for _, c := range changes {
+		if !diskAttrs[c.Attr] {
+			rest = append(rest, c)
+			continue
+		}
+		slot, size, ok := diskGrowAccept(c)
+		if !ok {
+			return nil, ErrAcceptDisk
+		}
+		guest, _ := spec["guest"].(map[string]any)
+		list, _ := guest["disks"].([]any)
+		found := false
+		for _, item := range list {
+			m, _ := item.(map[string]any)
+			if s, err := strconv.Atoi(fmt.Sprint(m["slot"])); err == nil && s == slot {
+				m["size_gb"], found = size, true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("issue: guest.disks of the head names no disk %d", slot)
+		}
+	}
+	return rest, nil
+}
 
 // ErrAcceptNIC is returned for accept of a more NIC (nic1 … nic3, D-418):
 // the bridge, tag and MAC of a hand change are not taken into the
@@ -140,8 +204,8 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 					return err
 				}
 			}
-			if it.Resource == plan.GuestRestoreFailedID {
-				// T-234 (M1 of #352): no Rule and no earlier "ignore
+			if it.Resource == plan.GuestRestoreFailedID || it.Resource == plan.GuestVolumeLeftID {
+				// T-234 (M1 of #352); guest:volume-left (D-437) likewise: no Rule and no earlier "ignore
 				// once" may keep the Issue of a failed restore from
 				// opening: it is the gate that protects the way back.
 				if err := s.openIssue(ctx, target, it); err != nil {
@@ -219,10 +283,17 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 				return err
 			}
 			data := map[string]any{"resolution": "gone"}
-			if reason := systemReason(it); reason != "" {
-				// The engine says why (T-134 F8): a comment on the Issue.
+			// D-428: every system resolution has a comment. The engine says
+			// why for its own Issues (T-134 F8); an agent's or the guest
+			// poll's item means the guest matches again.
+			reason := systemReason(it)
+			if reason != "" {
 				data["reason"] = reason
-				if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: " + reason + "."}); err != nil {
+			} else if !s.waitsNote(ctx, iss) { // waitingNote writes its own comment
+				reason = "the guest matches the desired state again"
+			}
+			if reason != "" {
+				if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: " + strings.TrimSuffix(reason, ".") + "."}); err != nil {
 					return err
 				}
 			}
@@ -236,7 +307,10 @@ func (s *Service) Intake(ctx context.Context, target string, rep wire.Report) er
 // of a restore: only the controller sends these resources (the link
 // refuses them from an agent), so the text is ours.
 func systemReason(it wire.Item) string {
-	if it.Resource != plan.GuestMissingID && it.Resource != plan.AgentSilentID && it.Resource != plan.GuestRestoreFailedID {
+	// guest:config too (T-241, D-428): the guest poll and the restore
+	// send it, never an agent (the link refuses it).
+	if it.Resource != plan.GuestMissingID && it.Resource != plan.AgentSilentID && it.Resource != plan.GuestRestoreFailedID &&
+		it.Resource != plan.GuestVolumeLeftID && it.Resource != wire.GuestConfigID {
 		return ""
 	}
 	return it.Output
@@ -253,6 +327,10 @@ func (s *Service) dropIssue(ctx context.Context, target, resource string) error 
 		return err
 	}
 	if err := s.st.ResolveIssue(ctx, iss.ID, store.ResolutionIgnore, "system"); err != nil {
+		return err
+	}
+	// D-428: the system resolution says why.
+	if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: a Rule covers all of its drift now (D-092)."}); err != nil {
 		return err
 	}
 	s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": store.ResolutionIgnore})
@@ -280,6 +358,9 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	}
 	if iss.Resource == plan.GuestRestoreFailedID && action == ActionIgnoreRule {
 		return store.Plan{}, ErrRestoreFailedRule
+	}
+	if iss.Resource == plan.GuestVolumeLeftID && action == ActionIgnoreRule { // F1 of #375
+		return store.Plan{}, ErrVolumeLeftRule
 	}
 	if err := s.restoreFailed(ctx, iss); err != nil {
 		return store.Plan{}, err
@@ -394,6 +475,11 @@ func (s *Service) acceptDoc(ctx context.Context, iss store.Issue, changes []wire
 		}
 		return state.Doc{Kind: doc.Kind, Name: doc.Name, Spec: spec}, nil
 	}
+	if iss.Resource == wire.GuestConfigID { // T-238: a grown data disk goes into guest.disks
+		if changes, err = acceptDisks(doc.Spec, changes); err != nil {
+			return state.Doc{}, err
+		}
+	}
 	overrides, _ := doc.Spec["overrides"].(map[string]any)
 	if overrides == nil {
 		overrides = map[string]any{}
@@ -468,6 +554,16 @@ func (s *Service) PlanDone(ctx context.Context, planID int64, ok bool) {
 // values of its Target wait for a restart (D-195): it adds a system
 // comment that names them, and the count to the event data. The engine
 // writes the waiting list before the Issue is resolved.
+// waitsNote reports whether waitingNote will comment on iss (a
+// guest:config Issue whose Target has values that wait for a restart).
+func (s *Service) waitsNote(ctx context.Context, iss store.Issue) bool {
+	if iss.Resource != wire.GuestConfigID {
+		return false
+	}
+	b, err := s.st.GetBinding(ctx, state.KindTarget, iss.Target)
+	return err == nil && len(b.Waiting) > 0
+}
+
 func (s *Service) waitingNote(ctx context.Context, iss store.Issue, data map[string]any) map[string]any {
 	if iss.Resource != wire.GuestConfigID {
 		return data
@@ -513,6 +609,9 @@ func (s *Service) RestoreFailedBlocks(ctx context.Context, iss store.Issue) (int
 	if err != nil {
 		return 0, err
 	}
+	if s.plans != nil && s.plans.RestoredOK(ctx, r) { // D-440: the disks are the restored ones
+		return 0, nil
+	}
 	return r.ID, nil
 }
 
@@ -526,6 +625,11 @@ func (s *Service) restoreFailed(ctx context.Context, iss store.Issue) error {
 	}
 	return fmt.Errorf("%w: Issue %d of %s says that the guest may have no disk; restore a backup first (POST /targets/%s/restore). Its actions come back after a restore that works", plan.ErrRestoreFailed, id, iss.Target, iss.Target)
 }
+
+// ErrVolumeLeftRule: no Rule covers guest:volume-left (D-437). A Rule Plan
+// would set the Issue to resolving, and the poll could no longer end it
+// when the volume is gone (F1 of #375).
+var ErrVolumeLeftRule = errors.New("issue: a left volume cannot be ignored by a rule; free the volume, or end the Issue with ignore once")
 
 // ErrRestoreFailedRule: the Issue of a failed restore cannot be ignored by
 // a Rule (M1 of #352): a Rule would keep every later one from opening.

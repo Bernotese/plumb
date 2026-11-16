@@ -21,9 +21,13 @@ func TestGuestValuesOfReport(t *testing.T) {
 		"sensitive":    differs("file:/etc/x", wire.Change{Attr: "content", Sensitive: true}),
 		"no from":      differs("file:/etc/x", wire.Change{Attr: "content", To: "x"}),
 		"guest:config": differs("guest:config", wire.Change{Attr: "tags", From: "a", To: "b"}),
-		"agent:values": differs("agent:values", wire.Change{Attr: "reported_values", From: "x"}),
-		"unchanged":    {Resource: "file:/etc/x", Status: wire.StatusUnchanged, Changes: []wire.Change{{Attr: "content", From: "x"}}},
-		"enum":         differs("firewall:main", wire.Change{Attr: "policy", From: "accept", To: "drop"}),
+		// T-238 (rule of D-413): a data disk comes from Proxmox, and the
+		// left-volume Issue is the controller's own.
+		"guest:config disk": differs("guest:config", wire.Change{Attr: "disk1", From: "6 GiB at /srv/a", To: "4 GiB at /srv/a"}),
+		"volume-left":       differs(GuestVolumeLeftID, wire.Change{Attr: "volume", From: "local-lvm:vm-1-disk-1"}),
+		"agent:values":      differs("agent:values", wire.Change{Attr: "reported_values", From: "x"}),
+		"unchanged":         {Resource: "file:/etc/x", Status: wire.StatusUnchanged, Changes: []wire.Change{{Attr: "content", From: "x"}}},
+		"enum":              differs("firewall:main", wire.Change{Attr: "policy", From: "accept", To: "drop"}),
 	} {
 		if got, _ := e.GuestValues(it); len(got) != 0 {
 			t.Errorf("%s: stored %+v", name, got)

@@ -80,6 +80,42 @@
     issue?.resource === GUEST_RESTORE_FAILED ? (issue.restore_way_back ?? null) : null,
   );
   const restoreFailed = $derived(issue?.resource === GUEST_RESTORE_FAILED);
+  // D-439: the restore worked, but the re-enroll Plan was refused; only a
+  // re-enroll Plan of the Target passes the gate.
+  const restoredRefused = $derived(
+    restoreFailed &&
+      issue?.status === "open" &&
+      issue.changes.some(
+        (c) =>
+          c.attr === "restore" &&
+          "from" in c &&
+          typeof c.from === "string" &&
+          c.from.startsWith("restored; the agent is not enrolled"),
+      ),
+  );
+  // D-440: the re-enroll Plan that the Issue waits for.
+  const reenrollPlan = $derived.by(() => {
+    const c = issue?.changes.find((x) => x.attr === "reenroll_plan");
+    return c && "to" in c && typeof c.to === "number" ? c.to : null;
+  });
+  let reenrollBusy = $state(false);
+  let reenrollError = $state<unknown>(null);
+  async function reenroll() {
+    if (!issue) return;
+    reenrollBusy = true;
+    reenrollError = null;
+    try {
+      const plan = await api.reenrollTarget(
+        issue.target,
+        `re-enroll after the restore (Issue ${issue.id})`,
+      );
+      go({ name: "plan", id: plan.id });
+    } catch (err) {
+      reenrollError = err;
+    } finally {
+      reenrollBusy = false;
+    }
+  }
   // T-234: while the last restore of the Target failed, its other Issues have no action.
   const blockedBy = $derived(issue?.status === "open" ? (issue.actions_blocked_by ?? null) : null);
   // M1 of #352: only a human admin session ends guest:restore-failed.
@@ -281,6 +317,28 @@
       <span class="mono">guest.nics</span> in the
       <a href={href({ name: "target-edit", target: issue.target })}>Target {issue.target}</a>.
     </p>
+  {/if}
+
+  {#if restoredRefused}
+    <section class="card" aria-labelledby="restored-title" id="restored-refused">
+      <h2 id="restored-title">Restored, the agent is not enrolled</h2>
+      <p>{issue.actions_note}</p>
+      {#if reenrollPlan !== null}
+        <p>
+          <a id="restored-plan" href={href({ name: "plan", id: reenrollPlan })}
+            >Open the re-enroll Plan {reenrollPlan}</a
+          >
+        </p>
+      {/if}
+      <ProblemBox error={reenrollError} />
+      {#if can("reenrollTarget")}
+        <button type="button" id="restored-reenroll" disabled={reenrollBusy} onclick={reenroll}>
+          Propose the re-enroll of {issue.target}
+        </button>
+      {:else}
+        <p class="muted">{roleNote("plan")} You cannot propose the re-enroll.</p>
+      {/if}
+    </section>
   {/if}
 
   {#if blockedBy !== null}

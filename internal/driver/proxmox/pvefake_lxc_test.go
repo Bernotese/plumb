@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -184,6 +185,13 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 						f.failNextPUT = ""
 						continue
 					}
+					if ok, err := f.diskDelete(vm, d); ok {
+						if err != nil {
+							fail(w, 500, err.Error(), nil)
+							return
+						}
+						continue
+					}
 					switch {
 					case vm.running && cold[d]:
 						if vm.delete == nil {
@@ -198,6 +206,12 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 						delete(vm.pending, d)
 					}
 				}
+			case !vm.running && f.diskWrite(vm, id, k, v[0]):
+			case vm.running && reFakeDataDisk.MatchString(k) && f.disks.symlinks[parseProps(v[0])["mp"]]:
+				f.disks.allocated++ // a refused hot-add leaks its volume (T-244 D13)
+				fail(w, 400, "unable to hotplug "+k+": symlink encountered", nil)
+				return
+			case vm.running && f.diskWrite(vm, id, k, v[0]):
 			case vm.running && cold[k]:
 				if vm.pending == nil {
 					vm.pending = map[string]string{}
@@ -270,11 +284,15 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 		reply(w, 200, f.task(key))
 
 	case r.Method == "PUT" && sub == "/resize":
-		if sizeGB(r.Form.Get("size")) < sizeGB(parseProps(vm.cfg["rootfs"])["size"]) {
+		disk := r.Form.Get("disk")
+		if !reFakeDataDisk.MatchString(disk) {
+			disk = "rootfs"
+		}
+		if sizeGB(r.Form.Get("size")) < sizeGB(parseProps(vm.cfg[disk])["size"]) {
 			fail(w, 500, "shrinking disks is not supported", nil)
 			return
 		}
-		vm.cfg["rootfs"] = strings.Replace(vm.cfg["rootfs"], "size="+parseProps(vm.cfg["rootfs"])["size"], "size="+r.Form.Get("size"), 1)
+		vm.cfg[disk] = strings.Replace(vm.cfg[disk], "size="+parseProps(vm.cfg[disk])["size"], "size="+r.Form.Get("size"), 1)
 		f.resizes = append(f.resizes, fmt.Sprintf("%d %s %s", id, r.Form.Get("disk"), r.Form.Get("size")))
 		reply(w, 200, f.task(key))
 
@@ -298,7 +316,20 @@ func (f *fakePVE) lxc(w http.ResponseWriter, r *http.Request, key string, id int
 		case "/status/start":
 			if vm.running {
 				f.tasks[upid].exit = fmt.Sprintf("CT %d already running", id)
+			} else if f.disks.onStart != nil && func() bool { f.disks.onStart(vm); return false }() {
+			} else if f.ctStartBlocked(vm) {
+				f.tasks[upid].exit = "startup for container '" + strconv.Itoa(id) + "' failed"
 			} else if f.tasks[upid].exit == "OK" {
+				var dels []string
+				for k := range vm.delete {
+					if reFakeDataDisk.MatchString(k) {
+						dels = append(dels, k)
+						delete(vm.delete, k)
+					}
+				}
+				for _, k := range dels {
+					vm.detach(k) // a pending data disk delete leaves unusedK
+				}
 				vm.running = true
 				vm.cfg = ctNext(vm) // a start applies the pending values
 				vm.pending, vm.delete = nil, nil

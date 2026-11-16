@@ -121,7 +121,7 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 				}
 				continue
 			}
-			if err := e.restoreIssue(ctx, b.Name, GuestMissingID, wire.StatusUnchanged, nil); err != nil {
+			if err := e.endRestoreIssue(ctx, b.Name, GuestMissingID, "the guest of the Target is in the pool again"); err != nil {
 				errs = append(errs, err)
 			}
 			if err := e.checkSilent(ctx, b.Name, observed, restored); err != nil {
@@ -148,6 +148,9 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 				errs = append(errs, err)
 				continue
 			}
+		}
+		if err := e.checkVolumeLeft(ctx, b.Name, observed); err != nil { // T-238, D-437 (4)
+			errs = append(errs, err)
 		}
 		item := wire.Item{Resource: wire.GuestConfigID, Status: wire.StatusUnchanged}
 		if changes := driver.DriftGuest(desired, observed); len(changes) > 0 {

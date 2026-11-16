@@ -239,6 +239,11 @@ func TestRestoreConfirmAndIssues(t *testing.T) {
 	if iss, err := e.st.GetIssue(e.ctx, silent.ID); err != nil || iss.Status != store.IssueResolved {
 		t.Errorf("after a hello: %+v %v", iss, err)
 	}
+	// D-428 (T-241): the system resolution says why, in a comment.
+	if cs, _ := e.st.Comments(e.ctx, silent.ID); len(cs) != 1 || cs[0].Author != "system" ||
+		cs[0].Body != "Resolved: the agent said hello after the restore of the controller." {
+		t.Errorf("comments of agent:silent: %+v", cs)
+	}
 	rc.check()
 }
 

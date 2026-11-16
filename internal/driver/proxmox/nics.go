@@ -43,6 +43,9 @@ type NetworkNotAllowedError struct {
 	NIC    int
 	Bridge string
 	Tag    int
+	// BridgeNamed: the install names the bridge itself (T-253): a tag then
+	// needs only its --extra-vlan.
+	BridgeNamed bool
 }
 
 func (e *NetworkNotAllowedError) Error() string {
@@ -51,8 +54,11 @@ func (e *NetworkNotAllowedError) Error() string {
 	if e.Tag != 0 {
 		what = fmt.Sprintf("bridge %s tag %d", e.Bridge, e.Tag)
 		flag = fmt.Sprintf("--extra-vlan %s:%d", e.Bridge, e.Tag)
+		if !e.BridgeNamed {
+			flag = "--extra-bridge " + e.Bridge + " " + flag
+		}
 	}
-	return fmt.Sprintf("proxmox: net%d: %s is not named by the install; the token has no SDN.Use there. Run install.sh with %s (D-401)", e.NIC, what, flag)
+	return fmt.Sprintf("proxmox: net%d: %s is not named by the install; the token has no SDN.Use there. Run install.sh again as a repair run with every --extra-bridge and --extra-vlan that the install has now, plus %s (D-401)", e.NIC, what, flag)
 }
 
 var reNICMAC = regexp.MustCompile(`^02(:[0-9a-f]{2}){5}$`)
@@ -66,7 +72,7 @@ func (d *Driver) checkNICNet(idx int, n driver.NIC) error {
 		return fmt.Errorf("proxmox: net%d: bad VLAN tag %d", idx, n.Tag)
 	}
 	if !d.NetAllowed(n.Bridge, n.Tag) {
-		return &NetworkNotAllowedError{NIC: idx, Bridge: n.Bridge, Tag: n.Tag}
+		return &NetworkNotAllowedError{NIC: idx, Bridge: n.Bridge, Tag: n.Tag, BridgeNamed: d.NetAllowed(n.Bridge, 0)}
 	}
 	return nil
 }

@@ -168,19 +168,26 @@ func TestRestoreFailsThenSafetyBackupRestores(t *testing.T) {
 	if status != "succeeded" || !strings.Contains(out, "restored backup 5afe000000000001") || strings.Contains(out, "The safety backup") || s.fr.safeties != 1 {
 		t.Fatalf("%s: %s (safety backups %d)", status, out, s.fr.safeties)
 	}
-	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Error("guest:restore-failed stays open after a restore that worked")
+	// D-440: the Issue ends at the re-enroll Run, not at the restore.
+	if !s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("guest:restore-failed ended before the re-enroll")
 	}
-	if len(s.fr.dropped) != 0 {
-		t.Errorf("safety backups dropped: %v", s.fr.dropped)
+	// D-429 (amends D1 of #346): the restored pre-restore volume is the
+	// kept one; only older safety backups go, never a newer one.
+	if len(s.fr.dropped) != 1 || s.fr.dropped[0] != "bk:safety-1" {
+		t.Errorf("safety backups dropped: %v, want keep bk:safety-1", s.fr.dropped)
 	}
 	if re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll); len(re) != 1 {
 		t.Errorf("re-enroll Plans: %v", re)
 	}
+	s.reenrollDone(t)
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("guest:restore-failed stays open after the re-enroll Run worked")
+	}
 	// The next restore of the healthy guest takes a new safety backup and
 	// replaces the old one (exactly one per Target, point a).
 	status, _ = s.restore(t, "3f2a9c0d1e4b5a67", false)
-	if status != "succeeded" || s.fr.safeties != 2 || len(s.fr.dropped) != 1 || s.fr.dropped[0] != "bk:safety-2" {
+	if status != "succeeded" || s.fr.safeties != 2 || len(s.fr.dropped) != 2 || s.fr.dropped[1] != "bk:safety-2" {
 		t.Errorf("next restore: %s, safeties %d, dropped %v", status, s.fr.safeties, s.fr.dropped)
 	}
 }
@@ -230,14 +237,16 @@ func TestRestoreSecondFailureKeepsTheGoodBackup(t *testing.T) {
 		t.Errorf("the Issue changed: %s, was %s", got, first)
 	}
 	// The way back works: the good safety backup is restored, with no new
-	// safety backup (the guest may be empty) and nothing deleted.
+	// safety backup (the guest may be empty); D-429 keeps it and drops
+	// only older ones.
 	s.fr.fail = nil
 	status, out = s.restore(t, "5afe000000000001", false)
-	if status != "succeeded" || s.fr.safeties != 1 || len(s.fr.dropped) != 0 {
+	if status != "succeeded" || s.fr.safeties != 1 || len(s.fr.dropped) != 1 || s.fr.dropped[0] != "bk:safety-1" {
 		t.Fatalf("restore of the good backup: %s %s, safeties %d, dropped %v", status, out, s.fr.safeties, s.fr.dropped)
 	}
+	s.reenrollDone(t) // D-440
 	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Error("the Issue stays after a restore that worked")
+		t.Error("the Issue stays after the re-enroll Run worked")
 	}
 }
 

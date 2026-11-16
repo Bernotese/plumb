@@ -324,3 +324,29 @@ describe("restore of a backup older than a disk (mock)", () => {
     expect(fresh.targets[0]?.resources[0]?.changes.some((c) => c.attr === "disk1")).toBe(false);
   });
 });
+
+// T-239 rest: the form says what T-238 really does (D-437, H1 and L2 of
+// #373, guest:volume-left of #365).
+describe("the disk texts match the server", () => {
+  it("VM: the restore note names the slot rule; the left-volume rule", async () => {
+    await edit();
+    expect(text(el("#disks-restore"))).toContain(
+      "when this list names its slot, the next Run attaches a new empty disk there",
+    );
+    expect(text(el("#disks-hint"))).toContain(
+      "the Issue guest:volume-left names it, and no disk is added until it is gone",
+    );
+  });
+
+  it("container: a stopped add is tried at the next start; a device is foreign", async () => {
+    await edit("ct-web1");
+    expect(text(el("#disks-hint"))).toContain(
+      "the disk is then tried only at its next start: if that start fails, remove the disk with a Plan",
+    );
+    el<HTMLInputElement>("#disks-managed").click();
+    flushSync();
+    expect(text(el("#disks-unmanaged-lxc"))).toContain(
+      "a bind mount or a device, Plumb did not make",
+    );
+  });
+});

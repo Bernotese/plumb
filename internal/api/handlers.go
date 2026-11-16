@@ -63,7 +63,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrIssueNotOpen):
 		problem(w, http.StatusConflict, "issue-not-open", "Issue is not open", "Another Plan resolves it, or it is resolved.")
 	case errors.Is(err, issue.ErrAcceptSensitive), errors.Is(err, issue.ErrAcceptImage), errors.Is(err, issue.ErrAddressFix),
-		errors.Is(err, issue.ErrAcceptFirewall), errors.Is(err, issue.ErrAcceptNIC), errors.Is(err, issue.ErrRestoreFailedRule):
+		errors.Is(err, issue.ErrAcceptFirewall), errors.Is(err, issue.ErrAcceptNIC), errors.Is(err, issue.ErrRestoreFailedRule), errors.Is(err, issue.ErrVolumeLeftRule):
 		problem(w, http.StatusConflict, "action-not-allowed", "Action not allowed", err.Error())
 	case errors.Is(err, plan.ErrRestoredMode):
 		problem(w, http.StatusConflict, "restored-mode", "Restored mode", err.Error())
@@ -84,7 +84,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		}
 		writeProblem(w, problemBody{Type: "urn:plumb:problem:validation", Title: "Validation failed",
 			Status: http.StatusUnprocessableEntity, Detail: "The documents are not valid.", Errors: uniqueFieldErrors(fe)})
-	case errors.As(err, &pe) && (errors.Is(err, plan.ErrNetworkNotAllowed) || errors.Is(err, plan.ErrNICsNotAdoptable)): // T-219
+	case errors.As(err, &pe) && (errors.Is(err, plan.ErrNetworkNotAllowed) || errors.Is(err, plan.ErrNICsNotAdoptable) || errors.Is(err, plan.ErrDisksNotAdoptable)): // T-219, T-238
 		problem(w, http.StatusUnprocessableEntity, pe.Err.Error(), "Validation failed", "Target "+pe.Target+": "+pe.Msg)
 	case errors.As(err, &pe):
 		detail := pe.Msg
@@ -836,7 +836,7 @@ func (s *Server) resolveIssue(w http.ResponseWriter, r *http.Request, p *princip
 	if req.Action == issue.ActionIgnoreOnce {
 		// M1 of #352: ending guest:restore-failed lifts the gate of T-234,
 		// so only a human admin session may, whatever its risk says.
-		if iss, err := s.st.GetIssue(r.Context(), id); err == nil && iss.Resource == plan.GuestRestoreFailedID && (!p.human() || p.tier != TierAdmin) {
+		if iss, err := s.st.GetIssue(r.Context(), id); err == nil && (iss.Resource == plan.GuestRestoreFailedID || iss.Resource == plan.GuestVolumeLeftID) && (!p.human() || p.tier != TierAdmin) {
 			problem(w, http.StatusForbidden, "human-required", "Human session required",
 				"Only a human admin session can end the Issue of a failed restore.")
 			return

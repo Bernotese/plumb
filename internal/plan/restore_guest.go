@@ -329,6 +329,9 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	if err != nil {
 		return store.Plan{}, err
 	}
+	if err := e.checkBackupNetworks(ctx, target, b.Ref, v); err != nil { // T-244 R1, T-241
+		return store.Plan{}, err
+	}
 	failedBefore, _, err := e.restoreFailedOpen(ctx, target)
 	if err != nil {
 		return store.Plan{}, err
@@ -344,11 +347,18 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	if reason == "" {
 		reason = "restore " + target + " from " + restoreText(v)
 	}
+	named := map[int]bool{}
+	if dk, _, err := docDisks(target, r); err == nil {
+		for _, d := range dk {
+			named[d.Slot] = true
+		}
+	}
+	diskChanges, diskNotes := e.restoreDiskChanges(ctx, b, v, st, named) // T-238
 	tp := TargetPlan{Target: target, Resources: []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
-		Risk: wire.RiskDestructive, Changes: []wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive},
-			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety, failedBefore), Risk: wire.RiskDestructive}}}}}
+		Risk: wire.RiskDestructive, Changes: append([]wire.Change{{Attr: AttrRestore, To: restoreText(v), Risk: wire.RiskDestructive},
+			{Attr: AttrSafetyBackup, To: safetyValue(skipSafety, failedBefore), Risk: wire.RiskDestructive}}, diskChanges...)}}}
 	changes, _ := json.Marshal([]TargetPlan{tp})
-	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: restoreNotes(target, r.Adopted != nil, skipSafety || failedBefore, failedBefore, v.Size)})
+	proposal, _ := json.Marshal(Proposal{Targets: []string{target}, Notes: append(restoreNotes(target, r.Adopted != nil, skipSafety || failedBefore, failedBefore, v.Size), diskNotes...)})
 	p, err := e.st.CreatePlan(ctx, store.Plan{BaseRevision: head.ID, Origin: OriginRestore, Proposal: proposal,
 		Changes: changes, Risk: string(wire.RiskDestructive), Reason: reason, Author: author,
 		HumanOnly: []string{HumanOnlyGuestRestore}})
@@ -383,11 +393,39 @@ func (e *Engine) restoreFailedOpen(ctx context.Context, target string) (bool, st
 	var ch []wire.Change
 	json.Unmarshal(iss.Changes, &ch)
 	for _, c := range ch {
-		if to, ok := c.To.(string); ok && c.Attr == "restore" {
+		if c.Attr != "restore" {
+			continue
+		}
+		// The "restored" states of D-439 are no broken guest: the disks are
+		// the restored ones (high QA finding of #374). A restore from there
+		// is a normal one: a safety backup first, "running" before the call.
+		if from, _ := c.From.(string); strings.HasPrefix(from, "restored") {
+			return false, "", nil
+		}
+		if to, ok := c.To.(string); ok {
 			return true, to, nil
 		}
 	}
 	return true, "", nil
+}
+
+// restoredState returns the changes of an open guest:restore-failed Issue
+// in a "restored" state (D-439), or nil.
+func (e *Engine) restoredState(ctx context.Context, target string) []wire.Change {
+	iss, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID)
+	if err != nil {
+		return nil
+	}
+	var ch []wire.Change
+	if json.Unmarshal(iss.Changes, &ch) != nil {
+		return nil
+	}
+	for _, c := range ch {
+		if from, _ := c.From.(string); c.Attr == "restore" && strings.HasPrefix(from, "restored") {
+			return ch
+		}
+	}
+	return nil
 }
 
 // checkBroken allows "no safety backup" only for a guest that is broken
@@ -397,10 +435,13 @@ func (e *Engine) checkBroken(ctx context.Context, target string, st driver.Guest
 	if st.Spec.DiskGB == 0 {
 		return nil
 	}
-	if _, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID); err == nil {
-		return nil
-	} else if !errors.Is(err, store.ErrNotFound) {
+	// M-B of #382: the same rule as restoreFailedOpen. Only a "failed" or
+	// "running" restore Issue is a broken guest; in a "restored" state the
+	// disks are the restored ones, so the safety backup is taken.
+	if open, _, err := e.restoreFailedOpen(ctx, target); err != nil {
 		return err
+	} else if open {
+		return nil
 	}
 	return &ProposalError{Target: target, Msg: "the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)"}
 }
@@ -412,8 +453,15 @@ func restorePlanned(p store.Plan) (TargetPlan, string, string, error) {
 	if err := json.Unmarshal(p.Changes, &tps); err != nil {
 		return TargetPlan{}, "", "", err
 	}
-	if len(tps) != 1 || len(tps[0].Resources) != 1 || len(tps[0].Resources[0].Changes) < 1 || len(tps[0].Resources[0].Changes) > 2 {
+	if len(tps) != 1 || len(tps[0].Resources) != 1 || len(tps[0].Resources[0].Changes) < 1 {
 		return TargetPlan{}, "", "", errors.New("plan: a restore Plan has one Target and the restore change")
+	}
+	// After the restore change: the safety backup, and the data disks that
+	// the backup lacks (T-238). Nothing else.
+	for i, c := range tps[0].Resources[0].Changes[1:] {
+		if (i > 0 || c.Attr != AttrSafetyBackup) && driver.DiskIndex(c.Attr) == 0 {
+			return TargetPlan{}, "", "", fmt.Errorf("plan: a restore Plan has no change %q", c.Attr)
+		}
 	}
 	c := tps[0].Resources[0].Changes[0]
 	text, _ := c.To.(string)
@@ -533,10 +581,23 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	if err != nil {
 		return fail("nothing was changed: " + err.Error())
 	}
+	// The network pre-check before the stop (T-244 R1, T-241): also for a
+	// restore of the safety backup, which takes the same path.
+	if err := e.checkBackupNetworks(ctx, tp.Target, b.Ref, v); err != nil {
+		var pe *ProposalError
+		if errors.As(err, &pe) {
+			return fail(pe.Msg)
+		}
+		return fail("nothing was changed: " + err.Error())
+	}
 	failedBefore, prevWay, err := e.restoreFailedOpen(ctx, tp.Target)
 	if err != nil {
 		return fail("nothing was changed: " + err.Error())
 	}
+	// A restore from the D-439 "restored" state: the "running" Issue below
+	// replaces it at the start, so the old proof ends there; a restore that
+	// does not start puts it back (the guest is as before).
+	prevRestored := e.restoredState(ctx, tp.Target)
 	if skip && !failedBefore {
 		if err := e.checkBroken(ctx, tp.Target, st); err != nil {
 			return fail("nothing was changed: " + err.Error())
@@ -596,7 +657,13 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 		if failedBefore {
 			return
 		}
-		if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusUnchanged, nil); err != nil {
+		if prevRestored != nil {
+			if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusDiffers, prevRestored); err != nil {
+				e.log.Warn("put back the restored state of the Issue", "target", tp.Target, "err", err)
+			}
+			return
+		}
+		if err := e.endRestoreIssue(ctx, tp.Target, GuestRestoreFailedID, "the restore did not start; the guest's disks are as before"); err != nil { // D-428
 			e.log.Warn("end the Issue of a restore that did not start", "target", tp.Target, "err", err)
 		}
 	}
@@ -639,17 +706,28 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 		return fail(msg)
 	}
 	// The disk is the restored one now: the follow-up (re-enroll Plan)
-	// comes also when a later step fails (review F1 of #335).
+	// comes also when a later step fails (review F1 of #335). D-427: the
+	// fact is stored first (the step output), so a start after a stop
+	// finds it; the guest:restore-failed Issue says "restored" and ends
+	// only after the follow-up (afterRestore, recoverRestores).
+	s.set(ctx, wire.GuestConfigID, wire.StatusRunning, nil, restoredMark+text)
 	e.restored.Store(p.ID, true)
-	// A restore that worked: the Issue of a failed one ends (D-420).
-	if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusUnchanged, nil); err != nil {
-		e.log.Warn("end the Issue of a failed restore", "target", tp.Target, "err", err)
+	if err := e.restoredIssue(ctx, tp.Target, run.ID, "restored: the follow-up (a re-enroll Plan, or the install command of an adopted Target) comes next"); err != nil {
+		e.log.Warn("mark the Issue of the restore as restored", "target", tp.Target, "err", err)
 	}
 	// Exactly one safety backup per Target: this Run's replaces the older
 	// ones. It stays after the restore, so a wrong restore can be undone.
-	// A Run without one deletes none.
-	if safety != nil {
-		if err := e.cfg.GuestRestore.DropSafetyBackups(ctx, tp.Target, safety.Volid); err != nil {
+	// D-429: a Run without one (the last restore had failed) that restored
+	// a pre-restore volume keeps it and every newer one; older ones go.
+	keep := ""
+	switch {
+	case safety != nil:
+		keep = safety.Volid
+	case isPreRestore(v):
+		keep = v.Volid
+	}
+	if keep != "" {
+		if err := e.cfg.GuestRestore.DropSafetyBackups(ctx, tp.Target, keep); err != nil {
 			e.log.Warn("delete the older safety backups", "target", tp.Target, "err", err)
 		}
 	}
@@ -692,6 +770,10 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 // restore call failed: the disk is the restored one. Its error is logged: a person
 // can always re-enroll by hand.
 func (e *Engine) afterRestore(ctx context.Context, p store.Plan, set *state.Set, ok bool) {
+	if p.Origin == OriginReenroll && ok {
+		e.endRestoredByReenroll(ctx, p)
+		return
+	}
 	if p.Origin != OriginRestore {
 		return
 	}
@@ -702,18 +784,11 @@ func (e *Engine) afterRestore(ctx context.Context, p store.Plan, set *state.Set,
 	if err != nil {
 		return
 	}
-	if r, err := e.renderOrNil(set, tp.Target); err != nil || r == nil || r.Adopted != nil {
+	r, err := e.renderOrNil(set, tp.Target)
+	if err != nil || r == nil {
 		return
 	}
-	re, err := e.Propose(ctx, Input{Proposal: Proposal{Reenroll: []string{tp.Target}}, Origin: OriginReenroll, Author: "system",
-		Reason: fmt.Sprintf("re-enroll %s after the restore of plan %d", tp.Target, p.ID)})
-	if err != nil {
-		// The Run output says that a re-enroll Plan follows; a person
-		// re-enrolls by hand when it is missing.
-		e.log.Error("re-enroll after the restore", "target", tp.Target, "plan", p.ID, "err", err)
-		return
-	}
-	e.log.Info("re-enroll Plan after the restore", "target", tp.Target, "plan", re.ID)
+	e.restoreFollowUp(ctx, p, tp.Target, r.Adopted != nil)
 }
 
 // safetyText is the reason of a failed safety backup: Plumb's own text of
@@ -754,4 +829,361 @@ func (e *Engine) writeRestoreIssue(ctx context.Context, target string, safety *R
 		ch = append(ch, wayBackChange(*safety))
 	}
 	return e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, ch)
+}
+
+// restoredMark starts the guest:config step output of a restore Run as soon
+// as the restore call worked (D-427): a start after a stop reads it.
+const restoredMark = "restored "
+
+// isPreRestore reports a volume whose marker has the trigger pre-restore
+// (a safety backup, D-420).
+func isPreRestore(v RestoreVolume) bool {
+	line, _, _ := strings.Cut(v.Notes, "\n")
+	parts := strings.Split(strings.TrimSpace(line), ":")
+	return len(parts) == 5 && parts[4] == "r"
+}
+
+// restoreFollowUp is the follow-up of a restore that worked (D-427): one
+// re-enroll Plan for a Plumb-made Target (host D12: an open one is used,
+// none is made twice), the install command for an adopted one. Then the
+// guest:restore-failed Issue ends with the reason (D-428). A refused
+// re-enroll leaves the Issue open in the "restored" state with Plumb's
+// reason and the way out (host D10); its gate lets only a re-enroll pass.
+func (e *Engine) restoreFollowUp(ctx context.Context, p store.Plan, target string, adopted bool) {
+	reason := fmt.Sprintf("a restore worked (plan %d)", p.ID)
+	var runID int64
+	if run, err := e.st.RunOfPlan(ctx, p.ID); err == nil {
+		runID = run.ID
+		reason = fmt.Sprintf("a restore worked in run %d (plan %d)", run.ID, p.ID)
+	}
+	switch {
+	case adopted:
+		reason += "; the guest runs without an agent: run the install command of the Target"
+	default:
+		open, err := e.openReenroll(ctx, target)
+		if err != nil {
+			e.log.Error("re-enroll after the restore", "target", target, "plan", p.ID, "err", err)
+			return
+		}
+		if open != 0 {
+			// T-252: no second Plan. D-440: the Issue waits for its Run.
+			e.waitForReenroll(ctx, target, runID, open)
+			return
+		}
+		re, err := e.Propose(ctx, Input{Proposal: Proposal{Reenroll: []string{target}}, Origin: OriginReenroll, Author: "system",
+			Reason: fmt.Sprintf("re-enroll %s after the restore of plan %d", target, p.ID)})
+		if err != nil {
+			e.log.Error("re-enroll after the restore", "target", target, "plan", p.ID, "err", err)
+			e.reenrollRefused(ctx, target, runID, err)
+			return
+		}
+		e.log.Info("re-enroll Plan after the restore", "target", target, "plan", re.ID)
+		// D-440: the Issue stays open in the "restored" state until the
+		// re-enroll Run worked (endRestoredByReenroll), never at the Plan:
+		// a Plan that goes stale (another Plan moved the head) or whose Run
+		// fails would else leave a stopped, revoked guest with no word.
+		e.waitForReenroll(ctx, target, runID, re.ID)
+		return
+	}
+	if err := e.endRestoreIssue(ctx, target, GuestRestoreFailedID, reason); err != nil {
+		e.log.Warn("end the Issue of the restore", "target", target, "err", err)
+	}
+}
+
+// openReenroll returns the id of a pending or approved re-enroll Plan of
+// target, or 0 (host D12: one re-enroll Plan, never a second one that
+// makes the first stale). A restore commits no revision, so an open Plan
+// stays valid.
+func (e *Engine) openReenroll(ctx context.Context, target string) (int64, error) {
+	pending, err := e.st.PendingPlans(ctx, OriginReenroll)
+	if err != nil {
+		return 0, err
+	}
+	approved, err := e.st.ApprovedPlans(ctx, OriginReenroll)
+	if err != nil {
+		return 0, err
+	}
+	head, err := e.st.Head(ctx)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
+	for _, pl := range append(pending, approved...) {
+		var tps []TargetPlan
+		if json.Unmarshal(pl.Changes, &tps) != nil || len(tps) != 1 || tps[0].Target != target {
+			continue
+		}
+		// T-252: only a Plan that can still do the work counts.
+		ok, _, err := e.reenrollUsable(ctx, pl, head.ID)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			return pl.ID, nil
+		}
+	}
+	return 0, nil
+}
+
+// reenrollRefused keeps the guest:restore-failed Issue open in the
+// "restored" state with Plumb's reason why the re-enroll Plan was refused
+// and the way out (host D10: never only a log line).
+func (e *Engine) reenrollRefused(ctx context.Context, target string, runID int64, err error) {
+	why := "the re-enroll Plan was refused"
+	var pe *ProposalError
+	if errors.As(err, &pe) {
+		// Plumb's own text; it can list config lines, so it is cut. A
+		// refusal is never guest text (D-250 names the Proxmox config).
+		why += ": " + cutRunes(pe.Msg, 300)
+	}
+	if ierr := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, []wire.Change{
+		{Attr: "restore", From: RestoredRefusedPrefix + why, To: "remove the addition in Proxmox, then POST /targets/" + target + "/reenroll", Risk: wire.RiskDisruptive},
+		{Attr: AttrRestoreRun, To: runID, Risk: wire.RiskRead},
+	}); ierr != nil {
+		e.log.Error("show the refused re-enroll in the Issue", "target", target, "err", ierr)
+	}
+}
+
+// RestoredRefusedPrefix starts the state of a guest:restore-failed Issue
+// whose restore worked but whose re-enroll Plan was refused (host D10).
+const RestoredRefusedPrefix = "restored; the agent is not enrolled: "
+
+// AttrRestoreRun is the change of a guest:restore-failed Issue in the
+// "restored" state that names the restore Run: the gate takes its proof
+// from that Run's stored step, never from the Issue text.
+const AttrRestoreRun = "restore_run"
+
+// restoredIssue sets the guest:restore-failed Issue to the "restored"
+// state: the guest's disks are the restored ones; only the follow-up is
+// missing. The gate then lets a re-enroll pass (restoreFailedGate).
+func (e *Engine) restoredIssue(ctx context.Context, target string, runID int64, from string) error {
+	return e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, []wire.Change{
+		{Attr: "restore", From: from, To: "the follow-up of the restore", Risk: wire.RiskDisruptive},
+		{Attr: AttrRestoreRun, To: runID, Risk: wire.RiskRead},
+	})
+}
+
+// restoredProof reports whether the open guest:restore-failed Issue iss
+// names a restore Run whose stored guest:config step says "restored"
+// (condition 1 of the T-241 design: proof from the store).
+func (e *Engine) restoredProof(ctx context.Context, iss store.Issue) bool {
+	var ch []wire.Change
+	if json.Unmarshal(iss.Changes, &ch) != nil {
+		return false
+	}
+	for _, c := range ch {
+		if c.Attr != AttrRestoreRun {
+			continue
+		}
+		runID, err := driver.IntValue(c.To)
+		if err != nil {
+			return false
+		}
+		run, err := e.st.GetRun(ctx, int64(runID))
+		if err != nil {
+			return false
+		}
+		if p, err := e.st.GetPlan(ctx, run.PlanID); err != nil || p.Origin != OriginRestore {
+			return false
+		}
+		steps, err := e.st.Steps(ctx, run.ID)
+		if err != nil {
+			return false
+		}
+		for _, s := range steps {
+			if s.Resource == wire.GuestConfigID && s.Target == iss.Target && restoredOutput(s.Output) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// endRestoredByReenroll ends a guest:restore-failed Issue in the
+// "restored" state when a re-enroll Run of its Target worked (condition 4,
+// D-428).
+func (e *Engine) endRestoredByReenroll(ctx context.Context, p store.Plan) {
+	var tps []TargetPlan
+	if json.Unmarshal(p.Changes, &tps) != nil {
+		return
+	}
+	for _, tp := range tps {
+		iss, err := e.st.OpenIssue(ctx, tp.Target, GuestRestoreFailedID)
+		if err != nil || !e.restoredProof(ctx, iss) {
+			continue
+		}
+		reason := fmt.Sprintf("the re-enroll Plan %d worked after the restore", p.ID)
+		if err := e.endRestoreIssue(ctx, tp.Target, GuestRestoreFailedID, reason); err != nil {
+			e.log.Warn("end the Issue of the restore after the re-enroll", "target", tp.Target, "err", err)
+		}
+
+	}
+}
+
+// cutRunes cuts s at n runes with a mark.
+func cutRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…(cut)"
+}
+
+// restoredOutput reports a restore step output that proves the restore
+// call worked: "restored <backup>…" while it runs or when it applied, and
+// "restored, but …" when a later step failed (the disk is the restored
+// one, review F1 of #335). "nothing was restored" does not count.
+func restoredOutput(out string) bool {
+	return strings.HasPrefix(out, restoredMark) || strings.HasPrefix(out, "restored, but")
+}
+
+// RestoredNote is the actions note of a guest:restore-failed Issue in the
+// "restored" state (D-439), or "": the state and the way out.
+func RestoredNote(ch []wire.Change) string {
+	for _, c := range ch {
+		from, _ := c.From.(string)
+		to, _ := c.To.(string)
+		if c.Attr == "restore" && strings.HasPrefix(from, "restored") {
+			return from + ". Way out: " + to + ". The disks are the restored ones, so Plans of this Target pass; the Issue ends when a re-enroll Run worked."
+		}
+	}
+	return ""
+}
+
+// RestoredWaitsPrefix starts the D-440 state of a guest:restore-failed
+// Issue: the restore worked, a re-enroll Plan is made, and its Run has not
+// worked yet.
+const RestoredWaitsPrefix = "restored; the agent is not enrolled yet: "
+
+// AttrReenrollPlan is the change of a guest:restore-failed Issue in the
+// D-440 state that names the re-enroll Plan. The way out follows that
+// Plan's real state when the Issue is read (RestoredActionNote).
+const AttrReenrollPlan = "reenroll_plan"
+
+// waitForReenroll sets the Issue to the D-440 state for the re-enroll
+// Plan planID; the restore Run runID is the proof of the D-439 gate.
+func (e *Engine) waitForReenroll(ctx context.Context, target string, runID, planID int64) {
+	if err := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, []wire.Change{
+		{Attr: "restore", From: fmt.Sprintf("%sapprove the re-enroll Plan %d", RestoredWaitsPrefix, planID),
+			To: fmt.Sprintf("approve the re-enroll Plan %d; when it can no longer run, plan the re-enroll again: POST /targets/%s/reenroll", planID, target), Risk: wire.RiskDisruptive},
+		{Attr: AttrRestoreRun, To: runID, Risk: wire.RiskRead},
+		{Attr: AttrReenrollPlan, To: planID, Risk: wire.RiskRead},
+	}); err != nil {
+		e.log.Error("keep the Issue of the restore open until the re-enroll", "target", target, "err", err)
+	}
+}
+
+// reenrollUsable reports whether the re-enroll Plan pl can still do the
+// work (T-252): pending on the head, or approved with no Run yet or a Run
+// that has not ended. why says what it is else.
+func (e *Engine) reenrollUsable(ctx context.Context, pl store.Plan, head int64) (bool, string, error) {
+	switch pl.Status {
+	case store.PlanPending:
+		if pl.BaseRevision != head {
+			return false, "it is stale (another Plan changed the revision)", nil
+		}
+		return true, "", nil
+	case store.PlanApproved:
+		run, err := e.st.RunOfPlan(ctx, pl.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			return true, "", nil
+		case err != nil:
+			return false, "", err
+		case run.Status == "running":
+			return true, "", nil
+		case run.Status == "succeeded":
+			return false, "its Run worked", nil
+		}
+		return false, "its Run failed", nil
+	}
+	if pl.Status == store.PlanStale {
+		return false, "it is stale (another Plan changed the revision, or it was dropped)", nil
+	}
+	return false, "it is " + pl.Status, nil
+}
+
+// RestoredActionNote is the actions note of a guest:restore-failed Issue
+// in a "restored" state, read at this moment (D-440): for the D-440 state
+// it follows the named re-enroll Plan; for the D-439 refusal it is
+// RestoredNote. "" for any other state.
+func (e *Engine) RestoredActionNote(ctx context.Context, iss store.Issue) string {
+	var ch []wire.Change
+	if json.Unmarshal(iss.Changes, &ch) != nil {
+		return ""
+	}
+	var planID int64
+	for _, c := range ch {
+		if c.Attr == AttrReenrollPlan {
+			if n, err := driver.IntValue(c.To); err == nil {
+				planID = int64(n)
+			}
+		}
+	}
+	if planID == 0 {
+		return RestoredNote(ch)
+	}
+	// T-253 (host step 9): the note names the newest re-enroll Plan of the
+	// Target that can still run, else the newest one that cannot; a Plan
+	// made by hand after the named one counts too.
+	if id, err := e.newestReenroll(ctx, iss.Target, planID); err == nil {
+		planID = id
+	}
+	tail := " The disks are the restored ones, so Plans of this Target pass (fix the Target first if the re-enroll failed because of it); the Issue ends when a re-enroll Run worked."
+	again := fmt.Sprintf("plan the re-enroll again (\"Propose the re-enroll\", or POST /targets/%s/reenroll).", iss.Target)
+	pl, err := e.st.GetPlan(ctx, planID)
+	if err != nil {
+		return fmt.Sprintf("%sthe re-enroll Plan %d is gone: %s%s", RestoredWaitsPrefix, planID, again, tail)
+	}
+	head, err := e.st.Head(ctx)
+	if err != nil {
+		return fmt.Sprintf("%sapprove the re-enroll Plan %d.%s", RestoredWaitsPrefix, planID, tail)
+	}
+	ok, why, err := e.reenrollUsable(ctx, pl, head.ID)
+	if ok && pl.Status == store.PlanApproved {
+		if run, err := e.st.RunOfPlan(ctx, pl.ID); err == nil && run.Status == "running" {
+			return fmt.Sprintf("%sthe re-enroll Plan %d runs (run %d): wait for it.%s", RestoredWaitsPrefix, planID, run.ID, tail)
+		}
+	}
+	switch {
+	case err != nil, ok:
+		return fmt.Sprintf("%sapprove the re-enroll Plan %d.%s", RestoredWaitsPrefix, planID, tail)
+	}
+	return fmt.Sprintf("%sthe re-enroll Plan %d can no longer run (%s): %s%s", RestoredWaitsPrefix, planID, why, again, tail)
+}
+
+// newestReenroll returns the re-enroll Plan of target that the Issue's
+// note names (T-253): the newest one that can still run, else the newest
+// one that cannot (named is the Plan that the Issue stored, counted too).
+func (e *Engine) newestReenroll(ctx context.Context, target string, named int64) (int64, error) {
+	head, err := e.st.Head(ctx)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
+	var all []store.Plan
+	for _, list := range []func(context.Context, string) ([]store.Plan, error){e.st.PendingPlans, e.st.ApprovedPlans, e.st.StalePlans} {
+		ps, err := list(ctx, OriginReenroll)
+		if err != nil {
+			return 0, err
+		}
+		all = append(all, ps...)
+	}
+	usable, newest := int64(0), named
+	for _, pl := range all {
+		var tps []TargetPlan
+		if json.Unmarshal(pl.Changes, &tps) != nil || len(tps) != 1 || tps[0].Target != target {
+			continue
+		}
+		newest = max(newest, pl.ID)
+		ok, _, err := e.reenrollUsable(ctx, pl, head.ID)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			usable = max(usable, pl.ID)
+		}
+	}
+	if usable != 0 {
+		return usable, nil
+	}
+	return newest, nil
 }

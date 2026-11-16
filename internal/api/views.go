@@ -381,6 +381,9 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		v.Changes = changes(rest)
 		if i.Status == store.IssueOpen {
 			v.ActionsNote = plan.RestoreFailedIgnoreNote // M1 of #352: for the confirm of ignore
+			if note := s.cfg.Plans.RestoredActionNote(ctx, i); note != "" {
+				v.ActionsNote = note // D-439: the "restored" state and its way out
+			}
 		}
 		if w != nil {
 			v.RestoreWayBack = &wayBackView{BackupID: w.BackupID, Time: w.Time}
@@ -389,7 +392,7 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 	if i.Status == store.IssueOpen && issue.IgnoreOnly(i.Resource) {
 		// ip is create-only: Plumb can neither revert nor accept (D-215).
 		v.Actions = append(v.Actions, "ignore_once")
-		if i.Resource != plan.GuestRestoreFailedID { // no Rule for it (M1 of #352)
+		if i.Resource != plan.GuestRestoreFailedID && i.Resource != plan.GuestVolumeLeftID { // no Rule for them (M1 of #352, D-437)
 			v.Actions = append(v.Actions, "ignore_rule")
 		}
 	} else if i.Status == store.IssueOpen {

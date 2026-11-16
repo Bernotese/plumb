@@ -313,7 +313,10 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	// T-234: a Target whose last restore failed takes no Plan but a delete
 	// by a person (a restore Plan has its own path). Before the planning:
 	// the empty guest would fail it with a text that misleads.
-	restoreFailedDelete, err := e.restoreFailedNames(ctx, next, names)
+	// D-439: a re-enroll Plan (its own origin, one Target, no document
+	// change) passes after a restore that worked.
+	reenrollOnly := in.Origin == OriginReenroll && len(names) == 1 && len(in.Proposal.Put) == 0 && len(in.Proposal.Delete) == 0
+	restoreFailedDelete, err := e.restoreFailedNames(ctx, next, names, reenrollOnly)
 	if err != nil {
 		return store.Plan{}, err
 	}
@@ -588,6 +591,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 			tp.Guest = "delete"
 			tp.Resources = []ResourceChange{{Resource: wire.GuestConfigID, Action: wire.ActionDelete, Risk: wire.RiskDestructive,
 				Changes: []wire.Change{{Attr: wire.AttrState, From: wire.StatePresent, To: wire.StateAbsent, Risk: wire.RiskDestructive}}}}
+			tp.notes = append(tp.notes, e.deleteDiskNotes(ctx, bind.Ref)...) // T-238, M1 of #360
 		}
 		return tp, nil
 
@@ -597,6 +601,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		}
 		tp.Guest = "adopt"
 		if _, err := e.docNICs(target, r); err != nil { // D-404
+			return tp, err
+		}
+		if _, _, err := docDisks(target, r); err != nil { // T-238, as D-404
 			return tp, err
 		}
 		tp.Resources = append(tp.Resources, ResourceChange{Resource: wire.GuestConfigID, Action: wire.ActionUpdate,
@@ -671,6 +678,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		return tp, &ProposalError{Target: target, Msg: "cannot read the guest: " + err.Error(), Err: err}
 	}
 	gchanges, err := e.cfg.Driver.Diff(desired, observed)
+	if de := diskDiffError(target, r, err); de != nil { // T-238: 422 at the disk
+		return tp, de
+	}
 	var oe *driver.OutsideError
 	if errors.As(err, &oe) {
 		return tp, &ProposalError{Target: target, Err: ErrOutside, Msg: outsideText(bind.Ref, observed)}
@@ -693,7 +703,12 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	}
 	// A VM disk that grew while its root file system did not (review M1
 	// of #217): the Plan grows the file system again.
-	if !reenroll && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
+	// D-440: a restored guest that waits for its re-enroll has no agent;
+	// its re-enroll Run grows the file system with the new agent.
+	waiting := !reenroll && e.restoredWaiting(ctx, target)
+	// M-A of #382: a re-enroll Plan takes a pending grow too; its Run
+	// grows after the new agent's hello.
+	if !waiting && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
 		gchanges = append(gchanges, rootFSChange(bind.RootGrow))
 	}
 	if !reenroll {
@@ -707,6 +722,11 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	if err != nil {
 		return tp, &ProposalError{Target: target, Msg: err.Error()}
 	}
+	var dnotes []string
+	if gchanges, dnotes, err = e.diskPlan(ctx, target, r, observed, gchanges); err != nil { // T-238
+		return tp, err
+	}
+	tp.notes = append(tp.notes, dnotes...)
 	if ac := allowRestartChange(before, r); ac != nil {
 		gchanges = append([]wire.Change{*ac}, gchanges...)
 	}
@@ -736,6 +756,13 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	// A stopped guest (D-299): it stays stopped, so its agent steps are
 	// skipped; or the Run starts it, so its agent cannot observe now and
 	// its resources are planned as for a new guest (D-308).
+	// D-440: a restored guest that waits for its re-enroll has no agent
+	// (the restore revoked it): as for a stopped Target (D-299), only its
+	// guest changes are planned; the re-enroll Run does the agent part.
+	if waiting {
+		tp.notes = append(tp.notes, textRestoredWaitsSkip)
+		return tp, nil
+	}
 	if observed.Power != driver.PowerRunning {
 		switch desired.Power {
 		case driver.PowerStopped:
@@ -819,6 +846,9 @@ func createChanges(s driver.GuestSpec) []wire.Change {
 	for i, n := range s.NICs { // T-219
 		c = append(c, wire.Change{Attr: driver.AttrNIC(i + 1), To: n.Value(), Risk: wire.RiskReversible})
 	}
+	for _, dk := range s.Disks { // T-238: written with the create (a container's cold)
+		c = append(c, wire.Change{Attr: driver.AttrDiskN(dk.Slot), To: dk.Value(), Risk: wire.RiskReversible})
+	}
 	if s.Power == driver.PowerStopped {
 		// Created, enrolled and applied, then stopped (D-299).
 		c = append(c, wire.Change{Attr: driver.AttrPower, From: string(driver.PowerRunning), To: string(driver.PowerStopped), Risk: driver.PowerRisk(driver.PowerStopped)})
@@ -897,6 +927,9 @@ func (e *Engine) guestSpec(target string, r *state.Rendered) (driver.GuestSpec, 
 		spec.Features = driver.CTFeatures // D-227: nesting only
 	}
 	if spec.NICs, err = e.docNICs(target, r); err != nil { // T-219
+		return spec, err
+	}
+	if spec.Disks, spec.DisksSet, err = docDisks(target, r); err != nil { // T-238
 		return spec, err
 	}
 	return spec, nil
@@ -1004,6 +1037,12 @@ func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPl
 					total = addBytes(total, DiskBytes(to-from))
 					grows++
 				}
+				if rc.Resource == wire.GuestConfigID { // T-238: data disk adds and grows
+					if gb := dataDiskGrowth(rc.Changes); gb > 0 {
+						total = addBytes(total, DiskBytes(gb))
+						grows++
+					}
+				}
 			}
 			continue
 		}
@@ -1019,6 +1058,11 @@ func (e *Engine) diskNote(ctx context.Context, next *state.Set, plans []TargetPl
 			continue
 		}
 		total = addBytes(total, DiskBytes(disk))
+		if dk, _, err := docDisks(tp.Target, r); err == nil { // T-238
+			for _, d := range dk {
+				total = addBytes(total, DiskBytes(d.SizeGB))
+			}
+		}
 		n++
 	}
 	if n == 0 && grows == 0 {

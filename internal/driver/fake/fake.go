@@ -104,6 +104,10 @@ type Driver struct {
 	failures map[Op][]error
 	calls    map[Op]int
 	hooks    map[Op][]func()
+	// Data disks (T-238): see disks.go.
+	diskStartFails, diskFreeFails bool
+	diskFreeErr                   error
+	leftover                      []string
 	// hotplug: a running guest takes cores and memory live. Default off,
 	// like Proxmox without hotplug and NUMA settings.
 	hotplug bool
@@ -542,6 +546,8 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 		next.Tags = append([]string(nil), spec.Tags...)
 		spec.NICs = append([]driver.NIC(nil), spec.NICs...) // T-219: own copies
 		next.NICs = append([]driver.NIC(nil), spec.NICs...)
+		spec.Disks, spec.DisksSet = createDisks(id, spec.Disks), false // T-238
+		next.Disks, next.DisksSet = createDisks(id, spec.Disks), false
 		g := &guest{spec: spec, next: next, power: driver.PowerRunning, token: boot.Token, ip: ip, boots: 1,
 			env: spec.Kind == wire.KindLXC}
 		if g.env {
@@ -562,11 +568,13 @@ func (d *Driver) Observe(ctx context.Context, id driver.GuestID) (driver.GuestSt
 		spec := g.spec
 		spec.SSHKeys = append([]string(nil), g.spec.SSHKeys...)
 		spec.Tags, spec.TagsSet = append([]string(nil), g.spec.Tags...), true
+		spec.Disks, spec.DisksSet = slices.Clone(g.spec.Disks), true
 		st := driver.GuestState{Spec: spec, Digest: digest(g), Power: g.power, TokenPending: g.pending != "", TokenInConfig: g.env, MAC: fakeMAC(id)}
 		if !equalSpec(g.spec, g.next) {
 			next := g.next
 			next.SSHKeys = append([]string(nil), g.next.SSHKeys...)
 			next.Tags, next.TagsSet = append([]string(nil), g.next.Tags...), true
+			next.Disks, next.DisksSet = slices.Clone(g.next.Disks), true
 			st.Pending = &next
 		}
 		if g.power == driver.PowerRunning {
@@ -611,6 +619,17 @@ func (d *Driver) Update(ctx context.Context, id driver.GuestID, changes []wire.C
 		hotplug := d.hotplug || g.lxc()
 		run, next := g.spec, g.next
 		for _, c := range changes {
+			if driver.DiskIndex(c.Attr) > 0 { // T-238
+				if err := d.diskChange(id, g, &run, &next, c); err != nil {
+					var ve *driver.VolumeLeftError
+					if errors.As(err, &ve) { // the detach is done; only the free failed
+						g.spec, g.next = run, next
+						g.gen++
+					}
+					return err
+				}
+				continue
+			}
 			if driver.IsCreateOnly(c.Attr) {
 				return &driver.CreateOnlyError{Attr: c.Attr}
 			}
@@ -954,8 +973,9 @@ func (d *Driver) DiskSpace(ctx context.Context) (driver.DiskSpace, error) {
 	return task(ctx, d, OpDiskSpace, func() (driver.DiskSpace, error) {
 		used := d.diskBase
 		for _, g := range d.guests {
-			used += int64(g.spec.DiskGB) * GiB
+			used += int64(g.spec.DiskGB+g.spec.DisksGB()) * GiB
 		}
+		used += int64(len(d.leftover)) * GiB // a left volume (model: 1 GiB)
 		for _, t := range d.tpls {
 			used += t.size
 		}

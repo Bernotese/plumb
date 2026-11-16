@@ -473,6 +473,15 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		watched = true
 		return s.ok
 	}
+	// D-440: a restored guest that waits for its re-enroll has no agent
+	// (revoked by the restore), at any power: its agent steps are skipped;
+	// the re-enroll Run does them with the new agent.
+	if !reenroll && e.restoredWaiting(ctx, tp.Target) {
+		for _, res := range r.Resources {
+			s.skip(ctx, res.ID, textRestoredWaitsSkip)
+		}
+		return s.ok
+	}
 
 	// An adopted Target without agent resources and without an agent: its
 	// agent comes by the install command (D-386, D-387); nothing waits.
@@ -751,7 +760,12 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		}
 		// T-074: the full disk counts until the clone is done; then the
 		// real use that the driver reads counts.
-		release, err := e.disk.Reserve(ctx, DiskBytes(spec.DiskGB), fmt.Sprintf("the %d GiB disk of %s", spec.DiskGB, tp.Target))
+		// T-238: the data disks count too (the gate counts every disk).
+		what := fmt.Sprintf("the %d GiB disk of %s", spec.DiskGB, tp.Target)
+		if spec.DisksGB() > 0 {
+			what = fmt.Sprintf("the %d GiB of disks of %s (with %d GiB of data disks)", spec.DiskGB+spec.DisksGB(), tp.Target, spec.DisksGB())
+		}
+		release, err := e.disk.Reserve(ctx, DiskBytes(spec.DiskGB+spec.DisksGB()), what)
 		if err != nil {
 			return res, fmt.Errorf("%w; nothing was made: free space on the storage or choose a smaller disk", err)
 		}
@@ -852,10 +866,21 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	write := driverChanges(recorded)
 	grow := driver.Grow(write)
 	write = slices.DeleteFunc(write, func(c wire.Change) bool { return c.Attr == driver.AttrDisk })
+	var disks []wire.Change // T-238: own steps, after the rest
+	write = slices.DeleteFunc(write, func(c wire.Change) bool {
+		if driver.DiskIndex(c.Attr) > 0 {
+			disks = append(disks, c)
+			return true
+		}
+		return false
+	})
 	if len(write) > 0 {
 		if err := e.cfg.Driver.Update(ctx, id, write, boot); err != nil {
 			return res, err
 		}
+	}
+	if err := e.diskSteps(ctx, tp.Target, id, disks); err != nil {
+		return res, err
 	}
 	after, err := e.cfg.Driver.Observe(ctx, id)
 	if err != nil {
@@ -921,7 +946,7 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	}
 	// A root grow that failed in an earlier Run (review M1 of #217): the
 	// Plan shows root_fs, the disk has its size, the agent grows again.
-	if grow == nil && !reenroll && hasAttr(planned.Changes, AttrRootFS) && b.RootGrow > 0 && desired.Kind == wire.KindVM {
+	if grow == nil && hasAttr(planned.Changes, AttrRootFS) && b.RootGrow > 0 && desired.Kind == wire.KindVM {
 		if after.Power != driver.PowerRunning {
 			return res, errors.New(textGrowNotRunning)
 		}
@@ -1083,6 +1108,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 	if err := e.recoverBuilds(ctx); err != nil {
 		return err
 	}
+	kept := e.keepRestoredSteps(ctx, runs) // D-427: before the steps fail
 	for _, run := range runs {
 		e.mu.Lock()
 		active := e.active[run.ID]
@@ -1100,16 +1126,23 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if err := e.finishDeletes(ctx, run); err != nil {
 			return err
 		}
-		if err := e.st.FinishRun(ctx, run.ID, "failed", e.waitsOfRun(ctx, run.ID)); err != nil {
+		// T-253 (host step 4): a restore whose step stored "restored" worked
+		// (a restore Run has that one step, restorePlanned); the stop cut
+		// only its follow-up, which recoverRestores makes now.
+		status := "failed"
+		if kept[run.ID] {
+			status = "succeeded"
+		}
+		if err := e.st.FinishRun(ctx, run.ID, status, e.waitsOfRun(ctx, run.ID)); err != nil {
 			return err
 		}
 		e.emit(ctx, "run.finished", fmt.Sprintf("run:%d", run.ID), "system",
-			map[string]any{"plan": run.PlanID, "status": "failed", "reason": reason})
+			map[string]any{"plan": run.PlanID, "status": status, "reason": reason})
 		if e.cfg.OnPlanDone != nil {
-			e.cfg.OnPlanDone(ctx, run.PlanID, false)
+			e.cfg.OnPlanDone(ctx, run.PlanID, status == "succeeded")
 		}
 	}
-	return nil
+	return e.recoverRestores(ctx) // D-427: the follow-up of a cut restore
 }
 
 // finishDeletes ends the delete steps that a crash cut off (D-211): when

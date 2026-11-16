@@ -28,15 +28,33 @@ type memDriver struct {
 	clock    *time.Time
 	rewrite  func(string) string // changes the notes that vzdump writes
 	block    chan struct{}       // non-nil: BackUpGuest waits for ctx end
+	// T-248: the vzdump tasks by UPID, and how the next task ends.
+	tasks    map[string]*GuestTask
+	upids    []string
+	overlap  bool  // another vzdump of the guest ends in the window: ErrManyNew
+	failLeft bool  // the task fails after it wrote its archive
+	taskErr  error // GuestBackupTask cannot read the task
 }
 
-func (d *memDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, ex []string) (string, bool, error) {
+func (d *memDriver) BackUpGuest(ctx context.Context, storage, guest, notes string, ex []string, onTask func(string)) (string, bool, error) {
 	if d.fail {
 		return "", false, errors.New("vzdump failed")
 	}
+	if d.tasks == nil {
+		d.tasks = map[string]*GuestTask{}
+	}
+	upid := fmt.Sprintf("UPID:pve:%08d:vzdump:%s", len(d.upids)+1, guest)
+	d.upids = append(d.upids, upid)
+	d.tasks[upid] = &GuestTask{Running: true}
+	if onTask != nil {
+		onTask(upid)
+	}
 	if d.block != nil {
+		d.notes = append(d.notes, notes)
 		close(d.block)
 		<-ctx.Done()
+		// The driver's wait asks Proxmox to stop the task (stopTask).
+		d.tasks[upid] = &GuestTask{}
 		return "", false, ctx.Err()
 	}
 	d.seq++
@@ -52,7 +70,28 @@ func (d *memDriver) BackUpGuest(ctx context.Context, storage, guest, notes strin
 	*d.clock = d.clock.Add(time.Minute)
 	v := Volume{Volid: fmt.Sprintf("%s:backup/vzdump-%s-%03d", storage, guest, d.seq), Time: *d.clock, Notes: n}
 	d.vols[guest] = append(d.vols[guest], v)
+	d.tasks[upid] = &GuestTask{OK: true, Volid: v.Volid}
+	switch {
+	case d.overlap:
+		// A hand vzdump of the same guest (no notes) ends in the window.
+		d.vols[guest] = append(d.vols[guest], Volume{Volid: fmt.Sprintf("%s:backup/vzdump-%s-hand-%03d", storage, guest, d.seq), Time: *d.clock})
+		return "", false, fmt.Errorf("%w: made 2", ErrManyNew)
+	case d.failLeft:
+		d.tasks[upid].OK = false
+		return "", false, errors.New("vzdump: an error after the archive")
+	}
 	return v.Volid, d.noNotes, nil
+}
+
+func (d *memDriver) GuestBackupTask(_ context.Context, _, guest, upid string) (GuestTask, error) {
+	if d.taskErr != nil {
+		return GuestTask{}, d.taskErr
+	}
+	t, ok := d.tasks[upid]
+	if !ok || !strings.HasSuffix(upid, ":"+guest) {
+		return GuestTask{}, ErrNotGuestTask
+	}
+	return *t, nil
 }
 
 func (d *memDriver) ListGuestBackups(_ context.Context, _, guest string) ([]Volume, error) {

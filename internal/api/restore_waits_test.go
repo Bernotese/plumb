@@ -1,0 +1,212 @@
+package api
+
+// T-254, D-440 (found on pve-dev, T-247 F4): after a restore the Issue
+// stays in the "restored" state until the re-enroll Run worked. A stale or
+// dropped re-enroll Plan leaves it open, and the note at read time says to
+// plan the re-enroll again.
+
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/store"
+)
+
+func TestRestoreIssueWaitsForTheReenrollRun(t *testing.T) {
+	for name, kill := range map[string]func(t *testing.T, s *safetyEnv, id int64){
+		// The host case: another Plan moves the head, the re-enroll goes stale.
+		"another Plan moved the head": func(t *testing.T, s *safetyEnv, id int64) {
+			s.e.seed(s.adm, "web2")
+		},
+		// The head moves with no Run, so no sweep marks the Plan stale:
+		// it is pending on an old base (the pending branch of the check).
+		"the head moved without a Run": func(t *testing.T, s *safetyEnv, id int64) {
+			head, err := s.e.st.Head(s.e.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := s.e.st.RevisionDocs(s.e.ctx, head.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.e.st.CommitRevision(s.e.ctx, store.NewRevision{Author: "user:qa", Reason: "same docs", Docs: rows}); err != nil {
+				t.Fatal(err)
+			}
+			if p, _ := s.e.st.GetPlan(s.e.ctx, id); p.Status != store.PlanPending {
+				t.Fatalf("the Plan is %s, want pending off the head", p.Status)
+			}
+		},
+		"the re-enroll Plan was dropped": func(t *testing.T, s *safetyEnv, id int64) {
+			if code, body := s.adm.do("DELETE", "/api/v1/plans/"+itoa(id), nil); code != 204 {
+				t.Fatalf("drop: %d %s", code, body)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSafetyEnv(t)
+			if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+				t.Fatalf("restore: %s %s", status, out)
+			}
+			first := s.reenrollOf(t, "web1")
+			iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+			if err != nil || first == 0 {
+				t.Fatalf("the Issue ended at the Plan (%v), or no Plan (%d)", err, first)
+			}
+			if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "approve the re-enroll Plan "+itoa(first)+".") {
+				t.Errorf("note while the Plan is good: %q", v.ActionsNote)
+			}
+			kill(t, s, first)
+			// The Issue stays open, and its note now says to plan it again.
+			v := s.issue(t, iss.ID)
+			if v.Status != "open" || !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(first)+" can no longer run (it is stale") || !strings.Contains(v.ActionsNote, "plan the re-enroll again") {
+				t.Fatalf("the Issue after the Plan went bad: %+v", v)
+			}
+			if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(first)+"/approve", nil); code != 409 {
+				t.Fatalf("the old re-enroll Plan still approves: %d %s", code, body)
+			}
+			// D-440: the disks are the restored ones, so the gate is open.
+			code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}})
+			if code != 201 {
+				t.Errorf("another Plan of web1: %d %s", code, body)
+			}
+			// The way out: a new re-enroll; its Run ends the Issue.
+			code, body = s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "the way out"})
+			if code != 201 {
+				t.Fatalf("re-enroll again: %d %s", code, body)
+			}
+			id := s.reenrollDone(t)
+			if s.openIssue(plan.GuestRestoreFailedID) {
+				t.Fatal("the Issue stays after the re-enroll Run worked")
+			}
+			if c := lastComment(t, s, plan.GuestRestoreFailedID); !strings.Contains(c, "the re-enroll Plan "+itoa(id)+" worked after the restore") {
+				t.Errorf("comment %q", c)
+			}
+		})
+	}
+}
+
+// D-440 (a): the gate is open only while the store proves the restore
+// worked. A second restore that fails after a "restored" state ends the
+// proof at its start (H1 of #374): the gate is closed again.
+func TestRestoredGateClosesAtAFailedSecondRestore(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}}); code != 201 {
+		t.Fatalf("restored: a document Plan: %d %s", code, body)
+	}
+	s.fr.fail = errors.New("proxmox: restore failed")
+	if status, _ := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "failed" {
+		t.Fatalf("the second restore: %s", status)
+	}
+	for name, try := range map[string]func() (int, []byte){
+		"document Plan": func() (int, []byte) {
+			return s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}})
+		},
+		"re-enroll": func() (int, []byte) {
+			return s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "x"})
+		},
+	} {
+		if code, body := try(); code != 409 || problemType(body) != "restore-failed" {
+			t.Errorf("failed again: %s: %d %s", name, code, body)
+		}
+	}
+	// The poll does not compare the guest that may be empty.
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if s.e.eng.RestoredOK(s.e.ctx, iss) {
+		t.Error("the proof holds after a failed restore")
+	}
+}
+
+// L1 of #382: while the re-enroll Run runs, the note says to wait.
+func TestRestoredNoteWhileTheReenrollRuns(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	id := s.reenrollOf(t, "web1")
+	head, _ := s.e.st.Head(s.e.ctx)
+	rows, _ := s.e.st.RevisionDocs(s.e.ctx, head.ID)
+	// The store's approve starts the Run row ("running") without a worker.
+	_, run, err := s.e.st.ApprovePlan(s.e.ctx, id, "user:qa", store.NewRevision{Author: "user:qa", Reason: "qa", PlanID: id, Docs: rows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(id)+" runs (run "+itoa(run.ID)+"): wait for it") {
+		t.Errorf("note while the Run runs: %q", v.ActionsNote)
+	}
+}
+
+// M-B of #382 (D-420 (4)): a guest in a "restored" state holds the good
+// restored disks, so a restore from there may not skip its safety backup.
+func TestRestoredStateNeedsTheSafetyBackup(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	if !s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatal("no restored state")
+	}
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "x", "skip_safety_backup": true})
+	if code != 422 || !strings.Contains(string(body), "only for a broken guest") {
+		t.Errorf("skip the safety backup in the restored state: %d %s", code, body)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "x"}); code != 201 {
+		t.Errorf("a normal restore from the restored state: %d %s", code, body)
+	}
+}
+
+// T-253 (host step 9): while a new re-enroll Plan is pending, the note
+// names it, not the older stale one; with none that can run, the newest.
+func TestRestoredNoteNamesTheNewestReenroll(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	first := s.reenrollOf(t, "web1")
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	s.e.seed(s.adm, "web2") // the head moves: first is stale
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "by hand"})
+	if code != 201 {
+		t.Fatalf("re-enroll by hand: %d %s", code, body)
+	}
+	second := s.reenrollOf(t, "web1")
+	if second == 0 || second == first {
+		t.Fatalf("no new Plan: %d %d", first, second)
+	}
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "approve the re-enroll Plan "+itoa(second)+".") || strings.Contains(v.ActionsNote, "Plan "+itoa(first)+" ") {
+		t.Errorf("note while the new Plan is pending: %q", v.ActionsNote)
+	}
+	s.e.seed(s.adm, "web3") // the new one goes stale too
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(second)+" can no longer run") {
+		t.Errorf("note with no Plan that can run: %q", v.ActionsNote)
+	}
+}
+
+// T-253: a newer re-enroll Plan that was dropped does not hide an older one
+// that can still run: the note names the one that can run.
+func TestRestoredNotePrefersAPlanThatCanRun(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	first := s.reenrollOf(t, "web1")
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "by hand"})
+	var p struct{ ID int64 }
+	json.Unmarshal(body, &p)
+	if code != 201 || p.ID <= first {
+		t.Fatalf("re-enroll by hand: %d %s", code, body)
+	}
+	if code, body := s.adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil); code != 204 {
+		t.Fatalf("drop: %d %s", code, body)
+	}
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "approve the re-enroll Plan "+itoa(first)+".") {
+		t.Errorf("note: %q", v.ActionsNote)
+	}
+}

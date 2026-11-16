@@ -259,7 +259,8 @@ func (d *Driver) createFromFile(ctx context.Context, spec driver.GuestSpec, boot
 		// The form encoding sends "=" as %3D, as Proxmox needs (host C2).
 		"env": {tokenPrefix + boot.Token},
 	}
-	addNICParams(params, spec.NICs, true) // T-219
+	addNICParams(params, spec.NICs, true)                              // T-219
+	addDiskParams(params, wire.KindLXC, d.cfg.DiskStorage, spec.Disks) // D-436, D-437: cold
 	if len(spec.SSHKeys) > 0 {
 		params.Set("ssh-public-keys", strings.Join(spec.SSHKeys, "\n"))
 	}
@@ -372,8 +373,8 @@ func (d *Driver) observeCT(ctx context.Context, id int) (driver.GuestState, erro
 	if err := d.c.Get(ctx, ctPath(d, id)+"/status/current", nil, &status); err != nil {
 		return driver.GuestState{}, notFound(err)
 	}
-	st := driver.GuestState{Spec: specOfCT(cfg), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
-	if p := specOfCT(next); !equalCTSpec(p, st.Spec) {
+	st := driver.GuestState{Spec: withDisks(specOfCT(cfg), cfg, d.cfg.DiskStorage, id), Digest: cfg["digest"], Power: driver.PowerStopped, MAC: net0MAC(cfg["net0"])}
+	if p := withDisks(specOfCT(next), next, d.cfg.DiskStorage, id); !equalCTSpec(p, st.Spec) {
 		st.Pending = &p
 	}
 	now, later := envToken(cfg["env"]), envToken(next["env"])
@@ -394,7 +395,8 @@ func equalCTSpec(a, b driver.GuestSpec) bool {
 		a.IP == b.IP && a.Gateway == b.Gateway && a.DiskGB == b.DiskGB && a.ImageName == b.ImageName &&
 		a.ImageVersion == b.ImageVersion && slices.Equal(a.SSHKeys, b.SSHKeys) && a.Features == b.Features &&
 		slices.Equal(a.Mounts, b.Mounts) && slices.Equal(a.Devices, b.Devices) && slices.Equal(a.RawLXC, b.RawLXC) &&
-		slices.Equal(a.Tags, b.Tags) && slices.Equal(a.NICs, b.NICs)
+		slices.Equal(a.Tags, b.Tags) && slices.Equal(a.NICs, b.NICs) && slices.Equal(a.Disks, b.Disks) &&
+		slices.Equal(a.Unused, b.Unused)
 }
 
 // ctAddresses reads the IPv4 addresses of eth0 that Proxmox sees from the
@@ -442,7 +444,12 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 	params := url.Values{"digest": {cfg["digest"]}}
 	grow := 0
 	var nicDels []string
+	var disks []wire.Change
 	for _, c := range changes {
+		if driver.DiskIndex(c.Attr) > 0 { // D-436, D-437: own steps, after the rest
+			disks = append(disks, c)
+			continue
+		}
 		if driver.IsCreateOnly(c.Attr) {
 			return &driver.CreateOnlyError{Attr: c.Attr}
 		}
@@ -527,7 +534,12 @@ func (d *Driver) updateCT(ctx context.Context, id int, changes []wire.Change, bo
 		}
 	}
 	if grow > 0 {
-		return d.resize(ctx, ctPath(d, id), "rootfs", grow)
+		if err := d.resize(ctx, ctPath(d, id), "rootfs", grow); err != nil {
+			return err
+		}
+	}
+	if len(disks) > 0 {
+		return d.diskChanges(ctx, id, wire.KindLXC, disks)
 	}
 	return nil
 }
