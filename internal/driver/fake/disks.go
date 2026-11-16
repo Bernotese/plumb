@@ -30,6 +30,15 @@ func (d *Driver) FailDiskFree(on bool) {
 	d.diskFreeFails = on
 }
 
+// FailDiskFreeWith makes every free fail with err (for example Proxmox's
+// "volume is still in use (snapshot?)"); nil goes back to FailDiskFree's
+// generic error.
+func (d *Driver) FailDiskFreeWith(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.diskFreeFails, d.diskFreeErr = err != nil, err
+}
+
 // Leftover lists the volumes that a failed free left on the storage.
 func (d *Driver) Leftover() []string {
 	d.mu.Lock()
@@ -98,7 +107,11 @@ func (d *Driver) diskChange(id driver.GuestID, g *guest, run, next *driver.Guest
 		if d.diskFreeFails {
 			d.leftover = append(d.leftover, have.Volume)
 			run.Unused, next.Unused = appendSorted(run.Unused, have.Volume), appendSorted(next.Unused, have.Volume)
-			return &driver.VolumeLeftError{Slot: n, Volume: have.Volume, Err: fmt.Errorf("fake: free refused")}
+			err := d.diskFreeErr
+			if err == nil {
+				err = fmt.Errorf("fake: free refused")
+			}
+			return &driver.VolumeLeftError{Slot: n, Volume: have.Volume, Err: err}
 		}
 		return nil
 	case have == nil:

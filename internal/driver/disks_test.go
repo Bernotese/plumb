@@ -2,6 +2,7 @@ package driver
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/wire"
@@ -123,5 +124,18 @@ func TestDiffDisksRefusals(t *testing.T) {
 	pend.Pending = &nx
 	if cs, err := DiffGuest(diskVM(), pend); err != nil || len(cs) != 0 {
 		t.Fatalf("pending remove: %+v %v", cs, err)
+	}
+}
+
+// T-253 F3 (T-247 step V): a free that Proxmox refuses because the volume
+// is still in use names the snapshot and warns against pvesm free.
+func TestVolumeLeftSnapshotHint(t *testing.T) {
+	inUse := &VolumeLeftError{Slot: 2, Volume: "local-lvm:vm-1-disk-2", Err: errors.New("unable to delete 'local-lvm:vm-1-disk-2' - volume is still in use (snapshot?)")}
+	if !inUse.InUse() || !strings.Contains(inUse.Error(), "A snapshot may hold the volume: remove the snapshot first") || !strings.Contains(inUse.Error(), "Do not `pvesm free`") {
+		t.Errorf("in use: %s", inUse.Error())
+	}
+	other := &VolumeLeftError{Slot: 2, Volume: "local-lvm:vm-1-disk-2", Err: errors.New("storage offline")}
+	if other.InUse() || strings.Contains(other.Error(), "snapshot") || !strings.Contains(other.Error(), "`pvesm free local-lvm:vm-1-disk-2` when no unused line names it") {
+		t.Errorf("other: %s", other.Error())
 	}
 }
