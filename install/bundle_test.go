@@ -191,7 +191,7 @@ func TestBundleCheckRefuses(t *testing.T) {
 			os.WriteFile(real, []byte(good(t, b)), 0o644)
 			os.Remove(filepath.Join(b.dir, "SHA256SUMS"))
 			os.Symlink(real, filepath.Join(b.dir, "SHA256SUMS"))
-		}, want: "is not a regular file"},
+		}, want: "SHA256SUMS of the bundle"},
 		"an absolute path": {change: func(t *testing.T, b *bundle) {
 			b.writeSums(t, strings.Replace(good(t, b), "  plumb\n", "  /tmp/plumb\n", 1))
 		}, want: "line 1 is not"},
@@ -395,4 +395,38 @@ func TestBundleRealTarball(t *testing.T) {
 	if !regexp.MustCompile(`plumb version: none -> v[0-9.]+`).MatchString(out) {
 		t.Errorf("no version line:\n%s", out)
 	}
+}
+
+// L-P of #387: the bundle's path is renamed and replaced by a
+// self-consistent fake right after the installer entered the folder (a
+// parent folder that another account can write). The installer reads only
+// the folder it entered: the fake never runs, and the proven plumb is
+// pushed. A plain path read (the mutant) would take the fake.
+func TestBundlePathSwappedAfterEntering(t *testing.T) {
+	h := newHost(t)
+	b := newBundle(t, "v0.1.0")
+	proven := fileSum(t, filepath.Join(b.dir, "plumb"))
+	evil := filepath.Join(t.TempDir(), "evil-ran")
+	// A fake bundle: an evil plumb, and SHA256SUMS that matches it.
+	fake := newBundle(t, "v0.1.0")
+	fake.write(t, "plumb", []byte("#!/bin/sh\ntouch "+evil+"\necho plumb v6.6.6\n"))
+	fake.writeSums(t, fake.sums(t, "plumb", "plumb-agent", "install.sh"))
+	hook := "mv " + b.dir + " " + b.dir + ".orig && mv " + fake.dir + " " + b.dir
+	code, out, errOut := h.runBundle(b, []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "PLUMB_INSTALL_BUNDLE_HOOK=" + hook},
+		"--yes", "--plumb-binary", filepath.Join(b.dir, "plumb"))
+	if _, err := os.Stat(b.dir + ".orig"); err != nil {
+		t.Fatalf("the hook did not swap the folder: %v", err)
+	}
+	// The given --plumb-binary path now names the fake's plumb: refused,
+	// because it is not the file of the folder that was checked.
+	if code == 0 || !strings.Contains(errOut, "is not the plumb of this bundle") {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(evil); err == nil {
+		t.Error("the fake plumb ran")
+	}
+	if _, err := os.Stat(filepath.Join(h.state, "push", "_usr_local_bin_plumb")); err == nil {
+		t.Error("a plumb was installed")
+	}
+	_ = proven
 }

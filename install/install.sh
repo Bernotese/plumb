@@ -2590,63 +2590,82 @@ do_remove_keep() {
 # them is used: SHA256SUMS next to install.sh must list exactly plumb,
 # plumb-agent and install.sh, and --plumb-binary must be that plumb. The
 # installer does not use plumb-agent (plumb embeds the agent), but the
-# bundle is whole only when it matches too. The files are copied into a
-# private folder first, and the COPIES are hashed and used for everything
-# later (M1 of #387): a swap in the bundle folder after the check cannot
-# reach the run as root. A bundle folder or file that another account can
-# write is refused. The check proves that the files are whole, not who
-# made them (the release attestation shows that, docs/RELEASE.md). A build
-# from source has no SHA256SUMS: then nothing is checked, and the run says
-# so; a stamped release installer refuses to go on without it.
+# bundle is whole only when it matches too.
+#
+# No window (M1 and L-P of #387): the shell enters the bundle folder ONCE
+# (cd -P) and then reads only relative names, so every check and the copy
+# see that one folder, also when its path is renamed and replaced (a parent
+# folder that another account can write). That folder and its files must
+# be the caller's and not writable by others, so nobody else can change
+# what is in it. The files are copied into a private folder first, and the
+# checks run on the COPIES, which are then used for everything (run and
+# push); the hash of each original is a second guard. The check proves
+# that the files are whole, not who made them (the release attestation
+# shows that, docs/RELEASE.md). A build from source has no SHA256SUMS:
+# then nothing is checked, and the run says so; a stamped release
+# installer refuses to go on without it.
 check_bundle() {
-	local dir sums line n=0 name sum have f real lines me
+	local dir back line n=0 name sum have f bin="" lines me
 	local -A want=()
 	dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || die "cannot find the folder of install.sh; nothing was changed"
-	sums=$dir/SHA256SUMS
-	if [[ ! -e $sums && ! -L $sums ]]; then
+	# --plumb-binary as given, from the caller's folder (before the cd).
+	if [[ -n $PLUMB_BINARY ]]; then
+		[[ ! -L $PLUMB_BINARY ]] || bin=symlink
+		[[ -n $bin ]] || bin=$(realpath -e -- "$PLUMB_BINARY" 2>/dev/null) || bin=""
+	fi
+	back=$PWD
+	cd -P -- "$dir" || die "cannot enter $dir; nothing was changed"
+	[[ -z ${PLUMB_INSTALL_BUNDLE_HOOK:-} ]] || bash -c "$PLUMB_INSTALL_BUNDLE_HOOK" # tests only: a swap of the path
+	if [[ ! -e SHA256SUMS && ! -L SHA256SUMS ]]; then
+		cd -- "$back" || die "cannot go back to $back"
 		[[ -z $RELEASE_VERSION ]] ||
-			die "this installer is of release $RELEASE_VERSION, but $sums is missing: the bundle cannot be checked. Unpack the release tarball again. Nothing was changed."
+			die "this installer is of release $RELEASE_VERSION, but $dir/SHA256SUMS is missing: the bundle cannot be checked. Unpack the release tarball again. Nothing was changed."
 		say "NOTE: no SHA256SUMS next to install.sh: no release bundle (a build from source), so its files are not checked."
 		return 0
 	fi
 	# Only the caller may write the bundle (M1 of #387).
 	me=$(id -u)
-	for f in "$dir" "$sums" "$dir/plumb" "$dir/plumb-agent" "$dir/install.sh"; do
+	for f in . SHA256SUMS plumb plumb-agent install.sh; do
 		[[ -e $f && ! -L $f ]] || continue # a symlink is refused below, by name
 		if [[ $(stat -c %u -- "$f") != "$me" ]] || (($(stat -c '%#a' -- "$f") & 8#022)); then
-			die "$f is not owned by this user or is writable by others; unpack the release tarball as root into a folder that only root can write. Nothing was changed."
+			die "$dir/${f#.} is not owned by this user or is writable by others; unpack the release tarball as root into a folder that only root can write. Nothing was changed."
 		fi
 	done
-	[[ -f $sums && ! -L $sums ]] || die "$sums is not a regular file; the bundle is refused. Nothing was changed."
-	lines=$(cat -- "$sums") || die "cannot read $sums; nothing was changed"
+	BUNDLE_COPY=$(mktemp -d) || die "cannot make a private folder for the bundle; nothing was changed"
+	chmod 0700 "$BUNDLE_COPY"
+	for f in SHA256SUMS plumb plumb-agent install.sh; do
+		[[ -f $f && ! -L $f ]] || die "$f of the bundle ($dir/$f) is missing or not a regular file; the bundle is refused. Nothing was changed."
+		cp -- "$f" "$BUNDLE_COPY/$f" || die "cannot copy $dir/$f; nothing was changed"
+		chmod 0700 "$BUNDLE_COPY/$f"
+	done
+	lines=$(cat -- "$BUNDLE_COPY/SHA256SUMS") || die "cannot read the copy of SHA256SUMS; nothing was changed"
 	if [[ $lines == *$'\r'* ]]; then
-		die "$sums has a carriage return (CRLF); the bundle is refused. Nothing was changed."
+		die "$dir/SHA256SUMS has a carriage return (CRLF); the bundle is refused. Nothing was changed."
 	fi
 	while IFS= read -r line || [[ -n $line ]]; do
 		n=$((n + 1))
 		[[ $line =~ ^([0-9a-f]{64})\ \ (plumb|plumb-agent|install\.sh)$ ]] ||
-			die "$sums line $n is not \"<sha256>  <file>\" for plumb, plumb-agent or install.sh; the bundle is refused. Nothing was changed."
+			die "$dir/SHA256SUMS line $n is not \"<sha256>  <file>\" for plumb, plumb-agent or install.sh; the bundle is refused. Nothing was changed."
 		sum=${BASH_REMATCH[1]} name=${BASH_REMATCH[2]}
-		[[ -z ${want[$name]:-} ]] || die "$sums lists $name twice; the bundle is refused. Nothing was changed."
+		[[ -z ${want[$name]:-} ]] || die "$dir/SHA256SUMS lists $name twice; the bundle is refused. Nothing was changed."
 		want[$name]=$sum
 	done <<<"$lines"
-	BUNDLE_COPY=$(mktemp -d) || die "cannot make a private folder for the bundle; nothing was changed"
-	chmod 0700 "$BUNDLE_COPY"
 	for name in plumb plumb-agent install.sh; do
-		[[ -n ${want[$name]:-} ]] || die "$sums does not list $name; the bundle is refused. Nothing was changed."
-		f=$dir/$name
-		[[ -f $f && ! -L $f ]] || die "$name of the bundle ($f) is missing or not a regular file; the bundle is refused. Nothing was changed."
-		cp -- "$f" "$BUNDLE_COPY/$name" || die "cannot copy $f; nothing was changed"
-		chmod 0700 "$BUNDLE_COPY/$name"
-		have=$(sha256sum <"$BUNDLE_COPY/$name") || die "cannot read the copy of $f; nothing was changed"
+		[[ -n ${want[$name]:-} ]] || die "$dir/SHA256SUMS does not list $name; the bundle is refused. Nothing was changed."
+		have=$(sha256sum <"$BUNDLE_COPY/$name") || die "cannot read the copy of $name; nothing was changed"
 		[[ ${have%% *} == "${want[$name]}" ]] ||
 			die "$name does not match SHA256SUMS: the bundle is damaged or was changed. Unpack the release tarball again. Nothing was changed."
+		# Second guard: the original in the folder is still these bytes.
+		have=$(sha256sum <"$name") || die "cannot read $dir/$name; nothing was changed"
+		[[ ${have%% *} == "${want[$name]}" ]] ||
+			die "$name in $dir changed during the check; the bundle is refused. Nothing was changed."
 	done
+	# --plumb-binary must be this folder's plumb: the same file (inode).
 	if [[ -n $PLUMB_BINARY ]]; then
-		real=$(realpath -e -- "$PLUMB_BINARY" 2>/dev/null) || real=""
-		[[ ! -L $PLUMB_BINARY && $real == "$dir/plumb" ]] ||
+		[[ $bin != symlink && -n $bin && $bin -ef plumb ]] ||
 			die "--plumb-binary $PLUMB_BINARY is not the plumb of this bundle ($dir/plumb), so SHA256SUMS does not cover it; use --plumb-binary $dir/plumb. Nothing was changed."
 	fi
+	cd -- "$back" || die "cannot go back to $back"
 	# From here on only the checked copy is run and pushed.
 	[[ -z $PLUMB_BINARY ]] || PLUMB_BINARY=$BUNDLE_COPY/plumb
 	VERIFIED_PLUMB_SUM=${want[plumb]}
