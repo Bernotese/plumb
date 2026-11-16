@@ -1,7 +1,10 @@
 # Plumb – build, test and lint. See docs/ARCHITECTURE.md §9.
 # Needs: Go (version in go.mod) and Node >= 24 with npm for the web targets.
 
-VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# A build that is no release says so: dev-<commit>[-dirty]. A release passes
+# VERSION=vX.Y.Z (scripts/package-release.sh); the file VERSION holds the
+# proposed release version (T-255; the user decides it, U6).
+VERSION     ?= dev-$(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
 GO_BUILD     = CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)"
 # Pinned linter. Change the version here only.
 STATICCHECK  = honnef.co/go/tools/cmd/staticcheck@v0.8.2

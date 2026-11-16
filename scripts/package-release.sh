@@ -6,6 +6,19 @@ version=${1:?usage: package-release.sh vMAJOR.MINOR.PATCH [output-directory]}
   echo 'Expected vMAJOR.MINOR.PATCH with an optional prerelease suffix' >&2
   exit 1
 }
+# T-255: the version core must be the one of the file VERSION and of
+# info.version in api/openapi.yaml (the API document names its own version).
+core=${version#v}
+core=${core%%-*}
+want=$(tr -d '[:space:]' < VERSION)
+api=$(awk '/^info:/{i=1;next} i && /^  version:/{print $2; exit}' api/openapi.yaml)
+[[ $core == "$want" && $api == "$want" ]] || {
+  echo "package-release.sh: version $version does not match VERSION ($want) and api/openapi.yaml info.version ($api)" >&2
+  exit 1
+}
+# T-255 (P3): the archive must not depend on the caller's umask (a 0002
+# umask stored SHA256SUMS as 0664 on the dev VM, 0644 on the CI runner).
+umask 022
 output=$(realpath -m "${2:-dist-release}")
 mkdir -p "$output"
 stage=$(mktemp -d)
@@ -17,7 +30,7 @@ make build VERSION="$version" \
 [[ $(bin/plumb --version) == "plumb $version" ]]
 [[ $(bin/plumb-agent version) == "plumb-agent $version" ]]
 install -m 0755 bin/plumb bin/plumb-agent install/install.sh "$stage/"
-(cd "$stage" && sha256sum plumb plumb-agent install.sh > SHA256SUMS && sha256sum -c SHA256SUMS)
+(cd "$stage" && sha256sum plumb plumb-agent install.sh > SHA256SUMS && chmod 0644 SHA256SUMS && sha256sum -c SHA256SUMS)
 # Fix all archive metadata; gzip -n omits its timestamp and original filename.
 archive="plumb-${version}-linux-amd64.tar.gz"
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \

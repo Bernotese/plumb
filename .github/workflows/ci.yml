@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: "1.27.4" # pinned (T-255): the same as the toolchain in go.mod
       - run: make test-guest
         env:
           GUEST_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: "1.27.4" # pinned (T-255): the same as the toolchain in go.mod
       - name: Set up LXD
         run: |
           sudo snap install lxd --channel=6/stable || sudo snap refresh lxd --channel=6/stable
@@ -88,7 +88,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: "1.27.4" # pinned (T-255): the same as the toolchain in go.mod
       - name: Race detector
         run: make test-race
       - name: Signed pin schedule proof (test key only)
@@ -105,10 +105,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: "1.27.4" # pinned (T-255): the same as the toolchain in go.mod
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26
+          node-version: "26.13.0" # pinned (T-255): the release build must not depend on the runner
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: make lint
@@ -126,3 +126,16 @@ jobs:
         run: cd web && npx playwright install --with-deps chromium
       - name: End-to-end test (UI on the real API)
         run: make test-e2e
+      # T-255 (release plan P3): the hashes of a release bundle of this
+      # commit, built on the CI runner, to compare with a build on another
+      # machine. It makes no release, no tag and no draft; the bundle is
+      # deleted with the runner.
+      - name: Release bundle hashes (reproducibility check, no release)
+        run: |
+          bash scripts/package-release.sh "v$(cat VERSION)-repro" "$RUNNER_TEMP/repro"
+          tar -xzOf "$RUNNER_TEMP/repro/plumb-v$(cat VERSION)-repro-linux-amd64.tar.gz" SHA256SUMS
+          cat "$RUNNER_TEMP/repro/SHA256SUMS"
+          go version
+          node --version
+          tar --version | head -1
+          gzip --version | head -1
