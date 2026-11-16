@@ -182,6 +182,10 @@ say() { printf '%s\n' "$*"; }
 
 # TMP_FILES are removed on every exit, also on Ctrl-C (review T-013 #7).
 TMP_FILES=()
+# TMP_PLACE is where every temp file and folder of the run goes (M1 of
+# #390). A source build takes TMPDIR (the tests); check_test_env checks it
+# for a release installer and exports it, so child tools use it too.
+TMP_PLACE=${TMPDIR:-/tmp}
 # BUNDLE_COPY is the private folder of the checked bundle files (T-257).
 BUNDLE_COPY=""
 cleanup_tmp() {
@@ -208,7 +212,7 @@ trap 'exit 143' TERM
 # It runs in the main shell, so the exit trap knows the file.
 new_tmp() {
 	local f
-	f=$(mktemp)
+	f=$(mktemp -p "$TMP_PLACE")
 	TMP_FILES+=("$f")
 	printf -v "$1" '%s' "$f"
 }
@@ -248,7 +252,7 @@ pct() {
 		return
 	fi
 	local rc=0 err
-	err=$(mktemp) || return 1
+	err=$(mktemp -p "$TMP_PLACE") || return 1
 	command pct "$@" </dev/null 2>"$err" | cat || rc=$?
 	cat -- "$err" >&2 || true
 	rm -f -- "$err"
@@ -2635,7 +2639,7 @@ check_bundle() {
 			die "$dir/${f#.} is not owned by this user or is writable by others; unpack the release tarball as root into a folder that only root can write. Nothing was changed."
 		fi
 	done
-	BUNDLE_COPY=$(mktemp -d) || die "cannot make a private folder for the bundle; nothing was changed"
+	BUNDLE_COPY=$(mktemp -d -p "$TMP_PLACE") || die "cannot make a private folder for the bundle; nothing was changed"
 	chmod 0700 "$BUNDLE_COPY"
 	for f in SHA256SUMS plumb plumb-agent install.sh; do
 		[[ -f $f && ! -L $f ]] || die "$f of the bundle ($dir/$f) is missing or not a regular file; the bundle is refused. Nothing was changed."
@@ -2717,6 +2721,16 @@ check_test_env() {
 	if [[ -n $RELEASE_VERSION ]]; then
 		((${#set[@]} == 0)) ||
 			die "this is the installer of release $RELEASE_VERSION; it takes no test settings from the environment, but ${set[*]} is set (for example passed on by sudo -E). Unset it and run again. Nothing was changed."
+		# M1 of #390: root's temp files (the bundle copy, plumb.env with the
+		# token secret) go only where no other account can rename them.
+		local mode
+		[[ -d $TMP_PLACE && ! -L $TMP_PLACE ]] ||
+			die "the temp folder $TMP_PLACE (TMPDIR) is not a folder; unset TMPDIR or set it to a folder that only root can write. Nothing was changed."
+		mode=$(stat -c '%#a' -- "$TMP_PLACE")
+		if [[ $(stat -c %u -- "$TMP_PLACE") != 0 ]] || { ((mode & 8#022)) && ! ((mode & 8#1000)); }; then
+			die "the temp folder $TMP_PLACE (TMPDIR) is not owned by root, or another account can write it and it is not sticky; unset TMPDIR or set it to a folder that only root can write. Nothing was changed."
+		fi
+		export TMPDIR=$TMP_PLACE
 		return 0
 	fi
 	say "NOTE: this install.sh is a source build (no release stamp): it honours the PLUMB_INSTALL_* test settings${set[0]:+ (set: ${set[*]})}."

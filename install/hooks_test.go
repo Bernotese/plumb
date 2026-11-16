@@ -54,7 +54,8 @@ func TestInstallerReadsOnlyListedEnvironment(t *testing.T) {
 		}
 	}
 	// Variables of bash and of the system that the script may read.
-	for _, n := range []string{"EUID", "PWD", "OLDPWD", "BASH_SOURCE", "BASH_REMATCH", "HOME", "PATH", "PIPESTATUS", "LINENO", "SECONDS", "RANDOM", "IFS"} {
+	// TMPDIR is read and, in a release installer, checked (M1 of #390).
+	for _, n := range []string{"EUID", "PWD", "OLDPWD", "BASH_SOURCE", "BASH_REMATCH", "HOME", "PATH", "PIPESTATUS", "LINENO", "SECONDS", "RANDOM", "IFS", "TMPDIR"} {
 		assigned[n] = true
 	}
 	var unlisted []string
