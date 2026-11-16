@@ -1108,7 +1108,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 	if err := e.recoverBuilds(ctx); err != nil {
 		return err
 	}
-	e.keepRestoredSteps(ctx, runs) // D-427: before the steps fail
+	kept := e.keepRestoredSteps(ctx, runs) // D-427: before the steps fail
 	for _, run := range runs {
 		e.mu.Lock()
 		active := e.active[run.ID]
@@ -1126,13 +1126,19 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if err := e.finishDeletes(ctx, run); err != nil {
 			return err
 		}
-		if err := e.st.FinishRun(ctx, run.ID, "failed", e.waitsOfRun(ctx, run.ID)); err != nil {
+		// T-253 (host step 4): a restore whose step stored "restored" worked;
+		// the stop cut only its follow-up, which recoverRestores makes now.
+		status := "failed"
+		if kept[run.ID] && e.restoreRunWorked(ctx, run.ID) {
+			status = "succeeded"
+		}
+		if err := e.st.FinishRun(ctx, run.ID, status, e.waitsOfRun(ctx, run.ID)); err != nil {
 			return err
 		}
 		e.emit(ctx, "run.finished", fmt.Sprintf("run:%d", run.ID), "system",
-			map[string]any{"plan": run.PlanID, "status": "failed", "reason": reason})
+			map[string]any{"plan": run.PlanID, "status": status, "reason": reason})
 		if e.cfg.OnPlanDone != nil {
-			e.cfg.OnPlanDone(ctx, run.PlanID, false)
+			e.cfg.OnPlanDone(ctx, run.PlanID, status == "succeeded")
 		}
 	}
 	return e.recoverRestores(ctx) // D-427: the follow-up of a cut restore
