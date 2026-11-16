@@ -435,10 +435,13 @@ func (e *Engine) checkBroken(ctx context.Context, target string, st driver.Guest
 	if st.Spec.DiskGB == 0 {
 		return nil
 	}
-	if _, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID); err == nil {
-		return nil
-	} else if !errors.Is(err, store.ErrNotFound) {
+	// M-B of #382: the same rule as restoreFailedOpen. Only a "failed" or
+	// "running" restore Issue is a broken guest; in a "restored" state the
+	// disks are the restored ones, so the safety backup is taken.
+	if open, _, err := e.restoreFailedOpen(ctx, target); err != nil {
 		return err
+	} else if open {
+		return nil
 	}
 	return &ProposalError{Target: target, Msg: "the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)"}
 }

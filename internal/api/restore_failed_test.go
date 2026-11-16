@@ -217,11 +217,25 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 		steps, _ := e.st.Steps(e.ctx, r.ID)
 		t.Fatalf("the document Run: %s %+v", r.Status, steps)
 	}
-	// Then the re-enroll again: its Run works and ends the Issue.
-	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "again"}); code != 201 {
-		t.Fatalf("re-enroll again: %d %s", code, body)
+	// Then the re-enroll again (M-A of #382): the first one grew the disk,
+	// so the root file system grow is pending. The re-enroll Plan shows it
+	// and its Run does it with the new agent; it ends the Issue.
+	if b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); b.RootGrow == 0 {
+		t.Fatal("no pending root grow after the failed re-enroll")
+	}
+	var grown []int64
+	e.agents["web1"].OnGrow(func(b wire.GrowBody) wire.Item {
+		grown = append(grown, b.MinBytes)
+		return wire.Item{Resource: wire.GrowItemID, Status: wire.StatusApplied}
+	})
+	code, body = s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "again"})
+	if code != 201 || !strings.Contains(string(body), `"root_fs"`) {
+		t.Fatalf("re-enroll again (with the pending root grow): %d %s", code, body)
 	}
 	id := s.reenrollDone(t)
+	if b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); b.RootGrow != 0 || len(grown) != 1 {
+		t.Errorf("the re-enroll Run did not grow the root file system: pending %d, grow calls %v", b.RootGrow, grown)
+	}
 	if v := s.issue(t, rf.ID); v.Status != "resolved" || !strings.Contains(v.Comments[len(v.Comments)-1].Body, "the re-enroll Plan "+itoa(id)+" worked after the restore") {
 		t.Fatalf("the Issue after the re-enroll: %+v", v)
 	}

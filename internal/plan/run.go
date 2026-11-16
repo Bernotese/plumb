@@ -946,7 +946,7 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	}
 	// A root grow that failed in an earlier Run (review M1 of #217): the
 	// Plan shows root_fs, the disk has its size, the agent grows again.
-	if grow == nil && !reenroll && hasAttr(planned.Changes, AttrRootFS) && b.RootGrow > 0 && desired.Kind == wire.KindVM {
+	if grow == nil && hasAttr(planned.Changes, AttrRootFS) && b.RootGrow > 0 && desired.Kind == wire.KindVM {
 		if after.Power != driver.PowerRunning {
 			return res, errors.New(textGrowNotRunning)
 		}

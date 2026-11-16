@@ -706,7 +706,9 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	// D-440: a restored guest that waits for its re-enroll has no agent;
 	// its re-enroll Run grows the file system with the new agent.
 	waiting := !reenroll && e.restoredWaiting(ctx, target)
-	if !reenroll && !waiting && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
+	// M-A of #382: a re-enroll Plan takes a pending grow too; its Run
+	// grows after the new agent's hello.
+	if !waiting && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
 		gchanges = append(gchanges, rootFSChange(bind.RootGrow))
 	}
 	if !reenroll {

@@ -140,3 +140,22 @@ func TestRestoredNoteWhileTheReenrollRuns(t *testing.T) {
 		t.Errorf("note while the Run runs: %q", v.ActionsNote)
 	}
 }
+
+// M-B of #382 (D-420 (4)): a guest in a "restored" state holds the good
+// restored disks, so a restore from there may not skip its safety backup.
+func TestRestoredStateNeedsTheSafetyBackup(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	if !s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatal("no restored state")
+	}
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "x", "skip_safety_backup": true})
+	if code != 422 || !strings.Contains(string(body), "only for a broken guest") {
+		t.Errorf("skip the safety backup in the restored state: %d %s", code, body)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/restore", map[string]any{"backup": "3f2a9c0d1e4b5a67", "reason": "x"}); code != 201 {
+		t.Errorf("a normal restore from the restored state: %d %s", code, body)
+	}
+}
