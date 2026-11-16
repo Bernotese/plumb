@@ -147,6 +147,7 @@ func (f *fakePVE) serveBackup(w http.ResponseWriter, r *http.Request, path, key 
 				f.tasks[upid].exit = b.restoreFail
 				if b.restoreWipes {
 					delete(vm.cfg, "scsi0") // the task removed the disk before it failed
+					delete(vm.cfg, "rootfs")
 				}
 			}
 			reply(w, 200, upid)

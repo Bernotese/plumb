@@ -55,11 +55,11 @@ func TestSDNRefusedExactExitStatus(t *testing.T) {
 	}
 }
 
-// T-244 R1: PVE refuses a VM restore without SDN.Use in its task, before
-// it touches a disk. "Not started" needs the exact end status, a VM, and
-// the VM's disk volumes read back unchanged; a container, a changed disk
-// and any other failure stay on the normal failure path ("may have no
-// disk").
+// T-244 R1, T-247 3c: PVE refuses a restore without SDN.Use in its task,
+// before it touches a disk, for a VM and for a container (T-253). "Not
+// started" needs the exact end status and the guest's disk volumes read
+// back unchanged; a changed disk and any other failure stay on the normal
+// failure path ("may have no disk").
 func TestRestoreGuestSDNRefusalNotStarted(t *testing.T) {
 	for _, c := range []struct {
 		name       string
@@ -70,7 +70,9 @@ func TestRestoreGuestSDNRefusalNotStarted(t *testing.T) {
 	}{
 		{"VM, SDN refusal", 9001, sdnExit, false, true},
 		{"VM, SDN refusal, disk gone", 9001, sdnExit, true, false},
-		{"container, SDN refusal", 9002, sdnExit, false, false},
+		{"container, SDN refusal", 9002, sdnExit, false, true},
+		{"container, SDN refusal, rootfs gone", 9002, sdnExit, true, false},
+		{"container, no space", 9002, "unable to restore CT 9002 - no space left", false, false},
 		{"VM, other 403", 9001, "403 Permission check failed (/vms/9001, VM.Config.Disk)", false, false},
 		{"VM, no space", 9001, "unable to restore VM 9001 - no space left", false, false},
 	} {
@@ -81,6 +83,9 @@ func TestRestoreGuestSDNRefusalNotStarted(t *testing.T) {
 			f.vms[c.guest].running = false
 			if f.vms[c.guest].ct {
 				f.vms[c.guest].cfg["unprivileged"] = "1"
+				if f.vms[c.guest].cfg["rootfs"] == "" {
+					f.vms[c.guest].cfg["rootfs"] = "local-lvm:vm-9002-disk-0,size=4G"
+				}
 			}
 			if f.vms[c.guest].cfg["scsi0"] == "" && !f.vms[c.guest].ct {
 				f.vms[c.guest].cfg["scsi0"] = "local-lvm:vm-9001-disk-0,size=4G"

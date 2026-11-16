@@ -63,14 +63,12 @@ func (d *Driver) RestoreGuest(ctx context.Context, storage, guest, volid string,
 	if vols[i].Size != size || vols[i].CTime != ctime {
 		return notStarted(ErrBackupChanged)
 	}
-	// H1 of #369: a VM's disks before the restore, to prove a refusal by
-	// state. T-244 R1 proved PVE's order (SDN check before any disk) for a
-	// VM only; a container stays on the normal failure path (T-247).
-	var before map[string]string
-	if m.Type != typeCT {
-		if before, err = d.vmDisks(ctx, id); err != nil {
-			return notStarted(err)
-		}
+	// H1 of #369: the guest's disks before the restore, to prove a refusal
+	// by state. PVE's order (SDN check before any disk) is proven for a VM
+	// (T-244 R1) and for a container (T-247 3c, T-253).
+	before, err := d.guestDisks(ctx, m)
+	if err != nil {
+		return notStarted(err)
 	}
 	params, path := restoreParams(d.cfg.Node, d.cfg.DiskStorage, m.Type == typeCT, id, volid)
 	upid, err := d.c.start(ctx, "POST", path, params)
@@ -85,11 +83,12 @@ func (d *Driver) RestoreGuest(ctx context.Context, storage, guest, volid string,
 		return nil
 	}
 	if err := d.c.WaitTask(ctx, d.cfg.Node, upid); err != nil {
-		if before != nil && sdnRefused(err) {
-			// T-244 R1: PVE checks SDN.Use of the backup's networks in the
-			// task, before it touches a disk. "Not started" only when the
-			// VM's disk volumes read back the same as before.
-			if after, rerr := d.vmDisks(ctx, id); rerr == nil && maps.Equal(before, after) {
+		if len(before) > 0 && sdnRefused(err) {
+			// T-244 R1, T-247 3c: PVE checks SDN.Use of the backup's
+			// networks in the task, before it touches a disk. "Not started"
+			// only on PVE's exact exit status and when the guest's disk
+			// volumes read back the same as before.
+			if after, rerr := d.guestDisks(ctx, m); rerr == nil && maps.Equal(before, after) {
 				return notStarted(fmt.Errorf("%w: %w", ErrNetworkRefused, err))
 			}
 		}
