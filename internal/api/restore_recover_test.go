@@ -274,12 +274,12 @@ func TestSystemResolutionsHaveComments(t *testing.T) {
 	s.restore(t, "3f2a9c0d1e4b5a67", false)
 	s.fr.fail = nil
 	s.restore(t, "5afe000000000001", false)
+	s.reenrollDone(t) // D-440: the re-enroll Run ends that Issue
 	// A cut restore found at a start.
 	cutRestore(t, s, "restored backup 3f2a9c0d1e4b5a67 of 2026-11-15T03:00:12Z")
 	e.eng.Recover(e.ctx)
-	// The follow-up of the cut restore made a new re-enroll Plan (the one
-	// of the way back is stale: the head moved); its Run is one more
-	// system end with a comment.
+	// The follow-up of the cut restore made a new re-enroll Plan; its Run
+	// is one more system end with a comment.
 	re, _ := e.st.PendingPlans(e.ctx, plan.OriginReenroll)
 	if len(re) > 0 {
 		newest := re[0].ID
