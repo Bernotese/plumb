@@ -31,6 +31,10 @@ type bundle struct {
 func newBundle(t *testing.T, version string) *bundle {
 	t.Helper()
 	dir := t.TempDir()
+	// As unpacked by root: only the owner may write (M1 of #387).
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	src, err := os.ReadFile("install.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +54,11 @@ func newBundle(t *testing.T, version string) *bundle {
 
 func (b *bundle) write(t *testing.T, name string, data []byte) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(b.dir, name), data, 0o755); err != nil {
+	p := filepath.Join(b.dir, name)
+	if err := os.WriteFile(p, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o755); err != nil { // not the umask's mode
 		t.Fatal(err)
 	}
 }
@@ -71,7 +79,11 @@ func (b *bundle) sums(t *testing.T, names ...string) string {
 
 func (b *bundle) writeSums(t *testing.T, s string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(b.dir, "SHA256SUMS"), []byte(s), 0o644); err != nil {
+	p := filepath.Join(b.dir, "SHA256SUMS")
+	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -289,23 +301,80 @@ func TestBundleUpgrade(t *testing.T) {
 	}
 }
 
-// A plumb that is swapped after the check is never pushed (T-257).
-func TestBundleSwapAfterCheck(t *testing.T) {
+// M1 of #387: a plumb swapped in the bundle folder after the check never
+// runs and is never pushed: the run uses the checked private copy.
+func TestBundleSwapInTheFolder(t *testing.T) {
 	h := newHost(t)
 	b := newBundle(t, "v0.1.0")
 	plumb := filepath.Join(b.dir, "plumb")
-	swap := "printf '#!/bin/sh\\necho swapped\\n' > " + plumb
+	proven := fileSum(t, plumb)
+	evil := filepath.Join(t.TempDir(), "evil-ran")
+	swap := "printf '#!/bin/sh\\ntouch " + evil + "\\necho plumb v9.9.9\\n' > " + plumb
 	code, out, errOut := h.runBundle(b, []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "FAKE_VERSION_HOOK=" + swap}, "--yes", "--plumb-binary", plumb)
+	if code != 0 {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+	if fileSum(t, plumb) == proven {
+		t.Fatal("the hook did not swap the bundle's plumb")
+	}
+	if _, err := os.Stat(evil); err == nil {
+		t.Error("the swapped plumb ran on the host")
+	}
+	if !strings.Contains(out, "plumb version: none -> v0.1.0") {
+		t.Errorf("the version line is not of the proven plumb:\n%s", out)
+	}
+	if got := fileSum(t, filepath.Join(h.state, "push", "_usr_local_bin_plumb")); got != proven {
+		t.Error("the pushed plumb is not the proven one")
+	}
+}
+
+// A change of the private copy itself (after the check, before it runs)
+// is refused: plumb_unchanged guards every run and the push.
+func TestBundleSwapTheCopy(t *testing.T) {
+	h := newHost(t)
+	b := newBundle(t, "v0.1.0")
+	tmp := t.TempDir()
+	evil := filepath.Join(t.TempDir(), "evil-ran")
+	swap := "for f in " + tmp + "/*/plumb; do printf '#!/bin/sh\\ntouch " + evil + "\\n' > \"$f\"; done"
+	code, out, errOut := h.runBundle(b, []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "TMPDIR=" + tmp, "FAKE_VERSION_HOOK=" + swap},
+		"--yes", "--plumb-binary", filepath.Join(b.dir, "plumb"))
 	if code == 0 || !strings.Contains(errOut, "changed after the bundle check; it is refused") {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}
-	for _, c := range h.calls() {
-		if strings.HasPrefix(c, "pct exec") && strings.Contains(c, "mv -f /usr/local/bin/.plumb.plumb-new /usr/local/bin/plumb") {
-			t.Errorf("the swapped plumb was put in place: %s", c)
-		}
+	if _, err := os.Stat(evil); err == nil {
+		t.Error("the changed copy ran on the host")
 	}
 	if _, err := os.Stat(filepath.Join(h.state, "push", "_usr_local_bin_plumb")); err == nil {
 		t.Error("a plumb was installed")
+	}
+	if left, _ := filepath.Glob(filepath.Join(tmp, "tmp.*")); len(left) != 0 {
+		t.Errorf("the private copy is left after the run: %v", left)
+	}
+}
+
+// M1 of #387: a bundle that another account can write is refused.
+func TestBundleRights(t *testing.T) {
+	for name, mode := range map[string]struct {
+		file string
+		perm os.FileMode
+	}{
+		"the folder is world-writable": {"", 0o777},
+		"the folder is group-writable": {"", 0o775},
+		"plumb is group-writable":      {"plumb", 0o775},
+		"SHA256SUMS is world-writable": {"SHA256SUMS", 0o666},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHost(t)
+			b := newBundle(t, "v0.1.0")
+			if err := os.Chmod(filepath.Join(b.dir, mode.file), mode.perm); err != nil {
+				t.Fatal(err)
+			}
+			code, out, errOut := h.runBundle(b, nil, "--dry-run", "--plumb-binary", filepath.Join(b.dir, "plumb"))
+			if code == 0 || !strings.Contains(errOut, "is not owned by this user or is writable by others") || !strings.Contains(errOut, "Nothing was changed") {
+				t.Fatalf("%d\n%s\n%s", code, out, errOut)
+			}
+			h.noHostChange(t)
+		})
 	}
 }
 

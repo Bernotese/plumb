@@ -42,7 +42,7 @@ cd plumb && make build          # makes bin/plumb
 
 Copy `bin/plumb` and `install/install.sh` to the Proxmox host.
 
-**From a release tarball** (when there is one): unpack it on the host and run its `install.sh` with
+**From a release tarball** (when there is one): unpack it on the host as root, into a folder that only root can write (the installer refuses a folder or file that another account can write), and run its `install.sh` with
 `--plumb-binary ./plumb` from that folder. Before it uses any file, the installer checks the
 tarball's `SHA256SUMS`: every file must be there and match, and `--plumb-binary` must be the
 `plumb` of the tarball; else it stops, names the file and changes nothing (the dry run shows the
