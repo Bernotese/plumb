@@ -66,7 +66,9 @@ Two kinds of options are off unless you name them:
 
 - **More networks for guests:** `--extra-bridge <bridge>` lets a guest network card use one more
   bridge, untagged. `--extra-vlan <bridge>:<tag>[,<tag>…]` allows these VLAN tags on a VLAN-aware
-  bridge. Repeat each option for more. A Target can use only the bridges and tags named here.
+  bridge. Repeat each option for more. A Target can use only the bridges and tags named here. A
+  later run (a repair run) sets this list from its options alone: give every extra bridge and VLAN
+  again, or its right is removed.
 - **Guest backups:** `--guest-backup-storage <storage>` names the one storage for backups of your
   guests. The installer refuses a storage that can also hold guest disks or snippets (content
   `images`, `rootdir` or `snippets`). A Proxmox Backup Server storage with an encryption key keeps the backups encrypted.
@@ -187,8 +189,9 @@ full list of rights.
        Proxmox default); else the change waits for a restart. The agent removes the netplan file of
        a removed card. A card that comes back gets the same MAC address.
      - Plumb refuses the Plan for a bridge or a VLAN tag that the install did not name. The message
-       names the installer option (`--extra-bridge`, `--extra-vlan`); run the installer again with
-       it (see "Updates and repair").
+       names the installer options that it needs (`--extra-bridge`, `--extra-vlan`). Run the
+       installer again with every extra bridge and VLAN that the install has now, plus these (see
+       "Updates and repair").
    - **Data disks:** up to 3 more disks after the main disk, on the disk storage that the install
      named. Tick "Plumb manages the data disks of this guest" to manage them; then each disk has a
      **slot** (1 to 3) and a size. The slot is the disk's fixed name (a VM `scsi1` … `scsi3`, a
@@ -249,7 +252,7 @@ full list of rights.
    ![Edit page of Target web2: configured and reported address, image, type, and the guest settings cores, memory, disk, bridge and power](docs/screenshots/readme-target.png)
    <br>_One Target: its address, its Image and its guest settings._
 
-   ![Data disks of the VM db1: the box "Plumb manages the data disks of this guest", disk 1 of 50 GiB in its fixed slot scsi1, a new disk 2 of 20 GiB with a slot choice, and the restore note](docs/screenshots/readme-target-disks.png)
+   ![Data disks of the VM db1: the box "Plumb manages the data disks of this guest", disk 1 of 50 GiB in its fixed slot scsi1, a new disk 2 of 10 GiB (the default size) with a slot choice, and the restore note](docs/screenshots/readme-target-disks.png)
    <br>_The data disks of a VM: the slot is the disk's fixed name, and a disk only grows._
 
 7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
@@ -531,8 +534,9 @@ destructive, and only a person with the role admin can approve it; an API token 
 
 Before anything changes, Plumb reads the network settings in the backup. If a network card of the
 backup is on a bridge or VLAN tag that the install does not name, Plumb refuses the restore (also
-the restore of a safety backup), and nothing is changed: run the installer again with that bridge
-or tag (a repair run), or restore another backup. The Run:
+the restore of a safety backup), and nothing is changed. The message names the options that it
+needs: run the installer again (a repair run) with every extra bridge and VLAN that the install
+has now, plus these; or restore another backup. The Run:
 
 1. stops the guest. A running guest needs "Plumb may restart this VM" (for a container: "this
    container") on the Target, or stop it yourself first;
