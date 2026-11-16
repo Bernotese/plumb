@@ -169,19 +169,21 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	if v.Status != "resolved" || v.Resolution == nil || v.Resolution.By != "system" || len(v.Comments) == 0 || !strings.Contains(v.Comments[len(v.Comments)-1].Body, "A restore replaced the guest") {
 		t.Fatalf("stale Issue after the restore: %+v", v)
 	}
-	// D-440: while the guest waits for its re-enroll, the poll opens no
-	// drift Issue. The re-enroll Run sets the guest to the Target (the
-	// memory of the restored guest is the desired one again); a new hand
-	// change after it is drift with its actions.
-	if err := e.eng.CheckGuests(e.ctx); err != nil {
+	// D-440 (refines D-439): the store proves the restore worked, so the
+	// poll compares the restored guest again, and its real drift opens a
+	// new Issue with its actions (the old rule of T-234).
+	if err := e.eng.CheckGuests(e.ctx); err != nil { // no digest reset: the Run left it empty
 		t.Fatal(err)
 	}
-	if _, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID); err == nil {
-		t.Fatal("a drift Issue while the guest waits for its re-enroll")
+	next, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID)
+	if err != nil || next.ID == pre.ID {
+		t.Fatalf("no new drift Issue of the restored guest: %+v %v", next, err)
 	}
-	// The re-enroll Run fails here (the fake agent has no grow command, and
-	// the Plan grows the root file system). D-440: a failed re-enroll Run
-	// leaves the Issue open, and its note says to plan the re-enroll again.
+	if v := s.issue(t, next.ID); v.ActionsBlockedBy != nil || len(v.Actions) == 0 {
+		t.Errorf("the new Issue has no actions: %+v", v)
+	}
+	// The re-enroll Run fails here (the Plan grows the disk, and the fake
+	// agent has no root grow command). The Issue stays open (D-440).
 	re := s.reenrollOf(t, "web1")
 	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re)+"/approve", nil); code != 202 {
 		t.Fatalf("approve the re-enroll: %d %s", code, body)
@@ -192,6 +194,35 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	}
 	if v := s.issue(t, rf.ID); v.Status != "open" || !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(re)+" can no longer run (its Run failed): plan the re-enroll again") {
 		t.Fatalf("the Issue after a failed re-enroll Run: %+v", v)
+	}
+	// A document Plan passes and its Run works without the agent (the
+	// guest waits for its re-enroll): the Target takes the restored memory.
+	mem := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","allow_restart":true,"guest":{"cores":2,"memory":4096,"disk":10,"bridge":"vmbr0"},`+
+		`"blocks":[{"use":"motd","params":{"text":"hello"}}]}`)
+	code, body = s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "the restored memory", "put": []state.Doc{mem}})
+	var acc struct{ ID int64 }
+	json.Unmarshal(body, &acc)
+	if code != 201 || acc.ID == 0 {
+		t.Fatalf("a document Plan of the restored guest: %d %s", code, body)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(acc.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve the accept: %d %s", code, body)
+	}
+	e.eng.Wait()
+	if r, _ := e.st.RunOfPlan(e.ctx, acc.ID); r.Status != "succeeded" {
+		steps, _ := e.st.Steps(e.ctx, r.ID)
+		t.Fatalf("the document Run: %s %+v", r.Status, steps)
+	}
+	// Then the re-enroll again: its Run works and ends the Issue.
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "again"}); code != 201 {
+		t.Fatalf("re-enroll again: %d %s", code, body)
+	}
+	id := s.reenrollDone(t)
+	if v := s.issue(t, rf.ID); v.Status != "resolved" || !strings.Contains(v.Comments[len(v.Comments)-1].Body, "the re-enroll Plan "+itoa(id)+" worked after the restore") {
+		t.Fatalf("the Issue after the re-enroll: %+v", v)
+	}
+	if st, _ := e.drv.Observe(e.ctx, gid); st.Spec.MemoryMB != 4096 {
+		t.Errorf("the accepted memory: %d", st.Spec.MemoryMB)
 	}
 }
 

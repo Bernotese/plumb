@@ -144,9 +144,11 @@ func TestRestoredReenrollRefused(t *testing.T) {
 	if n := len([]rune(v.ActionsNote)); n > 300+400 {
 		t.Errorf("the note is not cut: %d runes", n)
 	}
-	// Another Plan of the Target: 409, as before.
+	// D-440: the gate is open in the restored state; another Plan of the
+	// Target meets only the planning's own checks (here the create-only
+	// address that the guest holds).
 	code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "put": []any{restoreTarget("web1", false)}})
-	if code != 409 || problemType(body) != "restore-failed" {
+	if problemType(body) == "restore-failed" {
 		t.Errorf("another Plan: %d %s", code, body)
 	}
 	// A person fixes it in Proxmox; the re-enroll Plan passes; who

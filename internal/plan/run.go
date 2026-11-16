@@ -473,6 +473,15 @@ func (e *Engine) runTarget(ctx context.Context, p store.Plan, run store.Run, set
 		watched = true
 		return s.ok
 	}
+	// D-440: a restored guest that waits for its re-enroll has no agent
+	// (revoked by the restore), at any power: its agent steps are skipped;
+	// the re-enroll Run does them with the new agent.
+	if !reenroll && e.restoredWaiting(ctx, tp.Target) {
+		for _, res := range r.Resources {
+			s.skip(ctx, res.ID, textRestoredWaitsSkip)
+		}
+		return s.ok
+	}
 
 	// An adopted Target without agent resources and without an agent: its
 	// agent comes by the install command (D-386, D-387); nothing waits.

@@ -6,6 +6,7 @@ package api
 // plan the re-enroll again.
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -65,11 +66,12 @@ func TestRestoreIssueWaitsForTheReenrollRun(t *testing.T) {
 			if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(first)+"/approve", nil); code != 409 {
 				t.Fatalf("the old re-enroll Plan still approves: %d %s", code, body)
 			}
-			// The way out: a new re-enroll (the gate lets only it pass), its Run ends the Issue.
+			// D-440: the disks are the restored ones, so the gate is open.
 			code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}})
-			if code != 409 || problemType(body) != "restore-failed" {
+			if code != 201 {
 				t.Errorf("another Plan of web1: %d %s", code, body)
 			}
+			// The way out: a new re-enroll; its Run ends the Issue.
 			code, body = s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "the way out"})
 			if code != 201 {
 				t.Fatalf("re-enroll again: %d %s", code, body)
@@ -82,5 +84,59 @@ func TestRestoreIssueWaitsForTheReenrollRun(t *testing.T) {
 				t.Errorf("comment %q", c)
 			}
 		})
+	}
+}
+
+// D-440 (a): the gate is open only while the store proves the restore
+// worked. A second restore that fails after a "restored" state ends the
+// proof at its start (H1 of #374): the gate is closed again.
+func TestRestoredGateClosesAtAFailedSecondRestore(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}}); code != 201 {
+		t.Fatalf("restored: a document Plan: %d %s", code, body)
+	}
+	s.fr.fail = errors.New("proxmox: restore failed")
+	if status, _ := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "failed" {
+		t.Fatalf("the second restore: %s", status)
+	}
+	for name, try := range map[string]func() (int, []byte){
+		"document Plan": func() (int, []byte) {
+			return s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}})
+		},
+		"re-enroll": func() (int, []byte) {
+			return s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "x"})
+		},
+	} {
+		if code, body := try(); code != 409 || problemType(body) != "restore-failed" {
+			t.Errorf("failed again: %s: %d %s", name, code, body)
+		}
+	}
+	// The poll does not compare the guest that may be empty.
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if s.e.eng.RestoredOK(s.e.ctx, iss) {
+		t.Error("the proof holds after a failed restore")
+	}
+}
+
+// L1 of #382: while the re-enroll Run runs, the note says to wait.
+func TestRestoredNoteWhileTheReenrollRuns(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	id := s.reenrollOf(t, "web1")
+	head, _ := s.e.st.Head(s.e.ctx)
+	rows, _ := s.e.st.RevisionDocs(s.e.ctx, head.ID)
+	// The store's approve starts the Run row ("running") without a worker.
+	_, run, err := s.e.st.ApprovePlan(s.e.ctx, id, "user:qa", store.NewRevision{Author: "user:qa", Reason: "qa", PlanID: id, Docs: rows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(id)+" runs (run "+itoa(run.ID)+"): wait for it") {
+		t.Errorf("note while the Run runs: %q", v.ActionsNote)
 	}
 }

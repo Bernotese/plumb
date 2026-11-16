@@ -1040,7 +1040,7 @@ func RestoredNote(ch []wire.Change) string {
 		from, _ := c.From.(string)
 		to, _ := c.To.(string)
 		if c.Attr == "restore" && strings.HasPrefix(from, "restored") {
-			return from + ". Way out: " + to + ". Only a re-enroll Plan of this Target, a new restore or a delete is allowed until then."
+			return from + ". Way out: " + to + ". The disks are the restored ones, so Plans of this Target pass; the Issue ends when a re-enroll Run worked."
 		}
 	}
 	return ""
@@ -1119,7 +1119,7 @@ func (e *Engine) RestoredActionNote(ctx context.Context, iss store.Issue) string
 	if planID == 0 {
 		return RestoredNote(ch)
 	}
-	tail := " Only a re-enroll Plan of this Target, a new restore or a delete is allowed until the re-enroll worked."
+	tail := " The disks are the restored ones, so Plans of this Target pass (fix the Target first if the re-enroll failed because of it); the Issue ends when a re-enroll Run worked."
 	again := fmt.Sprintf("plan the re-enroll again (\"Propose the re-enroll\", or POST /targets/%s/reenroll).", iss.Target)
 	pl, err := e.st.GetPlan(ctx, planID)
 	if err != nil {
@@ -1130,6 +1130,11 @@ func (e *Engine) RestoredActionNote(ctx context.Context, iss store.Issue) string
 		return fmt.Sprintf("%sapprove the re-enroll Plan %d.%s", RestoredWaitsPrefix, planID, tail)
 	}
 	ok, why, err := e.reenrollUsable(ctx, pl, head.ID)
+	if ok && pl.Status == store.PlanApproved {
+		if run, err := e.st.RunOfPlan(ctx, pl.ID); err == nil && run.Status == "running" {
+			return fmt.Sprintf("%sthe re-enroll Plan %d runs (run %d): wait for it.%s", RestoredWaitsPrefix, planID, run.ID, tail)
+		}
+	}
 	switch {
 	case err != nil, ok:
 		return fmt.Sprintf("%sapprove the re-enroll Plan %d.%s", RestoredWaitsPrefix, planID, tail)

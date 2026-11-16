@@ -703,7 +703,10 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	}
 	// A VM disk that grew while its root file system did not (review M1
 	// of #217): the Plan grows the file system again.
-	if !reenroll && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
+	// D-440: a restored guest that waits for its re-enroll has no agent;
+	// its re-enroll Run grows the file system with the new agent.
+	waiting := !reenroll && e.restoredWaiting(ctx, target)
+	if !reenroll && !waiting && bind.RootGrow > 0 && desired.Kind == wire.KindVM && driver.Grow(gchanges) == nil {
 		gchanges = append(gchanges, rootFSChange(bind.RootGrow))
 	}
 	if !reenroll {
@@ -751,6 +754,13 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	// A stopped guest (D-299): it stays stopped, so its agent steps are
 	// skipped; or the Run starts it, so its agent cannot observe now and
 	// its resources are planned as for a new guest (D-308).
+	// D-440: a restored guest that waits for its re-enroll has no agent
+	// (the restore revoked it): as for a stopped Target (D-299), only its
+	// guest changes are planned; the re-enroll Run does the agent part.
+	if waiting {
+		tp.notes = append(tp.notes, textRestoredWaitsSkip)
+		return tp, nil
+	}
 	if observed.Power != driver.PowerRunning {
 		switch desired.Power {
 		case driver.PowerStopped:
