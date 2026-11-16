@@ -215,8 +215,13 @@ full list of rights.
        `guest:volume-left`, which names the volume. No disk is added to the Target until it is gone.
        Remove it on the Proxmox host as root: `qm set <vmid> --delete unusedN` (for a container
        `pct set`), with the `unusedN` line that names the volume, or `pvesm free <volume>` when no
-       such line names it. A delete of the Target also frees it. The Issue ends by itself when the
-       volume is gone.
+       such line names it. A delete of the Target also frees it. The Issue ends by itself at the
+       next check (about a minute) when the guest config no longer names the volume.
+       - A common cause is a **snapshot** of the guest that still uses the disk ("volume is still in
+         use (snapshot?)"). Remove the snapshot first (`qm delsnapshot <vmid> <name>`), then the
+         `unusedN` line.
+       - Never `pvesm free` a volume that an `unusedN` line still names: the line stays, the Issue
+         stays open, and a later snapshot delete can leave the guest locked.
      - A disk that grew in Proxmox is drift: "Accept" takes the bigger size into the Target, and
        there is no Revert (a disk cannot shrink). Deleting the Target deletes its data disks too;
        the Plan names each of them.
@@ -706,8 +711,9 @@ Keep the recovery key in any case.
   seen at the full check every 15 minutes.
 - Deleting an Image removes its templates in Proxmox, but only templates that Plumb made for this
   Image and that no guest still uses (a linked clone). A template in use stays, and the Run says
-  which. The downloaded files (cloud images, container templates) always stay; the Image page lists
-  them with the command that removes them. Remove what you no longer need in Proxmox.
+  which. The downloaded files (cloud images, container templates) always stay. The delete Plan names
+  each of them with the command that removes it; the page of a built or container Image lists them
+  too. Remove what you no longer need in Proxmox.
 - The first signed refresh of an Image needs a person: an API token cannot approve it.
 - Debian does not sign its cloud image checksums. Every new checksum of a Debian Image needs a
   person.
