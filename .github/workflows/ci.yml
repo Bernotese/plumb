@@ -137,3 +137,5 @@ jobs:
           cat "$RUNNER_TEMP/repro/SHA256SUMS"
           go version
           node --version
+          tar --version | head -1
+          gzip --version | head -1
