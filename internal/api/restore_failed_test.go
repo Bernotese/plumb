@@ -205,6 +205,10 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	if code != 201 || acc.ID == 0 {
 		t.Fatalf("a document Plan of the restored guest: %d %s", code, body)
 	}
+	// No agent step in it: the re-enroll Run grows the root file system.
+	if strings.Contains(string(body), `"root_fs"`) {
+		t.Errorf("the document Plan grows the root file system without an agent: %s", body)
+	}
 	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(acc.ID)+"/approve", nil); code != 202 {
 		t.Fatalf("approve the accept: %d %s", code, body)
 	}
