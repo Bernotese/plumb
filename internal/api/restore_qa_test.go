@@ -168,11 +168,22 @@ func TestQARestoreStopAfterTheFollowUpPlan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll); len(re) != 1 {
+	re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll)
+	if len(re) != 1 {
 		t.Fatalf("re-enroll Plans: %d", len(re))
 	}
+	// T-252: no second Plan is made, so the Issue stays open and names the
+	// open one; the re-enroll Run that works ends it with a comment.
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil || !strings.Contains(string(iss.Changes), "the re-enroll Plan "+itoa(re[0].ID)+" is still open") {
+		t.Fatalf("issue %s %v", iss.Changes, err)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re[0].ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	s.e.eng.Wait()
 	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Fatal("the Issue stays open")
+		t.Fatal("the Issue stays open after the re-enroll worked")
 	}
 	if c := lastComment(t, s, plan.GuestRestoreFailedID); c == "" {
 		t.Error("the Issue ended without a comment (D-428)")
