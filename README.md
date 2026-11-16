@@ -46,9 +46,19 @@ Copy `bin/plumb` and `install/install.sh` to the Proxmox host.
 `--plumb-binary ./plumb` from that folder. Before it uses any file, the installer checks the
 tarball's `SHA256SUMS`: every file must be there and match, and `--plumb-binary` must be the
 `plumb` of the tarball; else it stops, names the file and changes nothing (the dry run shows the
-check too). This proves only that the files are whole, not who made them: check that with
-`gh attestation verify` before you unpack (see `docs/RELEASE.md`). A build from source has no
-`SHA256SUMS`; the installer says so and checks nothing.
+check too). This proves only that the files are whole, not who made them.
+
+**Check the installer before you run it.** `install.sh` can check itself only while it runs, so it
+cannot prove that it is the right one. Only these two steps, **before** you unpack, prove the
+whole tarball, `install.sh` included: `gh attestation verify` (who built it) and the outer
+`SHA256SUMS` (see `docs/RELEASE.md`). The installer of a release says "Bundle check of release
+…"; if the installer of a tarball says "source build" instead, stop: it is not the installer of
+a release. A build from source has no `SHA256SUMS`; it says so and checks nothing.
+
+Run it from a clean root shell (for example `sudo -i`), not through `sudo -E` or a wrapper that
+passes your environment: `BASH_ENV` and `PATH` act before the first line of the script, so no
+check in it can stop them. A release installer refuses the test settings `PLUMB_INSTALL_*` and a
+`TMPDIR` that another account can write.
 
 ### 2. Dry run
 

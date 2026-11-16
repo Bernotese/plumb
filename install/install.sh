@@ -183,8 +183,9 @@ say() { printf '%s\n' "$*"; }
 # TMP_FILES are removed on every exit, also on Ctrl-C (review T-013 #7).
 TMP_FILES=()
 # TMP_PLACE is where every temp file and folder of the run goes (M1 of
-# #390). A source build takes TMPDIR (the tests); check_test_env checks it
-# for a release installer and exports it, so child tools use it too.
+# #390). It is TMPDIR or /tmp; check_test_env checks it for a release
+# installer (child tools take the same TMPDIR or /tmp). A source build
+# takes it as it is (the tests).
 TMP_PLACE=${TMPDIR:-/tmp}
 # BUNDLE_COPY is the private folder of the checked bundle files (T-257).
 BUNDLE_COPY=""
@@ -2730,7 +2731,6 @@ check_test_env() {
 		if [[ $(stat -c %u -- "$TMP_PLACE") != 0 ]] || { ((mode & 8#022)) && ! ((mode & 8#1000)); }; then
 			die "the temp folder $TMP_PLACE (TMPDIR) is not owned by root, or another account can write it and it is not sticky; unset TMPDIR or set it to a folder that only root can write. Nothing was changed."
 		fi
-		export TMPDIR=$TMP_PLACE
 		return 0
 	fi
 	say "NOTE: this install.sh is a source build (no release stamp): it honours the PLUMB_INSTALL_* test settings${set[0]:+ (set: ${set[*]})}."
