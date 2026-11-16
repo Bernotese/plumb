@@ -609,6 +609,9 @@ func (s *Service) RestoreFailedBlocks(ctx context.Context, iss store.Issue) (int
 	if err != nil {
 		return 0, err
 	}
+	if s.plans != nil && s.plans.RestoredOK(ctx, r) { // D-440: the disks are the restored ones
+		return 0, nil
+	}
 	return r.ID, nil
 }
 

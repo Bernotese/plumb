@@ -64,6 +64,38 @@ describe("restored, re-enroll refused (D-439)", () => {
     expect(button("Propose the re-enroll of web1")).toBeUndefined();
   });
 
+  it("D-440: waits for the re-enroll Run and links its Plan", async () => {
+    me.session = { principal: "user:alice", tier: "plan" } as never;
+    const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
+    const base = await api.getIssue(7);
+    vi.spyOn(api, "getIssue").mockResolvedValue({
+      ...base,
+      target: "web1",
+      resource: "guest:restore-failed",
+      status: "open",
+      plan_id: null,
+      resolution: null,
+      changes: [
+        {
+          attr: "restore",
+          from: "restored; the agent is not enrolled yet: approve the re-enroll Plan 31",
+          to: "approve the re-enroll Plan 31; when it can no longer run, plan the re-enroll again: POST /targets/web1/reenroll",
+          risk: "disruptive",
+        },
+        { attr: "restore_run", to: 12, risk: "read" },
+        { attr: "reenroll_plan", to: 31, risk: "read" },
+      ],
+      actions: ["ignore_once"],
+      actions_note:
+        'restored; the agent is not enrolled yet: the re-enroll Plan 31 can no longer run (it is stale (another Plan changed the revision, or it was dropped)): plan the re-enroll again ("Propose the re-enroll", or POST /targets/web1/reenroll).',
+    } as Issue);
+    show(IssueView, { api, id: 7 });
+    await until(() => text().includes("guest:restore-failed"));
+    expect(text(el("#restored-refused"))).toContain("can no longer run");
+    expect(el("#restored-plan")?.getAttribute("href")).toContain("plans/31");
+    expect(button("Propose the re-enroll of web1")).toBeDefined();
+  });
+
   it("a failed restore shows no re-enroll", async () => {
     me.session = { principal: "user:alice", tier: "admin" } as never;
     const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
