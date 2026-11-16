@@ -307,7 +307,6 @@ func (e *Engine) keepRestoredSteps(ctx context.Context, runs []store.Run) map[in
 	return kept
 }
 
-
 // recoverRestores is the start rule of D-427, after Recover finished the
 // cut Runs: for each open guest:restore-failed in the "running" state
 // (or "restored" with the follow-up missing) whose Target has no Run of
