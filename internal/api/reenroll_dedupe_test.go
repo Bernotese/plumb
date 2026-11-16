@@ -5,6 +5,7 @@ package api
 // (ok or failed), or a dropped one, never stops a new re-enroll Plan.
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -100,5 +101,35 @@ func TestReenrollApprovedRunStillCounts(t *testing.T) {
 	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
 	if err != nil || !strings.Contains(string(iss.Changes), "the re-enroll Plan "+itoa(first[0])+" is still open") {
 		t.Fatalf("issue %s %v", iss.Changes, err)
+	}
+}
+
+// M1 of the #381 review: an open re-enroll Plan of another Target never
+// stops this Target's own re-enroll Plan.
+func TestReenrollOfAnotherTargetDoesNotCount(t *testing.T) {
+	s := newSafetyEnv(t)
+	s.e.seed(s.adm, "web2")
+	s.e.approve(s.adm, "allow restart", restoreTarget("web2", true))
+	code, body := s.adm.do("POST", "/api/v1/targets/web2/reenroll", map[string]any{"reason": "web2's own"})
+	if code != 201 {
+		t.Fatalf("re-enroll web2: %d %s", code, body)
+	}
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore web1: %s %s", status, out)
+	}
+	ps, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll)
+	targets := map[string]int{}
+	for _, p := range ps {
+		var tps []plan.TargetPlan
+		json.Unmarshal(p.Changes, &tps)
+		for _, tp := range tps {
+			targets[tp.Target]++
+		}
+	}
+	if targets["web1"] != 1 || targets["web2"] != 1 {
+		t.Fatalf("re-enroll Plans by Target: %v", targets)
+	}
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("web1's Issue stays open: web2's Plan was counted")
 	}
 }
