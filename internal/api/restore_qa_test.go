@@ -175,7 +175,7 @@ func TestQARestoreStopAfterTheFollowUpPlan(t *testing.T) {
 	// T-252: no second Plan is made, so the Issue stays open and names the
 	// open one; the re-enroll Run that works ends it with a comment.
 	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
-	if err != nil || !strings.Contains(string(iss.Changes), "the re-enroll Plan "+itoa(re[0].ID)+" is still open") {
+	if err != nil || !strings.Contains(string(iss.Changes), "approve the re-enroll Plan "+itoa(re[0].ID)) {
 		t.Fatalf("issue %s %v", iss.Changes, err)
 	}
 	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re[0].ID)+"/approve", nil); code != 202 {

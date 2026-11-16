@@ -863,17 +863,8 @@ func (e *Engine) restoreFollowUp(ctx context.Context, p store.Plan, target strin
 			return
 		}
 		if open != 0 {
-			// T-252: no new Plan, so the Issue does not end: it stays in the
-			// "restored" state and names the open Plan. The re-enroll Run
-			// that works ends it (endRestoredByReenroll); if that Plan goes
-			// stale, the way out is a new re-enroll.
-			if err := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, []wire.Change{
-				{Attr: "restore", From: fmt.Sprintf("%sthe re-enroll Plan %d is still open, so no second one is made", RestoredRefusedPrefix, open),
-					To: fmt.Sprintf("approve the re-enroll Plan %d, or re-enroll again: POST /targets/%s/reenroll", open, target), Risk: wire.RiskDisruptive},
-				{Attr: AttrRestoreRun, To: runID, Risk: wire.RiskRead},
-			}); err != nil {
-				e.log.Error("keep the Issue of the restore open", "target", target, "err", err)
-			}
+			// T-252: no second Plan. D-440: the Issue waits for its Run.
+			e.waitForReenroll(ctx, target, runID, open)
 			return
 		}
 		re, err := e.Propose(ctx, Input{Proposal: Proposal{Reenroll: []string{target}}, Origin: OriginReenroll, Author: "system",
@@ -884,7 +875,12 @@ func (e *Engine) restoreFollowUp(ctx context.Context, p store.Plan, target strin
 			return
 		}
 		e.log.Info("re-enroll Plan after the restore", "target", target, "plan", re.ID)
-		reason += fmt.Sprintf("; approve the re-enroll Plan %d to start the guest with a new agent credential", re.ID)
+		// D-440: the Issue stays open in the "restored" state until the
+		// re-enroll Run worked (endRestoredByReenroll), never at the Plan:
+		// a Plan that goes stale (another Plan moved the head) or whose Run
+		// fails would else leave a stopped, revoked guest with no word.
+		e.waitForReenroll(ctx, target, runID, re.ID)
+		return
 	}
 	if err := e.endRestoreIssue(ctx, target, GuestRestoreFailedID, reason); err != nil {
 		e.log.Warn("end the Issue of the restore", "target", target, "err", err)
@@ -913,25 +909,14 @@ func (e *Engine) openReenroll(ctx context.Context, target string) (int64, error)
 		if json.Unmarshal(pl.Changes, &tps) != nil || len(tps) != 1 || tps[0].Target != target {
 			continue
 		}
-		// A pending Plan whose base is not the head can no longer be
-		// approved (it is stale at its approve): it does not count.
-		if pl.Status == store.PlanPending && pl.BaseRevision != head.ID {
-			continue
+		// T-252: only a Plan that can still do the work counts.
+		ok, _, err := e.reenrollUsable(ctx, pl, head.ID)
+		if err != nil {
+			return 0, err
 		}
-		// T-252: a Plan stays "approved" after its Run ended. Only one that
-		// can still do the work counts: pending, or approved with no Run
-		// yet or a Run that has not ended.
-		if pl.Status == store.PlanApproved {
-			run, err := e.st.RunOfPlan(ctx, pl.ID)
-			switch {
-			case errors.Is(err, store.ErrNotFound):
-			case err != nil:
-				return 0, err
-			case run.Status != "running":
-				continue // done (succeeded or failed)
-			}
+		if ok {
+			return pl.ID, nil
 		}
-		return pl.ID, nil
 	}
 	return 0, nil
 }
@@ -1027,6 +1012,7 @@ func (e *Engine) endRestoredByReenroll(ctx context.Context, p store.Plan) {
 		if err := e.endRestoreIssue(ctx, tp.Target, GuestRestoreFailedID, reason); err != nil {
 			e.log.Warn("end the Issue of the restore after the re-enroll", "target", tp.Target, "err", err)
 		}
+
 	}
 }
 
@@ -1058,4 +1044,92 @@ func RestoredNote(ch []wire.Change) string {
 		}
 	}
 	return ""
+}
+
+// RestoredWaitsPrefix starts the D-440 state of a guest:restore-failed
+// Issue: the restore worked, a re-enroll Plan is made, and its Run has not
+// worked yet.
+const RestoredWaitsPrefix = "restored; the agent is not enrolled yet: "
+
+// AttrReenrollPlan is the change of a guest:restore-failed Issue in the
+// D-440 state that names the re-enroll Plan. The way out follows that
+// Plan's real state when the Issue is read (RestoredActionNote).
+const AttrReenrollPlan = "reenroll_plan"
+
+// waitForReenroll sets the Issue to the D-440 state for the re-enroll
+// Plan planID; the restore Run runID is the proof of the D-439 gate.
+func (e *Engine) waitForReenroll(ctx context.Context, target string, runID, planID int64) {
+	if err := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, []wire.Change{
+		{Attr: "restore", From: fmt.Sprintf("%sapprove the re-enroll Plan %d", RestoredWaitsPrefix, planID),
+			To: fmt.Sprintf("approve the re-enroll Plan %d; when it can no longer run, plan the re-enroll again: POST /targets/%s/reenroll", planID, target), Risk: wire.RiskDisruptive},
+		{Attr: AttrRestoreRun, To: runID, Risk: wire.RiskRead},
+		{Attr: AttrReenrollPlan, To: planID, Risk: wire.RiskRead},
+	}); err != nil {
+		e.log.Error("keep the Issue of the restore open until the re-enroll", "target", target, "err", err)
+	}
+}
+
+// reenrollUsable reports whether the re-enroll Plan pl can still do the
+// work (T-252): pending on the head, or approved with no Run yet or a Run
+// that has not ended. why says what it is else.
+func (e *Engine) reenrollUsable(ctx context.Context, pl store.Plan, head int64) (bool, string, error) {
+	switch pl.Status {
+	case store.PlanPending:
+		if pl.BaseRevision != head {
+			return false, "it is stale (another Plan changed the revision)", nil
+		}
+		return true, "", nil
+	case store.PlanApproved:
+		run, err := e.st.RunOfPlan(ctx, pl.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			return true, "", nil
+		case err != nil:
+			return false, "", err
+		case run.Status == "running":
+			return true, "", nil
+		case run.Status == "succeeded":
+			return false, "its Run worked", nil
+		}
+		return false, "its Run failed", nil
+	}
+	return false, "it is " + pl.Status, nil
+}
+
+// RestoredActionNote is the actions note of a guest:restore-failed Issue
+// in a "restored" state, read at this moment (D-440): for the D-440 state
+// it follows the named re-enroll Plan; for the D-439 refusal it is
+// RestoredNote. "" for any other state.
+func (e *Engine) RestoredActionNote(ctx context.Context, iss store.Issue) string {
+	var ch []wire.Change
+	if json.Unmarshal(iss.Changes, &ch) != nil {
+		return ""
+	}
+	var planID int64
+	for _, c := range ch {
+		if c.Attr == AttrReenrollPlan {
+			if n, err := driver.IntValue(c.To); err == nil {
+				planID = int64(n)
+			}
+		}
+	}
+	if planID == 0 {
+		return RestoredNote(ch)
+	}
+	tail := " Only a re-enroll Plan of this Target, a new restore or a delete is allowed until the re-enroll worked."
+	again := fmt.Sprintf("plan the re-enroll again (\"Propose the re-enroll\", or POST /targets/%s/reenroll).", iss.Target)
+	pl, err := e.st.GetPlan(ctx, planID)
+	if err != nil {
+		return fmt.Sprintf("%sthe re-enroll Plan %d is gone: %s%s", RestoredWaitsPrefix, planID, again, tail)
+	}
+	head, err := e.st.Head(ctx)
+	if err != nil {
+		return fmt.Sprintf("%sapprove the re-enroll Plan %d.%s", RestoredWaitsPrefix, planID, tail)
+	}
+	ok, why, err := e.reenrollUsable(ctx, pl, head.ID)
+	switch {
+	case err != nil, ok:
+		return fmt.Sprintf("%sapprove the re-enroll Plan %d.%s", RestoredWaitsPrefix, planID, tail)
+	}
+	return fmt.Sprintf("%sthe re-enroll Plan %d can no longer run (%s): %s%s", RestoredWaitsPrefix, planID, why, again, tail)
 }

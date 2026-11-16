@@ -169,15 +169,29 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	if v.Status != "resolved" || v.Resolution == nil || v.Resolution.By != "system" || len(v.Comments) == 0 || !strings.Contains(v.Comments[len(v.Comments)-1].Body, "A restore replaced the guest") {
 		t.Fatalf("stale Issue after the restore: %+v", v)
 	}
-	if err := e.eng.CheckGuests(e.ctx); err != nil { // no digest reset: the Run left it empty
+	// D-440: while the guest waits for its re-enroll, the poll opens no
+	// drift Issue. The re-enroll Run sets the guest to the Target (the
+	// memory of the restored guest is the desired one again); a new hand
+	// change after it is drift with its actions.
+	if err := e.eng.CheckGuests(e.ctx); err != nil {
 		t.Fatal(err)
 	}
-	next, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID)
-	if err != nil || next.ID == pre.ID {
-		t.Fatalf("no new drift Issue of the restored guest: %+v %v", next, err)
+	if _, err := e.st.OpenIssue(e.ctx, "web1", wire.GuestConfigID); err == nil {
+		t.Fatal("a drift Issue while the guest waits for its re-enroll")
 	}
-	if v := s.issue(t, next.ID); v.ActionsBlockedBy != nil || len(v.Actions) == 0 {
-		t.Errorf("the new Issue has no actions: %+v", v)
+	// The re-enroll Run fails here (the fake agent has no grow command, and
+	// the Plan grows the root file system). D-440: a failed re-enroll Run
+	// leaves the Issue open, and its note says to plan the re-enroll again.
+	re := s.reenrollOf(t, "web1")
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re)+"/approve", nil); code != 202 {
+		t.Fatalf("approve the re-enroll: %d %s", code, body)
+	}
+	e.eng.Wait()
+	if r, _ := e.st.RunOfPlan(e.ctx, re); r.Status != "failed" {
+		t.Fatalf("the re-enroll Run: %s", r.Status)
+	}
+	if v := s.issue(t, rf.ID); v.Status != "open" || !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(re)+" can no longer run (its Run failed): plan the re-enroll again") {
+		t.Fatalf("the Issue after a failed re-enroll Run: %+v", v)
 	}
 }
 
@@ -302,8 +316,9 @@ func TestRestoreIssueOpenDuringTheCall(t *testing.T) {
 	if !open || !strings.HasPrefix(during.ActionsNote, "running: if this restore does not end") {
 		t.Fatalf("no Issue during the restore call: %v %+v", open, during)
 	}
+	s.reenrollDone(t) // D-440: the Issue ends at the re-enroll Run
 	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Error("the Issue stays after a restore that worked")
+		t.Error("the Issue stays after the re-enroll Run worked")
 	}
 	// A stop inside the call: the state that a restart finds is the Issue
 	// above with no running Run; the gate then holds (poll and Plans).

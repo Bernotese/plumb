@@ -90,9 +90,14 @@
           c.attr === "restore" &&
           "from" in c &&
           typeof c.from === "string" &&
-          c.from.startsWith("restored; the agent is not enrolled:"),
+          c.from.startsWith("restored; the agent is not enrolled"),
       ),
   );
+  // D-440: the re-enroll Plan that the Issue waits for.
+  const reenrollPlan = $derived.by(() => {
+    const c = issue?.changes.find((x) => x.attr === "reenroll_plan");
+    return c && "to" in c && typeof c.to === "number" ? c.to : null;
+  });
   let reenrollBusy = $state(false);
   let reenrollError = $state<unknown>(null);
   async function reenroll() {
@@ -318,6 +323,13 @@
     <section class="card" aria-labelledby="restored-title" id="restored-refused">
       <h2 id="restored-title">Restored, the agent is not enrolled</h2>
       <p>{issue.actions_note}</p>
+      {#if reenrollPlan !== null}
+        <p>
+          <a id="restored-plan" href={href({ name: "plan", id: reenrollPlan })}
+            >Open the re-enroll Plan {reenrollPlan}</a
+          >
+        </p>
+      {/if}
       <ProblemBox error={reenrollError} />
       {#if can("reenrollTarget")}
         <button type="button" id="restored-reenroll" disabled={reenrollBusy} onclick={reenroll}>
