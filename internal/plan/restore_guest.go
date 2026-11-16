@@ -863,8 +863,18 @@ func (e *Engine) restoreFollowUp(ctx context.Context, p store.Plan, target strin
 			return
 		}
 		if open != 0 {
-			reason += fmt.Sprintf("; the re-enroll Plan %d is still open, so no second one is made: approve it", open)
-			break
+			// T-252: no new Plan, so the Issue does not end: it stays in the
+			// "restored" state and names the open Plan. The re-enroll Run
+			// that works ends it (endRestoredByReenroll); if that Plan goes
+			// stale, the way out is a new re-enroll.
+			if err := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, []wire.Change{
+				{Attr: "restore", From: fmt.Sprintf("%sthe re-enroll Plan %d is still open, so no second one is made", RestoredRefusedPrefix, open),
+					To: fmt.Sprintf("approve the re-enroll Plan %d, or re-enroll again: POST /targets/%s/reenroll", open, target), Risk: wire.RiskDisruptive},
+				{Attr: AttrRestoreRun, To: runID, Risk: wire.RiskRead},
+			}); err != nil {
+				e.log.Error("keep the Issue of the restore open", "target", target, "err", err)
+			}
+			return
 		}
 		re, err := e.Propose(ctx, Input{Proposal: Proposal{Reenroll: []string{target}}, Origin: OriginReenroll, Author: "system",
 			Reason: fmt.Sprintf("re-enroll %s after the restore of plan %d", target, p.ID)})
@@ -894,11 +904,34 @@ func (e *Engine) openReenroll(ctx context.Context, target string) (int64, error)
 	if err != nil {
 		return 0, err
 	}
+	head, err := e.st.Head(ctx)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
 	for _, pl := range append(pending, approved...) {
 		var tps []TargetPlan
-		if json.Unmarshal(pl.Changes, &tps) == nil && len(tps) == 1 && tps[0].Target == target {
-			return pl.ID, nil
+		if json.Unmarshal(pl.Changes, &tps) != nil || len(tps) != 1 || tps[0].Target != target {
+			continue
 		}
+		// A pending Plan whose base is not the head can no longer be
+		// approved (it is stale at its approve): it does not count.
+		if pl.Status == store.PlanPending && pl.BaseRevision != head.ID {
+			continue
+		}
+		// T-252: a Plan stays "approved" after its Run ended. Only one that
+		// can still do the work counts: pending, or approved with no Run
+		// yet or a Run that has not ended.
+		if pl.Status == store.PlanApproved {
+			run, err := e.st.RunOfPlan(ctx, pl.ID)
+			switch {
+			case errors.Is(err, store.ErrNotFound):
+			case err != nil:
+				return 0, err
+			case run.Status != "running":
+				continue // done (succeeded or failed)
+			}
+		}
+		return pl.ID, nil
 	}
 	return 0, nil
 }
