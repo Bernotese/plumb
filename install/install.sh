@@ -183,9 +183,8 @@ say() { printf '%s\n' "$*"; }
 # TMP_FILES are removed on every exit, also on Ctrl-C (review T-013 #7).
 TMP_FILES=()
 # TMP_PLACE is where every temp file and folder of the run goes (M1 of
-# #390). It is TMPDIR or /tmp; check_test_env checks it for a release
-# installer (child tools take the same TMPDIR or /tmp). A source build
-# takes it as it is (the tests).
+# #390). A release installer uses /tmp only (check_test_env checks it and
+# refuses any other TMPDIR); a source build takes TMPDIR (the tests).
 TMP_PLACE=${TMPDIR:-/tmp}
 # BUNDLE_COPY is the private folder of the checked bundle files (T-257).
 BUNDLE_COPY=""
@@ -2722,14 +2721,19 @@ check_test_env() {
 	if [[ -n $RELEASE_VERSION ]]; then
 		((${#set[@]} == 0)) ||
 			die "this is the installer of release $RELEASE_VERSION; it takes no test settings from the environment, but ${set[*]} is set (for example passed on by sudo -E). Unset it and run again. Nothing was changed."
-		# M1 of #390: root's temp files (the bundle copy, plumb.env with the
-		# token secret) go only where no other account can rename them.
+		# M1 and M1b of #390: root's temp files (the bundle copy, plumb.env
+		# with the token secret) go only to /tmp. Another TMPDIR is refused:
+		# a check of its last folder cannot see a parent folder that another
+		# account can rename (the trick of L-P of #387).
+		if [[ -n ${TMPDIR+x} && $TMPDIR != /tmp ]]; then
+			die "this is the installer of release $RELEASE_VERSION; it uses /tmp for its temp files and takes no other TMPDIR, but TMPDIR=$TMPDIR is set. Unset TMPDIR and run again. Nothing was changed."
+		fi
+		TMP_PLACE=/tmp
 		local mode
-		[[ -d $TMP_PLACE && ! -L $TMP_PLACE ]] ||
-			die "the temp folder $TMP_PLACE (TMPDIR) is not a folder; unset TMPDIR or set it to a folder that only root can write. Nothing was changed."
+		[[ -d $TMP_PLACE && ! -L $TMP_PLACE ]] || die "/tmp is not a folder; nothing was changed"
 		mode=$(stat -c '%#a' -- "$TMP_PLACE")
 		if [[ $(stat -c %u -- "$TMP_PLACE") != 0 ]] || { ((mode & 8#022)) && ! ((mode & 8#1000)); }; then
-			die "the temp folder $TMP_PLACE (TMPDIR) is not owned by root, or another account can write it and it is not sticky; unset TMPDIR or set it to a folder that only root can write. Nothing was changed."
+			die "/tmp is not owned by root, or another account can write it and it is not sticky; the installer does not put root's temp files there. Nothing was changed."
 		fi
 		return 0
 	fi

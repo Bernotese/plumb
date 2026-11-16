@@ -577,58 +577,69 @@ func TestSourceBuildSaysSo(t *testing.T) {
 	}
 }
 
-// M1 of #390: a release installer puts root's temp files only into a
-// folder that no other account can rename them in: TMPDIR (or /tmp) must
-// be a folder owned by root, not writable by group or others unless it is
-// sticky. Else it refuses, names the folder and changes nothing.
+// M1 and M1b of #390: a release installer puts root's temp files only into
+// /tmp, which must be root's and sticky (or not writable by others), and it
+// refuses any other TMPDIR (a check of its last folder cannot see a parent
+// that another account can rename). Nothing is changed, also in a dry run.
 func TestReleaseTempPlace(t *testing.T) {
-	refused := "unset TMPDIR or set it to a folder that only root can write. Nothing was changed."
-	file := filepath.Join(t.TempDir(), "a-file")
-	os.WriteFile(file, nil, 0o600)
 	mine := t.TempDir()
-	os.Chmod(mine, 0o700) // only the owner check can refuse it
-	shared := t.TempDir()
+	os.Chmod(mine, 0o700)
 	for name, tc := range map[string]struct {
-		tmpdir string
-		mode   string // "": no shim; else stat reports the path as root's with this mode
-		ok     bool
+		tmpdir  string // "" = unset
+		shimDir string // stat reports this path with shimUID and shimMode
+		uid     string
+		mode    string
+		want    string // "" = passes
 	}{
-		"/tmp (root, sticky)":                 {tmpdir: "/tmp", ok: true},
-		"a folder of this user, 0700":         {tmpdir: mine},
-		"a file (root's, 0700)":               {tmpdir: file, mode: "0700"},
-		"root's, writable by all, not sticky": {tmpdir: shared, mode: "0777"},
-		"root's, writable by all, sticky":     {tmpdir: shared, mode: "01777", ok: true},
+		"TMPDIR unset":                     {},
+		"TMPDIR=/tmp":                      {tmpdir: "/tmp"},
+		"a folder of this user":            {tmpdir: mine, want: "takes no other TMPDIR, but TMPDIR=" + mine + " is set"},
+		"a root folder, sticky, not /tmp":  {tmpdir: mine, shimDir: mine, uid: "0", mode: "01777", want: "takes no other TMPDIR"},
+		"/tmp/ with a slash":               {tmpdir: "/tmp/", want: "takes no other TMPDIR"},
+		"/tmp not root's":                  {shimDir: "/tmp", uid: "1000", mode: "01777", want: "/tmp is not owned by root"},
+		"/tmp writable by all, not sticky": {shimDir: "/tmp", uid: "0", mode: "0777", want: "/tmp is not owned by root, or another account can write it"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHost(t)
 			b := newReleaseBundle(t, "v0.1.0")
-			env := h.releaseEnv("TMPDIR=" + tc.tmpdir)
-			if tc.mode != "" {
-				env = append(env, statShim(t, h, tc.tmpdir, tc.mode)...)
+			var env []string
+			if tc.tmpdir != "" {
+				env = append(env, "TMPDIR="+tc.tmpdir)
 			}
-			code, out, errOut := h.runBundleEnv(b, env, "--dry-run", "--plumb-binary", filepath.Join(b.dir, "plumb"))
-			got := strings.Contains(errOut, "the temp folder "+tc.tmpdir+" (TMPDIR)") && strings.Contains(errOut, refused)
-			if tc.ok == got || (tc.ok && !strings.Contains(out, "Bundle check of release")) {
-				t.Fatalf("ok=%v: %d\n%s\n%s", tc.ok, code, out, errOut)
+			env = h.releaseEnv(env...)
+			if tc.shimDir != "" {
+				env = append(env, statShim(t, h, tc.shimDir, tc.uid, tc.mode)...)
 			}
-			if !tc.ok {
+			for _, mode := range []string{"--dry-run", "--yes"} {
+				code, out, errOut := h.runBundleEnv(b, env, mode, "--plumb-binary", filepath.Join(b.dir, "plumb"))
+				if tc.want == "" {
+					if !strings.Contains(out, "Bundle check of release v0.1.0") {
+						t.Fatalf("%s: %d\n%s\n%s", mode, code, out, errOut)
+					}
+					continue
+				}
+				if code == 0 || !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, "Nothing was changed") || strings.Contains(out, "Bundle check") {
+					t.Fatalf("%s: %d, want %q\n%s\n%s", mode, code, tc.want, out, errOut)
+				}
+			}
+			if tc.want != "" {
 				h.noHostChange(t)
 			}
 		})
 	}
 }
 
-// statShim puts a stat first on the PATH that reports dir as owned by
-// root (uid 0) with mode; other paths go to the real stat. A test cannot
-// make such a folder without root.
-func statShim(t *testing.T, h *host, dir, mode string) []string {
+// statShim puts a stat first on the PATH that reports dir with uid and
+// mode; other paths go to the real stat. A test cannot make such a folder
+// without root.
+func statShim(t *testing.T, h *host, dir, uid, mode string) []string {
 	t.Helper()
 	shim := t.TempDir()
 	real, err := exec.LookPath("stat")
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/bash\nif [[ ${@: -1} == " + dir + " ]]; then case $2 in %u) echo 0; exit;; '%#a') echo " + mode + "; exit;; esac; fi\nexec " + real + " \"$@\"\n"
+	script := "#!/bin/bash\nif [[ ${@: -1} == " + dir + " ]]; then case $2 in %u) echo " + uid + "; exit;; '%#a') echo " + mode + "; exit;; esac; fi\nexec " + real + " \"$@\"\n"
 	os.WriteFile(filepath.Join(shim, "stat"), []byte(script), 0o755)
 	path := ""
 	for _, e := range h.env {
