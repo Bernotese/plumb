@@ -88,6 +88,37 @@ func (b *bundle) writeSums(t *testing.T, s string) {
 	}
 }
 
+// swapShim puts a shim of id (the first command that check_bundle runs
+// after it entered the bundle folder) first on the PATH. It runs swap once,
+// and only when it runs inside dir: then the path of the folder is replaced
+// while the installer is in it (B1 of #387: no hook in the installer).
+func swapShim(t *testing.T, h *host, dir, swap string) []string {
+	t.Helper()
+	shim := t.TempDir()
+	todo := filepath.Join(shim, "todo")
+	os.WriteFile(todo, nil, 0o600)
+	real, err := exec.LookPath("id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\nif [[ -e " + todo + " && $(pwd -P) == " + dir + " ]]; then rm -f " + todo + "; " + swap + "; fi\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shim, "id"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := ""
+	for _, e := range h.env {
+		if strings.HasPrefix(e, "PATH=") {
+			path = strings.TrimPrefix(e, "PATH=")
+		}
+	}
+	t.Cleanup(func() {
+		if _, err := os.Stat(todo); err == nil {
+			t.Error("the swap shim never ran: check_bundle no longer runs id in the bundle folder")
+		}
+	})
+	return []string{"PATH=" + shim + ":" + path}
+}
+
 // runBundle runs the bundle's install.sh on the fake host.
 func (h *host) runBundle(b *bundle, env []string, args ...string) (int, string, string) {
 	h.t.Helper()
@@ -399,7 +430,8 @@ func TestBundleRealTarball(t *testing.T) {
 
 // L-P of #387: the bundle's path is renamed and replaced by a
 // self-consistent fake right after the installer entered the folder (a
-// parent folder that another account can write). The installer reads only
+// parent folder that another account can write; the swap runs in a PATH
+// shim of id, see swapShim). The installer reads only
 // the folder it entered: the fake never runs, and the proven plumb is
 // pushed. A plain path read (the mutant) would take the fake.
 func TestBundlePathSwappedAfterEntering(t *testing.T) {
@@ -411,7 +443,7 @@ func TestBundlePathSwappedAfterEntering(t *testing.T) {
 	fake.write(t, "plumb", []byte("#!/bin/sh\ntouch "+evil+"\necho plumb v6.6.6\n"))
 	fake.writeSums(t, fake.sums(t, "plumb", "plumb-agent", "install.sh"))
 	hook := "mv " + b.dir + " " + b.dir + ".orig && mv " + fake.dir + " " + b.dir
-	code, out, errOut := h.runBundle(b, []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "PLUMB_INSTALL_BUNDLE_HOOK=" + hook},
+	code, out, errOut := h.runBundle(b, append(swapShim(t, h, b.dir, hook), "PLUMB_INSTALL_ASSUME_ROOT=1"),
 		"--yes", "--plumb-binary", filepath.Join(b.dir, "plumb"))
 	if _, err := os.Stat(b.dir + ".orig"); err != nil {
 		t.Fatalf("the hook did not swap the folder: %v", err)
@@ -446,7 +478,7 @@ func TestBundlePathSwappedHardLink(t *testing.T) {
 	fake.write(t, "plumb", []byte("#!/bin/sh\ntouch "+evil+"\necho plumb v6.6.6\n"))
 	fake.writeSums(t, fake.sums(t, "plumb", "plumb-agent", "install.sh"))
 	hook := "mv " + b.dir + " " + b.dir + ".orig && mv " + fake.dir + " " + b.dir
-	code, out, errOut := h.runBundle(b, []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "PLUMB_INSTALL_BUNDLE_HOOK=" + hook}, "--yes", "--plumb-binary", link)
+	code, out, errOut := h.runBundle(b, append(swapShim(t, h, b.dir, hook), "PLUMB_INSTALL_ASSUME_ROOT=1"), "--yes", "--plumb-binary", link)
 	if code != 0 {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}

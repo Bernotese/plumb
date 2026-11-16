@@ -2615,7 +2615,6 @@ check_bundle() {
 	fi
 	back=$PWD
 	cd -P -- "$dir" || die "cannot enter $dir; nothing was changed"
-	[[ -z ${PLUMB_INSTALL_BUNDLE_HOOK:-} ]] || bash -c "$PLUMB_INSTALL_BUNDLE_HOOK" # tests only: a swap of the path
 	if [[ ! -e SHA256SUMS && ! -L SHA256SUMS ]]; then
 		cd -- "$back" || die "cannot go back to $back"
 		[[ -z $RELEASE_VERSION ]] ||
