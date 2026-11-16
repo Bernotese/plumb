@@ -65,6 +65,10 @@ LXC_GW=""
 VMID_MIN=9000
 VMID_MAX=9099
 PLUMB_BINARY=""
+# T-257: scripts/package-release.sh sets the version here in the copy of a
+# release bundle. A bundle's installer then needs its SHA256SUMS.
+RELEASE_VERSION=""
+VERIFIED_PLUMB_SUM="" # the plumb sum that check_bundle proved, or ""
 CA_FILE=""
 AGENT_URL=""
 MODE=install
@@ -173,7 +177,12 @@ say() { printf '%s\n' "$*"; }
 
 # TMP_FILES are removed on every exit, also on Ctrl-C (review T-013 #7).
 TMP_FILES=()
-cleanup_tmp() { [[ ${#TMP_FILES[@]} -eq 0 ]] || rm -f -- "${TMP_FILES[@]}"; }
+# BUNDLE_COPY is the private folder of the checked bundle files (T-257).
+BUNDLE_COPY=""
+cleanup_tmp() {
+	[[ ${#TMP_FILES[@]} -eq 0 ]] || rm -f -- "${TMP_FILES[@]}"
+	[[ -z $BUNDLE_COPY ]] || rm -rf -- "$BUNDLE_COPY"
+}
 # on_exit keeps the exit status of the run: bash exits with the status
 # from before the trap.
 on_exit() {
@@ -1441,6 +1450,7 @@ setup_lxc() {
 	# The binary goes to a temp name and is renamed over the old one: a
 	# rename works while plumb runs; a push onto the running file fails
 	# with "Text file busy", and pct push still exits 0 (test host, T-056).
+	show_version_change
 	push_checked "$PLUMB_BINARY" /usr/local/bin/plumb 0755
 	push_checked "$PVE_CA" /etc/plumb/pve-root-ca.pem 0644
 	if [[ -n $TOKEN_SECRET ]]; then
@@ -1487,6 +1497,10 @@ push_checked() {
 	if [[ $DRY_RUN != 1 ]]; then
 		want=$(sha256sum <"$src") || die "cannot read $src"
 		want=${want%% *}
+		if [[ $src == "$PLUMB_BINARY" && -n $VERIFIED_PLUMB_SUM && $want != "$VERIFIED_PLUMB_SUM" ]]; then
+			pct exec "$LXC_ID" -- rm -f "$tmp" </dev/null >/dev/null 2>&1 || true
+			die "$src changed after the bundle check; it is refused. $dest and the running service were not changed"
+		fi
 		have=$(query pct exec "$LXC_ID" -- sha256sum "$tmp" </dev/null 2>/dev/null) || have=""
 		have=${have%% *}
 		if [[ $have != "$want" ]]; then
@@ -1959,6 +1973,7 @@ need_tty() {
 verify_on_host() {
 	local rc=0
 	say "plumb backup verify: type the RECOVERY KEY of this Plumb when asked."
+	plumb_unchanged
 	run "$PLUMB_BINARY" backup verify "$1" || rc=$?
 	case $rc in
 	0) ;;
@@ -2571,8 +2586,122 @@ do_remove_keep() {
 	say "  install.sh --plumb-binary FILE --restore $COPY_RESULT --lxc-ip $addr --lxc-gw ${gw:-<gateway>}$restore_copy_arg"
 }
 
+# check_bundle checks the files of a release bundle (T-257) before any of
+# them is used: SHA256SUMS next to install.sh must list exactly plumb,
+# plumb-agent and install.sh, and --plumb-binary must be that plumb. The
+# installer does not use plumb-agent (plumb embeds the agent), but the
+# bundle is whole only when it matches too.
+#
+# No window (M1 and L-P of #387): the shell enters the bundle folder ONCE
+# (cd -P) and then reads only relative names, so every check and the copy
+# see that one folder, also when its path is renamed and replaced (a parent
+# folder that another account can write). That folder and its files must
+# be the caller's and not writable by others, so nobody else can change
+# what is in it. The files are copied into a private folder first, and the
+# checks run on the COPIES, which are then used for everything (run and
+# push); the hash of each original is a second guard. The check proves
+# that the files are whole, not who made them (the release attestation
+# shows that, docs/RELEASE.md). A build from source has no SHA256SUMS:
+# then nothing is checked, and the run says so; a stamped release
+# installer refuses to go on without it.
+check_bundle() {
+	local dir back line n=0 name sum have f bin="" lines me
+	local -A want=()
+	dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || die "cannot find the folder of install.sh; nothing was changed"
+	# --plumb-binary as given, from the caller's folder (before the cd).
+	if [[ -n $PLUMB_BINARY ]]; then
+		[[ ! -L $PLUMB_BINARY ]] || bin=symlink
+		[[ -n $bin ]] || bin=$(realpath -e -- "$PLUMB_BINARY" 2>/dev/null) || bin=""
+	fi
+	back=$PWD
+	cd -P -- "$dir" || die "cannot enter $dir; nothing was changed"
+	if [[ ! -e SHA256SUMS && ! -L SHA256SUMS ]]; then
+		cd -- "$back" || die "cannot go back to $back"
+		[[ -z $RELEASE_VERSION ]] ||
+			die "this installer is of release $RELEASE_VERSION, but $dir/SHA256SUMS is missing: the bundle cannot be checked. Unpack the release tarball again. Nothing was changed."
+		say "NOTE: no SHA256SUMS next to install.sh: no release bundle (a build from source), so its files are not checked."
+		return 0
+	fi
+	# Only the caller may write the bundle (M1 of #387).
+	me=$(id -u)
+	for f in . SHA256SUMS plumb plumb-agent install.sh; do
+		[[ -e $f && ! -L $f ]] || continue # a symlink is refused below, by name
+		if [[ $(stat -c %u -- "$f") != "$me" ]] || (($(stat -c '%#a' -- "$f") & 8#022)); then
+			die "$dir/${f#.} is not owned by this user or is writable by others; unpack the release tarball as root into a folder that only root can write. Nothing was changed."
+		fi
+	done
+	BUNDLE_COPY=$(mktemp -d) || die "cannot make a private folder for the bundle; nothing was changed"
+	chmod 0700 "$BUNDLE_COPY"
+	for f in SHA256SUMS plumb plumb-agent install.sh; do
+		[[ -f $f && ! -L $f ]] || die "$f of the bundle ($dir/$f) is missing or not a regular file; the bundle is refused. Nothing was changed."
+		cp -- "$f" "$BUNDLE_COPY/$f" || die "cannot copy $dir/$f; nothing was changed"
+		chmod 0700 "$BUNDLE_COPY/$f"
+	done
+	lines=$(cat -- "$BUNDLE_COPY/SHA256SUMS") || die "cannot read the copy of SHA256SUMS; nothing was changed"
+	if [[ $lines == *$'\r'* ]]; then
+		die "$dir/SHA256SUMS has a carriage return (CRLF); the bundle is refused. Nothing was changed."
+	fi
+	while IFS= read -r line || [[ -n $line ]]; do
+		n=$((n + 1))
+		[[ $line =~ ^([0-9a-f]{64})\ \ (plumb|plumb-agent|install\.sh)$ ]] ||
+			die "$dir/SHA256SUMS line $n is not \"<sha256>  <file>\" for plumb, plumb-agent or install.sh; the bundle is refused. Nothing was changed."
+		sum=${BASH_REMATCH[1]} name=${BASH_REMATCH[2]}
+		[[ -z ${want[$name]:-} ]] || die "$dir/SHA256SUMS lists $name twice; the bundle is refused. Nothing was changed."
+		want[$name]=$sum
+	done <<<"$lines"
+	for name in plumb plumb-agent install.sh; do
+		[[ -n ${want[$name]:-} ]] || die "$dir/SHA256SUMS does not list $name; the bundle is refused. Nothing was changed."
+		have=$(sha256sum <"$BUNDLE_COPY/$name") || die "cannot read the copy of $name; nothing was changed"
+		[[ ${have%% *} == "${want[$name]}" ]] ||
+			die "$name does not match SHA256SUMS: the bundle is damaged or was changed. Unpack the release tarball again. Nothing was changed."
+		# Second guard: the original in the folder is still these bytes.
+		have=$(sha256sum <"$name") || die "cannot read $dir/$name; nothing was changed"
+		[[ ${have%% *} == "${want[$name]}" ]] ||
+			die "$name in $dir changed during the check; the bundle is refused. Nothing was changed."
+	done
+	# --plumb-binary must be this folder's plumb: the same file (inode).
+	if [[ -n $PLUMB_BINARY ]]; then
+		[[ $bin != symlink && -n $bin && $bin -ef plumb ]] ||
+			die "--plumb-binary $PLUMB_BINARY is not the plumb of this bundle ($dir/plumb), so SHA256SUMS does not cover it; use --plumb-binary $dir/plumb. Nothing was changed."
+	fi
+	cd -- "$back" || die "cannot go back to $back"
+	# From here on only the checked copy is run and pushed.
+	[[ -z $PLUMB_BINARY ]] || PLUMB_BINARY=$BUNDLE_COPY/plumb
+	VERIFIED_PLUMB_SUM=${want[plumb]}
+	say "Bundle check${RELEASE_VERSION:+ of release $RELEASE_VERSION}: SHA256SUMS matches plumb, plumb-agent and install.sh. This shows that the files are whole, not who made them (see docs/RELEASE.md)."
+}
+
+# plumb_unchanged fails when --plumb-binary is no longer the file that
+# check_bundle proved (T-257): a swap after the check is refused.
+plumb_unchanged() {
+	[[ -n $VERIFIED_PLUMB_SUM ]] || return 0
+	local have
+	have=$(sha256sum <"$PLUMB_BINARY") || die "cannot read $PLUMB_BINARY"
+	[[ ${have%% *} == "$VERIFIED_PLUMB_SUM" ]] ||
+		die "$PLUMB_BINARY changed after the bundle check; it is refused. Nothing more was changed."
+}
+
+# show_version_change says which plumb version replaces which (T-257). The
+# installer installs what --plumb-binary is; it compares nothing and asks
+# nothing (as before). Between two release versions it warns of a
+# downgrade: an older plumb does not start on a newer database schema.
+show_version_change() {
+	local old new
+	old=$(query pct exec "$LXC_ID" -- /usr/local/bin/plumb version </dev/null 2>/dev/null | head -n 1) || old=""
+	old=${old#plumb }
+	plumb_unchanged
+	new=$("$PLUMB_BINARY" version 2>/dev/null | head -n 1) || new=""
+	new=${new#plumb }
+	say "plumb version: ${old:-none} -> ${new:-unknown}"
+	if [[ $old =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && $new =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && $old != "$new" &&
+		$(printf '%s\n%s\n' "$old" "$new" | sort -V | head -n 1) == "$new" ]]; then
+		say "WARNING: $new is older than the installed $old (a downgrade). The older plumb will not start on the newer database (it refuses a newer schema), so the controller stays down: keep $old, or restore the Plumb backup taken before the upgrade."
+	fi
+}
+
 main() {
 	parse_args "$@"
+	check_bundle
 	check_host
 	check_state_file
 	case $MODE in

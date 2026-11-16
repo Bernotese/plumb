@@ -8,7 +8,7 @@ A release is one file: `plumb-<version>-linux-amd64.tar.gz`. Next to it is `SHA2
 
 1. **Who built it** (only if the release names a build attestation): `gh attestation verify plumb-<version>-linux-amd64.tar.gz --repo Bernotese/plumb`. This proves that GitHub's release workflow of this repository built the file from the commit that the attestation names.
 2. **The file is whole:** `sha256sum -c SHA256SUMS` in the folder of the download.
-3. **The files inside are whole:** unpack it, then `sha256sum -c SHA256SUMS` in that folder.
+3. **The files inside are whole:** unpack it, then `sha256sum -c SHA256SUMS` in that folder. The installer of the tarball checks this too before it uses a file, and it refuses a `SHA256SUMS` that lists anything but `plumb`, `plumb-agent` and `install.sh`.
 
 `SHA256SUMS` alone shows only that the files are whole: whoever changes the tarball can also change `SHA256SUMS`. Only the attestation shows where the file was built. Neither shows that the code is good. The first versions are below 1.0: the API may still change.
 
