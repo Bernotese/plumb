@@ -139,3 +139,8 @@ jobs:
           node --version
           tar --version | head -1
           gzip --version | head -1
+      # T-261 (release plan C4): the bundle that a release would ship: four
+      # regular files, strict SHA256SUMS, a stamped install.sh equal to the
+      # repo's, no D-369 test key, no source map. No release, no tag, no draft.
+      - name: Release bundle checks (no release)
+        run: bash scripts/check-release-bundle.sh "$RUNNER_TEMP/repro/plumb-v$(cat VERSION)-repro-linux-amd64.tar.gz" web/dist
