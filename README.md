@@ -57,8 +57,8 @@ a release. A build from source has no `SHA256SUMS`; it says so and checks nothin
 
 Run it from a clean root shell (for example `sudo -i`), not through `sudo -E` or a wrapper that
 passes your environment: `BASH_ENV` and `PATH` act before the first line of the script, so no
-check in it can stop them. A release installer refuses the test settings `PLUMB_INSTALL_*` and a
-`TMPDIR` that another account can write.
+check in it can stop them. A release installer refuses the test settings `PLUMB_INSTALL_*`, and it uses `/tmp` for its temp
+files: it refuses any other `TMPDIR`.
 
 ### 2. Dry run
 
