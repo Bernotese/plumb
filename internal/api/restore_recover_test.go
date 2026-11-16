@@ -272,6 +272,20 @@ func TestSystemResolutionsHaveComments(t *testing.T) {
 	// A cut restore found at a start.
 	cutRestore(t, s, "restored backup 3f2a9c0d1e4b5a67 of 2026-11-15T03:00:12Z")
 	e.eng.Recover(e.ctx)
+	// The follow-up of the cut restore made a new re-enroll Plan (the one
+	// of the way back is stale: the head moved); its Run is one more
+	// system end with a comment.
+	re, _ := e.st.PendingPlans(e.ctx, plan.OriginReenroll)
+	if len(re) > 0 {
+		newest := re[0].ID
+		for _, p := range re {
+			newest = max(newest, p.ID)
+		}
+		if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(newest)+"/approve", nil); code != 202 {
+			t.Fatalf("approve re-enroll: %d %s", code, body)
+		}
+		e.eng.Wait()
+	}
 	resolved, _ := e.st.ListIssues(e.ctx, store.IssueResolved, "", 0, 1000)
 	n := 0
 	for _, iss := range resolved {

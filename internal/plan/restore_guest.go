@@ -904,9 +904,18 @@ func (e *Engine) openReenroll(ctx context.Context, target string) (int64, error)
 	if err != nil {
 		return 0, err
 	}
+	head, err := e.st.Head(ctx)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
 	for _, pl := range append(pending, approved...) {
 		var tps []TargetPlan
 		if json.Unmarshal(pl.Changes, &tps) != nil || len(tps) != 1 || tps[0].Target != target {
+			continue
+		}
+		// A pending Plan whose base is not the head can no longer be
+		// approved (it is stale at its approve): it does not count.
+		if pl.Status == store.PlanPending && pl.BaseRevision != head.ID {
 			continue
 		}
 		// T-252: a Plan stays "approved" after its Run ended. Only one that
