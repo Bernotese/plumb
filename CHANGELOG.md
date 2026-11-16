@@ -12,3 +12,7 @@ How to check a download: `docs/RELEASE.md`.
 ## Unreleased
 
 The first release. Its version is not decided yet (the proposal is 0.1.0).
+
+### Known issues
+
+- `npm audit` reports one low advisory (GHSA-gcqx-w48m-w2h4, prototype poisoning in `deepmerge` 4.3.1). It comes only with the build tool `@sveltejs/vite-plugin-svelte` 7.3.1 (a dev dependency), it is not in the shipped web files, and no fixed version exists yet.
