@@ -405,7 +405,6 @@ func TestBundleRealTarball(t *testing.T) {
 func TestBundlePathSwappedAfterEntering(t *testing.T) {
 	h := newHost(t)
 	b := newBundle(t, "v0.1.0")
-	proven := fileSum(t, filepath.Join(b.dir, "plumb"))
 	evil := filepath.Join(t.TempDir(), "evil-ran")
 	// A fake bundle: an evil plumb, and SHA256SUMS that matches it.
 	fake := newBundle(t, "v0.1.0")
@@ -428,5 +427,36 @@ func TestBundlePathSwappedAfterEntering(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.state, "push", "_usr_local_bin_plumb")); err == nil {
 		t.Error("a plumb was installed")
 	}
-	_ = proven
+}
+
+// The same swap, with --plumb-binary given as a hard link to the bundle's
+// plumb (the same file, so the inode check passes): the run must still
+// use only the folder it entered, so the proven plumb is pushed and the
+// fake never runs. A read by the full path (the mutant) takes the fake.
+func TestBundlePathSwappedHardLink(t *testing.T) {
+	h := newHost(t)
+	b := newBundle(t, "v0.1.0")
+	proven := fileSum(t, filepath.Join(b.dir, "plumb"))
+	link := filepath.Join(t.TempDir(), "plumb")
+	if err := os.Link(filepath.Join(b.dir, "plumb"), link); err != nil {
+		t.Skip("no hard link here: ", err)
+	}
+	evil := filepath.Join(t.TempDir(), "evil-ran")
+	fake := newBundle(t, "v0.1.0")
+	fake.write(t, "plumb", []byte("#!/bin/sh\ntouch "+evil+"\necho plumb v6.6.6\n"))
+	fake.writeSums(t, fake.sums(t, "plumb", "plumb-agent", "install.sh"))
+	hook := "mv " + b.dir + " " + b.dir + ".orig && mv " + fake.dir + " " + b.dir
+	code, out, errOut := h.runBundle(b, []string{"PLUMB_INSTALL_ASSUME_ROOT=1", "PLUMB_INSTALL_BUNDLE_HOOK=" + hook}, "--yes", "--plumb-binary", link)
+	if code != 0 {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(evil); err == nil {
+		t.Error("the fake plumb ran")
+	}
+	if !strings.Contains(out, "plumb version: none -> v0.1.0") {
+		t.Errorf("not the proven plumb:\n%s", out)
+	}
+	if got := fileSum(t, filepath.Join(h.state, "push", "_usr_local_bin_plumb")); got != proven {
+		t.Error("the pushed plumb is not the proven one")
+	}
 }
