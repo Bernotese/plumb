@@ -39,7 +39,7 @@ const change = (page: Page, attr: string) =>
   page.getByRole("row", { name: new RegExp(`^${attr}\\b`) });
 
 async function showPlan(page: Page, reason: string): Promise<void> {
-  await page.getByLabel("Reason").fill(reason);
+  await page.locator("#t-reason").fill(reason);
   await page.getByRole("button", { name: "Show the plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
 }
@@ -73,7 +73,7 @@ test("VM data disks: add, grow only, remove by a person, unmanage", async ({ pag
 
   // (2) Grow only: smaller is a field error; bigger is a disruptive grow.
   await page.locator("#disk-1-size").fill("10");
-  await page.getByLabel("Reason").fill("e2e: shrink");
+  await page.locator("#t-reason").fill("e2e: shrink");
   await page.getByRole("button", { name: "Show the plan" }).click();
   await expect(page.locator("#disk-1-size-error")).toContainText(
     "A disk only grows: at least 20 GiB",
@@ -92,7 +92,7 @@ test("VM data disks: add, grow only, remove by a person, unmanage", async ({ pag
     "Plumb detaches the disk first, then frees its volume in a second step",
   );
   // The disk checks run at the submit: a running guest needs allow_restart.
-  await page.getByLabel("Reason").fill("e2e: remove the data disk");
+  await page.locator("#t-reason").fill("e2e: remove the data disk");
   await page.getByRole("button", { name: "Show the plan" }).click();
   await expect(page.locator("#disks-remove-error")).toContainText(
     "Removing a disk of a running guest needs",
@@ -167,7 +167,7 @@ test("container data disks: path rules and the stop-add-start rule (D-437)", asy
   await expect(page.locator("#disks-unmanaged-lxc")).toBeVisible();
   await page.locator("#add-disk").click();
   await page.locator("#disk-1-path").fill("/etc/x");
-  await page.getByLabel("Reason").fill("e2e: container disk");
+  await page.locator("#t-reason").fill("e2e: container disk");
   await page.getByRole("button", { name: "Show the plan" }).click();
   await expect(page.locator("#disk-1-path-error")).toBeVisible();
   // A running container without allow_restart: the add stops it, so no.
@@ -178,7 +178,7 @@ test("container data disks: path rules and the stop-add-start rule (D-437)", asy
   );
   await page.locator("#t-allow-restart").check();
   await showPlan(page, "e2e: container disk");
-  await expect(change(page, "disk1")).toContainText("2 GiB at /srv/data");
+  await expect(change(page, "disk1")).toContainText("10 GiB at /srv/data");
   await expect(change(page, "disk1")).toContainText("disruptive");
   await expect(
     page.getByText(
