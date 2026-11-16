@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Bernotese/plumb/internal/driver"
@@ -52,7 +53,7 @@ func restoreFailedError(target string, issueID int64) error {
 // (T-234): a Target with an open guest:restore-failed refuses the Plan,
 // except a delete of that Target, which then needs a person (the second
 // result is true).
-func (e *Engine) restoreFailedGate(ctx context.Context, plans []TargetPlan) (humanOnly bool, err error) {
+func (e *Engine) restoreFailedGate(ctx context.Context, plans []TargetPlan, reenroll bool) (humanOnly bool, err error) {
 	for _, tp := range plans {
 		id, err := e.RestoreFailedIssue(ctx, tp.Target)
 		if err != nil {
@@ -60,6 +61,14 @@ func (e *Engine) restoreFailedGate(ctx context.Context, plans []TargetPlan) (hum
 		}
 		if id == 0 {
 			continue
+		}
+		// D-439: a re-enroll Plan of one Target passes while the restore
+		// Run that the Issue names stored "restored" (the disks are the
+		// restored ones). Nothing else passes.
+		if reenroll && len(plans) == 1 && tp.Guest == "reenroll" {
+			if iss, err := e.st.GetIssue(ctx, id); err == nil && e.restoredProof(ctx, iss) {
+				continue
+			}
 		}
 		if tp.Guest != "delete" && tp.Guest != "unbind" { // an adopted Target's unbind leaves the guest as it is
 			return false, restoreFailedError(tp.Target, id)
@@ -71,10 +80,13 @@ func (e *Engine) restoreFailedGate(ctx context.Context, plans []TargetPlan) (hum
 
 // restoreFailedNames is restoreFailedGate before the planning: a Target
 // that the next set no longer renders is a delete.
-func (e *Engine) restoreFailedNames(ctx context.Context, next *state.Set, names []string) (humanOnly bool, err error) {
+func (e *Engine) restoreFailedNames(ctx context.Context, next *state.Set, names []string, reenroll bool) (humanOnly bool, err error) {
 	plans := make([]TargetPlan, 0, len(names))
 	for _, t := range names {
 		tp := TargetPlan{Target: t}
+		if reenroll {
+			tp.Guest = "reenroll"
+		}
 		r, err := e.renderOrNil(next, t)
 		if err != nil {
 			return false, err
@@ -84,7 +96,7 @@ func (e *Engine) restoreFailedNames(ctx context.Context, next *state.Set, names 
 		}
 		plans = append(plans, tp)
 	}
-	return e.restoreFailedGate(ctx, plans)
+	return e.restoreFailedGate(ctx, plans, reenroll)
 }
 
 // restoreFailedOne is the gate of a Plan kind with one Target and no
@@ -109,7 +121,7 @@ func (e *Engine) approveRestoreFailed(ctx context.Context, p *store.Plan) error 
 	if err := json.Unmarshal(p.Changes, &targets); err != nil {
 		return err
 	}
-	human, err := e.restoreFailedGate(ctx, targets)
+	human, err := e.restoreFailedGate(ctx, targets, p.Origin == OriginReenroll)
 	if err != nil {
 		return err
 	}
@@ -138,10 +150,9 @@ func (e *Engine) endStaleConfigIssue(ctx context.Context, target string) {
 	if iss.Status != store.IssueOpen {
 		return
 	}
-	if _, err := e.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: staleConfigComment}); err != nil {
-		e.log.Warn("comment the guest config Issue after a restore", "target", target, "err", err)
-	}
-	if err := e.restoreIssue(ctx, target, wire.GuestConfigID, wire.StatusUnchanged, nil); err != nil {
+	// The reason goes with the item, so the resolve writes one comment
+	// (D-428).
+	if err := e.endRestoreIssue(ctx, target, wire.GuestConfigID, staleConfigComment); err != nil {
 		e.log.Warn("end the guest config Issue after a restore", "target", target, "err", err)
 	}
 }
@@ -223,4 +234,99 @@ func (e *Engine) GuestHasDisk(ctx context.Context, target string) error {
 		return fmt.Errorf("%w: restore a backup first, or bring the guest back in Proxmox; then end this Issue", ErrRestoreNotEnded)
 	}
 	return err
+}
+
+// keepRestoredSteps runs in Recover before the unfinished steps fail
+// (D-427): a running restore step that stored "restored" becomes applied
+// with that output, so the fact survives the stop (FailUnfinishedSteps
+// would overwrite it). It returns the Targets whose restore it kept.
+func (e *Engine) keepRestoredSteps(ctx context.Context, runs []store.Run) {
+	for _, run := range runs {
+		e.mu.Lock()
+		active := e.active[run.ID]
+		e.mu.Unlock()
+		if active {
+			continue
+		}
+		p, err := e.st.GetPlan(ctx, run.PlanID)
+		if err != nil || p.Origin != OriginRestore {
+			continue
+		}
+		steps, err := e.st.Steps(ctx, run.ID)
+		if err != nil {
+			e.log.Error("read the steps of a cut restore Run", "run", run.ID, "err", err)
+			continue
+		}
+		for _, s := range steps {
+			if s.Resource == wire.GuestConfigID && s.Status == "running" && restoredOutput(s.Output) {
+				out := s.Output + "; the Run was cut by a controller stop, and the follow-up came at the next start (D-427)"
+				if err := e.st.UpdateStep(ctx, run.ID, s.Seq, "applied", s.Changes, out); err != nil {
+					e.log.Error("keep the restored step of a cut Run", "run", run.ID, "err", err)
+				}
+			}
+		}
+	}
+}
+
+// recoverRestores is the start rule of D-427, after Recover finished the
+// cut Runs: for each open guest:restore-failed in the "running" state
+// (or "restored" with the follow-up missing) whose Target has no Run of
+// this process, the last restore Run of the Target decides. Its stored
+// step says "restored": the follow-up is made now (one re-enroll Plan or
+// the install-command note), and the Issue ends. Else the guest may have
+// no disk: the Issue says "failed: the controller stopped during the
+// restore" with its way back (the T-234 gate stays).
+func (e *Engine) recoverRestores(ctx context.Context) error {
+	issues, err := e.st.ListIssues(ctx, store.IssueOpen, "", 0, 1000)
+	if err != nil {
+		return err
+	}
+	for _, iss := range issues {
+		if iss.Resource != GuestRestoreFailedID {
+			continue
+		}
+		var ch []wire.Change
+		if json.Unmarshal(iss.Changes, &ch) != nil || len(ch) == 0 {
+			continue
+		}
+		from, _ := ch[0].From.(string)
+		switch {
+		case strings.HasPrefix(from, "running:"):
+		case strings.HasPrefix(from, "restored: the follow-up"):
+		default:
+			continue // failed, or restored with a refused re-enroll: stays as it is
+		}
+		run, err := e.st.LastRunOfTarget(ctx, iss.Target)
+		if err != nil {
+			continue
+		}
+		p, err := e.st.GetPlan(ctx, run.PlanID)
+		if err != nil || p.Origin != OriginRestore || run.Status == "running" {
+			continue
+		}
+		steps, _ := e.st.Steps(ctx, run.ID)
+		restored := false
+		for _, s := range steps {
+			if s.Resource == wire.GuestConfigID && s.Target == iss.Target && restoredOutput(s.Output) {
+				restored = true
+			}
+		}
+		if restored {
+			if err := e.restoredIssue(ctx, iss.Target, run.ID, "restored: the follow-up (a re-enroll Plan, or the install command of an adopted Target) comes next"); err != nil {
+				e.log.Error("mark the Issue of the restore as restored", "target", iss.Target, "err", err)
+				continue
+			}
+			adopted := false
+			if r, err := e.headRender(ctx, iss.Target); err == nil && r != nil {
+				adopted = r.Adopted != nil
+			}
+			e.restoreFollowUp(ctx, p, iss.Target, adopted)
+			continue
+		}
+		ch[0].From = "failed: the controller stopped during the restore; the guest may have no disk"
+		if err := e.restoreIssue(ctx, iss.Target, GuestRestoreFailedID, wire.StatusDiffers, ch); err != nil {
+			e.log.Error("mark the Issue of a cut restore as failed", "target", iss.Target, "err", err)
+		}
+	}
+	return nil
 }

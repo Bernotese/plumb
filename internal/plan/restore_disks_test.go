@@ -60,3 +60,10 @@ func TestRestoreDiskNoteNamedSlot(t *testing.T) {
 		t.Errorf("named: %q", notes)
 	}
 }
+
+// D-439 (3): a long refusal reason is cut.
+func TestReenrollRefusedReasonCut(t *testing.T) {
+	if got := cutRunes(strings.Repeat("ä", 400), 300); len([]rune(got)) != 300+len([]rune("…(cut)")) || !strings.HasSuffix(got, "…(cut)") {
+		t.Errorf("cut: %d", len([]rune(got)))
+	}
+}

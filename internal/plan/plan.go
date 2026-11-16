@@ -540,7 +540,7 @@ func (e *Engine) HandleReport(ctx context.Context, d link.Delivery) error {
 		}
 		if e.cfg.Restore.Restored() {
 			// A hello after the confirm ends agent:silent.
-			if err := e.restoreIssue(ctx, d.Target, AgentSilentID, wire.StatusUnchanged, nil); err != nil {
+			if err := e.endRestoreIssue(ctx, d.Target, AgentSilentID, "the agent said hello after the restore of the controller"); err != nil {
 				return err
 			}
 		}
