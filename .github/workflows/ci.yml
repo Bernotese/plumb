@@ -126,3 +126,14 @@ jobs:
         run: cd web && npx playwright install --with-deps chromium
       - name: End-to-end test (UI on the real API)
         run: make test-e2e
+      # T-255 (release plan P3): the hashes of a release bundle of this
+      # commit, built on the CI runner, to compare with a build on another
+      # machine. It makes no release, no tag and no draft; the bundle is
+      # deleted with the runner.
+      - name: Release bundle hashes (reproducibility check, no release)
+        run: |
+          bash scripts/package-release.sh "v$(cat VERSION)-repro" "$RUNNER_TEMP/repro"
+          tar -xzOf "$RUNNER_TEMP/repro/plumb-v$(cat VERSION)-repro-linux-amd64.tar.gz" SHA256SUMS
+          cat "$RUNNER_TEMP/repro/SHA256SUMS"
+          go version
+          node --version

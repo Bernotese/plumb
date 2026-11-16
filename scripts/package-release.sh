@@ -6,6 +6,16 @@ version=${1:?usage: package-release.sh vMAJOR.MINOR.PATCH [output-directory]}
   echo 'Expected vMAJOR.MINOR.PATCH with an optional prerelease suffix' >&2
   exit 1
 }
+# T-255: the version core must be the one of the file VERSION and of
+# info.version in api/openapi.yaml (the API document names its own version).
+core=${version#v}
+core=${core%%-*}
+want=$(tr -d '[:space:]' < VERSION)
+api=$(awk '/^info:/{i=1;next} i && /^  version:/{print $2; exit}' api/openapi.yaml)
+[[ $core == "$want" && $api == "$want" ]] || {
+  echo "package-release.sh: version $version does not match VERSION ($want) and api/openapi.yaml info.version ($api)" >&2
+  exit 1
+}
 output=$(realpath -m "${2:-dist-release}")
 mkdir -p "$output"
 stage=$(mktemp -d)
