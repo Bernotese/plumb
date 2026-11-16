@@ -313,7 +313,10 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	// T-234: a Target whose last restore failed takes no Plan but a delete
 	// by a person (a restore Plan has its own path). Before the planning:
 	// the empty guest would fail it with a text that misleads.
-	restoreFailedDelete, err := e.restoreFailedNames(ctx, next, names)
+	// D-439: a re-enroll Plan (its own origin, one Target, no document
+	// change) passes after a restore that worked.
+	reenrollOnly := in.Origin == OriginReenroll && len(names) == 1 && len(in.Proposal.Put) == 0 && len(in.Proposal.Delete) == 0
+	restoreFailedDelete, err := e.restoreFailedNames(ctx, next, names, reenrollOnly)
 	if err != nil {
 		return store.Plan{}, err
 	}
