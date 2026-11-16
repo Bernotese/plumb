@@ -83,7 +83,10 @@ func reachable(port string) bool { return reach(port) == nil }
 // "reachable"; the error says whether it timed out or was refused, and
 // how long it took. The thread is left locked, so it ends with the
 // goroutine and never runs other code in the peer namespace.
-func reach(port string) error {
+func reach(port string) error { return reachWithin(port, 3*time.Second) }
+
+// reachWithin is reach with its own connect limit.
+func reachWithin(port string, limit time.Duration) error {
 	type result struct {
 		err  error
 		took time.Duration
@@ -102,7 +105,7 @@ func reach(port string) error {
 			return
 		}
 		start := time.Now()
-		c, err := net.DialTimeout("tcp", net.JoinHostPort(fwHost, port), 3*time.Second)
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(fwHost, port), limit)
 		if err == nil {
 			c.Close()
 		}
@@ -205,6 +208,45 @@ func reachDiag(port string, listenAt, applyAt time.Time) string {
 	return b.String()
 }
 
+// fwNetUp makes the peer namespace and the veth pair with the fixed MACs
+// (T-250) and returns the function that removes them. TestGuestFirewall and
+// TestGuestFirewallProbeLoop (T-260) share it, so the loop probes the same
+// network as the test.
+func fwNetUp(t *testing.T) func() {
+	t.Helper()
+	down := func() {
+		_ = exec.Command("ip", "link", "del", "plumbfw0").Run()
+		_ = exec.Command("ip", "netns", "del", fwNetns).Run()
+	}
+	down()
+	t.Cleanup(down) // also when a step below fails; a second delete is a no-op
+	fwSh(t, "ip", "netns", "add", fwNetns)
+	fwSh(t, "ip", "link", "add", "plumbfw0", "address", fwHostMAC, "type", "veth", "peer", "name", "plumbfw1", "address", fwPeerMAC)
+	// Let udev handle the add events first, where it runs (a VM; T-250).
+	if exec.Command("systemctl", "is-active", "--quiet", "systemd-udevd").Run() == nil {
+		_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
+	}
+	fwSh(t, "ip", "link", "set", "plumbfw1", "netns", fwNetns)
+	fwSh(t, "ip", "addr", "add", fwHost+"/24", "dev", "plumbfw0")
+	fwSh(t, "ip", "link", "set", "plumbfw0", "up")
+	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "addr", "add", fwPeer+"/24", "dev", "plumbfw1")
+	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "plumbfw1", "up")
+	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "lo", "up")
+	// The MACs are the set ones: nothing changed them (T-250).
+	for _, l := range []struct {
+		mac string
+		cmd []string
+	}{
+		{fwHostMAC, []string{"ip", "-br", "link", "show", "plumbfw0"}},
+		{fwPeerMAC, []string{"nsenter", "--net=/run/netns/" + fwNetns, "ip", "-br", "link", "show", "plumbfw1"}},
+	} {
+		if out := fwSh(t, l.cmd[0], l.cmd[1:]...); !strings.Contains(out, l.mac) {
+			t.Fatalf("the veth MAC is not the set %s: %s", l.mac, out)
+		}
+	}
+	return down
+}
+
 // TestGuestFirewall proves the resource firewall and its safe apply with
 // real nftables and systemd (T-116): Debian 13 and Ubuntu, in the
 // privileged containers of run.sh and in unprivileged LXC containers and
@@ -234,36 +276,7 @@ func TestGuestFirewall(t *testing.T) {
 	t.Cleanup(func() { _ = exec.Command("nft", "delete", "table", "inet", "plumb_qa_foreign").Run() })
 	foreignSurvives := func() { t.Helper(); fwSh(t, "nft", "list", "table", "inet", "plumb_qa_foreign") }
 	// The peer namespace.
-	_ = exec.Command("ip", "netns", "del", fwNetns).Run()
-	_ = exec.Command("ip", "link", "del", "plumbfw0").Run()
-	fwSh(t, "ip", "netns", "add", fwNetns)
-	t.Cleanup(func() {
-		_ = exec.Command("ip", "link", "del", "plumbfw0").Run()
-		_ = exec.Command("ip", "netns", "del", fwNetns).Run()
-	})
-	fwSh(t, "ip", "link", "add", "plumbfw0", "address", fwHostMAC, "type", "veth", "peer", "name", "plumbfw1", "address", fwPeerMAC)
-	// Let udev handle the add events first, where it runs (a VM; T-250).
-	if exec.Command("systemctl", "is-active", "--quiet", "systemd-udevd").Run() == nil {
-		_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
-	}
-	fwSh(t, "ip", "link", "set", "plumbfw1", "netns", fwNetns)
-	fwSh(t, "ip", "addr", "add", fwHost+"/24", "dev", "plumbfw0")
-	fwSh(t, "ip", "link", "set", "plumbfw0", "up")
-	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "addr", "add", fwPeer+"/24", "dev", "plumbfw1")
-	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "plumbfw1", "up")
-	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "lo", "up")
-	// The MACs are the set ones: nothing changed them (T-250).
-	for _, l := range []struct {
-		mac string
-		cmd []string
-	}{
-		{fwHostMAC, []string{"ip", "-br", "link", "show", "plumbfw0"}},
-		{fwPeerMAC, []string{"nsenter", "--net=/run/netns/" + fwNetns, "ip", "-br", "link", "show", "plumbfw1"}},
-	} {
-		if out := fwSh(t, l.cmd[0], l.cmd[1:]...); !strings.Contains(out, l.mac) {
-			t.Fatalf("the veth MAC is not the set %s: %s", l.mac, out)
-		}
-	}
+	fwNetUp(t)
 	listenAt := time.Now()
 	var applyAt time.Time // when the last apply returned (T-200 diagnostics)
 	for _, port := range []string{"8080", "8081"} {
