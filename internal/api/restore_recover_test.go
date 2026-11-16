@@ -180,11 +180,21 @@ func TestOneReenrollPlan(t *testing.T) {
 	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
 		t.Fatalf("second: %s %s", status, out)
 	}
-	if re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll); len(re) != 1 {
+	re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll)
+	if len(re) != 1 {
 		t.Fatalf("re-enroll Plans: %d", len(re))
 	}
-	if c := lastComment(t, s, plan.GuestRestoreFailedID); !strings.Contains(c, "is still open, so no second one is made") {
-		t.Errorf("comment %q", c)
+	// T-252: no second Plan, so the Issue stays open and names the open one.
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil || !strings.Contains(string(iss.Changes), "the re-enroll Plan "+itoa(re[0].ID)+" is still open") {
+		t.Fatalf("issue %s %v", iss.Changes, err)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re[0].ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve: %d %s", code, body)
+	}
+	s.e.eng.Wait()
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("the Issue stays after the re-enroll worked")
 	}
 }
 
