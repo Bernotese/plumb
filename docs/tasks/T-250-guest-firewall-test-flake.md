@@ -17,4 +17,8 @@
 - [ ] `make lint test`; the CI job "Firewall in unprivileged LXD containers" proves it (local skips); PR to `main`; report.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+`pl-reviewer/T-250-firewall-flake` · test-only (`internal/agent/guest_firewall_test.go`); proof: the CI jobs "Firewall in unprivileged LXC and VMs" and "Debian and Ubuntu guest tests" (both skip locally).
+- Cause (most likely, from the dump): no rule, both listeners up, Recv-Q 0, the peer's neighbour entry REACHABLE, both ports time out (no RST): the handshake's packets go nowhere. The veth pair had **random** MACs, and udev's default `MACAddressPolicy=persistent` gives such a link a new MAC when it handles the add event, late on a fresh guest; the peer then sends to the old MAC until its REACHABLE entry runs out. The first failure (#281) was in a VM, where udev runs; in an unprivileged container udevd only runs when `/sys` is writable, so the old dump cannot prove it there.
+- Fix: both veth ends get fixed MACs (`addr_assign_type` 3, never changed by udev), `udevadm settle` where udevd runs, and a check that the MACs are the set ones. The probe dials in this process from the peer namespace (setns on a locked thread) and says timeout/refused and how long; the old bash probe stays in the dump.
+- The dump now also has the MACs and `addr_assign_type`, both neighbour tables, `ip rule`, `ss -tan` of both sides, a ping, rp_filter/arp_ignore, udevd/networkd state and their journal: a next failure names its cause.
+- Not a product fault: Plumb's firewall code had not run (no apply yet), and Plumb never makes or changes links.

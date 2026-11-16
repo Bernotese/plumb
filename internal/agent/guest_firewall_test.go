@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,11 +15,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/Bernotese/plumb/internal/link"
 	"github.com/Bernotese/plumb/internal/resource"
@@ -34,6 +38,15 @@ const (
 	fwNetns = "plumbfwpeer"
 	fwHost  = "198.51.100.1"
 	fwPeer  = "198.51.100.2"
+	// Fixed, locally administered MACs of the veth pair (T-250). A veth
+	// made without an address gets a random one, and udev's default
+	// MACAddressPolicy=persistent may give it a new one when it handles
+	// the add event, late on a busy fresh guest: the peer then keeps
+	// sending to the old MAC (its neighbour entry stays REACHABLE), and
+	// every connect times out with no rule in the way. A set address
+	// (addr_assign_type 3) is never changed by udev.
+	fwHostMAC = "02:00:5e:fa:00:01"
+	fwPeerMAC = "02:00:5e:fa:00:02"
 )
 
 func fwSh(t *testing.T, name string, args ...string) string {
@@ -64,9 +77,55 @@ func liveTable(t *testing.T) string {
 // guest port.
 func reachable(port string) bool { return reach(port) == nil }
 
-// reach opens a TCP connection from the peer to the guest port; the error
-// holds the output of the probe.
+// reach opens a TCP connection from the peer namespace to the guest port,
+// in this process (T-250): a goroutine locked to its thread enters the
+// namespace and dials with a 3 s deadline. A connect that works is
+// "reachable"; the error says whether it timed out or was refused, and
+// how long it took. The thread is left locked, so it ends with the
+// goroutine and never runs other code in the peer namespace.
 func reach(port string) error {
+	type result struct {
+		err  error
+		took time.Duration
+	}
+	done := make(chan result, 1)
+	go func() {
+		runtime.LockOSThread() // never unlocked: the thread exits with the goroutine
+		f, err := os.Open("/run/netns/" + fwNetns)
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		defer f.Close()
+		if err := unix.Setns(int(f.Fd()), unix.CLONE_NEWNET); err != nil {
+			done <- result{err: fmt.Errorf("setns: %w", err)}
+			return
+		}
+		start := time.Now()
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(fwHost, port), 3*time.Second)
+		if err == nil {
+			c.Close()
+		}
+		done <- result{err: err, took: time.Since(start)}
+	}()
+	r := <-done
+	if r.err != nil {
+		kind := "error"
+		var ne net.Error
+		switch {
+		case errors.As(r.err, &ne) && ne.Timeout():
+			kind = "timeout"
+		case errors.Is(r.err, unix.ECONNREFUSED):
+			kind = "refused"
+		}
+		return fmt.Errorf("%s after %s: %v", kind, r.took.Round(time.Millisecond), r.err)
+	}
+	return nil
+}
+
+// bashReach is the probe before T-250 (nsenter, bash /dev/tcp, timeout
+// 3), kept as a second opinion in the dump.
+func bashReach(port string) error {
 	out, err := exec.Command("nsenter", "--net=/run/netns/"+fwNetns, "timeout", "3", "bash", "-c",
 		"exec 3<>/dev/tcp/"+fwHost+"/"+port).CombinedOutput()
 	if err != nil {
@@ -110,11 +169,33 @@ func reachDiag(port string, listenAt, applyAt time.Time) string {
 	} else {
 		fmt.Fprintf(&b, "--- neighbour port %s: reachable\n", other)
 	}
+	if err := bashReach(port); err != nil {
+		fmt.Fprintf(&b, "--- port %s by the bash probe: not reachable: %v\n", port, err)
+	} else {
+		fmt.Fprintf(&b, "--- port %s by the bash probe: reachable\n", port)
+	}
 	run("nft", "list", "ruleset")
 	run("ip", "-br", "addr")
 	run("ip", "route")
 	run("nsenter", "--net=/run/netns/"+fwNetns, "ip", "-br", "addr")
 	run("nsenter", "--net=/run/netns/"+fwNetns, "ip", "neigh")
+	// T-250: the MACs (and how they were assigned: 3 = set, 1 = random),
+	// both neighbour tables, policy routing, the TCP states of both sides,
+	// a ping, and who may touch the link.
+	run("ip", "-d", "link", "show", "plumbfw0")
+	run("cat", "/sys/class/net/plumbfw0/addr_assign_type")
+	run("nsenter", "--net=/run/netns/"+fwNetns, "ip", "-d", "link", "show", "plumbfw1")
+	run("ip", "neigh", "show", "dev", "plumbfw0")
+	run("ip", "rule")
+	run("ss", "-tan")
+	run("nsenter", "--net=/run/netns/"+fwNetns, "ss", "-tan")
+	run("nsenter", "--net=/run/netns/"+fwNetns, "ping", "-c", "1", "-W", "1", fwHost)
+	run("sysctl", "net.ipv4.conf.plumbfw0.rp_filter", "net.ipv4.conf.plumbfw0.arp_ignore", "net.ipv4.conf.all.rp_filter")
+	run("systemctl", "is-active", "systemd-udevd", "systemd-networkd", "NetworkManager")
+	if _, err := exec.LookPath("networkctl"); err == nil {
+		run("networkctl", "status", "plumbfw0", "--no-pager", "-n", "0")
+	}
+	run("journalctl", "-b", "--no-pager", "-n", "30", "-u", "systemd-udevd", "-u", "systemd-networkd")
 	run("ss", "-ltn")
 	if _, err := exec.LookPath("conntrack"); err == nil {
 		run("conntrack", "-L")
@@ -160,13 +241,24 @@ func TestGuestFirewall(t *testing.T) {
 		_ = exec.Command("ip", "link", "del", "plumbfw0").Run()
 		_ = exec.Command("ip", "netns", "del", fwNetns).Run()
 	})
-	fwSh(t, "ip", "link", "add", "plumbfw0", "type", "veth", "peer", "name", "plumbfw1")
+	fwSh(t, "ip", "link", "add", "plumbfw0", "address", fwHostMAC, "type", "veth", "peer", "name", "plumbfw1", "address", fwPeerMAC)
+	// Let udev handle the add events first, where it runs (a VM; T-250).
+	if exec.Command("systemctl", "is-active", "--quiet", "systemd-udevd").Run() == nil {
+		_ = exec.Command("udevadm", "settle", "--timeout=10").Run()
+	}
 	fwSh(t, "ip", "link", "set", "plumbfw1", "netns", fwNetns)
 	fwSh(t, "ip", "addr", "add", fwHost+"/24", "dev", "plumbfw0")
 	fwSh(t, "ip", "link", "set", "plumbfw0", "up")
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "addr", "add", fwPeer+"/24", "dev", "plumbfw1")
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "plumbfw1", "up")
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "lo", "up")
+	// The MACs are the set ones: nothing changed them (T-250).
+	for _, l := range [][]string{{"ip", "-br", "link", "show", "plumbfw0"}, {"nsenter", "--net=/run/netns/" + fwNetns, "ip", "-br", "link", "show", "plumbfw1"}} {
+		out := fwSh(t, l[0], l[1:]...)
+		if !strings.Contains(out, fwHostMAC) && !strings.Contains(out, fwPeerMAC) {
+			t.Fatalf("a veth MAC is not the set one: %s", out)
+		}
+	}
 	listenAt := time.Now()
 	var applyAt time.Time // when the last apply returned (T-200 diagnostics)
 	for _, port := range []string{"8080", "8081"} {
