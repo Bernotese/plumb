@@ -220,7 +220,7 @@ type VolumeLeftError struct {
 }
 
 func (e *VolumeLeftError) Error() string {
-	return fmt.Sprintf("the volume %s of disk %d could not be freed (%v); it stays on the disk storage: a person runs `pvesm free %s` as root, or a Plumb Target delete frees it", e.Volume, e.Slot, e.Err, e.Volume)
+	return fmt.Sprintf("the volume %s of disk %d could not be freed (%v); it stays on the disk storage: a person removes it as root with `qm set <vmid> --delete unusedN` (`pct set` for a container; N of the unused line that names it), or with `pvesm free %s` when no unused line names it; or a Plumb Target delete frees it", e.Volume, e.Slot, e.Err, e.Volume)
 }
 
 func (e *VolumeLeftError) Unwrap() error { return e.Err }

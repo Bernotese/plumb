@@ -63,7 +63,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrIssueNotOpen):
 		problem(w, http.StatusConflict, "issue-not-open", "Issue is not open", "Another Plan resolves it, or it is resolved.")
 	case errors.Is(err, issue.ErrAcceptSensitive), errors.Is(err, issue.ErrAcceptImage), errors.Is(err, issue.ErrAddressFix),
-		errors.Is(err, issue.ErrAcceptFirewall), errors.Is(err, issue.ErrAcceptNIC), errors.Is(err, issue.ErrRestoreFailedRule):
+		errors.Is(err, issue.ErrAcceptFirewall), errors.Is(err, issue.ErrAcceptNIC), errors.Is(err, issue.ErrRestoreFailedRule), errors.Is(err, issue.ErrVolumeLeftRule):
 		problem(w, http.StatusConflict, "action-not-allowed", "Action not allowed", err.Error())
 	case errors.Is(err, plan.ErrRestoredMode):
 		problem(w, http.StatusConflict, "restored-mode", "Restored mode", err.Error())
