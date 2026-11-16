@@ -130,6 +130,24 @@ It may not:
 The Plumb LXC itself is not in the pool, so Plumb cannot change itself. The installer prints the
 full list of rights.
 
+**The rights in detail.** The installer makes one Proxmox role per line and gives each line to the
+user `plumb@pve` and to its token `plumb@pve!plumb` (privilege separation). "Inherited" means that
+the guests in the pool get the right too. Nothing else is given.
+
+| Role                 | Path                                           | Privileges                                                                                                                                                                                                      | Inherited | Why                                                                     |
+| -------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ----------------------------------------------------------------------- |
+| `PlumbGuests`        | `/pool/plumb`                                  | `VM.Allocate`, `VM.Audit`, `VM.Clone`, `VM.Config.CPU`, `VM.Config.Cloudinit`, `VM.Config.Disk`, `VM.Config.HWType`, `VM.Config.Memory`, `VM.Config.Network`, `VM.Config.Options`, `VM.PowerMgmt`, `Pool.Audit` | yes       | create, change, start, stop and delete the guests in the pool           |
+| `PlumbDisk`          | `/storage/<disk storage>`                      | `Datastore.AllocateSpace`, `Datastore.Audit`                                                                                                                                                                    | no        | the guests' disks (`--disk-storage`, default `local-lvm`)               |
+| `PlumbImages`        | `/storage/plumb-images`                        | `Datastore.AllocateTemplate`, `Datastore.Audit`                                                                                                                                                                 | no        | the downloaded cloud images and container templates                     |
+| `PlumbSnippets`      | `/storage/plumb-snippets`                      | `Datastore.AllocateSpace`                                                                                                                                                                                       | no        | the cloud-init file of each VM                                          |
+| `PlumbBridge`        | `/sdn/zones/localnetwork/<bridge>`             | `SDN.Use`                                                                                                                                                                                                       | no        | connect guests to the guest bridge (`--bridge`, default `vmbr0`)        |
+| `PlumbNode`          | `/nodes/<node>`                                | `Sys.AccessNetwork`                                                                                                                                                                                             | no        | download the base images from their address onto the host               |
+| `PlumbAudit`         | `/`                                            | `Sys.Audit`                                                                                                                                                                                                     | no        | read the free space of the disk storage (read only; see above)          |
+| `PlumbBridge`        | `/sdn/zones/localnetwork/<extra bridge>`       | `SDN.Use`                                                                                                                                                                                                       | no        | only with `--extra-bridge`: one line per bridge                         |
+| `PlumbBridge`        | `/sdn/zones/localnetwork/<extra bridge>/<tag>` | `SDN.Use`                                                                                                                                                                                                       | no        | only with `--extra-vlan`: one line per VLAN tag, never the whole bridge |
+| `PlumbGuestBackupVM` | `/pool/plumb`                                  | `VM.Backup`                                                                                                                                                                                                     | yes       | only with `--guest-backup-storage`: back up the guests in the pool      |
+| `PlumbGuestBackup`   | `/storage/<guest backup storage>`              | `Datastore.AllocateSpace`, `Datastore.Audit`                                                                                                                                                                    | no        | only with `--guest-backup-storage`: write and list the guest backups    |
+
 ## First steps
 
 1. Open `https://<plumb-address>:8443`. The certificate comes from Plumb's own CA, so your browser
@@ -169,6 +187,10 @@ full list of rights.
    - When a `firewall` or `network` change cuts the guest off from Plumb, the agent puts the old
      settings back after 90 seconds.
    - A Block can also hold a local `group` (`groupadd`). Users join it through their `groups`.
+   - While you edit a Block, a **preview** next to its YAML shows the form that a Target gets for
+     its parameters, and the resources that it makes, with their names filled from the values you
+     type in the preview; a resource that Plumb would refuse is marked. It changes as you type, and
+     nothing is saved until you make the Plan.
 
    ![Starter catalogue: motd and nginx are added but differ, with Show difference and Update from the catalogue; network is not added, with Add](docs/screenshots/readme-catalogue.png)
    <br>_The starter catalogue: "Add" and "Update" make a Plan. Plumb never changes a Block by itself._
