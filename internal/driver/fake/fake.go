@@ -106,6 +106,7 @@ type Driver struct {
 	hooks    map[Op][]func()
 	// Data disks (T-238): see disks.go.
 	diskStartFails, diskFreeFails bool
+	diskFreeErr                   error
 	leftover                      []string
 	// hotplug: a running guest takes cores and memory live. Default off,
 	// like Proxmox without hotplug and NUMA settings.

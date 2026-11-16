@@ -1122,6 +1122,12 @@ func (e *Engine) RestoredActionNote(ctx context.Context, iss store.Issue) string
 	if planID == 0 {
 		return RestoredNote(ch)
 	}
+	// T-253 (host step 9): the note names the newest re-enroll Plan of the
+	// Target that can still run, else the newest one that cannot; a Plan
+	// made by hand after the named one counts too.
+	if id, err := e.newestReenroll(ctx, iss.Target, planID); err == nil {
+		planID = id
+	}
 	tail := " The disks are the restored ones, so Plans of this Target pass (fix the Target first if the re-enroll failed because of it); the Issue ends when a re-enroll Run worked."
 	again := fmt.Sprintf("plan the re-enroll again (\"Propose the re-enroll\", or POST /targets/%s/reenroll).", iss.Target)
 	pl, err := e.st.GetPlan(ctx, planID)
@@ -1143,4 +1149,41 @@ func (e *Engine) RestoredActionNote(ctx context.Context, iss store.Issue) string
 		return fmt.Sprintf("%sapprove the re-enroll Plan %d.%s", RestoredWaitsPrefix, planID, tail)
 	}
 	return fmt.Sprintf("%sthe re-enroll Plan %d can no longer run (%s): %s%s", RestoredWaitsPrefix, planID, why, again, tail)
+}
+
+// newestReenroll returns the re-enroll Plan of target that the Issue's
+// note names (T-253): the newest one that can still run, else the newest
+// one that cannot (named is the Plan that the Issue stored, counted too).
+func (e *Engine) newestReenroll(ctx context.Context, target string, named int64) (int64, error) {
+	head, err := e.st.Head(ctx)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
+	var all []store.Plan
+	for _, list := range []func(context.Context, string) ([]store.Plan, error){e.st.PendingPlans, e.st.ApprovedPlans, e.st.StalePlans} {
+		ps, err := list(ctx, OriginReenroll)
+		if err != nil {
+			return 0, err
+		}
+		all = append(all, ps...)
+	}
+	usable, newest := int64(0), named
+	for _, pl := range all {
+		var tps []TargetPlan
+		if json.Unmarshal(pl.Changes, &tps) != nil || len(tps) != 1 || tps[0].Target != target {
+			continue
+		}
+		newest = max(newest, pl.ID)
+		ok, _, err := e.reenrollUsable(ctx, pl, head.ID)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			usable = max(usable, pl.ID)
+		}
+	}
+	if usable != 0 {
+		return usable, nil
+	}
+	return newest, nil
 }

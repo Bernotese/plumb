@@ -274,8 +274,9 @@ func (e *Engine) GuestHasDisk(ctx context.Context, target string) error {
 // keepRestoredSteps runs in Recover before the unfinished steps fail
 // (D-427): a running restore step that stored "restored" becomes applied
 // with that output, so the fact survives the stop (FailUnfinishedSteps
-// would overwrite it). It returns the Targets whose restore it kept.
-func (e *Engine) keepRestoredSteps(ctx context.Context, runs []store.Run) {
+// would overwrite it). It returns the Runs whose restore step it kept.
+func (e *Engine) keepRestoredSteps(ctx context.Context, runs []store.Run) map[int64]bool {
+	kept := map[int64]bool{}
 	for _, run := range runs {
 		e.mu.Lock()
 		active := e.active[run.ID]
@@ -294,13 +295,16 @@ func (e *Engine) keepRestoredSteps(ctx context.Context, runs []store.Run) {
 		}
 		for _, s := range steps {
 			if s.Resource == wire.GuestConfigID && s.Status == "running" && restoredOutput(s.Output) {
-				out := s.Output + "; the Run was cut by a controller stop, and the follow-up came at the next start (D-427)"
+				out := s.Output + "; the restore worked, then a controller stop cut the Run; the follow-up was made at the next start"
 				if err := e.st.UpdateStep(ctx, run.ID, s.Seq, "applied", s.Changes, out); err != nil {
 					e.log.Error("keep the restored step of a cut Run", "run", run.ID, "err", err)
+					continue
 				}
+				kept[run.ID] = true
 			}
 		}
 	}
+	return kept
 }
 
 // recoverRestores is the start rule of D-427, after Recover finished the

@@ -130,14 +130,17 @@ func TestNICNetworkNotAllowed(t *testing.T) {
 		f.log = nil
 		f.mu.Unlock()
 		err = d.Update(ctx, "9001", []wire.Change{{Attr: "nic1", To: n.Value(), Risk: wire.RiskDisruptive}}, nil)
-		if !errors.As(err, &na) || !strings.Contains(err.Error(), "install.sh with --extra-") {
+		if !errors.As(err, &na) || !strings.Contains(err.Error(), "with every --extra-bridge and --extra-vlan that the install has now, plus --extra-") {
 			t.Errorf("update %+v: %v", n, err)
 		}
 		if f.count("") != 0 {
 			t.Errorf("update %+v sent a request", n)
 		}
 	}
-	if !strings.Contains((&NetworkNotAllowedError{NIC: 1, Bridge: "vmbr9", Tag: 30}).Error(), "--extra-vlan vmbr9:30") {
+	if !strings.Contains((&NetworkNotAllowedError{NIC: 1, Bridge: "vmbr9", Tag: 30}).Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-bridge vmbr9 --extra-vlan vmbr9:30 (") {
+		t.Error("an unnamed bridge with a tag needs both flags (T-253)")
+	}
+	if !strings.Contains((&NetworkNotAllowedError{NIC: 1, Bridge: "vmbr0", Tag: 30, BridgeNamed: true}).Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-vlan vmbr0:30 (") {
 		t.Error("the message does not name the flag")
 	}
 }

@@ -220,7 +220,22 @@ type VolumeLeftError struct {
 }
 
 func (e *VolumeLeftError) Error() string {
+	if e.InUse() {
+		return fmt.Sprintf("the volume %s of disk %d could not be freed (%v); it stays on the disk storage. %s", e.Volume, e.Slot, e.Err, SnapshotHint)
+	}
 	return fmt.Sprintf("the volume %s of disk %d could not be freed (%v); it stays on the disk storage: a person removes it as root with `qm set <vmid> --delete unusedN` (`pct set` for a container; N of the unused line that names it), or with `pvesm free %s` when no unused line names it; or a Plumb Target delete frees it", e.Volume, e.Slot, e.Err, e.Volume)
 }
+
+// InUse reports a free that Proxmox refused because the volume is still in
+// use, mostly by a snapshot of the guest (T-247 step V, T-253 F3).
+func (e *VolumeLeftError) InUse() bool {
+	return e.Err != nil && strings.Contains(e.Err.Error(), "still in use")
+}
+
+// SnapshotHint is the way out of a volume that Proxmox keeps because it is
+// still in use (T-247 step V): a pvesm free there leaves the unused line,
+// so the Issue would stay open, and a later snapshot delete can lock the
+// guest.
+const SnapshotHint = "A snapshot may hold the volume: remove the snapshot first (`qm delsnapshot <vmid> <name>`; `pct delsnapshot` for a container), then `qm set <vmid> --delete unusedN` (`pct set`; the unused line that names the volume). Do not `pvesm free` a volume that an unused line names: the line stays, and so does the Issue."
 
 func (e *VolumeLeftError) Unwrap() error { return e.Err }

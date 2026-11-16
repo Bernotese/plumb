@@ -92,8 +92,18 @@ func TestRestoreStopAfterTheCall(t *testing.T) {
 		t.Errorf("comment %q", c)
 	}
 	steps, _ := s.e.st.Steps(s.e.ctx, run.ID)
-	if steps[0].Status != "applied" || !strings.HasPrefix(steps[0].Output, "restored backup") || !strings.Contains(steps[0].Output, "D-427") {
+	if steps[0].Status != "applied" || !strings.HasPrefix(steps[0].Output, "restored backup") ||
+		!strings.Contains(steps[0].Output, "the restore worked, then a controller stop cut the Run; the follow-up was made at the next start") {
 		t.Errorf("the restored step: %+v", steps[0])
+	}
+	// T-253 (host step 4): the Run does not contradict its step. The
+	// restore worked, so the Run succeeded, and nothing says to restore
+	// again.
+	if r, _ := s.e.st.GetRun(s.e.ctx, run.ID); r.Status != "succeeded" {
+		t.Errorf("the cut restore Run: %s, want succeeded", r.Status)
+	}
+	if strings.Contains(strings.ToLower(steps[0].Output), "restore again") || strings.Contains(steps[0].Output, "may have no disk") {
+		t.Errorf("the step tells a person to restore again: %q", steps[0].Output)
 	}
 }
 
@@ -101,9 +111,13 @@ func TestRestoreStopAfterTheCall(t *testing.T) {
 // "failed", no re-enroll, the gate holds.
 func TestRestoreStopInsideTheCall(t *testing.T) {
 	s := newSafetyEnv(t)
-	cutRestore(t, s, "")
+	run := cutRestore(t, s, "")
 	if err := s.e.eng.Recover(s.e.ctx); err != nil {
 		t.Fatal(err)
+	}
+	// Nothing stored "restored": the Run stays failed (T-253).
+	if r, _ := s.e.st.GetRun(s.e.ctx, run.ID); r.Status != "failed" {
+		t.Errorf("a restore Run cut inside the task: %s, want failed", r.Status)
 	}
 	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
 	if err != nil || !strings.Contains(string(iss.Changes), "failed: the controller stopped during the restore") || !strings.Contains(string(iss.Changes), "5afe000000000001") {

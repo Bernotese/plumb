@@ -359,3 +359,22 @@ func TestDiskAcceptRefused(t *testing.T) {
 		t.Errorf("grown: %v", err)
 	}
 }
+
+// T-253 F3: the Issue and the step say what to do when a snapshot holds
+// the volume (Proxmox's "still in use").
+func TestDiskVolumeLeftSnapshotHint(t *testing.T) {
+	e := newEnv(t, true)
+	adm := e.admin()
+	e.seed(adm, "web1")
+	e.diskRun(adm, diskTarget("web1", `[{"slot":1,"size_gb":2}]`, true))
+	e.drv.FailDiskFreeWith(errors.New("unable to delete 'fake:vm-1-disk-1' - volume is still in use (snapshot?)"))
+	_, run, steps := e.diskRun(adm, diskTarget("web1", `[]`, true))
+	out := guestStepOutput(steps, "web1")
+	if run.Status != "failed" || !strings.Contains(out, "A snapshot may hold the volume: remove the snapshot first") {
+		t.Fatalf("step %s: %s", run.Status, out)
+	}
+	iss, err := e.st.OpenIssue(e.ctx, "web1", "guest:volume-left")
+	if err != nil || !strings.Contains(string(iss.Changes), "remove the snapshot first") || !strings.Contains(string(iss.Changes), "Do not `pvesm free`") {
+		t.Fatalf("issue %s %v", iss.Changes, err)
+	}
+}

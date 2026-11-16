@@ -34,16 +34,25 @@ func sdnRefused(err error) bool {
 // reDiskKey are the config keys that hold a VM's volumes.
 var reDiskKey = regexp.MustCompile(`^(scsi|sata|ide|virtio|unused|efidisk|tpmstate)[0-9]+$`)
 
-// vmDisks returns the volumes of a VM's config by key (the volume part of
-// each value), to prove later that a refused restore changed no disk.
-func (d *Driver) vmDisks(ctx context.Context, id int) (map[string]string, error) {
-	cfg, err := d.config(ctx, id)
+// reCTDiskKey are the config keys that hold a container's volumes.
+var reCTDiskKey = regexp.MustCompile(`^(rootfs|(mp|unused)[0-9]+)$`)
+
+// guestDisks returns the volumes of a guest's config by key (the volume
+// part of each value), to prove later that a refused restore changed no
+// disk. T-253: a container too (host fact of T-247 3c: PVE refuses the
+// network before it touches the rootfs).
+func (d *Driver) guestDisks(ctx context.Context, m member) (map[string]string, error) {
+	cfg, err := d.readPath(ctx, guestPath(d, m), true)
 	if err != nil {
 		return nil, err
 	}
+	keys := reDiskKey
+	if m.Type == typeCT {
+		keys = reCTDiskKey
+	}
 	out := map[string]string{}
 	for k, v := range cfg {
-		if reDiskKey.MatchString(k) {
+		if keys.MatchString(k) {
 			vol, _, _ := strings.Cut(v, ",")
 			out[k] = vol
 		}

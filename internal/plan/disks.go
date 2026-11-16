@@ -175,11 +175,15 @@ func volumeOf(iss store.Issue) string {
 // volumeLeftIssue opens guest:volume-left for a volume that a failed free
 // left (D-437 (4)): no revert, no accept; ignore once for a human admin.
 func (e *Engine) volumeLeftIssue(ctx context.Context, target string, ve *driver.VolumeLeftError) error {
+	way := fmt.Sprintf("as root: `qm set <vmid> --delete unusedN` (`pct set` for a container; the unused line that names %s), or `pvesm free %s` when no unused line names it; or a Plumb Target delete frees it", ve.Volume, ve.Volume)
+	if ve.InUse() { // T-253 F3: Proxmox keeps it because it is still in use
+		way = driver.SnapshotHint + " A Plumb Target delete frees it too."
+	}
 	return e.restoreIssue(ctx, target, GuestVolumeLeftID, wire.StatusDiffers, []wire.Change{
 		{Attr: "volume", From: ve.Volume, To: nil, Risk: wire.RiskDestructive},
 		// F2 of #375: the poll ends the Issue when the guest config no
 		// longer names the volume, so the way out removes its unused line.
-		{Attr: "way_out", To: fmt.Sprintf("as root: `qm set <vmid> --delete unusedN` (`pct set` for a container; the unused line that names %s), or `pvesm free %s` when no unused line names it; or a Plumb Target delete frees it", ve.Volume, ve.Volume), Risk: wire.RiskRead},
+		{Attr: "way_out", To: way, Risk: wire.RiskRead},
 	})
 }
 

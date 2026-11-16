@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Bernotese/plumb/internal/driver"
 )
 
 // configVolume is oneVolume with the backup's guest config (T-241).
@@ -72,8 +74,14 @@ func TestCheckBackupNetworks(t *testing.T) {
 			t.Errorf("%s: %v", conf, err)
 		}
 	}
-	if err := check(configVolume{conf: map[string]string{"net1": "virtio=y,bridge=vmbr9,tag=30"}}); !strings.Contains(err.Error(), "--extra-vlan vmbr9:30") {
+	// T-253 (host 3b): every flag that the network needs. vmbr9 is not
+	// named as a bridge here (only its tag 20), so tag 30 needs both.
+	if err := check(configVolume{conf: map[string]string{"net1": "virtio=y,bridge=vmbr9,tag=30"}}); !strings.Contains(err.Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-bridge vmbr9 --extra-vlan vmbr9:30; or restore") {
 		t.Errorf("flag: %v", err)
+	}
+	// A named bridge needs only the tag's flag.
+	if err := check(configVolume{conf: map[string]string{"net1": "virtio=y,bridge=vmbr0,tag=30"}}); !strings.Contains(err.Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-vlan vmbr0:30; or restore") {
+		t.Errorf("flag of a named bridge: %v", err)
 	}
 	// L2 of #369: each trunk VLAN must be named too.
 	for conf, want := range map[string]string{
@@ -94,5 +102,22 @@ func TestCheckBackupNetworks(t *testing.T) {
 	}
 	if err := check(oneVolume{}); err != nil {
 		t.Errorf("no reader: %v", err)
+	}
+}
+
+// T-253 (host 3b): the Target NIC refusal names every flag, as the restore
+// pre-check does (one rule, netFlags).
+func TestNotAllowedNamesEveryFlag(t *testing.T) {
+	e := &Engine{cfg: Config{NetAllowed: func(bridge string, tag int) bool {
+		return bridge == "vmbr0" && tag == 0 || bridge == "vmbr9" && tag == 20
+	}}}
+	for nic, want := range map[driver.NIC]string{
+		{Bridge: "vmbr9", Tag: 30}: "every --extra-bridge and --extra-vlan that the install has now, plus --extra-bridge vmbr9 --extra-vlan vmbr9:30",
+		{Bridge: "vmbr0", Tag: 30}: "every --extra-bridge and --extra-vlan that the install has now, plus --extra-vlan vmbr0:30",
+		{Bridge: "vmbr7"}:          "every --extra-bridge and --extra-vlan that the install has now, plus --extra-bridge vmbr7",
+	} {
+		if err := e.notAllowed("db1", 1, nic); !errors.Is(err, ErrNetworkNotAllowed) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: %v", nic, err)
+		}
 	}
 }
