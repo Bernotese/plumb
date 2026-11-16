@@ -6,6 +6,7 @@ package api
 // plan the re-enroll again.
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -184,5 +185,28 @@ func TestRestoredNoteNamesTheNewestReenroll(t *testing.T) {
 	s.e.seed(s.adm, "web3") // the new one goes stale too
 	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(second)+" can no longer run") {
 		t.Errorf("note with no Plan that can run: %q", v.ActionsNote)
+	}
+}
+
+// T-253: a newer re-enroll Plan that was dropped does not hide an older one
+// that can still run: the note names the one that can run.
+func TestRestoredNotePrefersAPlanThatCanRun(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	first := s.reenrollOf(t, "web1")
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "by hand"})
+	var p struct{ ID int64 }
+	json.Unmarshal(body, &p)
+	if code != 201 || p.ID <= first {
+		t.Fatalf("re-enroll by hand: %d %s", code, body)
+	}
+	if code, body := s.adm.do("DELETE", "/api/v1/plans/"+itoa(p.ID), nil); code != 204 {
+		t.Fatalf("drop: %d %s", code, body)
+	}
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "approve the re-enroll Plan "+itoa(first)+".") {
+		t.Errorf("note: %q", v.ActionsNote)
 	}
 }
