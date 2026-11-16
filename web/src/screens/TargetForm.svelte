@@ -1224,15 +1224,18 @@
         <p class="hint" id="disks-hint">
           The disk above is the main disk. Up to {MAX_DISKS} data disks more, each on the disk storage
           named at install. The slot is the disk's fixed name: removing one disk never renames another.
-          A disk only grows.
+          A disk only grows. If Plumb cannot free the volume of a removed disk, the Issue
+          <span class="mono">guest:volume-left</span> names it, and no disk is added until it is
+          gone.
           {#if kind === "lxc"}
             A container disk is added only while the container is stopped (D-437): the Run stops a
             running container, adds the disk and starts it again; that needs '{forKind(
               ALLOW_RESTART_LABEL,
               kind,
-            )}' (disruptive). A stopped container gets the disk and stays stopped (reversible).
-            Proxmox makes a file system on a container disk and mounts it at its path; the path
-            cannot change later. Guest backups hold it.
+            )}' (disruptive). A stopped container gets the disk and stays stopped (reversible); the
+            disk is then tried only at its next start: if that start fails, remove the disk with a
+            Plan. Proxmox makes a file system on a container disk and mounts it at its path; the
+            path cannot change later. Guest backups hold it.
           {:else}
             A VM gets a new disk live (reversible). A VM data disk is a raw block device with the
             serial <code>plumb-N</code>: find it with
@@ -1271,9 +1274,10 @@
                 <p id="disks-unmanaged-lxc">
                   A disk that a person added on the disk storage of the install counts as Plumb's:
                   list it with its slot, size and path to keep it. If this list does not name its
-                  slot, the Plan removes it and its data (destructive). A disk on another storage,
-                  or a bind mount, Plumb did not make: if the list names its slot, Plumb refuses the
-                  Plan; else the Plan detaches it (destructive), and Plumb does not free it.
+                  slot, the Plan removes it and its data (destructive). A disk on another storage, a
+                  bind mount or a device, Plumb did not make: if the list names its slot, Plumb
+                  refuses the Plan; else the Plan detaches it (destructive), and Plumb does not free
+                  it.
                 </p>
               {:else}
                 <p id="disks-unmanaged-vm">
@@ -1386,8 +1390,8 @@
             {#if kind === "lxc"}
               a container loses the data on that disk.
             {:else}
-              a VM keeps that disk as an unused volume (free it by hand); the next Run attaches a
-              new empty disk in its slot.
+              a VM keeps that disk as an unused volume (free it by hand); when this list names its
+              slot, the next Run attaches a new empty disk there.
             {/if}
             The restore Plan names the disk, and the safety backup holds it.
           </p>
