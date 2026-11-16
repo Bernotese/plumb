@@ -42,6 +42,14 @@ cd plumb && make build          # makes bin/plumb
 
 Copy `bin/plumb` and `install/install.sh` to the Proxmox host.
 
+**From a release tarball** (when there is one): unpack it on the host and run its `install.sh` with
+`--plumb-binary ./plumb` from that folder. Before it uses any file, the installer checks the
+tarball's `SHA256SUMS`: every file must be there and match, and `--plumb-binary` must be the
+`plumb` of the tarball; else it stops, names the file and changes nothing (the dry run shows the
+check too). This proves only that the files are whole, not who made them: check that with
+`gh attestation verify` before you unpack (see `docs/RELEASE.md`). A build from source has no
+`SHA256SUMS`; the installer says so and checks nothing.
+
 ### 2. Dry run
 
 The dry run prints every command that would change the host. It changes nothing.

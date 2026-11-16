@@ -308,3 +308,22 @@ func TestBundleSwapAfterCheck(t *testing.T) {
 		t.Error("a plumb was installed")
 	}
 }
+
+// A real bundle of scripts/package-release.sh passes the check (T-257). It
+// runs only with PLUMB_TEST_BUNDLE=<the folder of an unpacked tarball>; the
+// release plan's host run (C7) proves it on Proxmox.
+func TestBundleRealTarball(t *testing.T) {
+	dir := os.Getenv("PLUMB_TEST_BUNDLE")
+	if dir == "" {
+		t.Skip("PLUMB_TEST_BUNDLE is not set")
+	}
+	h := newHost(t)
+	b := &bundle{dir: dir}
+	code, out, errOut := h.runBundle(b, nil, "--dry-run", "--plumb-binary", filepath.Join(dir, "plumb"))
+	if code != 0 || !regexp.MustCompile(`Bundle check of release v[0-9.]+\S*: SHA256SUMS matches plumb, plumb-agent and install.sh`).MatchString(out) {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+	if !regexp.MustCompile(`plumb version: none -> v[0-9.]+`).MatchString(out) {
+		t.Errorf("no version line:\n%s", out)
+	}
+}
