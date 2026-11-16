@@ -159,3 +159,30 @@ func TestRestoredStateNeedsTheSafetyBackup(t *testing.T) {
 		t.Errorf("a normal restore from the restored state: %d %s", code, body)
 	}
 }
+
+// T-253 (host step 9): while a new re-enroll Plan is pending, the note
+// names it, not the older stale one; with none that can run, the newest.
+func TestRestoredNoteNamesTheNewestReenroll(t *testing.T) {
+	s := newSafetyEnv(t)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	first := s.reenrollOf(t, "web1")
+	iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	s.e.seed(s.adm, "web2") // the head moves: first is stale
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "by hand"})
+	if code != 201 {
+		t.Fatalf("re-enroll by hand: %d %s", code, body)
+	}
+	second := s.reenrollOf(t, "web1")
+	if second == 0 || second == first {
+		t.Fatalf("no new Plan: %d %d", first, second)
+	}
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "approve the re-enroll Plan "+itoa(second)+".") || strings.Contains(v.ActionsNote, "Plan "+itoa(first)+" ") {
+		t.Errorf("note while the new Plan is pending: %q", v.ActionsNote)
+	}
+	s.e.seed(s.adm, "web3") // the new one goes stale too
+	if v := s.issue(t, iss.ID); !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(second)+" can no longer run") {
+		t.Errorf("note with no Plan that can run: %q", v.ActionsNote)
+	}
+}
