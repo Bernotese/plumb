@@ -125,7 +125,9 @@ Options:
                          line on /sdn/zones/localnetwork/NAME (D-401)
   --extra-vlan NAME:TAG[,TAG…]
                          VLAN tags on a VLAN-aware bridge for guest NICs (repeat it for more); one
-                         SDN.Use line per tag on /sdn/zones/localnetwork/NAME/TAG, never the whole bridge
+                         SDN.Use line per tag on /sdn/zones/localnetwork/NAME/TAG, never the whole bridge.
+                         A repair run sets the extra networks from these flags alone: give every
+                         --extra-bridge and --extra-vlan of the install again, or its line is removed
   --guest-backup-storage ID
                          storage for guest backups (vzdump, content "backup"): VM.Backup on the pool and
                          Datastore.AllocateSpace + Audit on ID (D-405). With these rights the token itself can

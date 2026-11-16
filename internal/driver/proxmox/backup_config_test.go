@@ -67,14 +67,16 @@ func TestRestoreGuestSDNRefusalNotStarted(t *testing.T) {
 		exit       string
 		wipes      bool
 		notStarted bool
+		dropMP     bool // only the container's mp1 changed (T-253 L1)
 	}{
-		{"VM, SDN refusal", 9001, sdnExit, false, true},
-		{"VM, SDN refusal, disk gone", 9001, sdnExit, true, false},
-		{"container, SDN refusal", 9002, sdnExit, false, true},
-		{"container, SDN refusal, rootfs gone", 9002, sdnExit, true, false},
-		{"container, no space", 9002, "unable to restore CT 9002 - no space left", false, false},
-		{"VM, other 403", 9001, "403 Permission check failed (/vms/9001, VM.Config.Disk)", false, false},
-		{"VM, no space", 9001, "unable to restore VM 9001 - no space left", false, false},
+		{"VM, SDN refusal", 9001, sdnExit, false, true, false},
+		{"VM, SDN refusal, disk gone", 9001, sdnExit, true, false, false},
+		{"container, SDN refusal", 9002, sdnExit, false, true, false},
+		{"container, SDN refusal, rootfs gone", 9002, sdnExit, true, false, false},
+		{"container, SDN refusal, mp1 gone", 9002, sdnExit, false, false, true},
+		{"container, no space", 9002, "unable to restore CT 9002 - no space left", false, false, false},
+		{"VM, other 403", 9001, "403 Permission check failed (/vms/9001, VM.Config.Disk)", false, false, false},
+		{"VM, no space", 9001, "unable to restore VM 9001 - no space left", false, false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f, d := backupFake(t)
@@ -86,11 +88,12 @@ func TestRestoreGuestSDNRefusalNotStarted(t *testing.T) {
 				if f.vms[c.guest].cfg["rootfs"] == "" {
 					f.vms[c.guest].cfg["rootfs"] = "local-lvm:vm-9002-disk-0,size=4G"
 				}
+				f.vms[c.guest].cfg["mp1"] = "local-lvm:vm-9002-disk-1,mp=/srv/data,size=2G"
 			}
 			if f.vms[c.guest].cfg["scsi0"] == "" && !f.vms[c.guest].ct {
 				f.vms[c.guest].cfg["scsi0"] = "local-lvm:vm-9001-disk-0,size=4G"
 			}
-			f.backup.restoreFail, f.backup.restoreWipes = c.exit, c.wipes
+			f.backup.restoreFail, f.backup.restoreWipes, f.backup.restoreDropMP = c.exit, c.wipes, c.dropMP
 			err := d.RestoreGuest(context.Background(), "plumb-backup", strconv.Itoa(c.guest), vol, v.size, v.ctime)
 			if err == nil {
 				t.Fatal("no error")

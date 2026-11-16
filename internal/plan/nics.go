@@ -44,11 +44,19 @@ func (e *Engine) netFlags(bridge string, tag int) (what, flag string) {
 	return what, flag
 }
 
+// repairHint is the way out for a network that the install does not name
+// (T-253 L2 of #384): a repair run sets the whole extra list from its
+// flags, and a line that it does not name is removed. So the hint names
+// every flag of the install now, plus the new ones.
+func repairHint(flag string) string {
+	return "run install.sh again as a repair run with every --extra-bridge and --extra-vlan that the install has now, plus " + flag
+}
+
 // notAllowed is the ProposalError of a NIC on an unnamed network.
 func (e *Engine) notAllowed(target string, n int, nic driver.NIC) error {
 	what, flag := e.netFlags(nic.Bridge, nic.Tag)
 	return &ProposalError{Target: target, Err: ErrNetworkNotAllowed,
-		Msg: fmt.Sprintf("NIC %d: %s is not named by the install; the Proxmox token has no right on it. A person runs install.sh with %s (a repair run)", n, what, flag)}
+		Msg: fmt.Sprintf("NIC %d: %s is not named by the install; the Proxmox token has no right on it. A person must %s", n, what, repairHint(flag))}
 }
 
 // docNICs reads guest.nics of a rendered Target into driver NICs with

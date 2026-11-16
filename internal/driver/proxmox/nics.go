@@ -58,7 +58,7 @@ func (e *NetworkNotAllowedError) Error() string {
 			flag = "--extra-bridge " + e.Bridge + " " + flag
 		}
 	}
-	return fmt.Sprintf("proxmox: net%d: %s is not named by the install; the token has no SDN.Use there. Run install.sh with %s (D-401)", e.NIC, what, flag)
+	return fmt.Sprintf("proxmox: net%d: %s is not named by the install; the token has no SDN.Use there. Run install.sh again as a repair run with every --extra-bridge and --extra-vlan that the install has now, plus %s (D-401)", e.NIC, what, flag)
 }
 
 var reNICMAC = regexp.MustCompile(`^02(:[0-9a-f]{2}){5}$`)

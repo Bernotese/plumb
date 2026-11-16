@@ -78,7 +78,7 @@ func TestNICsThroughTheAPI(t *testing.T) {
 	// An unnamed tag or bridge: 422 network-not-allowed before any driver call.
 	for _, nics := range []string{`[{"bridge":"vmbr9","tag":30}]`, `[{"bridge":"vmbr7"}]`, `[{"bridge":"vmbr0","tag":20}]`} {
 		code, body := propose(nics)
-		if code != 422 || problemType(body) != "network-not-allowed" || !strings.Contains(string(body), "install.sh with --extra-") {
+		if code != 422 || problemType(body) != "network-not-allowed" || !strings.Contains(string(body), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-") {
 			t.Errorf("%s: %d %s", nics, code, body)
 		}
 	}

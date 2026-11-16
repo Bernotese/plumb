@@ -127,7 +127,7 @@ func (e *Engine) checkBackupNetworks(ctx context.Context, target, ref string, v 
 			}
 			what, flag := e.netFlags(n.Bridge, tag)
 			return notRestorable(target, fmt.Sprintf("NIC %d of backup %s is on %s, which the install does not name; Proxmox would refuse this restore. "+
-				"Run install.sh with %s (a repair run), or restore another backup. Nothing was changed", n.NIC, v.ID, what, flag))
+				"To restore it, %s; or restore another backup. Nothing was changed", n.NIC, v.ID, what, repairHint(flag)))
 		}
 	}
 	return nil
