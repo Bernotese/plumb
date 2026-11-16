@@ -513,7 +513,9 @@ The **Backups** page of a Target shows:
   - **an older guest of this Target**, for example before the guest was made again: Plumb never
     restores them and never deletes them by itself;
   - **not known to Plumb:** a person made them, the mark failed, or the record was lost with a
-    restore of Plumb. Plumb never touches them. Delete them in Proxmox.
+    restore of Plumb. Plumb never touches them. Delete them in Proxmox. When another backup of the
+    guest ran at the same time as Plumb's, Plumb finds its own one by its Proxmox task and lists
+    it under this guest; only the other one shows here.
 
 A person with the role admin can delete one backup of the first two groups, after a confirm.
 
@@ -542,15 +544,27 @@ or tag (a repair run), or restore another backup. The Run:
    When a re-enrollment Plan of the Target is still open, Plumb makes no second one: approve that
    one. An adopted guest starts without an agent: run an install command from its agent page.
 
+After a restore that worked, the Issue `guest:restore-failed` stays open with "restored; the agent
+is not enrolled yet" until the re-enrollment **Run** worked; then it ends with a comment. Its page
+names the re-enrollment Plan to approve. If that Plan can no longer run (another Plan changed the
+configuration first, it was dropped, or its Run failed), the Issue says so: plan the re-enrollment
+again ("Propose the re-enroll" on the Issue page). While the guest waits for its agent:
+
+- the disks are the restored ones, so Plans of the Target are allowed, and Plumb compares the guest
+  again (a drift Issue gets its actions). Use this to fix the Target when the re-enrollment failed
+  because of it;
+- a Run of such a Plan changes the guest in Proxmox and skips the steps inside the guest. The
+  re-enrollment Run does them with the new agent, and it also grows the root file system when a
+  disk grow is still waiting for it.
+
 If the controller stops during a restore, it checks the restore at its next start: when the restore
-worked, it makes the re-enrollment Plan then; when it did not end, the Issue `guest:restore-failed`
-(below) says that the guest may have no disk.
+worked, it makes the re-enrollment Plan then; when it cannot tell, the Issue `guest:restore-failed`
+(below) says that the guest may have no disk. The Proxmox restore task may still have ended well:
+look at the guest in Proxmox, or restore the safety backup that the Issue names.
 
 If the restore worked but Plumb cannot plan the re-enrollment (for example because a person added a
-mount point to the container in Proxmox), the Issue `guest:restore-failed` stays open and says why,
-with the way out: fix it in Proxmox, then re-enroll ("Propose the re-enroll" on the Issue page).
-Until then only a re-enrollment, a restore or a delete of the Target is allowed. The re-enrollment
-that works ends the Issue.
+mount point to the container in Proxmox), the Issue says why, with the way out: fix it in Proxmox,
+then re-enroll.
 
 **A backup older than a data disk** does not hold that disk. The restore Plan names each such disk
 and what happens to it:
@@ -575,9 +589,12 @@ and deletes only older safety backups.
 
 If the restore fails, the Run says that the guest may have no disk, and Plumb opens the Issue
 `guest:restore-failed`. It names the safety backup, and its link opens the restore of that backup.
-A restore that works ends the Issue. Re-enroll the agent only after a restore that worked.
+A restore that works moves the Issue to "restored; the agent is not enrolled yet" (above). When
+Proxmox refuses a restore before it begins (for example a network that the install does not name),
+the guest's disks are as before, and the Run says so.
 
-While this Issue is open, the guest may be empty, so Plumb protects it:
+While the Issue says that the restore failed (or that a restore runs), the guest may be empty, so
+Plumb protects it:
 
 - Plumb opens no drift Issue for the guest.
 - Every Plan for the Target is refused, except a restore and a delete of the Target. Only a person
@@ -591,7 +608,8 @@ While this Issue is open, the guest may be empty, so Plumb protects it:
 Two cases take no new safety backup:
 
 - the last restore failed: the guest may be empty, so the safety backup from before stays the way
-  back. The Plan says so;
+  back. The Plan says so. After a restore that worked, the guest is not broken: the next restore
+  takes a new safety backup, and "skip the safety backup" is refused;
 - the guest has no disk: a person may tick "The guest is broken already: skip the safety backup" in
   the wizard. Plumb checks it and refuses for a guest with a disk. An API token never can.
 
