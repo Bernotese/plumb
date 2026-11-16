@@ -19,7 +19,7 @@
 - Steps: (1) open `#/targets/<a demo VM>/edit`, tick `#disks-managed` (the first-time note `#disks-unmanaged-vm` shows), `#add-disk`, size 20, reason, "Show the plan": the Plan has `disk1` "20 GiB", `reversible`; approve; the Run succeeds; the edit page shows slot 1 fixed. (2) Size 10 → field error "only grows"; size 30 → Plan `disk1` 20 → 30 GiB, `disruptive`. (3) Remove → banner `#disks-removed`; the Plan is `destructive` with the warning that names the volume and the second free step; a `plan`/`apply` token gets 403 on approve, a person approves. (4) An LXC demo Target: add with path `/etc/x` → field error; `/srv/data` on a running container without allow_restart → `#disks-add-error`, with it → `disruptive`. (5) Untick the box → the saved document has no `disks`, the Plan has no disk line.
 - Do not push before the steps pass locally (CI runner rule); the web CI job runs e2e.
 
-- **Owner:** pl-frontend   · **Reviewer:** pl-architect   · **QA:** T-245
+- **Owner:** pl-backend (took over from pl-frontend, D-438)   · **Reviewer:** pl-reviewer   · **QA:** T-245
 - **Size:** S   · **Depends on:** T-238 … T-242 merged; T-247 passed
 
 ## Goal
