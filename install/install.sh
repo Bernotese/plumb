@@ -68,6 +68,11 @@ PLUMB_BINARY=""
 # T-257: scripts/package-release.sh sets the version here in the copy of a
 # release bundle. A bundle's installer then needs its SHA256SUMS.
 RELEASE_VERSION=""
+# T-259: the test settings (the list of install/hooks_test.go). A release
+# installer refuses them; a source build honours them for the tests.
+TEST_ENV_VARS=(PLUMB_INSTALL_ASSUME_ROOT PLUMB_INSTALL_ASSUME_TTY PLUMB_INSTALL_PVE_CA PLUMB_INSTALL_STATE
+	PLUMB_INSTALL_LXC_DIR PLUMB_INSTALL_RUNNING_TRIES PLUMB_INSTALL_RUNNING_WAIT PLUMB_INSTALL_STAY_WAIT
+	PLUMB_INSTALL_RESOLV PLUMB_INSTALL_SBIN PLUMB_INSTALL_UNIT_DIR PLUMB_INSTALL_COPY_CONF PLUMB_INSTALL_PVE_MNT)
 VERIFIED_PLUMB_SUM="" # the plumb sum that check_bundle proved, or ""
 CA_FILE=""
 AGENT_URL=""
@@ -2699,8 +2704,27 @@ show_version_change() {
 	fi
 }
 
+# check_test_env (T-259): the test settings change what root reads or
+# writes (for example PLUMB_INSTALL_PVE_CA: the CA that Plumb trusts), and
+# sudo -E, env_keep or a wrapper hands them over unseen. The installer of a
+# release refuses to run when one is set, also empty; it unsets nothing in
+# silence. A source build honours them and says so once.
+check_test_env() {
+	local v set=()
+	for v in "${TEST_ENV_VARS[@]}"; do
+		[[ -z ${!v+x} ]] || set+=("$v")
+	done
+	if [[ -n $RELEASE_VERSION ]]; then
+		((${#set[@]} == 0)) ||
+			die "this is the installer of release $RELEASE_VERSION; it takes no test settings from the environment, but ${set[*]} is set (for example passed on by sudo -E). Unset it and run again. Nothing was changed."
+		return 0
+	fi
+	say "NOTE: this install.sh is a source build (no release stamp): it honours the PLUMB_INSTALL_* test settings${set[0]:+ (set: ${set[*]})}."
+}
+
 main() {
 	parse_args "$@"
+	check_test_env
 	check_bundle
 	check_host
 	check_state_file
