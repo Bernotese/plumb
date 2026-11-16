@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Bernotese/plumb/internal/plan"
+	"github.com/Bernotese/plumb/internal/store"
 )
 
 func TestRestoreIssueWaitsForTheReenrollRun(t *testing.T) {
@@ -17,6 +18,24 @@ func TestRestoreIssueWaitsForTheReenrollRun(t *testing.T) {
 		// The host case: another Plan moves the head, the re-enroll goes stale.
 		"another Plan moved the head": func(t *testing.T, s *safetyEnv, id int64) {
 			s.e.seed(s.adm, "web2")
+		},
+		// The head moves with no Run, so no sweep marks the Plan stale:
+		// it is pending on an old base (the pending branch of the check).
+		"the head moved without a Run": func(t *testing.T, s *safetyEnv, id int64) {
+			head, err := s.e.st.Head(s.e.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := s.e.st.RevisionDocs(s.e.ctx, head.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.e.st.CommitRevision(s.e.ctx, store.NewRevision{Author: "user:qa", Reason: "same docs", Docs: rows}); err != nil {
+				t.Fatal(err)
+			}
+			if p, _ := s.e.st.GetPlan(s.e.ctx, id); p.Status != store.PlanPending {
+				t.Fatalf("the Plan is %s, want pending off the head", p.Status)
+			}
 		},
 		"the re-enroll Plan was dropped": func(t *testing.T, s *safetyEnv, id int64) {
 			if code, body := s.adm.do("DELETE", "/api/v1/plans/"+itoa(id), nil); code != 204 {
@@ -38,13 +57,13 @@ func TestRestoreIssueWaitsForTheReenrollRun(t *testing.T) {
 				t.Errorf("note while the Plan is good: %q", v.ActionsNote)
 			}
 			kill(t, s, first)
-			if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(first)+"/approve", nil); code != 409 {
-				t.Fatalf("the old re-enroll Plan still approves: %d %s", code, body)
-			}
 			// The Issue stays open, and its note now says to plan it again.
 			v := s.issue(t, iss.ID)
-			if v.Status != "open" || !strings.Contains(v.ActionsNote, "can no longer run") || !strings.Contains(v.ActionsNote, "plan the re-enroll again") {
+			if v.Status != "open" || !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(first)+" can no longer run (it is stale") || !strings.Contains(v.ActionsNote, "plan the re-enroll again") {
 				t.Fatalf("the Issue after the Plan went bad: %+v", v)
+			}
+			if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(first)+"/approve", nil); code != 409 {
+				t.Fatalf("the old re-enroll Plan still approves: %d %s", code, body)
 			}
 			// The way out: a new re-enroll (the gate lets only it pass), its Run ends the Issue.
 			code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "targets": []string{"web1"}})

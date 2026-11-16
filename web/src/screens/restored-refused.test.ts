@@ -87,7 +87,7 @@ describe("restored, re-enroll refused (D-439)", () => {
       ],
       actions: ["ignore_once"],
       actions_note:
-        'restored; the agent is not enrolled yet: the re-enroll Plan 31 can no longer run (it is stale (another Plan changed the revision)): plan the re-enroll again ("Propose the re-enroll", or POST /targets/web1/reenroll).',
+        'restored; the agent is not enrolled yet: the re-enroll Plan 31 can no longer run (it is stale (another Plan changed the revision, or it was dropped)): plan the re-enroll again ("Propose the re-enroll", or POST /targets/web1/reenroll).',
     } as Issue);
     show(IssueView, { api, id: 7 });
     await until(() => text().includes("guest:restore-failed"));

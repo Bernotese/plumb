@@ -1093,6 +1093,9 @@ func (e *Engine) reenrollUsable(ctx context.Context, pl store.Plan, head int64) 
 		}
 		return false, "its Run failed", nil
 	}
+	if pl.Status == store.PlanStale {
+		return false, "it is stale (another Plan changed the revision, or it was dropped)", nil
+	}
 	return false, "it is " + pl.Status, nil
 }
 
