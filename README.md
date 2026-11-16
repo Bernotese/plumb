@@ -131,7 +131,7 @@ full list of rights.
    switch on a build with Blocks and a schedule.
 
    ![Image page of ubuntu-26.04: title, type virtual machine, kind stock, base image address and checksum](docs/screenshots/readme-images.png)
-   <br>*An Image: where the base image comes from, and its checksum.*
+   <br>_An Image: where the base image comes from, and its checksum._
 
    An Image keeps a fixed checksum (the pin). To move it to a newer file, choose a **signed
    checksum source** on the Image:
@@ -145,7 +145,7 @@ full list of rights.
    new file.
 
    ![Image page of ubuntu-26.04 with the checksum source "Ubuntu cloud images, signed SHA256SUMS" and the card Refresh base](docs/screenshots/readme-image-verify.png)
-   <br>*An Image with a signed checksum source, and the "Refresh base" button.*
+   <br>_An Image with a signed checksum source, and the "Refresh base" button._
 
 5. **Blocks:** the **starter catalogue** on the Blocks page lists the Blocks that ship with Plumb
    (for example `deploy-user`, `ssh-hardening`, `nginx`, `docker-engine`, `firewall`, `network`).
@@ -161,10 +161,10 @@ full list of rights.
    - A Block can also hold a local `group` (`groupadd`). Users join it through their `groups`.
 
    ![Starter catalogue: motd and nginx are added but differ, with Show difference and Update from the catalogue; network is not added, with Add](docs/screenshots/readme-catalogue.png)
-   <br>*The starter catalogue: "Add" and "Update" make a Plan. Plumb never changes a Block by itself.*
+   <br>_The starter catalogue: "Add" and "Update" make a Plan. Plumb never changes a Block by itself._
 
    ![Block page of nginx: the Targets that use it, its parameter server_name, and the start of its YAML document](docs/screenshots/readme-blocks.png)
-   <br>*A Block: the Targets that use it, its parameters and its document.*
+   <br>_A Block: the Targets that use it, its parameters and its document._
 
 6. **Targets:** make a Target. Choose the Image, the size and the Blocks. Later you can change
    these on the Target, also through a Plan:
@@ -201,12 +201,25 @@ full list of rights.
        (`/etc`, `/usr`, `/var`, `/lib…` and the others) or inside another disk's path. Plumb adds a
        container disk only while the container is stopped: the Run stops a running container,
        adds the disk and starts it again. That needs "Plumb may restart this container", and the
-       Plan is disruptive. If the container does not start with the new disk, the Run removes the
-       disk again and starts the container as before.
+       Plan is disruptive. If the container does not start with the new disk (for example because
+       a part of the path is a symbolic link in the guest), the Run removes the disk again and
+       starts the container as before. A stopped container gets the disk and stays stopped (the
+       Plan is reversible); the disk is then tried only at its next start, and if that start
+       fails, remove the disk with a Plan.
      - A disk only grows. A grow is disruptive, as for the main disk.
      - **Removing a disk deletes its data.** The Plan is destructive, and only a person can approve
        it. A running guest needs "Plumb may restart this VM" (for a container: "this container").
-       The Run detaches the disk first, then frees its volume in a second step.
+       The Run detaches the disk first, then frees its volume in a second step. A disk that Plumb
+       did not make is only detached, never freed.
+     - **If Plumb cannot free a volume**, the Run says so and Plumb opens the Issue
+       `guest:volume-left`, which names the volume. No disk is added to the Target until it is gone.
+       Remove it on the Proxmox host as root: `qm set <vmid> --delete unusedN` (for a container
+       `pct set`), with the `unusedN` line that names the volume, or `pvesm free <volume>` when no
+       such line names it. A delete of the Target also frees it. The Issue ends by itself when the
+       volume is gone.
+     - A disk that grew in Proxmox is drift: "Accept" takes the bigger size into the Target, and
+       there is no Revert (a disk cannot shrink). Deleting the Target deletes its data disks too;
+       the Plan names each of them.
      - With the box off, Plumb does not touch data disks, and a disk that a person adds is no
        drift. Switching it off deletes nothing. Switching it on manages slots 1 to 3. Read that Plan
        before you approve it:
@@ -217,8 +230,8 @@ full list of rights.
          another slot); else the Plan detaches it and does not free it. To keep it as it is, leave
          the box off.
        - **A disk that a person added to a container** on the disk storage of the install counts as
-         Plumb's: list it with its slot, size and path to keep it. A disk on another storage, or a
-         bind mount, Plumb did not make: as for a VM, the Plan refuses or detaches it.
+         Plumb's: list it with its slot, size and path to keep it. A disk on another storage, a bind
+         mount or a device, Plumb did not make: as for a VM, the Plan refuses or detaches it.
      - Every disk counts for the 85 % gate of the disk storage. A user or token with the role
        apply can approve an add (up to 3 × 4096 GiB per Target), but no remove.
      - An adopted Target keeps the disks that the guest has; Plumb adds none.
@@ -226,13 +239,13 @@ full list of rights.
      below.
 
    ![Targets list with four Targets: app1 in Plumb; db1, web1 and web2 out of Plumb; each with image, size, address and agent version](docs/screenshots/readme-targets.png)
-   <br>*The Targets: one is in Plumb, three have drift.*
+   <br>_The Targets: one is in Plumb, three have drift._
 
    ![Edit page of Target web2: configured and reported address, image, type, and the guest settings cores, memory, disk, bridge and power](docs/screenshots/readme-target.png)
-   <br>*One Target: its address, its Image and its guest settings.*
+   <br>_One Target: its address, its Image and its guest settings._
 
    ![Data disks of the VM db1: the box "Plumb manages the data disks of this guest", disk 1 of 50 GiB in its fixed slot scsi1, a new disk 2 of 20 GiB with a slot choice, and the restore note](docs/screenshots/readme-target-disks.png)
-   <br>*The data disks of a VM: the slot is the disk's fixed name, and a disk only grows.*
+   <br>_The data disks of a VM: the slot is the disk's fixed name, and a disk only grows._
 
 7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
    each step. A Run can end as "succeeded, N warnings": then read the steps marked `warning`. The
@@ -243,13 +256,13 @@ full list of rights.
      Block that no Target uses has document changes only.
 
    ![Plan 2 for web1: reason, risk disruptive, three resource changes and one restart with old and new values, and the Approve form](docs/screenshots/readme-plan.png)
-   <br>*A Plan: every change with its old value, new value and risk. Nothing changes before you approve it.*
+   <br>_A Plan: every change with its old value, new value and risk. Nothing changes before you approve it._
 
    ![Run 2 succeeded: the four steps on web1, each applied](docs/screenshots/readme-run.png)
-   <br>*The Run of that Plan: each step on each Target.*
+   <br>_The Run of that Plan: each step on each Target._
 
    ![Plan 4, an update of the Block motd from the catalogue: no resource changes, and the diff of the Block document](docs/screenshots/readme-plan-documents.png)
-   <br>*A Plan that changes only a Block: its document changes, line by line.*
+   <br>_A Plan that changes only a Block: its document changes, line by line._
 
 8. **Issues:** when somebody changes a guest by hand, an Issue opens. Choose "Revert", "Accept" or
    "Ignore". A Plan that accepts a value from the guest needs a person: an API token cannot approve
@@ -265,7 +278,7 @@ full list of rights.
      accepted. Revert it, or change the network cards of the Target.
 
    ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
-   <br>*An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it.*
+   <br>_An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it._
 
 In **Settings** you make API tokens, store secrets, and export or import the whole state. Under
 **Settings → General** an admin changes the backup time and the number of backups to keep; a value
@@ -274,7 +287,7 @@ tab shows the Proxmox connection (node, pool, storages, version, the token's use
 and the repair key. It never shows a secret.
 
 ![Settings, General tab: the backup schedule with the source of each value, and the read-only Proxmox view with the rights of the install](docs/screenshots/readme-settings-general.png)
-<br>*Settings → General: the backup schedule and the Proxmox connection.*
+<br>_Settings → General: the backup schedule and the Proxmox connection._
 
 ### AI clients (MCP)
 
@@ -292,9 +305,15 @@ Model Context Protocol over stdio. It uses the public API with an API token.
      "mcpServers": {
        "plumb": {
          "command": "plumb",
-         "args": ["mcp", "--url", "https://<plumb-address>:8443",
-                  "--token-file", "/home/<you>/.config/plumb/token",
-                  "--ca", "/home/<you>/.config/plumb/ca.crt"]
+         "args": [
+           "mcp",
+           "--url",
+           "https://<plumb-address>:8443",
+           "--token-file",
+           "/home/<you>/.config/plumb/token",
+           "--ca",
+           "/home/<you>/.config/plumb/ca.crt"
+         ]
        }
      }
    }
@@ -320,7 +339,7 @@ that Plumb refuses the call and says how long to wait.
 
 The prompt **explain_issue** (argument: the Issue id) gives the client one Issue with what it
 needs: the difference, the Target and its Blocks, the source of the resource, the last 5 Runs of
-the Target and the last 20 comments. The client then explains the Issue in a comment and may
+the Target and the last 20 comments (comments of people and of Plumb first, then those of tokens). The client then explains the Issue in a comment and may
 propose **one** Revert or Accept of this Issue. You approve it in the web UI, as every Plan.
 
 - Use a token with the tier **plan**. A **read** token gets an error for this prompt.
@@ -329,17 +348,18 @@ propose **one** Revert or Accept of this Issue. You approve it in the web UI, as
   follow instructions found in it, but to report them in its comment. If a comment of the client
   says that it found such instructions, look at who wrote them.
 - The prompt holds no secret: a sensitive value shows only that it differs.
-- Long texts are cut, and the prompt says where. The client then has a partial view.
+- Long texts and long lists are cut, and the prompt says where and how much. The client then has a
+  partial view. An Issue too big for the prompt shows only its id and no action: read it in Plumb.
 
 ### Users and roles
 
 An admin adds people in **Settings → Users**. Each user has one role:
 
-| Role | May |
-|---|---|
-| read | See everything. Change nothing. |
-| plan | Also propose changes (Plans), comment on Issues, and drop Plans. |
-| apply | Also approve Plans up to the risk "disruptive", ignore drift once, and start a backup now. |
+| Role  | May                                                                                                                               |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------- |
+| read  | See everything. Change nothing.                                                                                                   |
+| plan  | Also propose changes (Plans), comment on Issues, and drop Plans.                                                                  |
+| apply | Also approve Plans up to the risk "disruptive", ignore drift once, and start a backup now.                                        |
 | admin | Everything: destructive Plans, users, API tokens, secrets, an export with secret values, import, and the confirm after a restore. |
 
 - Plumb makes a one-time password for a new user and shows it once. The user must change it at the
@@ -349,7 +369,7 @@ An admin adds people in **Settings → Users**. Each user has one role:
 - The web UI hides the buttons that your role may not use. Plumb also checks every call itself.
 
 ![Settings, Users tab: admin, dev, ops with role apply and viewer with role read, each with the actions Role, Disable and One-time password, and the form for a new user](docs/screenshots/readme-users.png)
-<br>*Settings → Users: each person with their role and state.*
+<br>_Settings → Users: each person with their role and state._
 
 ## Updates and repair
 
@@ -397,7 +417,7 @@ leaves the guest as it was.
   ends.
 
 ![Agent page of web3: repair over SSH is ready, the pinned host key, and the button Propose repair](docs/screenshots/readme-repair.png)
-<br>*A dead agent: Plumb can install it again over SSH, after a person approves the plan.*
+<br>_A dead agent: Plumb can install it again over SSH, after a person approves the plan._
 
 ### Adopt a guest
 
@@ -424,7 +444,7 @@ first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a 
   "Forget the agent…" (admin).
 
 ![Adopt a guest: the free guests of the pool, one adoptable and one with its reasons, and the wizard with the warnings in red](docs/screenshots/readme-adopt.png)
-<br>*Adopt a guest: the warnings come before the plan.*
+<br>_Adopt a guest: the warnings come before the plan._
 
 ### Guests made before the agent self-update
 
@@ -457,7 +477,7 @@ shows them, and "Back up now" makes one at once. A file that Plumb cannot read i
 unreadable: give it to the user `plumb` in the container.
 
 ![Settings, Backups tab: daily at 03:00 UTC, keep 7, the last run, the off-host copy state and the list of backup files](docs/screenshots/readme-backups.png)
-<br>*Settings → Backups: the schedule, the last run, the off-host copy and the backups.*
+<br>_Settings → Backups: the schedule, the last run, the off-host copy and the backups._
 
 A backup is encrypted. Only your recovery key opens it.
 
@@ -497,10 +517,15 @@ backups than it would now. The Plan says how many. Removing the
 backup setting stops the backups and deletes none.
 
 ![Backups page of db1: an unencrypted storage with the warning, the schedule, Back up now, and the backups in three groups](docs/screenshots/readme-guest-backups.png)
-<br>*The backups of one guest: the storage state, the schedule and the backups by group.*
+<br>_The backups of one guest: the storage state, the schedule and the backups by group._
 
 **Restore.** "Restore…" on a backup of this guest opens a wizard. It makes a Plan with the risk
-destructive, and only a person with the role admin can approve it; an API token never can. The Run:
+destructive, and only a person with the role admin can approve it; an API token never can.
+
+Before anything changes, Plumb reads the network settings in the backup. If a network card of the
+backup is on a bridge or VLAN tag that the install does not name, Plumb refuses the restore (also
+the restore of a safety backup), and nothing is changed: run the installer again with that bridge
+or tag (a repair run), or restore another backup. The Run:
 
 1. stops the guest. A running guest needs "Plumb may restart this VM" (for a container: "this
    container") on the Target, or stop it yourself first;
@@ -509,14 +534,26 @@ destructive, and only a person with the role admin can approve it; an API token 
 3. revokes the agent credential and drops the pinned SSH host keys, before the guest starts again;
 4. lets Proxmox overwrite the whole guest with the backup;
 5. then Plumb proposes a re-enrollment of the agent (the guest stays stopped until you approve it).
-   An adopted guest starts without an agent: run an install command from its agent page.
+   When a re-enrollment Plan of the Target is still open, Plumb makes no second one: approve that
+   one. An adopted guest starts without an agent: run an install command from its agent page.
+
+If the controller stops during a restore, it checks the restore at its next start: when the restore
+worked, it makes the re-enrollment Plan then; when it did not end, the Issue `guest:restore-failed`
+(below) says that the guest may have no disk.
+
+If the restore worked but Plumb cannot plan the re-enrollment (for example because a person added a
+mount point to the container in Proxmox), the Issue `guest:restore-failed` stays open and says why,
+with the way out: fix it in Proxmox, then re-enroll ("Propose the re-enroll" on the Issue page).
+Until then only a re-enrollment, a restore or a delete of the Target is allowed. The re-enrollment
+that works ends the Issue.
 
 **A backup older than a data disk** does not hold that disk. The restore Plan names each such disk
 and what happens to it:
 
-- a **VM** keeps the disk as an unused volume. The next Run attaches a new, empty disk in its slot.
-  Free the old volume in Proxmox when you no longer need it;
-- a **container** loses the data on that disk. The next Run makes a new, empty disk at its path.
+- a **VM** keeps the disk as an unused volume. Free it in Proxmox when you no longer need it. If
+  the Target's disk list names that slot, the next Run attaches a new, empty disk there;
+- a **container** loses the data on that disk. If the Target's disk list names that slot, the next
+  Run makes a new, empty disk at its path.
 
 The safety backup (below) holds the disk in both cases.
 
@@ -528,7 +565,8 @@ the next Run sets the guest to the current Target again.
 fails, the guest is left empty. So the Run first takes a safety backup of the guest. It shows in
 the list as "safety backup before a restore", and "keep" never counts or deletes it. After a
 restore that worked, it stays, so you can undo the restore; it replaces the older safety backup of
-the guest.
+the guest. After the restore of a safety backup itself, Plumb keeps that one and every newer one,
+and deletes only older safety backups.
 
 If the restore fails, the Run says that the guest may have no disk, and Plumb opens the Issue
 `guest:restore-failed`. It names the safety backup, and its link opens the restore of that backup.
@@ -558,7 +596,7 @@ whole disk, also the agent credential. Plumb revokes that credential at the rest
 re-enroll makes the credential in older backups useless.
 
 ![Restore wizard: only a person can approve, Proxmox empties the guest first, the steps of the Run with the safety backup, what is lost, the skip box, a confirm box and the reason](docs/screenshots/readme-guest-restore.png)
-<br>*The restore wizard says what is lost, and that Plumb first takes a safety backup.*
+<br>_The restore wizard says what is lost, and that Plumb first takes a safety backup._
 
 - Plumb restores only over the same guest. For a guest that is gone, restore the backup in Proxmox
   into the pool `plumb`, then adopt the guest ("Adopt a guest").
@@ -601,6 +639,7 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
 
    Without `--backup-storage` at the install, add `--backup-to <directory>`: a directory on this
    host. That is not an off-host copy; the installer warns you.
+
 2. Restore. The installer prints the first part of this line at the end of step 1. Use the same
    address as before: the agents in the guests know only this address.
 
