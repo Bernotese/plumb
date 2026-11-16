@@ -8,6 +8,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -327,5 +328,125 @@ func TestRestoredProofOnlyFromThisTargetsRestore(t *testing.T) {
 	proofState(t, s, plan.OriginRestore, "web1", "restored backup 3f2a9c0d1e4b5a67 of 2026-11-15T03:00:12Z")
 	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "r"}); code != 201 {
 		t.Errorf("the proven case: %d %s", code, body)
+	}
+}
+
+// toRestoredRefused brings web1 into the D-439 state "restored; the agent
+// is not enrolled" (as TestRestoredReenrollRefused) and returns a function
+// that undoes the cause in Proxmox.
+func toRestoredRefused(t *testing.T, s *safetyEnv) (fix func()) {
+	t.Helper()
+	var oldIP string
+	s.fr.after = func() {
+		s.e.drv.Tamper(driver.GuestID(s.ref), func(g *driver.GuestSpec) { oldIP, g.IP = g.IP, "192.0.2.99/24" })
+	}
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	s.fr.after = nil
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil || !strings.Contains(string(iss.Changes), plan.RestoredRefusedPrefix) {
+		t.Fatalf("not in the restored state: %s %v", iss.Changes, err)
+	}
+	return func() { s.e.drv.Tamper(driver.GuestID(s.ref), func(g *driver.GuestSpec) { g.IP = oldIP }) }
+}
+
+// High QA finding of #374: a restore from the "restored" state is a normal
+// restore: it takes a safety backup; when it fails, the Issue says
+// "failed" without the old Run, and the gate refuses every re-enroll, also
+// one planned before.
+func TestRestoreFromRestoredStateFails(t *testing.T) {
+	s := newSafetyEnv(t)
+	fix := toRestoredRefused(t, s)
+	fix()
+	code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "planned before"})
+	if code != 201 {
+		t.Fatalf("re-enroll in the restored state: %d %s", code, body)
+	}
+	var re struct{ ID int64 }
+	json.Unmarshal(body, &re)
+	safeties := s.fr.safeties
+	s.fr.fail = errors.New("restore failed")
+	// The old proof ends at the START of the new restore: during the call
+	// the Issue says "running" and names no Run.
+	var during string
+	s.fr.during = func() {
+		if iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID); err == nil {
+			during = string(iss.Changes)
+		}
+	}
+	status, out := s.restore(t, "3f2a9c0d1e4b5a67", false)
+	if !strings.Contains(during, "running: if this restore does not end") || strings.Contains(during, plan.AttrRestoreRun) {
+		t.Errorf("the Issue during the new restore call: %s", during)
+	}
+	if status != "failed" || s.fr.safeties != safeties+1 {
+		t.Fatalf("restore: %s %s, safety backups %d → %d", status, out, safeties, s.fr.safeties)
+	}
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil || !strings.Contains(string(iss.Changes), "failed: the guest may have no disk") || strings.Contains(string(iss.Changes), plan.AttrRestoreRun) {
+		t.Fatalf("issue %s %v", iss.Changes, err)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re.ID)+"/approve", nil); code != 409 || problemType(body) != "restore-failed" {
+		t.Errorf("the re-enroll planned before: %d %s", code, body)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "r"}); code != 409 || problemType(body) != "restore-failed" {
+		t.Errorf("a new re-enroll: %d %s", code, body)
+	}
+}
+
+// A restore from the "restored" state that does not start leaves the guest
+// as before: the Issue goes back to the "restored" state with its proof.
+func TestRestoreFromRestoredStateNotStarted(t *testing.T) {
+	s := newSafetyEnv(t)
+	fix := toRestoredRefused(t, s)
+	before, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	s.fr.fail = fmt.Errorf("%w: storage busy", plan.ErrRestoreNotStarted)
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "failed" || !strings.Contains(out, "did not start") {
+		t.Fatalf("restore: %s %s", status, out)
+	}
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil || string(iss.Changes) != string(before.Changes) {
+		t.Fatalf("issue %s, was %s (%v)", iss.Changes, before.Changes, err)
+	}
+	fix()
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "r"}); code != 201 {
+		t.Errorf("re-enroll after a restore that did not start: %d %s", code, body)
+	}
+}
+
+// A controller stop inside a restore from the "restored" state: the
+// "running" Issue replaced the old proof at the start, so the start rule
+// says "failed" and the gate refuses the re-enroll.
+func TestRestoreFromRestoredStateStopInside(t *testing.T) {
+	s := newSafetyEnv(t)
+	toRestoredRefused(t, s)
+	cutRestore(t, s, "") // the new restore wrote "running" and was cut inside the call
+	if err := s.e.eng.Recover(s.e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil || !strings.Contains(string(iss.Changes), "failed: the controller stopped during the restore") {
+		t.Fatalf("issue %s %v", iss.Changes, err)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "r"}); code != 409 {
+		t.Errorf("re-enroll: %d %s", code, body)
+	}
+}
+
+// A restore from the "restored" state that works is a normal one: the
+// safety backup, then the follow-up ends the Issue.
+func TestRestoreFromRestoredStateWorks(t *testing.T) {
+	s := newSafetyEnv(t)
+	fix := toRestoredRefused(t, s)
+	fix()
+	safeties := s.fr.safeties
+	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" || s.fr.safeties != safeties+1 {
+		t.Fatalf("restore: %s %s, safety backups %d → %d", status, out, safeties, s.fr.safeties)
+	}
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("the Issue stays after a restore and a re-enroll Plan")
+	}
+	if re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll); len(re) != 1 {
+		t.Errorf("re-enroll Plans: %d", len(re))
 	}
 }

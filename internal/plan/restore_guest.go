@@ -393,11 +393,39 @@ func (e *Engine) restoreFailedOpen(ctx context.Context, target string) (bool, st
 	var ch []wire.Change
 	json.Unmarshal(iss.Changes, &ch)
 	for _, c := range ch {
-		if to, ok := c.To.(string); ok && c.Attr == "restore" {
+		if c.Attr != "restore" {
+			continue
+		}
+		// The "restored" states of D-439 are no broken guest: the disks are
+		// the restored ones (high QA finding of #374). A restore from there
+		// is a normal one: a safety backup first, "running" before the call.
+		if from, _ := c.From.(string); strings.HasPrefix(from, "restored") {
+			return false, "", nil
+		}
+		if to, ok := c.To.(string); ok {
 			return true, to, nil
 		}
 	}
 	return true, "", nil
+}
+
+// restoredState returns the changes of an open guest:restore-failed Issue
+// in a "restored" state (D-439), or nil.
+func (e *Engine) restoredState(ctx context.Context, target string) []wire.Change {
+	iss, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID)
+	if err != nil {
+		return nil
+	}
+	var ch []wire.Change
+	if json.Unmarshal(iss.Changes, &ch) != nil {
+		return nil
+	}
+	for _, c := range ch {
+		if from, _ := c.From.(string); c.Attr == "restore" && strings.HasPrefix(from, "restored") {
+			return ch
+		}
+	}
+	return nil
 }
 
 // checkBroken allows "no safety backup" only for a guest that is broken
@@ -563,6 +591,10 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	if err != nil {
 		return fail("nothing was changed: " + err.Error())
 	}
+	// A restore from the D-439 "restored" state: the "running" Issue below
+	// replaces it at the start, so the old proof ends there; a restore that
+	// does not start puts it back (the guest is as before).
+	prevRestored := e.restoredState(ctx, tp.Target)
 	if skip && !failedBefore {
 		if err := e.checkBroken(ctx, tp.Target, st); err != nil {
 			return fail("nothing was changed: " + err.Error())
@@ -620,6 +652,12 @@ func (e *Engine) runRestore(ctx context.Context, p store.Plan, run store.Run, se
 	// restore call: the disks are as before.
 	endRunning := func() {
 		if failedBefore {
+			return
+		}
+		if prevRestored != nil {
+			if err := e.restoreIssue(ctx, tp.Target, GuestRestoreFailedID, wire.StatusDiffers, prevRestored); err != nil {
+				e.log.Warn("put back the restored state of the Issue", "target", tp.Target, "err", err)
+			}
 			return
 		}
 		if err := e.endRestoreIssue(ctx, tp.Target, GuestRestoreFailedID, "the restore did not start; the guest's disks are as before"); err != nil { // D-428
