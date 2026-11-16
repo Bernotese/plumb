@@ -66,3 +66,36 @@ func TestPackageReleaseRefusesAnotherVersion(t *testing.T) {
 		}
 	}
 }
+
+// T-255: the workflows pin the exact Go and Node versions, so that a
+// release build equals the tested one (plan P3). Go is the toolchain of
+// go.mod; every job of both workflows names the same versions.
+func TestWorkflowsPinTheToolchain(t *testing.T) {
+	m := regexp.MustCompile(`(?m)^toolchain go(\S+)$`).FindStringSubmatch(repoFile(t, "go.mod"))
+	if m == nil {
+		t.Fatal("go.mod has no toolchain line")
+	}
+	node := ""
+	for _, wf := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
+		s := repoFile(t, wf)
+		if strings.Contains(s, "go-version-file") || regexp.MustCompile(`node-version: [0-9]+\s`).MatchString(s) {
+			t.Errorf("%s: a Go or Node version is not pinned", wf)
+		}
+		for _, g := range regexp.MustCompile(`go-version: "([^"]+)"`).FindAllStringSubmatch(s, -1) {
+			if g[1] != m[1] {
+				t.Errorf("%s: go-version %s, want the go.mod toolchain %s", wf, g[1], m[1])
+			}
+		}
+		for _, n := range regexp.MustCompile(`node-version: "([^"]+)"`).FindAllStringSubmatch(s, -1) {
+			if node == "" {
+				node = n[1]
+			}
+			if n[1] != node {
+				t.Errorf("%s: node-version %s, want %s in every job", wf, n[1], node)
+			}
+		}
+	}
+	if node == "" {
+		t.Error("no pinned node-version")
+	}
+}
