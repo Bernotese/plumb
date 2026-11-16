@@ -215,6 +215,17 @@ func (e *Engine) restoreIssue(ctx context.Context, target, id string, status wir
 		Items: []wire.Item{{Resource: id, Status: status, Changes: changes}}})
 }
 
+// endRestoreIssue sends the unchanged item of a restore Issue with the
+// reason: when it resolves an open Issue, the Issue gets that reason as a
+// system comment (D-428; the issue service's systemReason).
+func (e *Engine) endRestoreIssue(ctx context.Context, target, id, reason string) error {
+	if e.cfg.OnDrift == nil {
+		return nil
+	}
+	return e.cfg.OnDrift(ctx, target, wire.Report{Type: wire.ReportDrift,
+		Items: []wire.Item{{Resource: id, Status: wire.StatusUnchanged, Output: reason}}})
+}
+
 // checkSilent opens agent:silent for a bound, running guest whose agent
 // this controller never heard since the restore, once SilentAfter passed
 // after the confirm; a hello resolves it. An agent that said hello in
@@ -229,8 +240,11 @@ func (e *Engine) checkSilent(ctx context.Context, target string, observed driver
 		return err
 	}
 	heard := e.cfg.Agents.Online(target) || err == nil && a.Hello != nil && !a.Hello.At.Before(r.RestoredAt)
-	if heard || observed.Power != driver.PowerRunning {
-		return e.restoreIssue(ctx, target, AgentSilentID, wire.StatusUnchanged, nil)
+	if heard {
+		return e.endRestoreIssue(ctx, target, AgentSilentID, "the agent of the guest was heard after the restore of the controller")
+	}
+	if observed.Power != driver.PowerRunning {
+		return e.endRestoreIssue(ctx, target, AgentSilentID, "the guest is not running, so a silent agent is no Issue")
 	}
 	return e.restoreIssue(ctx, target, AgentSilentID, wire.StatusDiffers,
 		[]wire.Change{{Attr: "hello", From: nil, To: "any", Risk: wire.RiskRead}})

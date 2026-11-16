@@ -177,7 +177,9 @@ func volumeOf(iss store.Issue) string {
 func (e *Engine) volumeLeftIssue(ctx context.Context, target string, ve *driver.VolumeLeftError) error {
 	return e.restoreIssue(ctx, target, GuestVolumeLeftID, wire.StatusDiffers, []wire.Change{
 		{Attr: "volume", From: ve.Volume, To: nil, Risk: wire.RiskDestructive},
-		{Attr: "way_out", To: fmt.Sprintf("a person runs `pvesm free %s` as root, or a Plumb Target delete frees it", ve.Volume), Risk: wire.RiskRead},
+		// F2 of #375: the poll ends the Issue when the guest config no
+		// longer names the volume, so the way out removes its unused line.
+		{Attr: "way_out", To: fmt.Sprintf("as root: `qm set <vmid> --delete unusedN` (`pct set` for a container; the unused line that names %s), or `pvesm free %s` when no unused line names it; or a Plumb Target delete frees it", ve.Volume, ve.Volume), Risk: wire.RiskRead},
 	})
 }
 
