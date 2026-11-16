@@ -3,6 +3,7 @@ package fake
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/Bernotese/plumb/internal/driver"
 	"github.com/Bernotese/plumb/internal/wire"
@@ -85,8 +86,18 @@ func (d *Driver) diskChange(id driver.GuestID, g *guest, run, next *driver.Guest
 		return nil
 	case want == nil:
 		run.Disks, next.Disks = withDisk(run.Disks, n, nil), withDisk(next.Disks, n, nil)
-		if !have.Foreign && d.diskFreeFails {
+		// As Proxmox (T-244 D7, D8): a detached volume becomes an unusedN
+		// entry of the guest. A foreign storage volume stays so (Plumb never
+		// frees it); a Plumb disk stays so only when its free fails (T-245).
+		if have.Foreign {
+			if vol, _, _ := strings.Cut(have.Raw, ","); vol != "" && !strings.HasPrefix(vol, "/") {
+				run.Unused, next.Unused = appendSorted(run.Unused, vol), appendSorted(next.Unused, vol)
+			}
+			return nil
+		}
+		if d.diskFreeFails {
 			d.leftover = append(d.leftover, have.Volume)
+			run.Unused, next.Unused = appendSorted(run.Unused, have.Volume), appendSorted(next.Unused, have.Volume)
 			return &driver.VolumeLeftError{Slot: n, Volume: have.Volume, Err: fmt.Errorf("fake: free refused")}
 		}
 		return nil
@@ -125,4 +136,25 @@ func (d *Driver) GrowDisk(id driver.GuestID, n, gb int) {
 		}
 	}
 	g.gen++
+}
+
+func appendSorted(list []string, v string) []string {
+	out := append(slices.Clone(list), v)
+	slices.Sort(out)
+	return out
+}
+
+// FreeVolume frees an unused volume of a guest as a person does with
+// pvesm free (T-245): it leaves the guest's unused entries and Leftover.
+func (d *Driver) FreeVolume(id driver.GuestID, vol string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	drop := func(l []string) []string {
+		return slices.DeleteFunc(slices.Clone(l), func(x string) bool { return x == vol })
+	}
+	if g := d.guests[id]; g != nil {
+		g.spec.Unused, g.next.Unused = drop(g.spec.Unused), drop(g.next.Unused)
+		g.gen++
+	}
+	d.leftover = drop(d.leftover)
 }
