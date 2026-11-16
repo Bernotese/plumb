@@ -253,10 +253,15 @@ func TestGuestFirewall(t *testing.T) {
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "plumbfw1", "up")
 	fwSh(t, "nsenter", "--net=/run/netns/"+fwNetns, "ip", "link", "set", "lo", "up")
 	// The MACs are the set ones: nothing changed them (T-250).
-	for _, l := range [][]string{{"ip", "-br", "link", "show", "plumbfw0"}, {"nsenter", "--net=/run/netns/" + fwNetns, "ip", "-br", "link", "show", "plumbfw1"}} {
-		out := fwSh(t, l[0], l[1:]...)
-		if !strings.Contains(out, fwHostMAC) && !strings.Contains(out, fwPeerMAC) {
-			t.Fatalf("a veth MAC is not the set one: %s", out)
+	for _, l := range []struct {
+		mac string
+		cmd []string
+	}{
+		{fwHostMAC, []string{"ip", "-br", "link", "show", "plumbfw0"}},
+		{fwPeerMAC, []string{"nsenter", "--net=/run/netns/" + fwNetns, "ip", "-br", "link", "show", "plumbfw1"}},
+	} {
+		if out := fwSh(t, l.cmd[0], l.cmd[1:]...); !strings.Contains(out, l.mac) {
+			t.Fatalf("the veth MAC is not the set %s: %s", l.mac, out)
 		}
 	}
 	listenAt := time.Now()
