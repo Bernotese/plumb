@@ -1126,10 +1126,11 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if err := e.finishDeletes(ctx, run); err != nil {
 			return err
 		}
-		// T-253 (host step 4): a restore whose step stored "restored" worked;
-		// the stop cut only its follow-up, which recoverRestores makes now.
+		// T-253 (host step 4): a restore whose step stored "restored" worked
+		// (a restore Run has that one step, restorePlanned); the stop cut
+		// only its follow-up, which recoverRestores makes now.
 		status := "failed"
-		if kept[run.ID] && e.restoreRunWorked(ctx, run.ID) {
+		if kept[run.ID] {
 			status = "succeeded"
 		}
 		if err := e.st.FinishRun(ctx, run.ID, status, e.waitsOfRun(ctx, run.ID)); err != nil {

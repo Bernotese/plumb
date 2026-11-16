@@ -307,22 +307,6 @@ func (e *Engine) keepRestoredSteps(ctx context.Context, runs []store.Run) map[in
 	return kept
 }
 
-// restoreRunWorked reports whether a cut restore Run whose step
-// keepRestoredSteps kept has no failed step (T-253, host step 4): the
-// restore worked, so the Run is no failure, and a person is not told to
-// restore again.
-func (e *Engine) restoreRunWorked(ctx context.Context, runID int64) bool {
-	steps, err := e.st.Steps(ctx, runID)
-	if err != nil || len(steps) == 0 {
-		return false
-	}
-	for _, s := range steps {
-		if s.Status != "applied" && s.Status != "unchanged" {
-			return false
-		}
-	}
-	return true
-}
 
 // recoverRestores is the start rule of D-427, after Recover finished the
 // cut Runs: for each open guest:restore-failed in the "running" state
