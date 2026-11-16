@@ -66,7 +66,8 @@ func TestQARestoreGateByState(t *testing.T) {
 
 // D-439 in the restored state, through a real Run (host D10): the
 // re-enroll passes, and an apply token may approve it as before (it is
-// disruptive); a document Plan stays 409.
+// disruptive). D-440: the disks are the restored ones, so a document Plan
+// passes too.
 func TestQARestoreGateRestoredState(t *testing.T) {
 	s := newSafetyEnv(t)
 	s.e.seed(s.adm, "web2")
@@ -80,8 +81,8 @@ func TestQARestoreGateRestoredState(t *testing.T) {
 	s.fr.after = nil
 	s.e.drv.Tamper(driver.GuestID(s.ref), func(g *driver.GuestSpec) { g.IP = oldIP })
 	got := qaGateTry(t, s)
-	if got[0] != 201 || got[1] != 409 || got[2] != 201 || got[3] != 201 {
-		t.Fatalf("restored: %v, want [201 409 201 201]", got)
+	if got[0] != 201 || got[1] != 201 || got[2] != 201 || got[3] != 201 {
+		t.Fatalf("restored: %v, want [201 201 201 201]", got)
 	}
 	code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "qa"})
 	var p struct{ ID int64 }
@@ -175,7 +176,7 @@ func TestQARestoreStopAfterTheFollowUpPlan(t *testing.T) {
 	// T-252: no second Plan is made, so the Issue stays open and names the
 	// open one; the re-enroll Run that works ends it with a comment.
 	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
-	if err != nil || !strings.Contains(string(iss.Changes), "the re-enroll Plan "+itoa(re[0].ID)+" is still open") {
+	if err != nil || !strings.Contains(string(iss.Changes), "approve the re-enroll Plan "+itoa(re[0].ID)) {
 		t.Fatalf("issue %s %v", iss.Changes, err)
 	}
 	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re[0].ID)+"/approve", nil); code != 202 {
@@ -271,7 +272,8 @@ func TestQARestoreNotStartedFromRestoredState(t *testing.T) {
 	if code, body := s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "qa"}); code != 201 {
 		t.Errorf("the re-enroll after a restore that did not start: %d %s", code, body)
 	}
-	if code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "qa", "put": []any{restoreTarget("web1", false)}}); code != 409 {
+	// D-440: the restored state is back with its proof, so a document Plan passes.
+	if code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "qa", "put": []any{restoreTarget("web1", false)}}); code != 201 {
 		t.Errorf("a document Plan: %d %s", code, body)
 	}
 }

@@ -27,9 +27,12 @@ var ErrRestoreFailed = errors.New("the last restore of the Target failed")
 const HumanOnlyRestoreFailed = "restore-failed"
 
 // RestoreFailedIssue returns the id of the open guest:restore-failed Issue
-// of target, or 0 when there is none. "Open" is every status but
-// resolved: a person ends it with "ignore once" (then the Target is free
-// again, by that person's decision) or a restore that works ends it.
+// of target that closes the gate (T-234), or 0 when there is none. "Open"
+// is every status but resolved: a person ends it with "ignore once" (then
+// the Target is free again, by that person's decision) or a restore that
+// works ends it. D-440 (refines D-439): an Issue in a "restored" state
+// with the proof from the store does not close the gate, because the
+// disks are the restored ones; it stays open until the re-enroll Run.
 func (e *Engine) RestoreFailedIssue(ctx context.Context, target string) (int64, error) {
 	iss, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -38,7 +41,39 @@ func (e *Engine) RestoreFailedIssue(ctx context.Context, target string) (int64, 
 	if err != nil {
 		return 0, err
 	}
+	if e.RestoredOK(ctx, iss) {
+		return 0, nil
+	}
 	return iss.ID, nil
+}
+
+// restoredWaiting reports whether target has an open guest:restore-failed
+// Issue in a proven "restored" state: the guest waits for its re-enroll.
+func (e *Engine) restoredWaiting(ctx context.Context, target string) bool {
+	iss, err := e.st.OpenIssue(ctx, target, GuestRestoreFailedID)
+	return err == nil && e.RestoredOK(ctx, iss)
+}
+
+// RestoredOK reports whether the guest:restore-failed Issue iss is in a
+// "restored" state (its restore change starts with "restored") and the
+// store proves it: the restore Run that it names stored "restored" for
+// the guest (restoredProof). A restore that starts later writes "running"
+// and so ends the proof at its start (H1 of #374).
+func (e *Engine) RestoredOK(ctx context.Context, iss store.Issue) bool {
+	if iss.Resource != GuestRestoreFailedID {
+		return false
+	}
+	var ch []wire.Change
+	if json.Unmarshal(iss.Changes, &ch) != nil {
+		return false
+	}
+	restored := false
+	for _, c := range ch {
+		if from, _ := c.From.(string); c.Attr == "restore" && strings.HasPrefix(from, "restored") {
+			restored = true
+		}
+	}
+	return restored && e.restoredProof(ctx, iss)
 }
 
 // restoreFailedError is the refusal of a Plan for a Target whose last

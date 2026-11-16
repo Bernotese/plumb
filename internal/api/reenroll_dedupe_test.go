@@ -13,6 +13,7 @@ import (
 	"github.com/Bernotese/plumb/internal/driver/fake"
 	"github.com/Bernotese/plumb/internal/plan"
 	"github.com/Bernotese/plumb/internal/store"
+	"github.com/Bernotese/plumb/internal/wire"
 )
 
 // reenrollOf returns the open re-enroll Plans (pending) of the env.
@@ -67,8 +68,10 @@ func TestSecondRestoreAfterAFinishedReenroll(t *testing.T) {
 			if len(second) != 1 || second[0] == first[0] {
 				t.Fatalf("no new re-enroll Plan after the second restore: %v (first %d)", second, first[0])
 			}
-			if c := lastComment(t, s, plan.GuestRestoreFailedID); !strings.Contains(c, "approve the re-enroll Plan "+itoa(second[0])) || strings.Contains(c, itoa(first[0])+" is still open") {
-				t.Errorf("the Issue's end names %q", c)
+			// D-440: the Issue waits for the new Plan's Run and names it.
+			iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+			if err != nil || !strings.Contains(string(iss.Changes), "approve the re-enroll Plan "+itoa(second[0])) {
+				t.Errorf("the Issue: %s %v", iss.Changes, err)
 			}
 		})
 	}
@@ -99,7 +102,7 @@ func TestReenrollApprovedRunStillCounts(t *testing.T) {
 		t.Fatalf("a second re-enroll Plan while the first one runs: %v", got)
 	}
 	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
-	if err != nil || !strings.Contains(string(iss.Changes), "the re-enroll Plan "+itoa(first[0])+" is still open") {
+	if err != nil || !strings.Contains(string(iss.Changes), "approve the re-enroll Plan "+itoa(first[0])) {
 		t.Fatalf("issue %s %v", iss.Changes, err)
 	}
 }
@@ -129,7 +132,31 @@ func TestReenrollOfAnotherTargetDoesNotCount(t *testing.T) {
 	if targets["web1"] != 1 || targets["web2"] != 1 {
 		t.Fatalf("re-enroll Plans by Target: %v", targets)
 	}
-	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Error("web1's Issue stays open: web2's Plan was counted")
+	// D-440: web1's Issue waits for web1's own Plan, never web2's.
+	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
+	if err != nil {
+		t.Fatal(err)
 	}
+	var ch []wire.Change
+	json.Unmarshal(iss.Changes, &ch)
+	for _, c := range ch {
+		if c.Attr == plan.AttrReenrollPlan {
+			if n, _ := c.To.(float64); int64(n) != s.reenrollOf(t, "web1") {
+				t.Errorf("web1's Issue names Plan %v, not web1's own", c.To)
+			}
+		}
+	}
+}
+
+// reenrollOf returns the pending re-enroll Plan of target, or 0.
+func (s *safetyEnv) reenrollOf(t *testing.T, target string) int64 {
+	t.Helper()
+	ps, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll)
+	for _, p := range ps {
+		var tps []plan.TargetPlan
+		if json.Unmarshal(p.Changes, &tps) == nil && len(tps) == 1 && tps[0].Target == target {
+			return p.ID
+		}
+	}
+	return 0
 }

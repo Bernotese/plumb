@@ -169,6 +169,9 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	if v.Status != "resolved" || v.Resolution == nil || v.Resolution.By != "system" || len(v.Comments) == 0 || !strings.Contains(v.Comments[len(v.Comments)-1].Body, "A restore replaced the guest") {
 		t.Fatalf("stale Issue after the restore: %+v", v)
 	}
+	// D-440 (refines D-439): the store proves the restore worked, so the
+	// poll compares the restored guest again, and its real drift opens a
+	// new Issue with its actions (the old rule of T-234).
 	if err := e.eng.CheckGuests(e.ctx); err != nil { // no digest reset: the Run left it empty
 		t.Fatal(err)
 	}
@@ -178,6 +181,66 @@ func TestRestoreFailedNoDriftNoRevert(t *testing.T) {
 	}
 	if v := s.issue(t, next.ID); v.ActionsBlockedBy != nil || len(v.Actions) == 0 {
 		t.Errorf("the new Issue has no actions: %+v", v)
+	}
+	// The re-enroll Run fails here (the Plan grows the disk, and the fake
+	// agent has no root grow command). The Issue stays open (D-440).
+	re := s.reenrollOf(t, "web1")
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re)+"/approve", nil); code != 202 {
+		t.Fatalf("approve the re-enroll: %d %s", code, body)
+	}
+	e.eng.Wait()
+	if r, _ := e.st.RunOfPlan(e.ctx, re); r.Status != "failed" {
+		t.Fatalf("the re-enroll Run: %s", r.Status)
+	}
+	if v := s.issue(t, rf.ID); v.Status != "open" || !strings.Contains(v.ActionsNote, "the re-enroll Plan "+itoa(re)+" can no longer run (its Run failed): plan the re-enroll again") {
+		t.Fatalf("the Issue after a failed re-enroll Run: %+v", v)
+	}
+	// A document Plan passes and its Run works without the agent (the
+	// guest waits for its re-enroll): the Target takes the restored memory.
+	mem := doc(state.KindTarget, "web1", `{"type":"vm","image":"ubuntu","allow_restart":true,"guest":{"cores":2,"memory":4096,"disk":10,"bridge":"vmbr0"},`+
+		`"blocks":[{"use":"motd","params":{"text":"hello"}}]}`)
+	code, body = s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "the restored memory", "put": []state.Doc{mem}})
+	var acc struct{ ID int64 }
+	json.Unmarshal(body, &acc)
+	if code != 201 || acc.ID == 0 {
+		t.Fatalf("a document Plan of the restored guest: %d %s", code, body)
+	}
+	// No agent step in it: the re-enroll Run grows the root file system.
+	if strings.Contains(string(body), `"root_fs"`) {
+		t.Errorf("the document Plan grows the root file system without an agent: %s", body)
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(acc.ID)+"/approve", nil); code != 202 {
+		t.Fatalf("approve the accept: %d %s", code, body)
+	}
+	e.eng.Wait()
+	if r, _ := e.st.RunOfPlan(e.ctx, acc.ID); r.Status != "succeeded" {
+		steps, _ := e.st.Steps(e.ctx, r.ID)
+		t.Fatalf("the document Run: %s %+v", r.Status, steps)
+	}
+	// Then the re-enroll again (M-A of #382): the first one grew the disk,
+	// so the root file system grow is pending. The re-enroll Plan shows it
+	// and its Run does it with the new agent; it ends the Issue.
+	if b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); b.RootGrow == 0 {
+		t.Fatal("no pending root grow after the failed re-enroll")
+	}
+	var grown []int64
+	e.agents["web1"].OnGrow(func(b wire.GrowBody) wire.Item {
+		grown = append(grown, b.MinBytes)
+		return wire.Item{Resource: wire.GrowItemID, Status: wire.StatusApplied}
+	})
+	code, body = s.adm.do("POST", "/api/v1/targets/web1/reenroll", map[string]any{"reason": "again"})
+	if code != 201 || !strings.Contains(string(body), `"root_fs"`) {
+		t.Fatalf("re-enroll again (with the pending root grow): %d %s", code, body)
+	}
+	id := s.reenrollDone(t)
+	if b, _ := e.st.GetBinding(e.ctx, state.KindTarget, "web1"); b.RootGrow != 0 || len(grown) != 1 {
+		t.Errorf("the re-enroll Run did not grow the root file system: pending %d, grow calls %v", b.RootGrow, grown)
+	}
+	if v := s.issue(t, rf.ID); v.Status != "resolved" || !strings.Contains(v.Comments[len(v.Comments)-1].Body, "the re-enroll Plan "+itoa(id)+" worked after the restore") {
+		t.Fatalf("the Issue after the re-enroll: %+v", v)
+	}
+	if st, _ := e.drv.Observe(e.ctx, gid); st.Spec.MemoryMB != 4096 {
+		t.Errorf("the accepted memory: %d", st.Spec.MemoryMB)
 	}
 }
 
@@ -302,8 +365,9 @@ func TestRestoreIssueOpenDuringTheCall(t *testing.T) {
 	if !open || !strings.HasPrefix(during.ActionsNote, "running: if this restore does not end") {
 		t.Fatalf("no Issue during the restore call: %v %+v", open, during)
 	}
+	s.reenrollDone(t) // D-440: the Issue ends at the re-enroll Run
 	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Error("the Issue stays after a restore that worked")
+		t.Error("the Issue stays after the re-enroll Run worked")
 	}
 	// A stop inside the call: the state that a restart finds is the Issue
 	// above with no running Run; the gate then holds (poll and Plans).

@@ -80,10 +80,15 @@ func TestRestoreStopAfterTheCall(t *testing.T) {
 		iss, _ := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
 		t.Fatalf("re-enroll Plans: %d; issue %s", len(re), iss.Changes)
 	}
-	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Fatal("the Issue stays open")
+	// D-440: the Issue waits in the "restored" state for the re-enroll Run.
+	if !s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatal("the Issue ended at the Plan, not at its Run")
 	}
-	if c := lastComment(t, s, plan.GuestRestoreFailedID); !strings.Contains(c, "a restore worked in run") || !strings.Contains(c, "approve the re-enroll Plan") {
+	re := s.reenrollDone(t)
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Fatal("the Issue stays open after the re-enroll Run worked")
+	}
+	if c := lastComment(t, s, plan.GuestRestoreFailedID); !strings.Contains(c, "the re-enroll Plan "+itoa(re)+" worked after the restore") {
 		t.Errorf("comment %q", c)
 	}
 	steps, _ := s.e.st.Steps(s.e.ctx, run.ID)
@@ -139,9 +144,11 @@ func TestRestoredReenrollRefused(t *testing.T) {
 	if n := len([]rune(v.ActionsNote)); n > 300+400 {
 		t.Errorf("the note is not cut: %d runes", n)
 	}
-	// Another Plan of the Target: 409, as before.
+	// D-440: the gate is open in the restored state; another Plan of the
+	// Target meets only the planning's own checks (here the create-only
+	// address that the guest holds).
 	code, body := s.adm.do("POST", "/api/v1/plans", map[string]any{"reason": "x", "put": []any{restoreTarget("web1", false)}})
-	if code != 409 || problemType(body) != "restore-failed" {
+	if problemType(body) == "restore-failed" {
 		t.Errorf("another Plan: %d %s", code, body)
 	}
 	// A person fixes it in Proxmox; the re-enroll Plan passes; who
@@ -186,7 +193,7 @@ func TestOneReenrollPlan(t *testing.T) {
 	}
 	// T-252: no second Plan, so the Issue stays open and names the open one.
 	iss, err := s.e.st.OpenIssue(s.e.ctx, "web1", plan.GuestRestoreFailedID)
-	if err != nil || !strings.Contains(string(iss.Changes), "the re-enroll Plan "+itoa(re[0].ID)+" is still open") {
+	if err != nil || !strings.Contains(string(iss.Changes), "approve the re-enroll Plan "+itoa(re[0].ID)) {
 		t.Fatalf("issue %s %v", iss.Changes, err)
 	}
 	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(re[0].ID)+"/approve", nil); code != 202 {
@@ -269,12 +276,12 @@ func TestSystemResolutionsHaveComments(t *testing.T) {
 	s.restore(t, "3f2a9c0d1e4b5a67", false)
 	s.fr.fail = nil
 	s.restore(t, "5afe000000000001", false)
+	s.reenrollDone(t) // D-440: the re-enroll Run ends that Issue
 	// A cut restore found at a start.
 	cutRestore(t, s, "restored backup 3f2a9c0d1e4b5a67 of 2026-11-15T03:00:12Z")
 	e.eng.Recover(e.ctx)
-	// The follow-up of the cut restore made a new re-enroll Plan (the one
-	// of the way back is stale: the head moved); its Run is one more
-	// system end with a comment.
+	// The follow-up of the cut restore made a new re-enroll Plan; its Run
+	// is one more system end with a comment.
 	re, _ := e.st.PendingPlans(e.ctx, plan.OriginReenroll)
 	if len(re) > 0 {
 		newest := re[0].ID
@@ -467,10 +474,43 @@ func TestRestoreFromRestoredStateWorks(t *testing.T) {
 	if status, out := s.restore(t, "3f2a9c0d1e4b5a67", false); status != "succeeded" || s.fr.safeties != safeties+1 {
 		t.Fatalf("restore: %s %s, safety backups %d → %d", status, out, safeties, s.fr.safeties)
 	}
-	if s.openIssue(plan.GuestRestoreFailedID) {
-		t.Error("the Issue stays after a restore and a re-enroll Plan")
-	}
 	if re, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll); len(re) != 1 {
 		t.Errorf("re-enroll Plans: %d", len(re))
 	}
+	s.reenrollDone(t) // D-440: the Issue ends at the re-enroll Run
+	if s.openIssue(plan.GuestRestoreFailedID) {
+		t.Error("the Issue stays after the re-enroll Run worked")
+	}
+}
+
+// reenrollDone approves the newest pending re-enroll Plan of web1 and waits
+// for its Run (D-440: the restore Issue ends only at that Run).
+func (s *safetyEnv) reenrollDone(t *testing.T) int64 {
+	t.Helper()
+	ps, _ := s.e.st.PendingPlans(s.e.ctx, plan.OriginReenroll)
+	var id int64
+	for _, p := range ps {
+		var tps []plan.TargetPlan
+		if json.Unmarshal(p.Changes, &tps) == nil && len(tps) == 1 && tps[0].Target == "web1" && p.ID > id {
+			id = p.ID
+		}
+	}
+	if id == 0 {
+		t.Fatal("no pending re-enroll Plan of web1")
+	}
+	if code, body := s.adm.do("POST", "/api/v1/plans/"+itoa(id)+"/approve", nil); code != 202 {
+		t.Fatalf("approve the re-enroll %d: %d %s", id, code, body)
+	}
+	s.e.eng.Wait()
+	if r, _ := s.e.st.RunOfPlan(s.e.ctx, id); r.Status != "succeeded" {
+		steps, _ := s.e.st.Steps(s.e.ctx, r.ID)
+		var outs []string
+		for _, st := range steps {
+			if st.Status != "applied" && st.Status != "unchanged" {
+				outs = append(outs, st.Resource+": "+st.Output)
+			}
+		}
+		t.Fatalf("the re-enroll Run %d: %s %v", r.ID, r.Status, outs)
+	}
+	return id
 }
