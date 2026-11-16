@@ -381,7 +381,7 @@ func (s *Server) issueView(ctx context.Context, i store.Issue) (issueView, error
 		v.Changes = changes(rest)
 		if i.Status == store.IssueOpen {
 			v.ActionsNote = plan.RestoreFailedIgnoreNote // M1 of #352: for the confirm of ignore
-			if note := plan.RestoredNote(ch); note != "" {
+			if note := s.cfg.Plans.RestoredActionNote(ctx, i); note != "" {
 				v.ActionsNote = note // D-439: the "restored" state and its way out
 			}
 		}

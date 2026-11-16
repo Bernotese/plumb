@@ -19,7 +19,7 @@ import (
 // Only agent.last_seen_at is left out (see below).
 func qaImportDB(t *testing.T, e *env, tables ...string) string {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(e.dir, "plumb.db")+"?mode=ro")
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(e.dir, "plumb.db")+"?mode=ro&_pragma=busy_timeout(5000)") // T-251: the live server may write
 	if err != nil {
 		t.Fatal(err)
 	}

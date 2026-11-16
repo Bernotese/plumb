@@ -92,11 +92,9 @@ func TestAgentWithRealLink(t *testing.T) {
 		t.Fatalf("apply result: %+v", rep)
 	}
 	// Fail the real TouchAgent write, then recover without re-enrollment.
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	// The agent keeps polling, so the link may hold the write lock right
+	// now: the second connection waits for it (T-251).
+	db := openRawDB(t, dbPath)
 	if _, err := db.Exec(`CREATE TRIGGER fail_touch BEFORE UPDATE OF last_seen_at ON agent BEGIN SELECT RAISE(FAIL, 'private store failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -175,4 +173,57 @@ waitBusy:
 	if rep := receive(wire.ReportResult, id); rep.Error != "" || len(rep.Items) != 1 || rep.Items[0].Status != wire.StatusUnchanged {
 		t.Fatalf("recovered observe: %+v", rep)
 	}
+}
+
+// openRawDB opens a second connection to the store's file for a test, with
+// the busy timeout of store.Open: a write of the running link (TouchAgent
+// at each poll) holds the write lock for a moment, and a connection
+// without a busy timeout then fails at once with SQLITE_BUSY (T-251; CI
+// of #376 at 14887f2).
+func openRawDB(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// T-251: the second connection of TestAgentWithRealLink waits for a writer
+// instead of failing. A writer holds the lock on purpose (BEGIN IMMEDIATE,
+// as the store's transactions); the DDL through openRawDB must wait and
+// succeed. Without the busy timeout it fails with SQLITE_BUSY every time.
+func TestRawDBWaitsForAWriter(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "busy.db")
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	holder, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { holder.Close() })
+	conn, err := holder.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(200 * time.Millisecond) // the writer keeps the lock for a while
+		conn.ExecContext(ctx, "COMMIT")
+		conn.Close()
+		close(released)
+	}()
+	db := openRawDB(t, path)
+	if _, err := db.Exec(`CREATE TRIGGER t251 BEFORE UPDATE OF last_seen_at ON agent BEGIN SELECT 1; END`); err != nil {
+		t.Fatalf("the second connection did not wait for the writer: %v", err)
+	}
+	<-released
 }
