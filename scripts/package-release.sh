@@ -30,6 +30,12 @@ make build VERSION="$version" \
 [[ $(bin/plumb --version) == "plumb $version" ]]
 [[ $(bin/plumb-agent version) == "plumb-agent $version" ]]
 install -m 0755 bin/plumb bin/plumb-agent install/install.sh "$stage/"
+# T-257: the bundle's installer knows its release and then needs SHA256SUMS.
+sed -i "s/^RELEASE_VERSION=\"\"\$/RELEASE_VERSION=\"$version\"/" "$stage/install.sh"
+grep -qx "RELEASE_VERSION=\"$version\"" "$stage/install.sh" || {
+  echo 'package-release.sh: cannot stamp the release version into install.sh' >&2
+  exit 1
+}
 (cd "$stage" && sha256sum plumb plumb-agent install.sh > SHA256SUMS && chmod 0644 SHA256SUMS && sha256sum -c SHA256SUMS)
 # Fix all archive metadata; gzip -n omits its timestamp and original filename.
 archive="plumb-${version}-linux-amd64.tar.gz"

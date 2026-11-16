@@ -345,6 +345,13 @@ pct)
 			[[ ${FAKE_BACKUP_NOW_FAIL:-0} == 1 ]] && exit 1
 			touch "$st/backup-now"
 			;;
+		# T-257: the installed plumb tells its version (the pushed file runs).
+		"/usr/local/bin/plumb version")
+			# FAKE_VERSION_HOOK runs here: between the bundle check and the push.
+			[[ -z ${FAKE_VERSION_HOOK:-} ]] || bash -c "$FAKE_VERSION_HOOK"
+			[[ -x $st/push/_usr_local_bin_plumb ]] || exit 127
+			"$st/push/_usr_local_bin_plumb" version
+			;;
 		"test -s /etc/plumb/plumb.env") [[ -e $st/push/_etc_plumb_plumb.env ]] ;;
 		"grep -q ^"*" /etc/plumb/plumb.env") grep -q "$3" "$st/push/_etc_plumb_plumb.env" ;;
 		"grep -qx "*" /etc/plumb/plumb.env") grep -qxF "$3" "$st/push/_etc_plumb_plumb.env" ;;
