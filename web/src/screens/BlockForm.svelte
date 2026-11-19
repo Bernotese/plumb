@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import resourceKinds from "../lib/resourceKinds.json";
+  import { KINDS, keyAttr as typeKey } from "../lib/resourceTypes";
   import type { Field } from "../lib/schemaForm";
 
   /** One resource of the preview: its type and its key, as the server names it (`file:/etc/motd`). */
@@ -14,16 +14,9 @@
     only?: string;
   }
 
-  /**
-   * The key attribute of each resource type. A hand copy of `Type.Key` in
-   * internal/resource/resource.go: the tests pin the path-keyed types, so a
-   * new type needs a line here (one source, through resourceKinds.json, is a
-   * later card).
-   */
-  const PATH_KEYED = new Set(["file", "directory", "symlink"]);
-  export const keyAttr = (type: string) => (PATH_KEYED.has(type) ? "path" : "name");
+  /** The key attribute of a resource type (lib/resourceTypes, from internal/resource). */
+  export const keyAttr = typeKey;
 
-  const KINDS: Record<string, readonly string[]> = resourceKinds;
   const ALL_KINDS = [...new Set(Object.values(KINDS).flat())];
 
   /** Go text/template actions; `{{- ` and ` -}}` trim the whitespace next to them. */

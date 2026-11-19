@@ -1,15 +1,54 @@
 {
-  "apt_repository": ["vm", "lxc"],
-  "command": ["vm", "lxc"],
-  "directory": ["vm", "lxc"],
-  "file": ["vm", "lxc"],
-  "firewall": ["vm", "lxc"],
-  "group": ["vm", "lxc"],
-  "network": ["vm"],
-  "package": ["vm", "lxc"],
-  "service": ["vm", "lxc"],
-  "symlink": ["vm", "lxc"],
-  "sysctl": ["vm"],
-  "unit": ["vm", "lxc"],
-  "user": ["vm", "lxc"]
+  "apt_repository": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  },
+  "command": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  },
+  "directory": {
+    "kinds": ["vm", "lxc"],
+    "key": "path"
+  },
+  "file": {
+    "kinds": ["vm", "lxc"],
+    "key": "path"
+  },
+  "firewall": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  },
+  "group": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  },
+  "network": {
+    "kinds": ["vm"],
+    "key": "name"
+  },
+  "package": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  },
+  "service": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  },
+  "symlink": {
+    "kinds": ["vm", "lxc"],
+    "key": "path"
+  },
+  "sysctl": {
+    "kinds": ["vm"],
+    "key": "name"
+  },
+  "unit": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  },
+  "user": {
+    "kinds": ["vm", "lxc"],
+    "key": "name"
+  }
 }

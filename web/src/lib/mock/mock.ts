@@ -2,6 +2,7 @@
 // examples of api/openapi.yaml; it computes plans, runs and events the way
 // the server does (ARCHITECTURE §3, §4), in a much simpler form.
 import { ApiError } from "../api";
+import { keyAttr } from "../resourceTypes";
 import type {
   CatalogBlock,
   GuestBackup,
@@ -146,15 +147,6 @@ export function renderValue(v: unknown, params: Record<string, unknown>): unknow
   return v;
 }
 
-const keyAttr: Record<string, string> = {
-  file: "path",
-  directory: "path",
-  package: "name",
-  service: "name",
-  user: "name",
-  symlink: "path",
-};
-
 /** The Block use that renders a resource, or null (D-301: Issue.source, RawResource.source). */
 export function sourceOf(
   spec: TargetDoc["spec"],
@@ -243,7 +235,7 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
       if (!type || !rawAttrs) continue;
       const attrs: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(rawAttrs)) attrs[k] = renderValue(v, params);
-      const id = `${type}:${String(attrs[keyAttr[type] ?? "name"])}`;
+      const id = `${type}:${String(attrs[keyAttr(type)])}`;
       const r: Rendered = { id, type, attrs };
       // The first resource of a use waits for the `after` ids of its Block (D-167).
       if (!ids.length && block.spec.after?.length) r.after = [...block.spec.after];

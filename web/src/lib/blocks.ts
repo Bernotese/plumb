@@ -1,5 +1,5 @@
 // Helpers of the Blocks screens (T-096). Pure functions, so the screens stay thin.
-import resourceKinds from "./resourceKinds.json";
+import { KINDS } from "./resourceTypes";
 import type { BlockDoc, ImageView, TargetView } from "./types";
 import type { GuestKind } from "./view";
 
@@ -51,10 +51,6 @@ export function resourceTypes(doc: BlockDoc): string[] {
   }
   return out;
 }
-
-// The target kinds of each resource type; a Go test keeps it equal to the
-// table in internal/resource (D-260).
-const KINDS: Record<string, readonly string[]> = resourceKinds;
 
 /**
  * The resource types of a Block that a Target of this kind does not
