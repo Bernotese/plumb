@@ -115,7 +115,7 @@ func TestCheckReleaseBundle(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("no bash")
 	}
-	noDist := filepath.Join(t.TempDir(), "no-dist")
+	noDist := t.TempDir() // a built web/dist with no .map file
 	if code, out := runCheck(t, writeTarball(t, members(goodFiles(t))), noDist); code != 0 || !strings.Contains(out, `check-release-bundle: ok (RELEASE_VERSION="v0.1.0"`) {
 		t.Fatalf("a right bundle: %d %s", code, out)
 	}
@@ -126,13 +126,17 @@ func TestCheckReleaseBundle(t *testing.T) {
 	}{
 		"an extra member": {make: func(t *testing.T) []member {
 			return append(members(goodFiles(t)), member{name: "evil", data: []byte("x")})
-		}, want: "not exactly plumb"},
-		"a missing member": {make: func(t *testing.T) []member { return members(goodFiles(t))[:3] }, want: "not exactly plumb"},
+		}, want: `holds the member "evil"`},
+		"a missing member": {make: func(t *testing.T) []member { return members(goodFiles(t))[:3] }, want: "holds 3 members"},
+		"a member twice": {make: func(t *testing.T) []member {
+			ms := members(goodFiles(t))
+			return append(ms[:3], ms[0])
+		}, want: "holds the member plumb twice"},
 		"a member in a folder": {make: func(t *testing.T) []member {
 			ms := members(goodFiles(t))
 			ms[0].name = "x/plumb"
 			return ms
-		}, want: "not exactly plumb"},
+		}, want: `holds the member "x/plumb"`},
 		"a link member": {make: func(t *testing.T) []member {
 			ms := members(goodFiles(t))
 			ms[1] = member{name: "plumb-agent", typ: tar.TypeSymlink, link: "/usr/bin/true"}
@@ -187,6 +191,21 @@ func TestCheckReleaseBundle(t *testing.T) {
 			f["SHA256SUMS"] = sumsOf(f, "plumb", "plumb-agent", "install.sh")
 			return members(f)
 		}, want: "holds a sourceMappingURL"},
+		// L2 of #391: one member named "install.sh plumb" passed a compare of
+		// the names joined by spaces.
+		"one member with two names": {make: func(t *testing.T) []member {
+			f := goodFiles(t)
+			return []member{{name: "SHA256SUMS", data: f["SHA256SUMS"]}, {name: "install.sh plumb", data: f["plumb"]}, {name: "plumb-agent", data: f["plumb-agent"]}}
+		}, want: `holds the member "install.sh plumb"`},
+		"an odd member name": {make: func(t *testing.T) []member {
+			ms := members(goodFiles(t))
+			ms[1].name = "plumb-agent2"
+			return ms
+		}, want: `holds the member "plumb-agent2"`},
+		// L1 of #391: a missing web/dist is no silent skip of the .map check.
+		"web/dist missing": {make: func(t *testing.T) []member { return members(goodFiles(t)) }, dist: func(t *testing.T) string {
+			return filepath.Join(t.TempDir(), "no-dist")
+		}, want: "is not a folder: the .map check cannot run"},
 		"a .map file in web/dist": {make: func(t *testing.T) []member { return members(goodFiles(t)) }, dist: func(t *testing.T) string {
 			d := t.TempDir()
 			os.MkdirAll(filepath.Join(d, "assets"), 0o755)

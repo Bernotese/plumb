@@ -15,7 +15,7 @@ GO_FILES     = $(shell find . -name '*.go' -not -path '*/node_modules/*')
 # npm ci runs only when the lock file changed; npm writes this file on every install.
 WEB_DEPS     = web/node_modules/.package-lock.json
 
-.PHONY: build check-embed build-web test test-go test-race test-web test-e2e lint lint-go lint-sh lint-web vuln test-guest test-guest-lxd test-pve clean
+.PHONY: build check-embed build-web test test-go test-scripts test-race test-web test-e2e lint lint-go lint-sh lint-web vuln test-guest test-guest-lxd test-pve clean
 
 ## build: web UI and both static binaries → bin/
 build: build-web
@@ -36,7 +36,11 @@ build-web: $(WEB_DEPS)
 	cd web && npm run build
 
 ## test: all tests that need no Proxmox host and no root
-test: test-go test-web
+test: test-go test-web test-scripts
+
+## test-scripts: tests of the repo scripts (leak-scan.py, T-256; fake values only)
+test-scripts:
+	python3 -I scripts/leak_scan_test.py
 
 test-go:
 	go test ./...
