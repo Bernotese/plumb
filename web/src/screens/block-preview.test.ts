@@ -3,7 +3,7 @@
 // and the resource list, updated while the person types. It is a local
 // approximation; the server renders only when a plan is made.
 import { afterEach, describe, expect, it } from "vitest";
-import { resourceTypes } from "../lib/resourceTypes";
+import { typeNames } from "../lib/resourceTypes";
 import { createMockApi } from "../lib/mock/mock";
 import { fieldsOf } from "../lib/schemaForm";
 import BlockForm, {
@@ -25,9 +25,9 @@ const preview = () => text(el("aside.preview"));
 
 describe("block preview helpers", () => {
   it("names the key attribute of every resource type as internal/resource does", () => {
-    const path = resourceTypes().filter((t) => keyAttr(t) === "path");
+    const path = typeNames().filter((t) => keyAttr(t) === "path");
     expect(path.sort()).toEqual(["directory", "file", "symlink"]);
-    for (const t of resourceTypes()) if (!path.includes(t)) expect(keyAttr(t), t).toBe("name");
+    for (const t of typeNames()) if (!path.includes(t)) expect(keyAttr(t), t).toBe("name");
   });
 
   it("fills simple actions with scalar parameters and trims like Go", () => {

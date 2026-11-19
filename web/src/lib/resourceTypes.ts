@@ -17,4 +17,4 @@ export const KINDS: Record<string, readonly string[]> = Object.fromEntries(
 export const keyAttr = (type: string): string => TYPES[type]?.key ?? "name";
 
 /** The resource type names, sorted. */
-export const resourceTypes = (): string[] => Object.keys(TYPES).sort();
+export const typeNames = (): string[] => Object.keys(TYPES).sort();
