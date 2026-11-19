@@ -178,6 +178,21 @@ func (e *Engine) CheckGuests(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// runDigest is the digest that a Run stores after it wrote or read the
+// guest. The poll compares a guest only when its digest changed, so a Run
+// that fixed a drift and stored the new digest left the open guest:config
+// Issue open although nothing differed any more (T-247 F2; row 82 of the
+// T-260 log). While such an Issue is open, the Run stores no digest: the
+// next poll compares the guest again and ends the Issue when it is no
+// longer true (with its system comment, D-428), or keeps it. A store error
+// also gives "": one more compare is safe, a missed one is not.
+func (e *Engine) runDigest(ctx context.Context, target string, st driver.GuestState) string {
+	if _, err := e.st.OpenIssue(ctx, target, wire.GuestConfigID); !errors.Is(err, store.ErrNotFound) {
+		return ""
+	}
+	return pollKey(st)
+}
+
 // Live is the live status of a target: what the API shows next to the
 // desired state. It is not part of the state.
 type Live struct {

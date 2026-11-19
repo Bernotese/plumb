@@ -280,7 +280,7 @@ the guests in the pool get the right too. Nothing else is given.
        - **A disk that a person added to a container** on the disk storage of the install counts as
          Plumb's: list it with its slot, size and path to keep it. A disk on another storage, a bind
          mount or a device, Plumb did not make: as for a VM, the Plan refuses or detaches it.
-     - Every disk counts for the 85 % gate of the disk storage. A user or token with the role
+     - Every disk counts for the disk gate of the disk storage (85 % by default). A user or token with the role
        apply can approve an add (up to 3 × 4096 GiB per Target), but no remove.
      - An adopted Target keeps the disks that the guest has; Plumb adds none.
    - **Guest backups:** daily or weekly at a time (UTC), and how many to keep. See "Guest backups"
@@ -629,7 +629,8 @@ fails, the guest is left empty. So the Run first takes a safety backup of the gu
 the list as "safety backup before a restore", and "keep" never counts or deletes it. After a
 restore that worked, it stays, so you can undo the restore; it replaces the older safety backup of
 the guest. After the restore of a safety backup itself, Plumb keeps that one and every newer one,
-and deletes only older safety backups.
+and deletes only older safety backups. If the controller stops during a restore, the older safety
+backups of that guest stay until its next restore that works; you may delete them in Proxmox.
 
 If the restore fails, the Run says that the guest may have no disk, and Plumb opens the Issue
 `guest:restore-failed`. It names the safety backup, and its link opens the restore of that backup.

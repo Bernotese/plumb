@@ -40,7 +40,9 @@ var reCTDiskKey = regexp.MustCompile(`^(rootfs|(mp|unused)[0-9]+)$`)
 // guestDisks returns the volumes of a guest's config by key (the volume
 // part of each value), to prove later that a refused restore changed no
 // disk. T-253: a container too (host fact of T-247 3c: PVE refuses the
-// network before it touches the rootfs).
+// network before it touches the rootfs). A compare of names cannot see a
+// volume destroyed and made again under the same name; for a VM the proof
+// also rests on the task's exit status and the order of the restore steps.
 func (d *Driver) guestDisks(ctx context.Context, m member) (map[string]string, error) {
 	cfg, err := d.readPath(ctx, guestPath(d, m), true)
 	if err != nil {

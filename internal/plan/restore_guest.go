@@ -863,6 +863,12 @@ func (e *Engine) restoreFollowUp(ctx context.Context, p store.Plan, target strin
 		open, err := e.openReenroll(ctx, target)
 		if err != nil {
 			e.log.Error("re-enroll after the restore", "target", target, "plan", p.ID, "err", err)
+			// Row 74 of the T-260 log (host D10): Plumb's reason goes into
+			// the Issue, not only into the log. The Issue stays open in the
+			// "restored" state (D-440); the store text stays in the log.
+			e.reenrollNotMade(ctx, target, runID,
+				"the re-enroll Plan could not be made: Plumb could not read its Plans (see the controller log)",
+				"plan the re-enroll again: POST /targets/"+target+"/reenroll")
 			return
 		}
 		if open != 0 {
@@ -935,11 +941,17 @@ func (e *Engine) reenrollRefused(ctx context.Context, target string, runID int64
 		// refusal is never guest text (D-250 names the Proxmox config).
 		why += ": " + cutRunes(pe.Msg, 300)
 	}
+	e.reenrollNotMade(ctx, target, runID, why, "remove the addition in Proxmox, then POST /targets/"+target+"/reenroll")
+}
+
+// reenrollNotMade keeps the guest:restore-failed Issue open in the
+// "restored" state with why no re-enroll Plan was made and the way out.
+func (e *Engine) reenrollNotMade(ctx context.Context, target string, runID int64, why, way string) {
 	if ierr := e.restoreIssue(ctx, target, GuestRestoreFailedID, wire.StatusDiffers, []wire.Change{
-		{Attr: "restore", From: RestoredRefusedPrefix + why, To: "remove the addition in Proxmox, then POST /targets/" + target + "/reenroll", Risk: wire.RiskDisruptive},
+		{Attr: "restore", From: RestoredRefusedPrefix + why, To: way, Risk: wire.RiskDisruptive},
 		{Attr: AttrRestoreRun, To: runID, Risk: wire.RiskRead},
 	}); ierr != nil {
-		e.log.Error("show the refused re-enroll in the Issue", "target", target, "err", ierr)
+		e.log.Error("show the missing re-enroll Plan in the Issue", "target", target, "err", ierr)
 	}
 }
 
