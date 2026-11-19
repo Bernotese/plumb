@@ -425,9 +425,18 @@ To update Plumb, run the new `install.sh` with the new `plumb` binary. Use the s
 the install. The same run repairs a broken install. Try `--dry-run` first.
 
 Agents in the guests never update by themselves: each update is a Plan that a person approves.
-After an update of Plumb, the agent page of each Target shows **Update available**. Plumb proposes
-the update Plan by itself only when the new agent can do other things than the old one; otherwise
-use **Propose agent update** on the agent page, once per Target.
+After an update of Plumb, the agent page of each Target shows one of these states:
+
+- **Update available:** this Plumb serves a newer agent, and the old one still applies the desired
+  state. Update it when it suits you.
+- **Update required:** the desired state needs things that this agent does not know. Plumb refuses
+  every Plan of the Target until the agent is updated.
+- **Manual update:** the agent is too old to update itself. Run the one-time root command in the
+  guest (see [Guests made before the agent self-update](#guests-made-before-the-agent-self-update)),
+  or make the Target again.
+
+For the first two, use **Propose agent update** on the agent page, once per Target. Plumb proposes
+the update Plan by itself only when the new agent can do other things than the old one.
 
 New rights come only with an installer run. To use more networks or guest backups on an existing
 install, run the installer again with your usual options and the new ones (`--extra-bridge`,
@@ -729,9 +738,9 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
 
 ### After a restore
 
-- The installer shows a new password for `admin` once. Write it down. It works for one login only:
-  that login asks for a new password, and after it only the new one works. The old passwords do not
-  work any more.
+- The installer shows a new password for `admin` once. Write it down. It works until you set a new
+  one: each login with it asks for the new password first. After the change only the new password
+  works. The old passwords do not work any more.
 - Plumb starts in **restored mode**: it reads Proxmox and the agents, but it changes nothing. No
   Plan is applied and no backup runs. A banner says so.
 - Every other user is locked. **Settings → Backups** lists them: give a user a one-time password
