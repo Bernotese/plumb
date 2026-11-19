@@ -18,4 +18,7 @@ Release slice, card **C5a** of `docs/plans/release-slice.md`. The repo is public
 - [ ] The tool as a script in the repo (`scripts/` or `test/`), so that C5b can run it again on the RC; no secret value in it. `make lint`; PR to `main`; report.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- `pl-reviewer/T-256-leak-hunt-repo` · tool `scripts/leak-scan.py` · method and counts in `docs/tasks/T-256.log.md`; the place list is a 0600 file outside the repo (given to pl-lead).
+- **Secrets: 0** in git (all refs), the 992 GitHub texts, 1 504 Actions run logs (21 never ran) and the web bundle. gitleaks: only made-up fixtures and public examples.
+- 4 private example addresses equal dev VM values (history only; the current tree has only the dev VM address that AGENTS.md names). Decision (b) of pl-lead: no rewrite, no rotation, the 10 text places stay; the tree needs no change.
+- tests: `make lint test` (see the PR).
