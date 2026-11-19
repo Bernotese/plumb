@@ -15,6 +15,10 @@ import (
 	"github.com/Bernotese/plumb/internal/wire"
 )
 
+// mainAddrBound is how long the main address may be missing after the
+// apply: the DHCP renew of a VM NIC, not a lost address.
+const mainAddrBound = 10 * time.Second
+
 // TestGuestNetworkNIC proves the network resource of a more NIC (T-220,
 // D-403) with real netplan apply: lxd.sh hot-plugs a second virtio card
 // with a MAC of Plumb's form (PLUMB_NIC_MAC); the resource finds it by
@@ -109,8 +113,18 @@ func TestGuestNetworkNIC(t *testing.T) {
 		t.Fatalf("file: %s %v", b, err)
 	}
 	waitLive("10.99.20.5/24", true)
-	if !strings.Contains(string(mustOut(t, "ip", "-o", "addr", "show", "dev", dev)), " "+main.String()+"/") {
-		t.Fatalf("the main address of %s is gone", dev)
+	// netplan apply may drop the main address of a DHCP NIC for a moment
+	// (the gap meter of TestGuestNetwork saw 24 ms): wait for it, and log
+	// how long it was missing. A loss longer than the bound still fails.
+	start := time.Now()
+	for !strings.Contains(string(mustOut(t, "ip", "-o", "addr", "show", "dev", dev)), " "+main.String()+"/") {
+		if time.Since(start) > mainAddrBound {
+			t.Fatalf("the main address of %s is gone for more than %v", dev, mainAddrBound)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if d := time.Since(start); d > 20*time.Millisecond {
+		t.Logf("the main address of %s was back after %v", dev, d.Round(time.Millisecond))
 	}
 	if rs, _, _ := waitDefaultRoute(30 * time.Second); len(rs) == 0 || rs[0].Dev != dev {
 		t.Fatalf("the default route moved: %+v", rs)
