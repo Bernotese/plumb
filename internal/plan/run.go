@@ -636,7 +636,7 @@ func (e *Engine) stopGuest(ctx context.Context, target string) error {
 	if st.Power != driver.PowerStopped {
 		return fmt.Errorf("the guest still runs after the stop; %s", forKind("check the VM in Proxmox", st.Spec.Kind))
 	}
-	b.Digest = pollKey(st)
+	b.Digest = e.runDigest(ctx, b.Name, st)
 	return e.st.PutBinding(ctx, b)
 }
 
@@ -785,7 +785,7 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 		keep := context.WithoutCancel(ctx)
 		digest := ""
 		if st, err := e.cfg.Driver.Observe(keep, id); err == nil {
-			digest = pollKey(st)
+			digest = e.runDigest(keep, tp.Target, st)
 		}
 		res.changes = createChanges(spec)
 		res.stop = spec.Power == driver.PowerStopped // created, enrolled and applied, then stopped (D-299)
@@ -966,7 +966,7 @@ func (e *Engine) updateGuest(ctx context.Context, tp TargetPlan, r *state.Render
 	}
 	res.output = waitingOutput(recorded)
 	res.stop = !reenroll && powerTo(planned.Changes) == driver.PowerStopped && powerTo(recorded) == driver.PowerStopped
-	b.Digest = pollKey(after)
+	b.Digest = e.runDigest(ctx, b.Name, after)
 	return res, e.st.PutBinding(ctx, b)
 }
 
@@ -1043,7 +1043,7 @@ func (e *Engine) clearStep(ctx context.Context, s *stepper, target string) {
 		fail(errors.New("the config still shows it after the clear"))
 		return
 	}
-	b.Digest = pollKey(st)
+	b.Digest = e.runDigest(ctx, b.Name, st)
 	if err := e.st.PutBinding(ctx, b); err != nil {
 		fail(err)
 		return

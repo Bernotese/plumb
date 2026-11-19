@@ -15,4 +15,8 @@ Release slice, card **C9** of `docs/plans/release-slice.md` (rows O1, O7, O9, O1
 - [ ] Test files only (and the log); a product fix is a card. `make lint test`; name the CI jobs that prove each part and what skips locally; PR to `main`; evidence in the PR first; report.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- `pl-reviewer/T-260-release-qa-sweep` · PR #394 · log `docs/tasks/T-260.log.md`.
+- O1: `TestGuestFirewallProbeLoop` first after boot: 400/400 (LXD job) + 200/200 (Docker job), 0 failed → unexplained, the release notes name it.
+- O7: 84 lows (54 fixed, 10 card proposals, 20 dropped); O9 (a) a test of today's behaviour + "leave, README line"; O9 (b) a proposal, not for this release.
+- O11: 50× both tests, 100 pass. C3: 12 mutants of mine, 3 survivors → new tests.
+- tests: `make lint test` rc 0; the CI guest jobs prove O1.

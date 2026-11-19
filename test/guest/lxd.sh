@@ -73,6 +73,9 @@ for image in images:debian/13 ubuntu:26.04; do
     inst env DEBIAN_FRONTEND=noninteractive sh -c \
       'apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=5 update -q && apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=5 install -y -q --no-install-recommends nftables iproute2' >/dev/null
     lxc file push "$tmp/agent.test" "$name/root/agent.test"
+    # T-260 (release plan P2, O1): the probe loop first after the boot,
+    # before any other test touches the network.
+    inst /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuestFirewallProbeLoop$'
     inst /root/agent.test -test.v -test.timeout=5m -test.run '^TestGuest(Firewall|LogHoldsNoSecret)$'
     if [[ "$kind" == vm ]]; then
       # T-150 (review G3 of #244): the netplan list merge of D-348, in a
