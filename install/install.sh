@@ -58,6 +58,10 @@ IMAGE_STORAGE=plumb-images
 IMAGE_DIR=/var/lib/plumb-images
 TEMPLATE_STORAGE=local
 BRIDGE=vmbr0
+# T-265: the defaults, so that a printed restore or repair line names only
+# what differs from them.
+readonly DEF_POOL=$POOL DEF_BRIDGE=$BRIDGE DEF_DISK_STORAGE=$DISK_STORAGE DEF_IMAGE_STORAGE=$IMAGE_STORAGE \
+	DEF_SNIPPET_DIR=$SNIPPET_DIR DEF_IMAGE_DIR=$IMAGE_DIR
 LXC_ID=""
 LXC_HOSTNAME=plumb
 LXC_IP=dhcp
@@ -816,7 +820,7 @@ rollback_image_content() {
 	{
 		echo "install.sh: the run stopped before the new plumb was checked; the content of plumb-images is set back to \"import\" (D-229)."
 		if [[ $ok == 1 ]]; then
-			echo "install.sh: plumb-images has the content \"import\" again. VM Images work; LXC Images need a repair run (run install.sh again)."
+			echo "install.sh: plumb-images has the content \"import\" again. VM Images work; LXC Images need a repair run (the same install.sh command again)."
 			echo "install.sh: if plumb.service runs, restart it so that it reads the content again: pct exec $LXC_ID -- systemctl restart plumb.service"
 		else
 			echo "install.sh: cannot set the content of plumb-images back."
@@ -1077,6 +1081,9 @@ state_put() {
 	fi
 	content=$(printf 'lxc_id=%s\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=%s' \
 		"$lxc" "$POOL" "$SNIPPET_STORAGE" "$snippets" "$images" "$id" "$copy")
+	# The flags that shape the rights and storages of the install (T-265):
+	# a printed restore or repair line is built from them (rerun_flags).
+	content+=$'\n'$(rights_state)
 	# A kept state (--remove --keep-guests) stays until a restore or an
 	# install made a new LXC that runs; while a restore works, the mark
 	# restoring=1 names its LXC (review M2 of #221).
@@ -1095,6 +1102,106 @@ state_put() {
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"
 	STATE_WRITTEN=$content
+}
+
+# --- the flags of the install in a printed line (T-265) ---
+
+# RIGHTS_KEYS are the state keys of the flags that shape the rights and the
+# storages of an install. A repair run sets the rights from its flags alone
+# (D-401, D-405), so a printed "run this" line must name all of them.
+readonly RIGHTS_KEYS=(bridge disk_storage image_storage extra_nets guest_backup_storage guest_backup_clear)
+
+# rights_state prints the RIGHTS_KEYS lines of this run for the state file.
+rights_state() {
+	local nets
+	nets=$(IFS=,; echo "${EXTRA_NETS[*]}")
+	printf 'bridge=%s\ndisk_storage=%s\nimage_storage=%s\nextra_nets=%s\nguest_backup_storage=%s\nguest_backup_clear=%s' \
+		"$BRIDGE" "$DISK_STORAGE" "$IMAGE_STORAGE" "$nets" "$GUEST_BACKUP_STORAGE" "$GUEST_BACKUP_CLEAR"
+}
+
+# state_has KEY: the state file has a line for KEY (also an empty one).
+state_has() {
+	[[ -f $STATE_FILE ]] && grep -q "^$1=" "$STATE_FILE"
+}
+
+# plain_value VALUE: one plain shell word that the flag checks could have
+# made (no blank, quote, ;, |, &, $, <, >, glob or leading -).
+plain_value() {
+	[[ $1 =~ ^[A-Za-z0-9/][A-Za-z0-9._/:,=@+-]*$ ]]
+}
+
+# rerun_flags prints the flags of the install in the state file, each with
+# a leading space, ready to paste after "install.sh --plumb-binary FILE":
+# --pool, --bridge, --disk-storage, --image-storage, --snippet-dir and
+# --image-dir when they differ from the default, every --extra-bridge and
+# --extra-vlan, and --guest-backup-storage/--guest-backup-clear, then the
+# caller's own flags, given as NAME VALUE pairs (the backup storage). Every
+# value goes through the same check; no caller text is printed raw (M1 of
+# #396). A state file from
+# before T-265 lacks some keys (or a hand edit put in a value that the flag
+# checks refuse); then the line ends with a <UNKNOWN …> part that names them. Bash refuses to run such a line (a redirect from a
+# missing file, then a syntax error), so it is never pasted without them.
+rerun_flags() {
+	local out="" k v net b nets=() order=() missing=()
+	# rerun_add NAME VALUE adds one flag; a value with other characters than the
+	# flag checks allow is never printed (a hand-edited state file).
+	rerun_add() {
+		if plain_value "$2"; then out+=" $1 $2"; else missing+=("$1"); fi
+	}
+	v=$(state_get pool)
+	[[ -z $v || $v == "$DEF_POOL" ]] || rerun_add --pool "$v"
+	for k in "${RIGHTS_KEYS[@]}"; do
+		state_has "$k" || missing+=("$k")
+	done
+	v=$(state_get bridge)
+	[[ -z $v || $v == "$DEF_BRIDGE" ]] || rerun_add --bridge "$v"
+	v=$(state_get disk_storage)
+	[[ -z $v || $v == "$DEF_DISK_STORAGE" ]] || rerun_add --disk-storage "$v"
+	v=$(state_get image_storage)
+	[[ -z $v || $v == "$DEF_IMAGE_STORAGE" ]] || rerun_add --image-storage "$v"
+	v=$(state_get snippet_dir)
+	[[ -z $v || $v == "$DEF_SNIPPET_DIR" ]] || rerun_add --snippet-dir "$v"
+	v=$(state_get image_dir)
+	[[ -z $v || $v == "$DEF_IMAGE_DIR" ]] || rerun_add --image-dir "$v"
+	# extra_nets: "bridge" or "bridge/tag", comma-separated. The tags of a
+	# bridge go into one --extra-vlan BRIDGE:TAG,TAG, in the stored order.
+	local -A vlan=()
+	IFS=, read -ra nets <<<"$(state_get extra_nets)"
+	for net in "${nets[@]}"; do
+		if [[ $net == */* ]]; then
+			b=${net%%/*}
+			[[ -n ${vlan[$b]+x} ]] || order+=("$b")
+			vlan[$b]+=${vlan[$b]:+,}${net#*/}
+		else
+			rerun_add --extra-bridge "$net"
+		fi
+	done
+	for b in "${order[@]}"; do
+		rerun_add --extra-vlan "$b:${vlan[$b]}"
+	done
+	v=$(state_get guest_backup_storage)
+	[[ -z $v ]] || rerun_add --guest-backup-storage "$v"
+	[[ $(state_get guest_backup_clear) != 1 ]] || out+=" --guest-backup-clear"
+	# The caller's own flags (the backup storage) come before the unknown
+	# part, so that part always ends the line.
+	while (($# >= 2)); do
+		rerun_add "$1" "$2"
+		shift 2
+	done
+	if ((${#missing[@]} > 0)); then
+		local flags=()
+		for k in "${missing[@]}"; do
+			case $k in
+			extra_nets) flags+=(--extra-bridge --extra-vlan) ;;
+			guest_backup_storage) flags+=(--guest-backup-storage) ;;
+			guest_backup_clear) flags+=(--guest-backup-clear) ;;
+			--*) flags+=("$k") ;;
+			*) flags+=("--${k//_/-}") ;;
+			esac
+		done
+		out+=" <UNKNOWN: $STATE_FILE does not hold these flags of the install (older than T-265, or not a plain value), add them by hand: ${flags[*]}>"
+	fi
+	printf '%s' "$out"
 }
 
 # --- DNS of new VMs (D-187) ---
@@ -2031,6 +2138,36 @@ pool_has_guests() {
 	[[ $members =~ \"vmid\" ]]
 }
 
+# check_restore_flags compares the rights flags of a --restore with those
+# of the kept install (T-265). A restore without them gives no rights for
+# those networks and turns guest backups off (D-401, D-405); that may be
+# wanted, so it warns and the confirm decides.
+check_restore_flags() {
+	local k kept now diff=0 a b
+	for k in "${RIGHTS_KEYS[@]}"; do
+		if ! state_has "$k"; then
+			say "WARNING: $STATE_FILE is older than T-265 and does not hold the flags of the old install. Give its"
+			say "--bridge, --disk-storage, --image-storage, --extra-bridge, --extra-vlan and --guest-backup-* flags again:"
+			say "a run without them gives no rights for those networks and turns guest backups off (D-401, D-405)."
+			return 0
+		fi
+	done
+	while IFS='=' read -r k now; do
+		kept=$(state_get "$k")
+		if [[ $k == extra_nets ]]; then # the same networks in any order
+			a=$(tr , '\n' <<<"$kept" | sort -u)
+			b=$(tr , '\n' <<<"$now" | sort -u)
+			[[ $a == "$b" ]] || diff=1
+		elif [[ $kept != "$now" ]]; then
+			diff=1
+		fi
+	done <<<"$(rights_state)"
+	((diff == 0)) && return 0
+	say "WARNING: this run's rights flags differ from those of the old install. The old install had:"
+	say "  install.sh --plumb-binary FILE$(rerun_flags) (plus --restore, --lxc-ip, --lxc-gw and --backup-storage)"
+	say "A network or guest backup storage that this run does not name loses its rights (D-401, D-405)."
+}
+
 # check_restore runs before any change of --restore FILE (D-290, D-304).
 check_restore() {
 	[[ -f $RESTORE_FILE ]] || die "--restore $RESTORE_FILE: no such file"
@@ -2050,7 +2187,7 @@ check_restore() {
 		[[ $(state_get restoring) == 1 && $(lxc_state "$id") == ours ]] ||
 			die "a Plumb LXC ($id) exists; replace it with --remove --keep-guests first. Nothing was changed."
 		if query pct exec "$id" -- test -s /var/lib/plumb/plumb.db </dev/null >/dev/null 2>&1; then
-			die "LXC $id of the last --restore has a restored database; run install.sh --plumb-binary FILE (a repair run) to start it. Nothing was changed."
+			die "LXC $id of the last --restore has a restored database; run install.sh --plumb-binary FILE$(rerun_flags) (a repair run) to start it. Nothing was changed."
 		fi
 		HALF_LXC=$id
 		say "LXC $id is left from a --restore that did not finish; it has no database. It is destroyed with its key volume first."
@@ -2324,8 +2461,7 @@ do_install() {
 		say "It RESTORES the backup $RESTORE_FILE (install $H_INSTALL_ID, agents at $H_AGENT_URL) into a new LXC:"
 		say "plumb backup verify on this host, then plumb key restore and plumb restore in the LXC; each asks on this"
 		say "terminal. The restored Plumb changes nothing until you confirm in its UI that the old controller is off."
-		say "Give the --extra-bridge, --extra-vlan and --guest-backup-* flags of the old install again: a run without"
-		say "them gives no rights for those networks and turns guest backups off (D-401, D-405)."
+		check_restore_flags
 	elif [[ -z $own || $(lxc_state "$own") != ours ]] && pool_has_guests; then
 		die "pool $POOL holds guests or templates, and this host has no Plumb LXC: a plain install does not take them. Use --restore BACKUP (after --remove --keep-guests). Nothing was changed."
 	fi
@@ -2377,7 +2513,7 @@ do_install() {
 		say "Restored from $RESTORE_FILE. Log in as admin with the password that plumb restore showed. Plumb is in"
 		say "restored mode: it observes, and changes nothing until you confirm that the old controller is off (D-290)."
 		if [[ -z $BACKUP_STORAGE_SET ]]; then
-			say "No off-host backup copy is configured. Add one with a repair run: install.sh --plumb-binary FILE --backup-storage ID"
+			say "No off-host backup copy is configured. Add one with a repair run: install.sh --plumb-binary FILE$(rerun_flags --backup-storage ID)"
 		fi
 		return 0
 	fi
@@ -2518,7 +2654,19 @@ do_remove_keep() {
 	NODE=$(query hostname -s)
 	local lxc keyvol addr kept_backup_storage restore_copy_arg
 	kept_backup_storage=$(state_get backup_storage)
-	restore_copy_arg=${kept_backup_storage:+ --backup-storage $kept_backup_storage}
+	# The state values go into the printed lines and the kept state: a
+	# backup_storage that is not a storage id (a hand edit) is neither
+	# printed nor kept (M1 of #396). check_backup_storage does not run with
+	# --backup-to.
+	if [[ -n $kept_backup_storage && ! $kept_backup_storage =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+		[[ -n $BACKUP_TO ]] || die "$STATE_FILE has a backup_storage that is not a storage id; fix it by hand or give --backup-to DIR. Nothing was removed."
+		say "WARNING: $STATE_FILE has a backup_storage that is not a storage id; it is not printed and not kept."
+		kept_backup_storage=""
+		restore_copy_arg=$(rerun_flags --backup-storage "")
+	else
+		# The whole restore line: the rights flags of the install too (T-265).
+		restore_copy_arg=$(rerun_flags ${kept_backup_storage:+--backup-storage "$kept_backup_storage"})
+	fi
 	lxc=$(state_get lxc_id)
 	[[ -n $lxc && $(lxc_state "$lxc") == ours ]] || die "no Plumb LXC of this script on this host; there is no controller to replace. Nothing was removed."
 	LXC_ID=$lxc
@@ -2589,6 +2737,17 @@ do_remove_keep() {
 	new_tmp tmp
 	printf 'lxc_id=\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=%s\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s\n' \
 		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$kept_backup_storage" "$NODE" "$addr" "$gw" >"$tmp"
+	# The rights flags stay as they are: a key that an old state lacks stays
+	# missing, so the restore still names it as unknown (T-265).
+	local k v
+	for k in "${RIGHTS_KEYS[@]}"; do
+		# Only a plain value is kept (an empty one too); a bad one is dropped,
+		# so the restore names that flag as unknown (M1 of #396).
+		v=$(state_get "$k")
+		if state_has "$k" && { [[ -z $v ]] || plain_value "$v"; }; then
+			printf '%s=%s\n' "$k" "$v" >>"$tmp"
+		fi
+	done
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"
 	say "The controller is removed; the guests run on. Restore with:"

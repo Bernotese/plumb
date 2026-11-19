@@ -50,6 +50,17 @@ describe("block preview helpers", () => {
     expect(fillTemplate("a {{- .a }} b", p, fields).text).toBe("ax b");
     expect(fillTemplate("a {{ .a -}} b", p, fields).text).toBe("a xb");
     expect(fillTemplate("a\n {{- .a -}} \tb", p, fields).text).toBe("axb");
+    // Row 38 of the T-260 log: a trim mark trims the text after the action
+    // before it, as Go does ("{{ .a }} {{- .b }}" is "xy", not "x y").
+    expect(fillTemplate("{{ .a }} {{- .n }}", p, fields).text).toBe("x3");
+    expect(fillTemplate("{{ .a -}} {{ .n }}", p, fields).text).toBe("x3");
+    expect(fillTemplate("{{ .a -}}  {{- .n }} .", p, fields).text).toBe("x3 .");
+    // Around an action that only the server fills, the trim marks still
+    // trim (Go does), and the action stays as written.
+    expect(fillTemplate("a {{- .a | upper }} b", p, fields)).toEqual({
+      text: "a{{- .a | upper }} b",
+      template: true,
+    });
     // Only the server fills an object, a NaN, a pipe or a function.
     for (const t of ["{{ .o }}", "{{ .x }}", "{{ .a | upper }}", "{{ printf .a }}"])
       expect(fillTemplate(t, p, fields), t).toEqual({ text: t, template: true });
@@ -76,6 +87,14 @@ describe("block preview helpers", () => {
       expect(fillTemplate(t, p, fields).text).not.toContain("db");
     }
     expect(refused("{{ .a }}")).toBeUndefined();
+    // Row 39 of the T-260 log: ".x" inside a string literal is text, not a
+    // parameter reference (Go strings, raw strings and runes).
+    for (const t of ['{{ printf "%s .nope" .a }}', "{{ printf `.nope` .a }}", "{{ printf '.' }}"])
+      expect(refused(t), t).toBeUndefined();
+    expect(refused('{{ printf "\\" .nope }}'), "an escaped quote ends no literal").toBe(
+      ".nope is not a parameter",
+    );
+    expect(refused('{{ printf ".a" .nope }}')).toBe(".nope is not a parameter");
   });
 
   it("fills a missing value with the parameter default, as the server does", () => {

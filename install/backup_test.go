@@ -500,7 +500,7 @@ func TestRemoveKeepGuests(t *testing.T) {
 	if st["backup_storage"] != "backups" || st["lxc_id"] != "" || st["kept_guests"] != "1" || st["install_id"] != id || st["node"] != "pve1" || st["pool"] != "plumb" || st["old_address"] != "192.0.2.50/24" || st["old_gateway"] != "192.0.2.1" {
 		t.Errorf("kept state %v", st)
 	}
-	if !strings.Contains(out, "--restore "+copyPath+" --lxc-ip 192.0.2.50/24 --lxc-gw 192.0.2.1 --backup-storage backups") {
+	if !strings.Contains(out, "--restore "+copyPath+" --lxc-ip 192.0.2.50/24 --lxc-gw 192.0.2.1"+b.dirs()+" --backup-storage backups\n") {
 		t.Errorf("no exact restore line:\n%s", out)
 	}
 	// A plain install into the kept pool is refused.
@@ -654,7 +654,7 @@ func TestRestoreBackupStorage(t *testing.T) {
 			}
 			conf, err := os.ReadFile(b.conf)
 			if want == "" {
-				if !os.IsNotExist(err) || !strings.Contains(out, "No off-host backup copy is configured") {
+				if !os.IsNotExist(err) || !strings.Contains(out, "No off-host backup copy is configured. Add one with a repair run: install.sh --plumb-binary FILE"+b.dirs()+" --backup-storage ID\n") {
 					t.Errorf("disabled copy: config error %v, output %s", err, out)
 				}
 			} else if err != nil || !strings.Contains(string(conf), "storage="+want+"\n") {
