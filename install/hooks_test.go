@@ -54,7 +54,8 @@ func TestInstallerReadsOnlyListedEnvironment(t *testing.T) {
 		}
 	}
 	// Variables of bash and of the system that the script may read.
-	for _, n := range []string{"EUID", "PWD", "OLDPWD", "BASH_SOURCE", "BASH_REMATCH", "HOME", "PATH", "PIPESTATUS", "LINENO", "SECONDS", "RANDOM", "IFS"} {
+	// TMPDIR is read and, in a release installer, checked (M1 of #390).
+	for _, n := range []string{"EUID", "PWD", "OLDPWD", "BASH_SOURCE", "BASH_REMATCH", "HOME", "PATH", "PIPESTATUS", "LINENO", "SECONDS", "RANDOM", "IFS", "TMPDIR"} {
 		assigned[n] = true
 	}
 	var unlisted []string
@@ -167,4 +168,30 @@ func shellCode(s string) string {
 		out.WriteByte('\n')
 	}
 	return out.String()
+}
+
+// T-259: the list that a release installer refuses is this list.
+func TestReleaseRefusalListIsTheList(t *testing.T) {
+	b, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)\nTEST_ENV_VARS=\(([^)]*)\)`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatal("install.sh has no TEST_ENV_VARS")
+	}
+	got := map[string]bool{}
+	for _, n := range strings.Fields(m[1]) {
+		got[n] = true
+	}
+	for n := range envAllowed {
+		if !got[n] {
+			t.Errorf("%s is read by install.sh but a release installer does not refuse it", n)
+		}
+	}
+	for n := range got {
+		if !envAllowed[n] {
+			t.Errorf("TEST_ENV_VARS names %s, which is not on the list", n)
+		}
+	}
 }

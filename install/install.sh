@@ -68,6 +68,11 @@ PLUMB_BINARY=""
 # T-257: scripts/package-release.sh sets the version here in the copy of a
 # release bundle. A bundle's installer then needs its SHA256SUMS.
 RELEASE_VERSION=""
+# T-259: the test settings (the list of install/hooks_test.go). A release
+# installer refuses them; a source build honours them for the tests.
+TEST_ENV_VARS=(PLUMB_INSTALL_ASSUME_ROOT PLUMB_INSTALL_ASSUME_TTY PLUMB_INSTALL_PVE_CA PLUMB_INSTALL_STATE
+	PLUMB_INSTALL_LXC_DIR PLUMB_INSTALL_RUNNING_TRIES PLUMB_INSTALL_RUNNING_WAIT PLUMB_INSTALL_STAY_WAIT
+	PLUMB_INSTALL_RESOLV PLUMB_INSTALL_SBIN PLUMB_INSTALL_UNIT_DIR PLUMB_INSTALL_COPY_CONF PLUMB_INSTALL_PVE_MNT)
 VERIFIED_PLUMB_SUM="" # the plumb sum that check_bundle proved, or ""
 CA_FILE=""
 AGENT_URL=""
@@ -177,6 +182,10 @@ say() { printf '%s\n' "$*"; }
 
 # TMP_FILES are removed on every exit, also on Ctrl-C (review T-013 #7).
 TMP_FILES=()
+# TMP_PLACE is where every temp file and folder of the run goes (M1 of
+# #390). A release installer uses /tmp only (check_test_env checks it and
+# refuses any other TMPDIR); a source build takes TMPDIR (the tests).
+TMP_PLACE=${TMPDIR:-/tmp}
 # BUNDLE_COPY is the private folder of the checked bundle files (T-257).
 BUNDLE_COPY=""
 cleanup_tmp() {
@@ -203,7 +212,7 @@ trap 'exit 143' TERM
 # It runs in the main shell, so the exit trap knows the file.
 new_tmp() {
 	local f
-	f=$(mktemp)
+	f=$(mktemp -p "$TMP_PLACE")
 	TMP_FILES+=("$f")
 	printf -v "$1" '%s' "$f"
 }
@@ -243,7 +252,7 @@ pct() {
 		return
 	fi
 	local rc=0 err
-	err=$(mktemp) || return 1
+	err=$(mktemp -p "$TMP_PLACE") || return 1
 	command pct "$@" </dev/null 2>"$err" | cat || rc=$?
 	cat -- "$err" >&2 || true
 	rm -f -- "$err"
@@ -2630,7 +2639,7 @@ check_bundle() {
 			die "$dir/${f#.} is not owned by this user or is writable by others; unpack the release tarball as root into a folder that only root can write. Nothing was changed."
 		fi
 	done
-	BUNDLE_COPY=$(mktemp -d) || die "cannot make a private folder for the bundle; nothing was changed"
+	BUNDLE_COPY=$(mktemp -d -p "$TMP_PLACE") || die "cannot make a private folder for the bundle; nothing was changed"
 	chmod 0700 "$BUNDLE_COPY"
 	for f in SHA256SUMS plumb plumb-agent install.sh; do
 		[[ -f $f && ! -L $f ]] || die "$f of the bundle ($dir/$f) is missing or not a regular file; the bundle is refused. Nothing was changed."
@@ -2699,8 +2708,41 @@ show_version_change() {
 	fi
 }
 
+# check_test_env (T-259): the test settings change what root reads or
+# writes (for example PLUMB_INSTALL_PVE_CA: the CA that Plumb trusts), and
+# sudo -E, env_keep or a wrapper hands them over unseen. The installer of a
+# release refuses to run when one is set, also empty; it unsets nothing in
+# silence. A source build honours them and says so once.
+check_test_env() {
+	local v set=()
+	for v in "${TEST_ENV_VARS[@]}"; do
+		[[ -z ${!v+x} ]] || set+=("$v")
+	done
+	if [[ -n $RELEASE_VERSION ]]; then
+		((${#set[@]} == 0)) ||
+			die "this is the installer of release $RELEASE_VERSION; it takes no test settings from the environment, but ${set[*]} is set (for example passed on by sudo -E). Unset it and run again. Nothing was changed."
+		# M1 and M1b of #390: root's temp files (the bundle copy, plumb.env
+		# with the token secret) go only to /tmp. Another TMPDIR is refused:
+		# a check of its last folder cannot see a parent folder that another
+		# account can rename (the trick of L-P of #387).
+		if [[ -n ${TMPDIR+x} && $TMPDIR != /tmp ]]; then
+			die "this is the installer of release $RELEASE_VERSION; it uses /tmp for its temp files and takes no other TMPDIR, but TMPDIR=$TMPDIR is set. Unset TMPDIR and run again. Nothing was changed."
+		fi
+		TMP_PLACE=/tmp
+		local mode
+		[[ -d $TMP_PLACE && ! -L $TMP_PLACE ]] || die "/tmp is not a folder; nothing was changed"
+		mode=$(stat -c '%#a' -- "$TMP_PLACE")
+		if [[ $(stat -c %u -- "$TMP_PLACE") != 0 ]] || { ((mode & 8#022)) && ! ((mode & 8#1000)); }; then
+			die "/tmp is not owned by root, or another account can write it and it is not sticky; the installer does not put root's temp files there. Nothing was changed."
+		fi
+		return 0
+	fi
+	say "NOTE: this install.sh is a source build (no release stamp): it honours the PLUMB_INSTALL_* test settings${set[0]:+ (set: ${set[*]})}."
+}
+
 main() {
 	parse_args "$@"
+	check_test_env
 	check_bundle
 	check_host
 	check_state_file
