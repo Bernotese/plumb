@@ -5,11 +5,11 @@ A **draft** made from `docs/RELEASE-NOTES-TEMPLATE.md`, `CHANGELOG.md` ("Unrelea
 Open before use:
 
 - Fill `<version>` and `<date>`.
-- **Expected for commit `bc8350e` with version `0.1.0`** (a local build, T-263 R3-0; a later commit on `main` changes them):
+- **Expected for commit `c8d5c15` with version `0.1.0`** (a local build, T-263 R4-0; a later commit on `main` changes them):
   - `plumb` `611a267c8fdacc80895271a92489a8d74349a98e12e8d398aacc7026dc797c27`
   - `plumb-agent` `6605f9ce51d1636eaf48b7e1a3c3974d0da985f53d72ddd0e0e5feb5862692a8`
-  - `install.sh` `a41102dcf2bc0f9e792bd430af108f333c95a2a94023ff173805ae7365d33e05`
-  - `plumb-v0.1.0-linux-amd64.tar.gz` `83d7976fd638f36993b7f40336afe4682e4ee50a9c11c2e115400979ce975189`
+  - `install.sh` `c6bc04c6bf2383dfb9c98d7faca88519d50f2947c82521230d300ff4e4fcd5ae`
+  - `plumb-v0.1.0-linux-amd64.tar.gz` `8a00d0b95064e43088659169ae2e9272fa7635d1175ef7f6495523ddfe4b68fb`
 
   The draft release's `SHA256SUMS` must equal these when it is built from that commit.
 
