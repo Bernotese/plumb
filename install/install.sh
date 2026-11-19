@@ -1124,12 +1124,20 @@ state_has() {
 	[[ -f $STATE_FILE ]] && grep -q "^$1=" "$STATE_FILE"
 }
 
+# plain_value VALUE: one plain shell word that the flag checks could have
+# made (no blank, quote, ;, |, &, $, <, >, glob or leading -).
+plain_value() {
+	[[ $1 =~ ^[A-Za-z0-9/][A-Za-z0-9._/:,=@+-]*$ ]]
+}
+
 # rerun_flags prints the flags of the install in the state file, each with
 # a leading space, ready to paste after "install.sh --plumb-binary FILE":
 # --pool, --bridge, --disk-storage, --image-storage, --snippet-dir and
 # --image-dir when they differ from the default, every --extra-bridge and
-# --extra-vlan, and --guest-backup-storage/--guest-backup-clear, then $1:
-# the caller's own flags (the backup storage, as each caller names it). A state file from
+# --extra-vlan, and --guest-backup-storage/--guest-backup-clear, then the
+# caller's own flags, given as NAME VALUE pairs (the backup storage). Every
+# value goes through the same check; no caller text is printed raw (M1 of
+# #396). A state file from
 # before T-265 lacks some keys (or a hand edit put in a value that the flag
 # checks refuse); then the line ends with a <UNKNOWN …> part that names them. Bash refuses to run such a line (a redirect from a
 # missing file, then a syntax error), so it is never pasted without them.
@@ -1138,7 +1146,7 @@ rerun_flags() {
 	# rerun_add NAME VALUE adds one flag; a value with other characters than the
 	# flag checks allow is never printed (a hand-edited state file).
 	rerun_add() {
-		if [[ $2 =~ ^[A-Za-z0-9/][A-Za-z0-9._/:,=@+-]*$ ]]; then out+=" $1 $2"; else missing+=("$1"); fi
+		if plain_value "$2"; then out+=" $1 $2"; else missing+=("$1"); fi
 	}
 	v=$(state_get pool)
 	[[ -z $v || $v == "$DEF_POOL" ]] || rerun_add --pool "$v"
@@ -1176,7 +1184,10 @@ rerun_flags() {
 	[[ $(state_get guest_backup_clear) != 1 ]] || out+=" --guest-backup-clear"
 	# The caller's own flags (the backup storage) come before the unknown
 	# part, so that part always ends the line.
-	out+=${1:-}
+	while (($# >= 2)); do
+		rerun_add "$1" "$2"
+		shift 2
+	done
 	if ((${#missing[@]} > 0)); then
 		local flags=()
 		for k in "${missing[@]}"; do
@@ -2502,7 +2513,7 @@ do_install() {
 		say "Restored from $RESTORE_FILE. Log in as admin with the password that plumb restore showed. Plumb is in"
 		say "restored mode: it observes, and changes nothing until you confirm that the old controller is off (D-290)."
 		if [[ -z $BACKUP_STORAGE_SET ]]; then
-			say "No off-host backup copy is configured. Add one with a repair run: install.sh --plumb-binary FILE$(rerun_flags " --backup-storage ID")"
+			say "No off-host backup copy is configured. Add one with a repair run: install.sh --plumb-binary FILE$(rerun_flags --backup-storage ID)"
 		fi
 		return 0
 	fi
@@ -2643,8 +2654,19 @@ do_remove_keep() {
 	NODE=$(query hostname -s)
 	local lxc keyvol addr kept_backup_storage restore_copy_arg
 	kept_backup_storage=$(state_get backup_storage)
-	# The whole restore line: the rights flags of the install too (T-265).
-	restore_copy_arg=$(rerun_flags "${kept_backup_storage:+ --backup-storage $kept_backup_storage}")
+	# The state values go into the printed lines and the kept state: a
+	# backup_storage that is not a storage id (a hand edit) is neither
+	# printed nor kept (M1 of #396). check_backup_storage does not run with
+	# --backup-to.
+	if [[ -n $kept_backup_storage && ! $kept_backup_storage =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+		[[ -n $BACKUP_TO ]] || die "$STATE_FILE has a backup_storage that is not a storage id; fix it by hand or give --backup-to DIR. Nothing was removed."
+		say "WARNING: $STATE_FILE has a backup_storage that is not a storage id; it is not printed and not kept."
+		kept_backup_storage=""
+		restore_copy_arg=$(rerun_flags --backup-storage "")
+	else
+		# The whole restore line: the rights flags of the install too (T-265).
+		restore_copy_arg=$(rerun_flags ${kept_backup_storage:+--backup-storage "$kept_backup_storage"})
+	fi
 	lxc=$(state_get lxc_id)
 	[[ -n $lxc && $(lxc_state "$lxc") == ours ]] || die "no Plumb LXC of this script on this host; there is no controller to replace. Nothing was removed."
 	LXC_ID=$lxc
@@ -2717,9 +2739,14 @@ do_remove_keep() {
 		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$kept_backup_storage" "$NODE" "$addr" "$gw" >"$tmp"
 	# The rights flags stay as they are: a key that an old state lacks stays
 	# missing, so the restore still names it as unknown (T-265).
-	local k
+	local k v
 	for k in "${RIGHTS_KEYS[@]}"; do
-		! state_has "$k" || printf '%s=%s\n' "$k" "$(state_get "$k")" >>"$tmp"
+		# Only a plain value is kept (an empty one too); a bad one is dropped,
+		# so the restore names that flag as unknown (M1 of #396).
+		v=$(state_get "$k")
+		if state_has "$k" && { [[ -z $v ]] || plain_value "$v"; }; then
+			printf '%s=%s\n' "$k" "$v" >>"$tmp"
+		fi
 	done
 	run install -o root -g root -m 0600 "$tmp" "$STATE_FILE"
 	rm -f "$tmp"

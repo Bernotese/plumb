@@ -193,3 +193,75 @@ func TestRerunLineHidesBadValue(t *testing.T) {
 		t.Errorf("line %q", line)
 	}
 }
+
+// M1 of #396: a hand-edited backup_storage is neither printed nor kept.
+// With --backup-to, check_backup_storage does not run; without it the
+// remove stops before any change.
+func TestRemoveKeepGuestsBadBackupStorage(t *testing.T) {
+	t.Parallel()
+	b := t265Host(t)
+	raw := mustRead(t, b.stateF)
+	bad := strings.Replace(string(raw), "\nbackup_storage=backups\n", "\nbackup_storage=x;reboot\n", 1)
+	if bad == string(raw) {
+		t.Fatalf("no backup_storage line in the state:\n%s", raw)
+	}
+	if err := os.WriteFile(b.stateF, []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.resetCalls()
+	code, out, errOut := b.keepGuests(nil)
+	if code == 0 || !strings.Contains(errOut, "has a backup_storage that is not a storage id; fix it by hand or give --backup-to DIR. Nothing was removed.") {
+		t.Errorf("without --backup-to: %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(out+errOut, "reboot") || len(b.changed()) != 0 {
+		t.Errorf("printed the value or changed the host: %v\n%s", b.changed(), out)
+	}
+
+	code, out, errOut = b.keepGuests(nil, "--backup-to", t.TempDir())
+	if code != 0 {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(out+errOut, "reboot") {
+		t.Errorf("the bad value is printed:\n%s", out)
+	}
+	line := restoreLine(t, out)
+	if !strings.Contains(line, t265Extra+" <UNKNOWN: ") || !strings.HasSuffix(line, "add them by hand: --backup-storage>") {
+		t.Errorf("line %q", line)
+	}
+	if !strings.Contains(out, "Then: install.sh --plumb-binary FILE --restore BACKUP --lxc-ip 192.0.2.50/24 --lxc-gw 192.0.2.1"+b.dirs()+t265Extra+" <UNKNOWN: ") {
+		t.Errorf("the plan line:\n%s", out)
+	}
+	if err := exec.Command("bash", "-n", "-c", strings.Replace(line, "FILE", "/bin/true", 1)).Run(); err == nil {
+		t.Error("bash accepts the line")
+	}
+	st := mustRead(t, b.stateF)
+	if strings.Contains(string(st), "reboot") || b.stateFile()["backup_storage"] != "" || b.stateFile()["kept_guests"] != "1" {
+		t.Errorf("kept state:\n%s", st)
+	}
+}
+
+// M1 of #396: a bad rights value is not written back into the kept state;
+// the restore then names that flag as unknown.
+func TestRemoveKeepGuestsDropsBadRightsValue(t *testing.T) {
+	t.Parallel()
+	b := t265Host(t)
+	raw := mustRead(t, b.stateF)
+	bad := strings.Replace(string(raw), "\nguest_backup_storage=plumb-backup\n", "\nguest_backup_storage=$(reboot)\n", 1)
+	if bad == string(raw) {
+		t.Fatalf("no guest_backup_storage line:\n%s", raw)
+	}
+	if err := os.WriteFile(b.stateF, []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := b.keepGuests(nil)
+	if code != 0 {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+	st := string(mustRead(t, b.stateF))
+	if strings.Contains(st, "reboot") || strings.Contains(st, "guest_backup_storage=") || !strings.Contains(st, "\nextra_nets=vmbr1,vmbr9/20,vmbr9/30\n") {
+		t.Errorf("kept state:\n%s", st)
+	}
+	if line := restoreLine(t, out); strings.Contains(line, "reboot") || !strings.HasSuffix(line, "add them by hand: --guest-backup-storage>") {
+		t.Errorf("line %q", line)
+	}
+}
