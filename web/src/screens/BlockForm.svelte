@@ -27,7 +27,9 @@
   const ALL_KINDS = [...new Set(Object.values(KINDS).flat())];
 
   /** Go text/template actions; `{{- ` and ` -}}` trim the whitespace next to them. */
-  const ACTION = /(\s*)\{\{(- )?([^]*?)( -)?\}\}(\s*)/g;
+  const ACTION = /\{\{(- )?([^]*?)( -)?\}\}/g;
+  /** Go string, raw string and rune literals inside an action. */
+  const LITERAL = /"(?:[^"\\\n]|\\.)*"|`[^`]*`|'(?:[^'\\\n]|\\.)*'/g;
   const SIMPLE = /^\s*\.([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*$/;
   const PARAM_REF = /(?:^|[^A-Za-z0-9_$\]])\.([A-Za-z_][A-Za-z0-9_]*)/g;
 
@@ -54,49 +56,56 @@
     let template = false;
     let refused: string | undefined;
     const refuse = (why: string) => (refused ??= why);
-    const text = s.replace(
-      ACTION,
-      (
-        all,
-        before: string,
-        lt: string | undefined,
-        body: string,
-        rt: string | undefined,
-        after: string,
-      ) => {
-        const keep = (inner: string) => (lt ? "" : before) + inner + (rt ? "" : after);
-        for (const m of body.matchAll(PARAM_REF)) {
-          const f = fields.find((x) => x.name === m[1]);
-          if (!f) refuse(`.${m[1]} is not a parameter`);
-          else if (f.kind === "secret") refuse("a key cannot hold a secret");
-        }
-        const simple = SIMPLE.exec(body);
-        if (!simple) {
-          template = true;
-          return all;
-        }
-        const path = (simple[1] ?? "").split(".");
-        let v: unknown = params;
-        let fs: Field[] | undefined = fields;
-        for (const k of path) {
-          const f: Field | undefined = fs?.find((x) => x.name === k);
-          if (f?.kind === "secret") {
-            refuse("a key cannot hold a secret");
-            return all;
-          }
-          fs = f?.fields;
-          if (typeof v !== "object" || v === null || Array.isArray(v) || !(k in v)) {
-            refuse(`no value for .${path.join(".")}`);
-            return all;
-          }
-          v = (v as Record<string, unknown>)[k];
-        }
-        if (typeof v === "string" || typeof v === "boolean") return keep(String(v));
-        if (typeof v === "number" && Number.isFinite(v)) return keep(String(v));
+    // One action at a time, so that a trim mark trims the text next to it
+    // after the action before it was filled (row 38 of the T-260 log):
+    // "{{ .a }} {{- .b }}" is "xy", as in Go.
+    const fill = (all: string, body: string): string => {
+      // A parameter reference inside a string literal is text (row 39).
+      for (const m of body.replace(LITERAL, '""').matchAll(PARAM_REF)) {
+        const f = fields.find((x) => x.name === m[1]);
+        if (!f) refuse(`.${m[1]} is not a parameter`);
+        else if (f.kind === "secret") refuse("a key cannot hold a secret");
+      }
+      const simple = SIMPLE.exec(body);
+      if (!simple) {
         template = true;
         return all;
-      },
-    );
+      }
+      const path = (simple[1] ?? "").split(".");
+      let v: unknown = params;
+      let fs: Field[] | undefined = fields;
+      for (const k of path) {
+        const f: Field | undefined = fs?.find((x) => x.name === k);
+        if (f?.kind === "secret") {
+          refuse("a key cannot hold a secret");
+          return all;
+        }
+        fs = f?.fields;
+        if (typeof v !== "object" || v === null || Array.isArray(v) || !(k in v)) {
+          refuse(`no value for .${path.join(".")}`);
+          return all;
+        }
+        v = (v as Record<string, unknown>)[k];
+      }
+      if (typeof v === "string" || typeof v === "boolean") return String(v);
+      if (typeof v === "number" && Number.isFinite(v)) return String(v);
+      template = true;
+      return all;
+    };
+    let text = "";
+    let last = 0;
+    let trimNext = false;
+    for (const m of s.matchAll(ACTION)) {
+      let between = s.slice(last, m.index);
+      if (trimNext) between = between.replace(/^\s+/, "");
+      if (m[1]) between = between.replace(/\s+$/, "");
+      text += between + fill(m[0], m[2] ?? "");
+      trimNext = m[3] !== undefined;
+      last = m.index + m[0].length;
+    }
+    let tail = s.slice(last);
+    if (trimNext) tail = tail.replace(/^\s+/, "");
+    text += tail;
     return refused ? { text, template, refused } : { text, template };
   }
 

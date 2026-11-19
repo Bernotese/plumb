@@ -290,9 +290,9 @@ func TestQAExplainIssueAgentSilent(t *testing.T) {
 
 // Sizes: a guest value of 40 000 multi-byte runes and 30 comments of
 // 3 KiB. The message stays bounded, every part is valid JSON, the cuts
-// are marked, and the newest comment survives. (A guest value whose Issue
-// answer passes the client's 256 KiB read cap makes the prompt fail as a
-// whole: finding F1 of T-245, docs/tasks/T-245.log.md.)
+// are marked, and the newest comment survives. (Before #372, an Issue
+// answer above the client's 256 KiB read cap made the prompt fail as a
+// whole: finding F1 of T-245. The prompt now reads up to 8 MiB and cuts.)
 func TestQAExplainIssueSizes(t *testing.T) {
 	e := newEnv(t, true)
 	adm := e.admin()
@@ -323,7 +323,8 @@ func TestQAExplainIssueSizes(t *testing.T) {
 	}
 	cs := string(parts["comments"])
 	// The newest comment stays, each kept comment is cut with its mark.
-	// (The 10 comments before the last 20 go without a mark: finding F2.)
+	// (Before #372 the comments before the last 20 went without a mark,
+	// finding F2 of T-245; now the part says "left_out".)
 	if !strings.Contains(cs, "comment-29 ") || !strings.Contains(cs, "runes left out)") {
 		t.Errorf("comments part: the newest is missing or a cut is not marked (%d bytes)", len(cs))
 	}
