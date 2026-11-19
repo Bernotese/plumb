@@ -25,10 +25,17 @@ type bundle struct {
 	version string
 }
 
-// newBundle writes install.sh (stamped with version, as
-// scripts/package-release.sh does), a fake plumb that prints version,
-// plumb-agent and a matching SHA256SUMS.
-func newBundle(t *testing.T, version string) *bundle {
+// newBundle writes install.sh, a fake plumb that prints version,
+// plumb-agent and a matching SHA256SUMS. Its install.sh is not stamped (a
+// source build with a bundle, T-259): it honours the fake host's
+// PLUMB_INSTALL_* settings and checks the bundle the same way.
+func newBundle(t *testing.T, version string) *bundle { return makeBundle(t, version, false) }
+
+// newReleaseBundle is newBundle with install.sh stamped with version, as
+// scripts/package-release.sh does. It refuses the test settings (T-259).
+func newReleaseBundle(t *testing.T, version string) *bundle { return makeBundle(t, version, true) }
+
+func makeBundle(t *testing.T, version string, stamp bool) *bundle {
 	t.Helper()
 	dir := t.TempDir()
 	// As unpacked by root: only the owner may write (M1 of #387).
@@ -39,9 +46,12 @@ func newBundle(t *testing.T, version string) *bundle {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamped := regexp.MustCompile(`(?m)^RELEASE_VERSION=""$`).ReplaceAll(src, []byte(`RELEASE_VERSION="`+version+`"`))
-	if bytes.Equal(stamped, src) {
-		t.Fatal("install.sh has no RELEASE_VERSION line to stamp")
+	stamped := src
+	if stamp {
+		stamped = regexp.MustCompile(`(?m)^RELEASE_VERSION=""$`).ReplaceAll(src, []byte(`RELEASE_VERSION="`+version+`"`))
+		if bytes.Equal(stamped, src) {
+			t.Fatal("install.sh has no RELEASE_VERSION line to stamp")
+		}
 	}
 	b := &bundle{dir: dir, version: version}
 	b.write(t, "install.sh", stamped)
@@ -122,8 +132,26 @@ func swapShim(t *testing.T, h *host, dir, swap string) []string {
 // runBundle runs the bundle's install.sh on the fake host.
 func (h *host) runBundle(b *bundle, env []string, args ...string) (int, string, string) {
 	h.t.Helper()
+	return h.runBundleEnv(b, append(append([]string{}, h.env...), env...), args...)
+}
+
+// releaseEnv is the fake host's environment without the test settings
+// (T-259), plus env.
+func (h *host) releaseEnv(env ...string) []string {
+	var out []string
+	for _, e := range h.env {
+		if n := strings.SplitN(e, "=", 2)[0]; !envAllowed[n] && n != "TMPDIR" {
+			out = append(out, e)
+		}
+	}
+	return append(out, env...)
+}
+
+// runBundleEnv runs the bundle's install.sh with exactly env.
+func (h *host) runBundleEnv(b *bundle, env []string, args ...string) (int, string, string) {
+	h.t.Helper()
 	cmd := exec.Command("bash", append([]string{filepath.Join(b.dir, "install.sh"), "--snippet-dir", h.snippet, "--image-dir", h.images()}, args...)...)
-	cmd.Env = append(append([]string{}, h.env...), env...)
+	cmd.Env = env
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := bounded(h.t, cmd)
@@ -153,7 +181,7 @@ func TestBundleCheckPasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dry run: %d\n%s\n%s", code, out, errOut)
 	}
-	if !strings.Contains(out, "Bundle check of release v0.1.0: SHA256SUMS matches plumb, plumb-agent and install.sh") ||
+	if !strings.Contains(out, "Bundle check: SHA256SUMS matches plumb, plumb-agent and install.sh") ||
 		!strings.Contains(out, "not who made them") {
 		t.Errorf("the dry run does not show the check:\n%s", out)
 	}
@@ -190,9 +218,6 @@ func TestBundleCheckRefuses(t *testing.T) {
 		"damaged plumb-agent": {change: func(t *testing.T, b *bundle) {
 			b.write(t, "plumb-agent", []byte("x"))
 		}, want: "plumb-agent does not match SHA256SUMS"},
-		"missing SHA256SUMS": {change: func(t *testing.T, b *bundle) {
-			os.Remove(filepath.Join(b.dir, "SHA256SUMS"))
-		}, want: "this installer is of release v0.1.0, but"},
 		"missing plumb-agent": {change: func(t *testing.T, b *bundle) {
 			os.Remove(filepath.Join(b.dir, "plumb-agent"))
 		}, want: "plumb-agent of the bundle"},
@@ -419,12 +444,13 @@ func TestBundleRealTarball(t *testing.T) {
 	}
 	h := newHost(t)
 	b := &bundle{dir: dir}
-	code, out, errOut := h.runBundle(b, nil, "--dry-run", "--plumb-binary", filepath.Join(dir, "plumb"))
-	if code != 0 || !regexp.MustCompile(`Bundle check of release v[0-9.]+\S*: SHA256SUMS matches plumb, plumb-agent and install.sh`).MatchString(out) {
-		t.Fatalf("%d\n%s\n%s", code, out, errOut)
-	}
-	if !regexp.MustCompile(`plumb version: none -> v[0-9.]+`).MatchString(out) {
-		t.Errorf("no version line:\n%s", out)
+	// A release installer refuses the fake host's test settings (T-259), so
+	// it runs without them: the bundle check passes, and the run stops later
+	// at the real host checks of this machine.
+	_, out, errOut := h.runBundleEnv(b, h.releaseEnv(), "--dry-run", "--plumb-binary", filepath.Join(dir, "plumb"))
+	if !regexp.MustCompile(`Bundle check of release v[0-9.]+\S*: SHA256SUMS matches plumb, plumb-agent and install.sh`).MatchString(out) ||
+		strings.Contains(errOut, "takes no test settings") {
+		t.Fatalf("%s\n%s", out, errOut)
 	}
 }
 
@@ -491,4 +517,135 @@ func TestBundlePathSwappedHardLink(t *testing.T) {
 	if got := fileSum(t, filepath.Join(h.state, "push", "_usr_local_bin_plumb")); got != proven {
 		t.Error("the pushed plumb is not the proven one")
 	}
+}
+
+// T-259: the installer of a release refuses each test setting, also an
+// empty one, names it, and changes nothing, also in a dry run. Without
+// them it checks its bundle as before.
+func TestReleaseRefusesTestSettings(t *testing.T) {
+	for v := range envAllowed {
+		for _, val := range []string{"1", ""} {
+			t.Run(v+"="+val, func(t *testing.T) {
+				h := newHost(t)
+				b := newReleaseBundle(t, "v0.1.0")
+				used := filepath.Join(t.TempDir(), "used")
+				for _, mode := range []string{"--dry-run", "--yes"} {
+					code, out, errOut := h.runBundleEnv(b, h.releaseEnv(v+"="+val, "PLUMB_TEST_USED="+used), mode, "--plumb-binary", filepath.Join(b.dir, "plumb"))
+					if code == 0 || !strings.Contains(errOut, "takes no test settings from the environment, but "+v+" is set") ||
+						!strings.Contains(errOut, "Nothing was changed") {
+						t.Fatalf("%s: %d\n%s\n%s", mode, code, out, errOut)
+					}
+					if strings.Contains(out, "Bundle check") {
+						t.Errorf("%s: the bundle was used before the refusal:\n%s", mode, out)
+					}
+				}
+				if _, err := os.Stat(used); err == nil {
+					t.Error("plumb ran")
+				}
+				h.noHostChange(t)
+			})
+		}
+	}
+}
+
+// T-259: without the test settings, the release installer checks its
+// bundle; a missing SHA256SUMS is refused (a source build would go on).
+func TestReleaseBundleCheck(t *testing.T) {
+	h := newHost(t)
+	b := newReleaseBundle(t, "v0.1.0")
+	_, out, errOut := h.runBundleEnv(b, h.releaseEnv(), "--dry-run", "--plumb-binary", filepath.Join(b.dir, "plumb"))
+	if !strings.Contains(out, "Bundle check of release v0.1.0: SHA256SUMS matches plumb, plumb-agent and install.sh") ||
+		strings.Contains(out, "source build") || strings.Contains(errOut, "takes no test settings") {
+		t.Fatalf("%s\n%s", out, errOut)
+	}
+	os.Remove(filepath.Join(b.dir, "SHA256SUMS"))
+	code, out, errOut := h.runBundleEnv(b, h.releaseEnv(), "--dry-run", "--plumb-binary", filepath.Join(b.dir, "plumb"))
+	if code == 0 || !strings.Contains(errOut, "this installer is of release v0.1.0, but") || !strings.Contains(errOut, "Nothing was changed") {
+		t.Fatalf("missing SHA256SUMS: %d\n%s\n%s", code, out, errOut)
+	}
+	h.noHostChange(t)
+}
+
+// T-259: a source build says once that it honours the test settings, and
+// names the ones that are set.
+func TestSourceBuildSaysSo(t *testing.T) {
+	h := newHost(t)
+	code, out, errOut := h.run(nil, "--dry-run", "--plumb-binary", h.plumb)
+	if code != 0 || strings.Count(out, "this install.sh is a source build (no release stamp)") != 1 ||
+		!strings.Contains(out, "(set: PLUMB_INSTALL_") || !strings.Contains(out, "PLUMB_INSTALL_PVE_CA") {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+}
+
+// M1 and M1b of #390: a release installer puts root's temp files only into
+// /tmp, which must be root's and sticky (or not writable by others), and it
+// refuses any other TMPDIR (a check of its last folder cannot see a parent
+// that another account can rename). Nothing is changed, also in a dry run.
+func TestReleaseTempPlace(t *testing.T) {
+	mine := t.TempDir()
+	os.Chmod(mine, 0o700)
+	for name, tc := range map[string]struct {
+		tmpdir  string // "" = unset
+		shimDir string // stat reports this path with shimUID and shimMode
+		uid     string
+		mode    string
+		want    string // "" = passes
+	}{
+		"TMPDIR unset":                     {},
+		"TMPDIR=/tmp":                      {tmpdir: "/tmp"},
+		"a folder of this user":            {tmpdir: mine, want: "takes no other TMPDIR, but TMPDIR=" + mine + " is set"},
+		"a root folder, sticky, not /tmp":  {tmpdir: mine, shimDir: mine, uid: "0", mode: "01777", want: "takes no other TMPDIR"},
+		"/tmp/ with a slash":               {tmpdir: "/tmp/", want: "takes no other TMPDIR"},
+		"/tmp not root's":                  {shimDir: "/tmp", uid: "1000", mode: "01777", want: "/tmp is not owned by root"},
+		"/tmp writable by all, not sticky": {shimDir: "/tmp", uid: "0", mode: "0777", want: "/tmp is not owned by root, or another account can write it"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHost(t)
+			b := newReleaseBundle(t, "v0.1.0")
+			var env []string
+			if tc.tmpdir != "" {
+				env = append(env, "TMPDIR="+tc.tmpdir)
+			}
+			env = h.releaseEnv(env...)
+			if tc.shimDir != "" {
+				env = append(env, statShim(t, h, tc.shimDir, tc.uid, tc.mode)...)
+			}
+			for _, mode := range []string{"--dry-run", "--yes"} {
+				code, out, errOut := h.runBundleEnv(b, env, mode, "--plumb-binary", filepath.Join(b.dir, "plumb"))
+				if tc.want == "" {
+					if !strings.Contains(out, "Bundle check of release v0.1.0") {
+						t.Fatalf("%s: %d\n%s\n%s", mode, code, out, errOut)
+					}
+					continue
+				}
+				if code == 0 || !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, "Nothing was changed") || strings.Contains(out, "Bundle check") {
+					t.Fatalf("%s: %d, want %q\n%s\n%s", mode, code, tc.want, out, errOut)
+				}
+			}
+			if tc.want != "" {
+				h.noHostChange(t)
+			}
+		})
+	}
+}
+
+// statShim puts a stat first on the PATH that reports dir with uid and
+// mode; other paths go to the real stat. A test cannot make such a folder
+// without root.
+func statShim(t *testing.T, h *host, dir, uid, mode string) []string {
+	t.Helper()
+	shim := t.TempDir()
+	real, err := exec.LookPath("stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/bash\nif [[ ${@: -1} == " + dir + " ]]; then case $2 in %u) echo " + uid + "; exit;; '%#a') echo " + mode + "; exit;; esac; fi\nexec " + real + " \"$@\"\n"
+	os.WriteFile(filepath.Join(shim, "stat"), []byte(script), 0o755)
+	path := ""
+	for _, e := range h.env {
+		if strings.HasPrefix(e, "PATH=") {
+			path = strings.TrimPrefix(e, "PATH=")
+		}
+	}
+	return []string{"PATH=" + shim + ":" + path}
 }
