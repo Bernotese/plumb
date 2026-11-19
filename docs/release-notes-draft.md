@@ -32,7 +32,7 @@ Then unpack it as root into a folder that only root can write, and run its `inst
 
 - **From a build from source:** run this release's `install.sh` with the same options as before (a repair run), `--dry-run` first.
 - **Name every option again:** every extra bridge, VLAN tag and guest backup storage. A repair run removes the rights of the ones it is not given.
-- **Agents:** they do not update by themselves. After the upgrade each Target shows "Update available": approve one agent update Plan per Target.
+- **Agents:** they do not update by themselves. After the upgrade the agent page of each Target shows its state: "Update available" or "Update required" (Plumb refuses the Plans of that Target until the update) → propose and approve one agent update Plan per Target; "Manual update" → the one root command below.
 - **Old guests:** a guest made before the agent could update itself needs one root command, once (README, "Guests made before the agent self-update").
 
 ## What is new
@@ -86,7 +86,7 @@ Before this release, its release candidates went through a full run on a real Pr
 - **The restore of Plumb itself** (remove the controller and keep the guests, then a clean install with the restore of a backup):
   1. every Target reconciles, and no drift Issue opened in 15 minutes;
   2. every agent is online without a re-enrollment, and the SSH host keys stay pinned;
-  3. the admin logs in with the new password, the tokens work within their tier once a person enables them again, and a revoked token stays revoked;
+  3. the admin logs in with the password that the restore showed and must set a new one first (after it only the new one works), the tokens work within their tier once a person enables them again, and a revoked token stays revoked;
   4. the guest backups are still listed, and a guest with a data disk restores from one;
   5. the guests, their data disks and their network cards are unchanged;
   6. the Proxmox rights and the storage config are equal;
