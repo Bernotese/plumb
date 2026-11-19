@@ -708,18 +708,22 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
    Without `--backup-storage` at the install, add `--backup-to <directory>`: a directory on this
    host. That is not an off-host copy; the installer warns you.
 
-2. Restore. The installer prints the first part of this line at the end of step 1. Use the same
-   address as before: the agents in the guests know only this address.
+2. Restore. Use the whole line that the installer prints at the end of step 1. It has the same
+   address as before (the agents in the guests know only this address), the backup storage, and
+   every flag of the install that sets a right or a storage: `--extra-bridge`, `--extra-vlan`,
+   `--guest-backup-storage`, `--guest-backup-clear`, and `--pool`, `--bridge`, `--disk-storage`,
+   `--image-storage`, `--snippet-dir` and `--image-dir` when they are not the default. It looks
+   like this:
 
    ```sh
-   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway>
+   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway> <the flags of the install>
    ```
 
-   The installer reuses the kept backup storage. It asks for the recovery key and checks the
-   file before it changes anything. A wrong key stops the run. Give `--extra-bridge`,
-   `--extra-vlan` and `--guest-backup-storage` (and `--guest-backup-clear`) of the old install
-   again: without them the restored Plumb has no rights for those networks, and guest backups are
-   off.
+   The installer asks for the recovery key and checks the file before it changes anything. A wrong
+   key stops the run. A restore without the flags of the old install gives the restored Plumb no
+   rights for those networks, and guest backups are off; the installer warns before it starts.
+   An install made before this version did not store its flags. Then the printed line ends with
+   `<UNKNOWN: …>`, and the shell refuses to run it: add the flags of the old install by hand.
 
 ### After a restore
 

@@ -14,4 +14,8 @@ Found on the real host (T-263 6(3)): `install.sh --remove --keep-guests` prints 
 - [ ] No new flag, no ACL change. `make lint test`; evidence in the PR first; PR to `main`; report.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- `install.state` holds `bridge`, `disk_storage`, `image_storage`, `extra_nets`, `guest_backup_storage`, `guest_backup_clear`; `--remove --keep-guests` keeps them. One function, `rerun_flags`, builds the flags (plus `--pool`, `--snippet-dir`, `--image-dir` when not default) from it.
+- Places that use it: the restore line at the end of `--remove --keep-guests`, its "Then:" plan line, the repair hint "No off-host backup copy" after a restore, and the die "LXC … has a restored database; run … (a repair run)". New: a `--restore` whose rights flags differ from the kept install warns before the confirm and prints the old flags. The README restore section says to paste the whole line. `acl_failed` ("the same command again") and the image rollback hint name no flags; the controller's texts already say "with every --extra-bridge and --extra-vlan".
+- Old state: the line ends with `<UNKNOWN: … add them by hand: --flags>`; bash refuses it (syntax error). A value that the flag checks would refuse is never printed (same `<UNKNOWN>`).
+- Tests (`install/restore_line_test.go`): guest backup storage + `--extra-bridge vmbr1` + `--extra-vlan vmbr9:20,30` → exact line; a restore from that line gives the same ACL rows; warning tests; old state; bad value; non-defaults. 13 of 13 mutants caught. `make lint test` rc 0.
+- No new flag, no ACL change.
