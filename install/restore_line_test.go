@@ -79,7 +79,7 @@ func TestRemoveKeepGuestsLineHasEveryFlag(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("restore from the line: %d\n%s\n%s", code, out, errOut)
 	}
-	if strings.Contains(out, "WARNING: this run's rights flags differ") {
+	if strings.Contains(out, "WARNING: this run's flags differ") {
 		t.Errorf("warning on the exact line:\n%s", out)
 	}
 	if after := b.aclLines(); !slices.Equal(after, before) {
@@ -99,11 +99,11 @@ func TestRestoreWithoutTheFlagsWarns(t *testing.T) {
 	// The VLAN tags in another order are the same networks: no warning.
 	code, out, errOut := b.run(asRoot, "--dry-run", "--yes", "--plumb-binary", b.plumb, "--restore", file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1",
 		"--extra-vlan", "vmbr9:30,20", "--extra-bridge", "vmbr1", "--guest-backup-storage", "plumb-backup", "--guest-backup-clear")
-	if strings.Contains(out, "WARNING: this run's rights flags differ") {
+	if strings.Contains(out, "WARNING: this run's flags differ") {
 		t.Errorf("warning for the same networks: %d\n%s\n%s", code, out, errOut)
 	}
 	code, out, errOut = b.run(asRoot, "--dry-run", "--yes", "--plumb-binary", b.plumb, "--restore", file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1", "--extra-bridge", "vmbr1")
-	if !strings.Contains(out, "WARNING: this run's rights flags differ from those of the old install. The old install had:\n  install.sh --plumb-binary FILE"+b.dirs()+t265Extra+" (plus") {
+	if !strings.Contains(out, "WARNING: this run's flags differ from those of the old install. The old install had:\n  install.sh --plumb-binary FILE"+b.dirs()+t265Extra+" (plus") {
 		t.Errorf("no warning for a restore without the flags: %d\n%s\n%s", code, out, errOut)
 	}
 }
@@ -129,7 +129,7 @@ func TestRemoveKeepGuestsOldStateSaysUnknown(t *testing.T) {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}
 	line := restoreLine(t, out)
-	want := b.dirs() + " --backup-storage backups <UNKNOWN: " + b.stateF + " does not hold these flags of the install (older than T-265, or not a plain value), add them by hand: --bridge --disk-storage --image-storage --extra-bridge --extra-vlan --guest-backup-storage --guest-backup-clear>"
+	want := b.dirs() + " --backup-storage backups <UNKNOWN: " + b.stateF + " does not hold these flags of the install (older than T-269, or not a plain value), add them by hand: --bridge --disk-storage --image-storage --extra-bridge --extra-vlan --guest-backup-storage --guest-backup-clear>"
 	if !strings.HasSuffix(line, want) {
 		t.Fatalf("line %q\nwant suffix %q", line, want)
 	}
@@ -142,7 +142,7 @@ func TestRemoveKeepGuestsOldStateSaysUnknown(t *testing.T) {
 	}
 	// The restore then warns that the flags are not known.
 	code, out, errOut = b.run(asRoot, "--dry-run", "--yes", "--plumb-binary", b.plumb, "--restore", filepath.Join(b.store, "plumb-backups", "plumb-20261113T030000Z.pbk"), "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
-	if !strings.Contains(out, "is older than T-265 and does not hold the flags of the old install") {
+	if !strings.Contains(out, "is older than T-269 and does not hold these flags of the old install: --bridge --disk-storage --image-storage --extra-bridge/--extra-vlan --guest-backup-storage --guest-backup-clear.") {
 		t.Errorf("no warning on an old state: %d\n%s\n%s", code, out, errOut)
 	}
 }
