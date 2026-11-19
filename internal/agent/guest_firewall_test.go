@@ -79,11 +79,16 @@ func reachable(port string) bool { return reach(port) == nil }
 
 // reach opens a TCP connection from the peer namespace to the guest port,
 // in this process (T-250): a goroutine locked to its thread enters the
-// namespace and dials with a 3 s deadline. A connect that works is
+// namespace and dials with the fwConnectLimit deadline. A connect that works is
 // "reachable"; the error says whether it timed out or was refused, and
 // how long it took. The thread is left locked, so it ends with the
 // goroutine and never runs other code in the peer namespace.
-func reach(port string) error { return reachWithin(port, 3*time.Second) }
+func reach(port string) error { return reachWithin(port, fwConnectLimit) }
+
+// fwConnectLimit is the connect limit of every probe: TestGuestFirewall
+// and its probe loop (T-260) fail at the same time, so a slow connect that
+// fails the test also fails the loop (L1 of #394).
+const fwConnectLimit = 3 * time.Second
 
 // reachWithin is reach with its own connect limit.
 func reachWithin(port string, limit time.Duration) error {

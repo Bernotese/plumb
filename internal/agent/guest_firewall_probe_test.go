@@ -19,7 +19,8 @@ import (
 //
 // Each round makes the network of the test again (the netns and the veth
 // pair with the fixed MACs, fwNetUp), starts a fresh listener on a new port
-// and probes it once from the peer with a 5 s connect limit. No nft table
+// and probes it once from the peer with the connect limit of
+// TestGuestFirewall (fwConnectLimit, 3 s; L1 of #394). No nft table
 // is loaded, so every probe must connect: a timeout or a refusal fails the
 // test at once, with the T-250 dump of that moment. No retry: a slow first
 // connect counts too (rounds slower than 1 s are logged).
@@ -41,6 +42,7 @@ func TestGuestFirewallProbeLoop(t *testing.T) {
 		t.Fatalf("an inet plumb table is loaded before the loop; the probe needs none:\n%s", out)
 	}
 	var slow int
+	loopStart := time.Now()
 	var worst time.Duration
 	for i := 1; i <= rounds; i++ {
 		down := fwNetUp(t)
@@ -60,7 +62,7 @@ func TestGuestFirewallProbeLoop(t *testing.T) {
 		}()
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
 		start := time.Now()
-		err = reachWithin(port, 5*time.Second)
+		err = reach(port)
 		took := time.Since(start)
 		if err != nil {
 			// The dump while the failed state is still there, then stop:
@@ -78,6 +80,6 @@ func TestGuestFirewallProbeLoop(t *testing.T) {
 		ln.Close()
 		down()
 	}
-	t.Logf("O1 probe loop: %d of %d rounds connected, 0 failed; slowest connect %s; %d slower than 1 s",
-		rounds, rounds, worst.Round(time.Millisecond), slow)
+	t.Logf("O1 probe loop: %d of %d rounds connected, 0 failed; slowest connect %s (limit %s); %d slower than 1 s; loop time %s",
+		rounds, rounds, worst.Round(time.Millisecond), fwConnectLimit, slow, time.Since(loopStart).Round(time.Millisecond))
 }
