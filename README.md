@@ -50,7 +50,8 @@ check too). This proves only that the files are whole, not who made them.
 
 **Check the installer before you run it.** `install.sh` can check itself only while it runs, so it
 cannot prove that it is the right one. Only these two steps, **before** you unpack, prove the
-whole tarball, `install.sh` included: `gh attestation verify` (who built it) and the outer
+whole tarball, `install.sh` included: `gh attestation verify` with the options of `docs/RELEASE.md` (who built it, and that it was the
+release workflow on `main`) and the outer
 `SHA256SUMS` (see `docs/RELEASE.md`). The installer of a release says "Bundle check of release
 …"; if the installer of a tarball says "source build" instead, stop: it is not the installer of
 a release. A build from source has no `SHA256SUMS`; it says so and checks nothing.

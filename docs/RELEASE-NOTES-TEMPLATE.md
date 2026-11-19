@@ -14,7 +14,7 @@ Plumb is below 1.0: its API and its file formats may still change between releas
 
 Download `plumb-<version>-linux-amd64.tar.gz` and `SHA256SUMS` from this page. Check them **before** you unpack:
 
-1. Who built it: `gh attestation verify plumb-<version>-linux-amd64.tar.gz --repo Bernotese/plumb`. This shows that the release workflow of this repository built the file from the commit that it names. <Leave this step out if the release has no attestation.>
+1. Who built it: `gh attestation verify plumb-<version>-linux-amd64.tar.gz --repo Bernotese/plumb --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main`. This shows that the release workflow of this repository built the file from the commit that it names. <Leave this step out if the release has no attestation.>
 2. The file is whole: `sha256sum -c SHA256SUMS`.
 
 Then unpack it as root into a folder that only root can write, and run its `install.sh` from there, first with `--dry-run` (see the README, "Install"). The installer checks the inner `SHA256SUMS` before it uses a file. That proves only that the files are whole, not who made them: step 1 does that.

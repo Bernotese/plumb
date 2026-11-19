@@ -17,44 +17,38 @@ concurrency:
 
 jobs:
   # T-261 (release plan C4, PR B; merges only after the user's yes, U6).
-  # Two jobs, so that each holds only the rights it needs: build attests
-  # the tarball, draft makes the draft. The draft job builds again (the
-  # build is reproducible, T-255) and refuses unless its tarball is the
-  # attested one, byte for byte. The workflow never publishes: a person
-  # reads the draft and publishes it.
+  # Three jobs, so that each holds only the rights it needs (M2 of #392):
+  # build runs the repo's build code (Go, npm, vite) with no id-token;
+  # attest can mint the OIDC token but runs no repo code (no checkout: it
+  # downloads the artifact, checks its sha256 and attests it); draft makes
+  # the draft from the same artifact and never publishes it. A person reads
+  # the draft and publishes it.
   build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: read # checkout, and the list of releases (public repo)
-      id-token: write # the OIDC token that signs the attestation (Sigstore)
-      attestations: write # store the attestation in this repository
+      contents: read # checkout
     outputs:
       tarball-sha256: ${{ steps.sum.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Refuse an existing tag or release before building
+      - name: Refuse a bad version or an existing tag before building
         env:
-          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ inputs.version }}
         run: |
           [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+([.-][a-zA-Z0-9]+)*)?$ ]]
           status=0
-          git ls-remote --exit-code --tags origin "refs/tags/$VERSION" || status=$?
+          git ls-remote --exit-code --tags "https://github.com/$GH_REPO" "refs/tags/$VERSION" || status=$?
           if [[ $status != 2 ]]; then
             echo 'Tag exists or tag lookup failed; refusing release.' >&2
             exit 1
           fi
-          # List all releases, including drafts. API failures must stop the job.
-          gh api --paginate "repos/$GH_REPO/releases" --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags"
-          if grep -Fxq -- "$VERSION" "$RUNNER_TEMP/release-tags"; then
-            echo 'Release already exists; refusing release.' >&2
-            exit 1
-          fi
+          # Existing releases and drafts are checked in the draft job: only its
+          # contents: write can list drafts (L1 of #392).
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.4" # pinned (T-255): the same as the toolchain in go.mod
@@ -81,23 +75,56 @@ jobs:
         run: |
           sum=$(sha256sum "$RUNNER_TEMP/release-one/plumb-${VERSION}-linux-amd64.tar.gz")
           echo "sha256=${sum%% *}" >>"$GITHUB_OUTPUT"
-      - name: Attest the build provenance of the tarball
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Hand the two files to the next jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          subject-path: ${{ runner.temp }}/release-one/plumb-${{ inputs.version }}-linux-amd64.tar.gz
+          name: release-files
+          path: |
+            ${{ runner.temp }}/release-one/plumb-${{ inputs.version }}-linux-amd64.tar.gz
+            ${{ runner.temp }}/release-one/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
 
-  draft:
+  attest:
     needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
-      contents: write # make the draft release (never published here)
+      id-token: write # the OIDC token that signs the attestation (Sigstore)
+      attestations: write # store the attestation in this repository
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No checkout: this job runs no code of the repository.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          persist-credentials: false
-      - name: Refuse an existing tag or release before building
+          name: release-files
+          path: ${{ runner.temp }}/release-files
+      - name: The file is the one that build made
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILT: ${{ needs.build.outputs.tarball-sha256 }}
+        run: |
+          [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+([.-][a-zA-Z0-9]+)*)?$ ]]
+          sum=$(sha256sum "$RUNNER_TEMP/release-files/plumb-${VERSION}-linux-amd64.tar.gz")
+          if [[ ! $BUILT =~ ^[0-9a-f]{64}$ || ${sum%% *} != "$BUILT" ]]; then
+            echo 'The artifact is not the tarball that build made; refusing to attest.' >&2
+            exit 1
+          fi
+      - name: Attest the build provenance of the tarball
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/release-files/plumb-${{ inputs.version }}-linux-amd64.tar.gz
+
+  draft:
+    needs: [build, attest]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # list releases incl. drafts, and make the draft release (never published here)
+    steps:
+      # No checkout: this job runs no code of the repository either.
+      - name: Refuse an existing tag or release (drafts included)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -105,7 +132,7 @@ jobs:
         run: |
           [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+([.-][a-zA-Z0-9]+)*)?$ ]]
           status=0
-          git ls-remote --exit-code --tags origin "refs/tags/$VERSION" || status=$?
+          git ls-remote --exit-code --tags "https://github.com/$GH_REPO" "refs/tags/$VERSION" || status=$?
           if [[ $status != 2 ]]; then
             echo 'Tag exists or tag lookup failed; refusing release.' >&2
             exit 1
@@ -116,23 +143,18 @@ jobs:
             echo 'Release already exists; refusing release.' >&2
             exit 1
           fi
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          go-version: "1.27.4" # pinned (T-255): the same as the toolchain in go.mod
-          cache: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "26.13.0" # pinned (T-255): the release build must not depend on the runner
-          cache: ''
-      - name: Build again; it must be the attested tarball
+          name: release-files
+          path: ${{ runner.temp }}/release-files
+      - name: The file is the attested one
         env:
           VERSION: ${{ inputs.version }}
-          ATTESTED: ${{ needs.build.outputs.tarball-sha256 }}
+          BUILT: ${{ needs.build.outputs.tarball-sha256 }}
         run: |
-          bash scripts/package-release.sh "$VERSION" "$RUNNER_TEMP/release-one"
-          sum=$(sha256sum "$RUNNER_TEMP/release-one/plumb-${VERSION}-linux-amd64.tar.gz")
-          if [[ ! $ATTESTED =~ ^[0-9a-f]{64}$ || ${sum%% *} != "$ATTESTED" ]]; then
-            echo 'The tarball is not the attested one; refusing the draft.' >&2
+          sum=$(sha256sum "$RUNNER_TEMP/release-files/plumb-${VERSION}-linux-amd64.tar.gz")
+          if [[ ! $BUILT =~ ^[0-9a-f]{64}$ || ${sum%% *} != "$BUILT" ]]; then
+            echo 'The artifact is not the attested tarball; refusing the draft.' >&2
             exit 1
           fi
       - name: Create a draft for a person to publish
@@ -143,6 +165,6 @@ jobs:
         run: |
           gh release create "$VERSION" \
             --draft --target "$GITHUB_SHA" --title "$VERSION" \
-            --notes 'Linux/amd64. Check it before unpacking: gh attestation verify, then sha256sum -c SHA256SUMS (docs/RELEASE.md). A person must review and publish this draft.' \
-            "$RUNNER_TEMP/release-one/plumb-${VERSION}-linux-amd64.tar.gz" \
-            "$RUNNER_TEMP/release-one/SHA256SUMS"
+            --notes 'Linux/amd64. Check it before unpacking: gh attestation verify <tarball> --repo Bernotese/plumb --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main, then sha256sum -c SHA256SUMS (docs/RELEASE.md). A person must review and publish this draft.' \
+            "$RUNNER_TEMP/release-files/plumb-${VERSION}-linux-amd64.tar.gz" \
+            "$RUNNER_TEMP/release-files/SHA256SUMS"

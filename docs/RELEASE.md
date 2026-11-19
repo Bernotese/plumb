@@ -6,7 +6,7 @@ There is no release of Plumb yet. This file says how one is made and how you che
 
 A release is one file: `plumb-<version>-linux-amd64.tar.gz`. Next to it is `SHA256SUMS`, and inside it is a second `SHA256SUMS` for `plumb`, `plumb-agent` and `install.sh`.
 
-1. **Who built it** (only if the release names a build attestation): `gh attestation verify plumb-<version>-linux-amd64.tar.gz --repo Bernotese/plumb`. This proves that GitHub's release workflow of this repository built the file from the commit that the attestation names.
+1. **Who built it** (only if the release names a build attestation): `gh attestation verify plumb-<version>-linux-amd64.tar.gz --repo Bernotese/plumb --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main`. This proves that GitHub's release workflow of this repository built the file from the commit that the attestation names. Use a current `gh`: an old one has no `gh attestation`. The two last options matter: without them, an attestation made by any other workflow of the repository (for example on a branch) would pass too.
 2. **The file is whole:** `sha256sum -c SHA256SUMS` in the folder of the download.
 3. **The files inside are whole:** unpack it, then `sha256sum -c SHA256SUMS` in that folder.
 
