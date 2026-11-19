@@ -50,7 +50,7 @@ describe("mock api", () => {
     expect(issue?.actions).toEqual(["revert", "ignore_once", "ignore_rule"]);
   });
 
-  it("plans, approves and runs a new target with live events", async () => {
+  it("plans, approves and runs a new Target with live events", async () => {
     const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
     const doc: TargetDoc = {
       kind: "Target",
@@ -92,7 +92,7 @@ describe("mock api", () => {
     expect((await api.getTarget("app1")).document.spec.image).toBe("debian-13");
   });
 
-  it("makes other pending plans stale and refuses to approve them", async () => {
+  it("makes other pending Plans stale and refuses to approve them", async () => {
     const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
     const t = await api.getTarget("db1");
     const a = await api.createPlan({
@@ -135,7 +135,7 @@ describe("mock api", () => {
     );
   });
 
-  it("reverts an issue through a plan; accept is refused for a sensitive change", async () => {
+  it("reverts an Issue through a Plan; accept is refused for a sensitive change", async () => {
     const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
     await expect(api.resolveIssue(9, "accept")).rejects.toSatisfy((e) => status(e) === 409);
     const plan = await api.resolveIssue(9, "revert");
@@ -151,7 +151,7 @@ describe("mock api", () => {
     expect((await api.getIssue(9)).resolution?.action).toBe("revert");
   });
 
-  it("accept makes a plan that changes nothing on the guest", async () => {
+  it("accept makes a Plan that changes nothing on the guest", async () => {
     const api = createMockApi({ signedIn: true });
     const plan = await api.resolveIssue(8, "accept");
     expect(plan.warnings[0]).toContain("override");
@@ -368,7 +368,7 @@ describe("mock order: after and restarts (T-049)", () => {
     expect(restartOn(resources)).toContain(avail("a"));
   });
 
-  it("plans after and restart_by for a new site on a target with nginx", async () => {
+  it("plans after and restart_by for a new site on a Target with nginx", async () => {
     const blocks = await seeded();
     const old = { ...base, blocks: [{ use: "nginx" }, site("a")] };
     const next = { ...base, blocks: [{ use: "nginx" }, site("a"), site("b")] };
@@ -384,7 +384,7 @@ describe("mock order: after and restarts (T-049)", () => {
     expect(plan[2]?.after).toBeUndefined();
   });
 
-  it("plans a new target with nginx and two sites: after, no restart", async () => {
+  it("plans a new Target with nginx and two sites: after, no restart", async () => {
     const plan = planTarget(
       undefined,
       { ...base, blocks: [{ use: "nginx" }, site("a"), site("b")] },

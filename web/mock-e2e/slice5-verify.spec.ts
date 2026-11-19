@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 // server has the pin refresh (T-152). Run with
 // `npx playwright test -c playwright.mock.config.ts slice5-verify`.
 
-test("verify: Refresh base makes a pin-only plan with source, key, old and new", async ({
+test("verify: Refresh base makes a pin-only Plan with source, key, old and new", async ({
   page,
 }) => {
   await page.goto("/?as=admin#/images/ubuntu-26.04");
@@ -17,7 +17,7 @@ test("verify: Refresh base makes a pin-only plan with source, key, old and new",
   await expect(
     page.getByText(/Signed by the key D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81/),
   ).toBeVisible();
-  await expect(page.getByText("Only a person can approve this plan.")).toBeVisible();
+  await expect(page.getByText("Only a person can approve this Plan.")).toBeVisible();
   await page.getByRole("button", { name: "Approve and apply" }).click();
   await expect(page.getByText(/Run status:\s*succeeded/)).toBeVisible({ timeout: 30_000 });
   await page.goto("/?as=admin#/images/ubuntu-26.04");
@@ -29,13 +29,13 @@ test("verify: the image form takes a Debian SHA-512 source", async ({ page }) =>
   await page.goto("/?as=admin#/images/debian-13/edit");
   await page.locator("#i-verify").selectOption("ubuntu-cloud");
   await page.locator("#i-reason").fill("e2e");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.locator("#i-verify-error")).toContainText("cloud-images.ubuntu.com");
   await page.locator("#i-algo").selectOption("sha512");
   await page.locator("#i-sha").fill("b".repeat(128));
   await page.locator("#i-verify").selectOption("debian-https");
   await expect(page.getByText("every new pin needs a person")).toBeVisible();
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
 });
 

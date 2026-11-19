@@ -28,7 +28,7 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
       return {
         label: "Out of Plumb",
         tone: "warn",
-        detail: `${s.open_issues} open issue${s.open_issues === 1 ? "" : "s"}.`,
+        detail: `${s.open_issues} open Issue${s.open_issues === 1 ? "" : "s"}.`,
       };
     case "restart_needed":
       return {
@@ -43,7 +43,7 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
     case "pending":
       return { label: "Pending", tone: "muted", detail: "No guest yet." };
     case "error":
-      return { label: "Error", tone: "danger", detail: "The last run failed." };
+      return { label: "Error", tone: "danger", detail: "The last Run failed." };
   }
 }
 
@@ -304,7 +304,7 @@ export function humanOnlyReasons(plan: Plan): string[] {
     }
     if (reason === "firewall-off") {
       out.push(
-        "It turns off the firewall of a target (D-368): every port of that guest is open then.",
+        "It turns off the firewall of a Target (D-368): every port of that guest is open then.",
       );
       continue;
     }
@@ -320,7 +320,7 @@ export function humanOnlyReasons(plan: Plan): string[] {
         t.resources.some((r) => r.changes.some((c) => isSensitive(c))),
     );
     if (given.length === 0) {
-      out.push("It gives a secret to a target that did not get it before.");
+      out.push("It gives a secret to a Target that did not get it before.");
     }
     // The contract does not say which binding is new, so the text names
     // what the target uses, not what it gets (review #48).

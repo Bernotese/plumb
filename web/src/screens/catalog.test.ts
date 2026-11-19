@@ -47,7 +47,7 @@ describe("starter catalogue", () => {
     );
   });
 
-  it("a differing Block shows the difference and offers an update plan", async () => {
+  it("a differing Block shows the difference and offers an update Plan", async () => {
     const api = createMockApi({ signedIn: true });
     const create = vi.spyOn(api, "createPlan");
     show(Blocks, { api });

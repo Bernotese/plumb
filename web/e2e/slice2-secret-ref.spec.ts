@@ -49,7 +49,7 @@ test("secret picker: a new binding is human-only and unverified", async ({ page 
   await addAppEnvBlock(page);
 
   await page.getByRole("link", { name: "web1", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Edit target web1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Edit Target web1" })).toBeVisible();
   await page.getByLabel("Block to add").selectOption({ label: "Application environment file" });
   await page.getByRole("button", { name: "Add Block" }).click();
   await page.getByRole("button", { name: "New secret" }).click();
@@ -59,12 +59,12 @@ test("secret picker: a new binding is human-only and unverified", async ({ page 
   await expect(page.getByLabel("Secret name")).toHaveCount(0);
   await expect(page.getByLabel("Database password (a secret)")).toHaveValue("e2e-db");
   await page.getByRole("textbox", { name: "Reason", exact: true }).fill("e2e: app env");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
 
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   const planId = Number(/\d+$/.exec(page.url())?.[0]);
   await expect(page.getByText(/Uses secrets:\s*e2e-db\s*\(version \d+\)/)).toBeVisible();
-  await expect(page.getByText("Only a person can approve this plan.")).toBeVisible();
+  await expect(page.getByText("Only a person can approve this Plan.")).toBeVisible();
   await expect(
     page.getByText("It gives a secret to web1 that web1 did not get before."),
   ).toBeVisible();

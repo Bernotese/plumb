@@ -61,11 +61,11 @@ test("raw mode: accept as raw, edit the raw content, back to the Block", async (
     await card.getByRole("button", { name: "Edit content" }).click();
     await expect(card.locator("#raw-0-content")).toBeFocused();
     await card.locator("#raw-0-content").fill("Edited in Plumb\n");
-    await card.getByRole("button", { name: "Show the plan" }).click();
+    await card.getByRole("button", { name: "Show the Plan" }).click();
     await expect(card.getByText("Say why you make this change.")).toBeVisible();
     await expect(card.locator("#raw-reason")).toBeFocused();
     await card.locator("#raw-reason").fill("e2e: new raw motd");
-    await card.getByRole("button", { name: "Show the plan" }).click();
+    await card.getByRole("button", { name: "Show the Plan" }).click();
     await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
     await expect(page.getByText("file:/etc/motd").first()).toBeVisible();
     await approveAndRun(page);

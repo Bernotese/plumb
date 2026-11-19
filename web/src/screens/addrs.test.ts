@@ -92,7 +92,7 @@ describe("Issue on guest:address", () => {
     expect(text(el("#address-hint"))).toBe(ADDRESS_HINT);
     expect(button(/^Revert/)).toBeUndefined();
     expect(button(/^Accept/)).toBeUndefined();
-    expect(text()).not.toContain("This makes a plan.");
+    expect(text()).not.toContain("This makes a Plan.");
     expect(button("Ignore once")).toBeDefined();
     expect(button("Make ignore-rule plan")).toBeDefined();
     expect(text()).toContain("Reported by the guest");

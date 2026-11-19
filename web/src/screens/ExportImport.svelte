@@ -205,7 +205,7 @@
 <form class="card" onsubmit={doImport} autocomplete="off" novalidate>
   <h2>Import</h2>
   <p>
-    Plumb reads an export file and makes a plan. Nothing changes until you approve the plan, except
+    Plumb reads an export file and makes a Plan. Nothing changes until you approve the Plan, except
     secrets: they are written at once (see below).
   </p>
   <div class="field">
@@ -256,7 +256,7 @@
       >{/if}
     <span class="hint" id="import-pass-hint">
       Without it, Plumb writes no secret from the file. With it, Plumb creates the missing secrets
-      at once; they stay when you drop the plan.
+      at once; they stay when you drop the Plan.
     </span>
   </div>
   <div class="field">

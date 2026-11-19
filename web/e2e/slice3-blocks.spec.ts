@@ -30,7 +30,7 @@ test("blocks: edit motd as YAML, checked in the browser and the server", async (
   // Browser check: an unknown key shows at its line, nothing is sent.
   await editor.fill(original.replace(/^spec:$/m, "spec:\n  colour: red"));
   await page.getByRole("textbox", { name: "Reason" }).fill("e2e: blocks screen");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("button", { name: "Line 4" })).toBeVisible();
   await expect(page.locator("#b-errors")).toContainText('Unknown key "colour"');
   await expect(editor).toHaveAttribute("aria-invalid", "true");
@@ -44,7 +44,7 @@ test("blocks: edit motd as YAML, checked in the browser and the server", async (
   expect(unquoted).not.toBe(original);
   await editor.fill(unquoted);
   await expect(page.locator("#b-errors")).toContainText("The text matches the Block schema.");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("button", { name: `Line ${modeLine}` })).toBeVisible();
   // The error comes from the render of each Target that uses motd.
   await expect(page.locator("#b-errors")).toContainText("mode: got number, want string");
@@ -53,7 +53,7 @@ test("blocks: edit motd as YAML, checked in the browser and the server", async (
 
   // A valid change: the Plan lists every Target that uses motd.
   await editor.fill(original.replace(/mode: "?0644"?/, 'mode: "0640"'));
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   // The h1 "Plan N" renders before getPlan returns (T-197): wait for the Targets.
   const targetHeadings = page.getByRole("heading", { level: 2, name: /^Target / });

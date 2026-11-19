@@ -7,12 +7,12 @@ import { login } from "./login";
 // see the demo state unchanged.
 
 async function drop(page: Page) {
-  await page.getByRole("button", { name: "Drop plan" }).click();
+  await page.getByRole("button", { name: "Drop Plan" }).click();
   await page.locator("#drop-confirm").click();
-  await expect(page.getByText("This plan is stale.")).toBeVisible();
+  await expect(page.getByText("This Plan is stale.")).toBeVisible();
 }
 
-test("target YAML mode: an edit makes a plan; a server error shows at its line", async ({
+test("target YAML mode: an edit makes a Plan; a server error shows at its line", async ({
   page,
 }) => {
   await login(page);
@@ -27,14 +27,14 @@ test("target YAML mode: an edit makes a plan; a server error shows at its line",
   // A value the server refuses: its 422 pointer shows at the line.
   await editor.fill(text.replace(/cores: \d+/, "cores: 0"));
   await page.locator("#t-reason").fill("e2e: YAML mode");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   const errors = page.locator("#t-yaml-errors");
   await expect(errors).toContainText("(server)");
   const line = text.split("\n").findIndex((l) => /^\s+cores: /.test(l)) + 1;
   await expect(errors.getByRole("button", { name: `Line ${line}` })).toBeVisible();
 
   await editor.fill(text.replace(`memory: ${memory}`, `memory: ${memory * 2}`));
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.locator("#docs-count")).toContainText("1 changed");
   await expect(
@@ -124,13 +124,13 @@ test("nested parameter form: a Block with object parameters", async ({ page }) =
     /- use: e2e-nested\n {6}params:\n {8}site:\n {10}name: shop\n {8}upstreams:\n {10}- host: b\.lan\n {12}port: 80\n {10}- host: a\.lan\n {12}port: 80\n/,
   );
   await page.getByRole("button", { name: "Form", exact: true }).click();
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: /file:\/etc\/e2e-nested/ })).toBeVisible();
   await drop(page);
 });
 
-test("image YAML mode: an edit makes a plan", async ({ page }) => {
+test("image YAML mode: an edit makes a Plan", async ({ page }) => {
   await login(page);
   await page.goto("/#/images/ubuntu-26.04/edit");
   await page.getByRole("button", { name: "YAML", exact: true }).click();
@@ -139,7 +139,7 @@ test("image YAML mode: an edit makes a plan", async ({ page }) => {
   expect(text).toMatch(/^kind: Image\nname: ubuntu-26\.04\nspec:\n/);
   await editor.fill(text.replace(/title: .*/, "title: Ubuntu from YAML"));
   await page.locator("#i-reason").fill("e2e: image YAML");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(
     page
