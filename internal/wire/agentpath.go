@@ -143,26 +143,6 @@ var AgentPathAttrs = map[string][]string{
 	"user":      {"home"},
 }
 
-// AgentPathOf returns the first path of r that IsAgentPath, with its
-// attribute, or "" when there is none. It sees only r: use AgentConflicts
-// for a resource list, which also follows the symlinks of the list.
-func AgentPathOf(r Resource) (attr, p string) {
-	for _, a := range AgentPathAttrs[r.Type] {
-		v, ok := r.Attrs[a].(string)
-		if !ok || v == "" {
-			continue
-		}
-		if r.Type == "symlink" && a == "target" && !strings.HasPrefix(v, "/") {
-			link, _ := r.Attrs["path"].(string)
-			v = path.Join(path.Dir(link), v)
-		}
-		if IsAgentPath(v) {
-			return a, v
-		}
-	}
-	return "", ""
-}
-
 // AgentConflict is a resource that would change the agent itself.
 type AgentConflict struct {
 	ID    string // resource id
