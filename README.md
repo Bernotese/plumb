@@ -742,6 +742,9 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
 
 ### After a restore
 
+Do these in this order: set the new admin password, confirm the restore, then enable the users and
+the API tokens that you still need. Until the password is changed, the login can do nothing else.
+
 - The installer shows a new password for `admin` once. Write it down. It works until you set a new
   one: each login with it asks for the new password first. After the change only the new password
   works. The old passwords do not work any more.
@@ -750,11 +753,12 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
 - Every other user is locked. **Settings → Backups** lists them: give a user a one-time password
   there; they choose their own password at their first login.
 - Every API token is disabled. Enable only the ones you still need, in Settings → API tokens (a
-  person must do it; a token cannot).
+  person must do it; a token cannot, and not before the new admin password is set).
 - When the old controller is off for good, confirm it in **Settings → Backups**. Only then does
   Plumb work normally again. Plumb asks because two controllers must never manage the same guests:
   both would change them. With the API, a person confirms with `POST /api/v1/restore/confirm` and
-  the body `{"old_controller_off": true}`; without that field the call is refused.
+  the body `{"old_controller_off": true}`, after the password change; without that field the call
+  is refused.
 - Guests that were made after the backup are listed as unknown guests. Plumb never changes or
   deletes them. A guest that was deleted after the backup gets an Issue; Plumb does not make it
   again by itself.
