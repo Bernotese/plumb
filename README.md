@@ -424,7 +424,19 @@ An admin adds people in **Settings → Users**. Each user has one role:
 To update Plumb, run the new `install.sh` with the new `plumb` binary. Use the same options as at
 the install. The same run repairs a broken install. Try `--dry-run` first.
 
-Agents in the guests update through a Plan: Plumb proposes it, you approve it.
+Agents in the guests never update by themselves: each update is a Plan that a person approves.
+After an update of Plumb, the agent page of each Target shows one of these states:
+
+- **Update available:** this Plumb serves a newer agent, and the old one still applies the desired
+  state. Update it when it suits you.
+- **Update required:** the desired state needs things that this agent does not know. Plumb refuses
+  every Plan of the Target until the agent is updated.
+- **Manual update:** the agent is too old to update itself. Run the one-time root command in the
+  guest (see [Guests made before the agent self-update](#guests-made-before-the-agent-self-update)),
+  or make the Target again.
+
+For the first two, use **Propose agent update** on the agent page, once per Target. Plumb proposes
+the update Plan by itself only when the new agent can do other things than the old one.
 
 New rights come only with an installer run. To use more networks or guest backups on an existing
 install, run the installer again with your usual options and the new ones (`--extra-bridge`,
@@ -588,6 +600,9 @@ has now, plus these; or restore another backup. The Run:
    When a re-enrollment Plan of the Target is still open, Plumb makes no second one: approve that
    one. An adopted guest starts without an agent: run an install command from its agent page.
 
+The restored guest runs the agent that was in the backup. When that is an older version, its agent
+page shows **Update available**: propose the agent update (see [Updates and repair](#updates-and-repair)).
+
 After a restore that worked, the Issue `guest:restore-failed` stays open with "restored; the agent
 is not enrolled yet" until the re-enrollment **Run** worked; then it ends with a comment. Its page
 names the re-enrollment Plan to approve. If that Plan can no longer run (another Plan changed the
@@ -708,32 +723,45 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
    Without `--backup-storage` at the install, add `--backup-to <directory>`: a directory on this
    host. That is not an off-host copy; the installer warns you.
 
-2. Restore. Use the whole line that the installer prints at the end of step 1. It has the same
-   address as before (the agents in the guests know only this address), the backup storage, and
-   every flag of the install that sets a right or a storage: `--extra-bridge`, `--extra-vlan`,
-   `--guest-backup-storage`, `--guest-backup-clear`, and `--pool`, `--bridge`, `--disk-storage`,
-   `--image-storage`, `--snippet-dir` and `--image-dir` when they are not the default. It looks
-   like this:
+2. Restore. Use the whole line that the installer prints at the end of step 1, not a line of your
+   own. It has the same address as before (the agents in the guests know only this address), the
+   backup storage, and every flag of the install that is not the default: the rights and storages
+   (`--extra-bridge`, `--extra-vlan`, `--guest-backup-storage`, `--guest-backup-clear`, `--pool`,
+   `--bridge`, `--disk-storage`, `--image-storage`, `--template-storage`, `--snippet-dir`,
+   `--image-dir`), `--lxc-id` when you gave it, `--vmid-range`, the DNS of new VMs (`--nameserver`,
+   `--searchdomain`) and the backup settings (`--backup-time`, `--backup-keep`, `--backup-copy-time`,
+   `--backup-copy-keep`, `--backup-max-size`). Defaults are left out on purpose. It looks like this:
 
    ```sh
-   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway> <the flags of the install>
+   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway> --backup-storage <storage> <the other flags of the install>
    ```
 
    The installer asks for the recovery key and checks the file before it changes anything. A wrong
    key stops the run. A restore without the flags of the old install gives the restored Plumb no
-   rights for those networks, and guest backups are off; the installer warns before it starts.
-   An install made before this version did not store its flags. Then the printed line ends with
-   `<UNKNOWN: …>`, and the shell refuses to run it: add the flags of the old install by hand.
+   rights for those networks, turns guest backups off, and takes the defaults for the rest; the
+   installer warns before it starts. An install made before this version did not store all its
+   flags. Then the printed line ends with `<UNKNOWN: …>`, and the shell refuses to run it: add the
+   flags of the old install by hand.
 
 ### After a restore
 
-- The installer shows a new password for `admin` once. Write it down. The first login asks for a
-  new one. The old passwords do not work any more.
+Do these in this order: set the new admin password, confirm the restore, then enable the users and
+the API tokens that you still need. Until the password is changed, the login can do nothing else.
+
+- The installer shows a new password for `admin` once. Write it down. It works until you set a new
+  one: each login with it asks for the new password first. After the change only the new password
+  works. The old passwords do not work any more.
 - Plumb starts in **restored mode**: it reads Proxmox and the agents, but it changes nothing. No
   Plan is applied and no backup runs. A banner says so.
-- Every API token is disabled. Enable only the ones you still need, in Settings → API tokens.
+- Every other user is locked. **Settings → Backups** lists them: give a user a one-time password
+  there; they choose their own password at their first login.
+- Every API token is disabled. Enable only the ones you still need, in Settings → API tokens (a
+  person must do it; a token cannot, and not before the new admin password is set).
 - When the old controller is off for good, confirm it in **Settings → Backups**. Only then does
-  Plumb work normally again. If two controllers run, both change the same guests.
+  Plumb work normally again. Plumb asks because two controllers must never manage the same guests:
+  both would change them. With the API, a person confirms with `POST /api/v1/restore/confirm` and
+  the body `{"old_controller_off": true}`, after the password change; without that field the call
+  is refused.
 - Guests that were made after the backup are listed as unknown guests. Plumb never changes or
   deletes them. A guest that was deleted after the backup gets an Issue; Plumb does not make it
   again by itself.

@@ -58,10 +58,6 @@ IMAGE_STORAGE=plumb-images
 IMAGE_DIR=/var/lib/plumb-images
 TEMPLATE_STORAGE=local
 BRIDGE=vmbr0
-# T-265: the defaults, so that a printed restore or repair line names only
-# what differs from them.
-readonly DEF_POOL=$POOL DEF_BRIDGE=$BRIDGE DEF_DISK_STORAGE=$DISK_STORAGE DEF_IMAGE_STORAGE=$IMAGE_STORAGE \
-	DEF_SNIPPET_DIR=$SNIPPET_DIR DEF_IMAGE_DIR=$IMAGE_DIR
 LXC_ID=""
 LXC_HOSTNAME=plumb
 LXC_IP=dhcp
@@ -111,6 +107,14 @@ NAMESERVER=""   # --nameserver, else from RESOLV (D-187)
 SEARCHDOMAIN="" # --searchdomain, else from RESOLV or the host name
 STATE_FILE=${PLUMB_INSTALL_STATE:-/etc/plumb/install.state}
 LXC_DIR=${PLUMB_INSTALL_LXC_DIR:-/var/lib/lxc}
+# T-265, T-269: the defaults, so that a printed restore or repair line names
+# only what differs from them; and what the user gave for the flags whose
+# default is computed later (set by parse_args).
+readonly DEF_POOL=$POOL DEF_BRIDGE=$BRIDGE DEF_DISK_STORAGE=$DISK_STORAGE DEF_IMAGE_STORAGE=$IMAGE_STORAGE \
+	DEF_SNIPPET_DIR=$SNIPPET_DIR DEF_IMAGE_DIR=$IMAGE_DIR DEF_TEMPLATE_STORAGE=$TEMPLATE_STORAGE \
+	DEF_VMID_RANGE=$VMID_MIN-$VMID_MAX DEF_BACKUP_TIME=$BACKUP_TIME DEF_BACKUP_KEEP=$BACKUP_KEEP \
+	DEF_BACKUP_COPY_KEEP=$BACKUP_COPY_KEEP DEF_BACKUP_MAX_SIZE=$BACKUP_MAX_SIZE
+GIVEN_LXC_ID="" GIVEN_NAMESERVER="" GIVEN_SEARCHDOMAIN="" GIVEN_BACKUP_COPY_TIME=""
 
 # The key volume (D-086, D-102, D-177): its own volume with backup=0, so the
 # master key is never in a backup of the LXC. plumb key init never creates
@@ -171,6 +175,8 @@ Options:
                          and the Proxmox objects stay for --restore (D-290)
   --backup-to DIR        with --keep-guests: copy the backup to DIR on THIS host (not off-host)
   --restore FILE         install a new controller from a backup file into the kept pool
+                         (--remove --keep-guests prints the whole restore line: every flag of the
+                         install that is not the default; defaults are left out on purpose)
   --dry-run              print the commands that change the host; change nothing
   --yes                  do not ask before changes
   -h, --help             this text
@@ -292,11 +298,11 @@ parse_args() {
 		--extra-vlan) EXTRA_VLAN_ARGS+=("${2:?}"); shift ;;
 		--guest-backup-storage) GUEST_BACKUP_STORAGE=${2:?}; shift ;;
 		--guest-backup-clear) GUEST_BACKUP_CLEAR=1 ;;
-		--lxc-id) LXC_ID=${2:?}; shift ;;
+		--lxc-id) LXC_ID=${2:?}; GIVEN_LXC_ID=$LXC_ID; shift ;;
 		--lxc-ip) LXC_IP=${2:?}; shift ;;
 		--lxc-gw) LXC_GW=${2:?}; shift ;;
-		--nameserver) NAMESERVER=${2:?}; shift ;;
-		--searchdomain) SEARCHDOMAIN=${2:?}; shift ;;
+		--nameserver) NAMESERVER=${2:?}; GIVEN_NAMESERVER=$NAMESERVER; shift ;;
+		--searchdomain) SEARCHDOMAIN=${2:?}; GIVEN_SEARCHDOMAIN=$SEARCHDOMAIN; shift ;;
 		--vmid-range)
 			VMID_MIN=${2%-*}
 			VMID_MAX=${2#*-}
@@ -319,7 +325,7 @@ parse_args() {
 		--backup-storage) BACKUP_STORAGE=${2:?}; shift ;;
 		--backup-time) BACKUP_TIME=${2:?}; shift ;;
 		--backup-keep) BACKUP_KEEP=${2:?}; shift ;;
-		--backup-copy-time) BACKUP_COPY_TIME=${2:?}; shift ;;
+		--backup-copy-time) BACKUP_COPY_TIME=${2:?}; GIVEN_BACKUP_COPY_TIME=$BACKUP_COPY_TIME; shift ;;
 		--backup-copy-keep) BACKUP_COPY_KEEP=${2:?}; shift ;;
 		--backup-max-size) BACKUP_MAX_SIZE=${2:?}; shift ;;
 		--dry-run) DRY_RUN=1 ;;
@@ -1083,7 +1089,7 @@ state_put() {
 		"$lxc" "$POOL" "$SNIPPET_STORAGE" "$snippets" "$images" "$id" "$copy")
 	# The flags that shape the rights and storages of the install (T-265):
 	# a printed restore or repair line is built from them (rerun_flags).
-	content+=$'\n'$(rights_state)
+	content+=$'\n'$(rerun_state)
 	# A kept state (--remove --keep-guests) stays until a restore or an
 	# install made a new LXC that runs; while a restore works, the mark
 	# restoring=1 names its LXC (review M2 of #221).
@@ -1104,19 +1110,53 @@ state_put() {
 	STATE_WRITTEN=$content
 }
 
-# --- the flags of the install in a printed line (T-265) ---
+# --- the flags of the install in a printed line (T-265, T-269) ---
 
-# RIGHTS_KEYS are the state keys of the flags that shape the rights and the
-# storages of an install. A repair run sets the rights from its flags alone
-# (D-401, D-405), so a printed "run this" line must name all of them.
-readonly RIGHTS_KEYS=(bridge disk_storage image_storage extra_nets guest_backup_storage guest_backup_clear)
+# RERUN_TABLE: "state key|flag|default" of every flag that the user gives
+# and that shapes the install. A repair run sets the install from its
+# flags alone (D-401, D-405; DNS, schedules and limits too), so a printed
+# "run this" line must name each one that is not the default. A flag
+# whose default is computed (--nameserver, --searchdomain, the copy time)
+# or that is only kept when given (--lxc-id) is stored as given: an empty
+# value means "not given". The first six are T-265's keys, in its order.
+readonly RERUN_TABLE=(
+	"bridge|--bridge|$DEF_BRIDGE"
+	"disk_storage|--disk-storage|$DEF_DISK_STORAGE"
+	"image_storage|--image-storage|$DEF_IMAGE_STORAGE"
+	"extra_nets||"
+	"guest_backup_storage|--guest-backup-storage|"
+	"guest_backup_clear|--guest-backup-clear|0"
+	"template_storage|--template-storage|$DEF_TEMPLATE_STORAGE"
+	"vmid_range|--vmid-range|$DEF_VMID_RANGE"
+	"lxc_id_arg|--lxc-id|"
+	"nameserver_arg|--nameserver|"
+	"searchdomain_arg|--searchdomain|"
+	"backup_time|--backup-time|$DEF_BACKUP_TIME"
+	"backup_keep|--backup-keep|$DEF_BACKUP_KEEP"
+	"backup_copy_time_arg|--backup-copy-time|"
+	"backup_copy_keep|--backup-copy-keep|$DEF_BACKUP_COPY_KEEP"
+	"backup_max_size|--backup-max-size|$DEF_BACKUP_MAX_SIZE"
+)
+RERUN_KEYS=()
+for _row in "${RERUN_TABLE[@]}"; do RERUN_KEYS+=("${_row%%|*}"); done
+readonly RERUN_KEYS
+unset _row
 
-# rights_state prints the RIGHTS_KEYS lines of this run for the state file.
-rights_state() {
-	local nets
+# rerun_state prints the RERUN_TABLE lines of this run for the state file.
+rerun_state() {
+	local nets lid=$GIVEN_LXC_ID
 	nets=$(IFS=,; echo "${EXTRA_NETS[*]}")
-	printf 'bridge=%s\ndisk_storage=%s\nimage_storage=%s\nextra_nets=%s\nguest_backup_storage=%s\nguest_backup_clear=%s' \
-		"$BRIDGE" "$DISK_STORAGE" "$IMAGE_STORAGE" "$nets" "$GUEST_BACKUP_STORAGE" "$GUEST_BACKUP_CLEAR"
+	# A repair run without --lxc-id keeps the LXC of the state: the id that
+	# was given for it stays given.
+	if [[ -z $lid && -n $(state_get lxc_id_arg) && $(state_get lxc_id_arg) == "${LXC_ID:-$(state_get lxc_id)}" ]]; then
+		lid=$(state_get lxc_id_arg)
+	fi
+	printf '%s\n' "bridge=$BRIDGE" "disk_storage=$DISK_STORAGE" "image_storage=$IMAGE_STORAGE" "extra_nets=$nets" \
+		"guest_backup_storage=$GUEST_BACKUP_STORAGE" "guest_backup_clear=$GUEST_BACKUP_CLEAR" \
+		"template_storage=$TEMPLATE_STORAGE" "vmid_range=$VMID_MIN-$VMID_MAX" "lxc_id_arg=$lid" \
+		"nameserver_arg=$GIVEN_NAMESERVER" "searchdomain_arg=$GIVEN_SEARCHDOMAIN" "backup_time=$BACKUP_TIME" \
+		"backup_keep=$BACKUP_KEEP" "backup_copy_time_arg=$GIVEN_BACKUP_COPY_TIME" "backup_copy_keep=$BACKUP_COPY_KEEP" \
+		"backup_max_size=$BACKUP_MAX_SIZE"
 }
 
 # state_has KEY: the state file has a line for KEY (also an empty one).
@@ -1132,17 +1172,17 @@ plain_value() {
 
 # rerun_flags prints the flags of the install in the state file, each with
 # a leading space, ready to paste after "install.sh --plumb-binary FILE":
-# --pool, --bridge, --disk-storage, --image-storage, --snippet-dir and
-# --image-dir when they differ from the default, every --extra-bridge and
-# --extra-vlan, and --guest-backup-storage/--guest-backup-clear, then the
-# caller's own flags, given as NAME VALUE pairs (the backup storage). Every
-# value goes through the same check; no caller text is printed raw (M1 of
-# #396). A state file from
-# before T-265 lacks some keys (or a hand edit put in a value that the flag
-# checks refuse); then the line ends with a <UNKNOWN …> part that names them. Bash refuses to run such a line (a redirect from a
-# missing file, then a syntax error), so it is never pasted without them.
+# --pool, --snippet-dir and --image-dir, then every row of RERUN_TABLE,
+# each only when it is not the default, then the caller's own flags, given
+# as NAME VALUE pairs (the backup storage). Every value goes through the
+# same check; no caller text is printed raw (M1 of #396). A state file
+# from before T-265 or T-269 lacks some keys (or a hand edit put in a
+# value that the flag checks refuse); then the line ends with a
+# <UNKNOWN …> part that names them. Bash refuses to run such a line (a
+# redirect from a missing file, then a syntax error), so it is never
+# pasted without them.
 rerun_flags() {
-	local out="" k v net b nets=() order=() missing=()
+	local out="" row k flag def v net b nets=() order=() missing=()
 	# rerun_add NAME VALUE adds one flag; a value with other characters than the
 	# flag checks allow is never printed (a hand-edited state file).
 	rerun_add() {
@@ -1150,38 +1190,47 @@ rerun_flags() {
 	}
 	v=$(state_get pool)
 	[[ -z $v || $v == "$DEF_POOL" ]] || rerun_add --pool "$v"
-	for k in "${RIGHTS_KEYS[@]}"; do
+	for row in "${RERUN_TABLE[@]}"; do
+		k=${row%%|*}
 		state_has "$k" || missing+=("$k")
 	done
-	v=$(state_get bridge)
-	[[ -z $v || $v == "$DEF_BRIDGE" ]] || rerun_add --bridge "$v"
-	v=$(state_get disk_storage)
-	[[ -z $v || $v == "$DEF_DISK_STORAGE" ]] || rerun_add --disk-storage "$v"
-	v=$(state_get image_storage)
-	[[ -z $v || $v == "$DEF_IMAGE_STORAGE" ]] || rerun_add --image-storage "$v"
-	v=$(state_get snippet_dir)
-	[[ -z $v || $v == "$DEF_SNIPPET_DIR" ]] || rerun_add --snippet-dir "$v"
-	v=$(state_get image_dir)
-	[[ -z $v || $v == "$DEF_IMAGE_DIR" ]] || rerun_add --image-dir "$v"
-	# extra_nets: "bridge" or "bridge/tag", comma-separated. The tags of a
-	# bridge go into one --extra-vlan BRIDGE:TAG,TAG, in the stored order.
+	# The directories come right after the first three rows (T-265's order).
 	local -A vlan=()
-	IFS=, read -ra nets <<<"$(state_get extra_nets)"
-	for net in "${nets[@]}"; do
-		if [[ $net == */* ]]; then
-			b=${net%%/*}
-			[[ -n ${vlan[$b]+x} ]] || order+=("$b")
-			vlan[$b]+=${vlan[$b]:+,}${net#*/}
-		else
-			rerun_add --extra-bridge "$net"
+	for row in "${RERUN_TABLE[@]}"; do
+		IFS='|' read -r k flag def <<<"$row"
+		v=$(state_get "$k")
+		case $k in
+		extra_nets)
+			# "bridge" or "bridge/tag", comma-separated. The tags of a
+			# bridge go into one --extra-vlan BRIDGE:TAG,TAG, in order.
+			IFS=, read -ra nets <<<"$v"
+			for net in "${nets[@]}"; do
+				if [[ $net == */* ]]; then
+					b=${net%%/*}
+					[[ -n ${vlan[$b]+x} ]] || order+=("$b")
+					vlan[$b]+=${vlan[$b]:+,}${net#*/}
+				else
+					rerun_add --extra-bridge "$net"
+				fi
+			done
+			for b in "${order[@]}"; do
+				rerun_add --extra-vlan "$b:${vlan[$b]}"
+			done
+			continue
+			;;
+		guest_backup_clear)
+			[[ $v != 1 ]] || out+=" --guest-backup-clear"
+			continue
+			;;
+		esac
+		[[ -z $v || $v == "$def" ]] || rerun_add "$flag" "$v"
+		if [[ $k == image_storage ]]; then
+			v=$(state_get snippet_dir)
+			[[ -z $v || $v == "$DEF_SNIPPET_DIR" ]] || rerun_add --snippet-dir "$v"
+			v=$(state_get image_dir)
+			[[ -z $v || $v == "$DEF_IMAGE_DIR" ]] || rerun_add --image-dir "$v"
 		fi
 	done
-	for b in "${order[@]}"; do
-		rerun_add --extra-vlan "$b:${vlan[$b]}"
-	done
-	v=$(state_get guest_backup_storage)
-	[[ -z $v ]] || rerun_add --guest-backup-storage "$v"
-	[[ $(state_get guest_backup_clear) != 1 ]] || out+=" --guest-backup-clear"
 	# The caller's own flags (the backup storage) come before the unknown
 	# part, so that part always ends the line.
 	while (($# >= 2)); do
@@ -1192,14 +1241,16 @@ rerun_flags() {
 		local flags=()
 		for k in "${missing[@]}"; do
 			case $k in
-			extra_nets) flags+=(--extra-bridge --extra-vlan) ;;
-			guest_backup_storage) flags+=(--guest-backup-storage) ;;
-			guest_backup_clear) flags+=(--guest-backup-clear) ;;
 			--*) flags+=("$k") ;;
-			*) flags+=("--${k//_/-}") ;;
+			extra_nets) flags+=(--extra-bridge --extra-vlan) ;;
+			*)
+				for row in "${RERUN_TABLE[@]}"; do
+					[[ ${row%%|*} != "$k" ]] || { IFS='|' read -r _ flag _ <<<"$row"; flags+=("$flag"); }
+				done
+				;;
 			esac
 		done
-		out+=" <UNKNOWN: $STATE_FILE does not hold these flags of the install (older than T-265, or not a plain value), add them by hand: ${flags[*]}>"
+		out+=" <UNKNOWN: $STATE_FILE does not hold these flags of the install (older than T-269, or not a plain value), add them by hand: ${flags[*]}>"
 	fi
 	printf '%s' "$out"
 }
@@ -1976,6 +2027,8 @@ put_host_file() {
 # root on the host.
 install_copy_timer() {
 	local storage=$1 type=$2 path=$3 tmp
+	# Never a config without type or path: every copy would fail (F2).
+	[[ -n $storage && -n $type && $path == /* ]] || die "the copy timer of storage $storage has no type or path (an install.sh error); nothing of the timer was written"
 	run pct exec "$LXC_ID" -- install -d -o root -g root -m 0755 "$COPY_STATUS_DIR" </dev/null
 	new_tmp tmp
 	copy_script >"$tmp"
@@ -1989,6 +2042,8 @@ install_copy_timer() {
 	rm -f "$tmp"
 	run systemctl daemon-reload
 	run systemctl enable --now "$COPY_NAME.timer"
+	# The written config is read back (T-269).
+	[[ $DRY_RUN == 1 ]] || copy_conf_whole || die "the config of the copy timer ($COPY_CONF) has no storage type or path after it was written; see it, then run again"
 	say "The copy timer copies the newest backup daily at $BACKUP_COPY_TIME UTC to storage $storage ($path/plumb-backups, keep $BACKUP_COPY_KEEP)."
 }
 
@@ -2013,15 +2068,28 @@ check_copy_setting() {
 			if ! (check_backup_storage); then
 				die "Backup storage $BACKUP_STORAGE from the kept state failed its checks; give --backup-storage ID or give --backup-storage none. Nothing was changed."
 			fi
+			# Again in this shell: the subshell above only tests, and its
+			# COPY_TYPE and COPY_PATH are lost (F2 of T-263: the restored
+			# timer got an empty type and path).
+			check_backup_storage
 			return 0
 		fi
 		if ! (check_backup_storage) 2>/dev/null; then
 			say "WARNING: the backup copy storage $BACKUP_STORAGE fails its checks now; the copy timer is kept as it is."
+			copy_conf_whole || say "WARNING: the config of the copy timer ($COPY_CONF) has no storage type or path (made by an older --restore): every copy fails. Fix the storage, or give --backup-storage ID or --backup-storage none."
 			BACKUP_STORAGE=""
 			return 0
 		fi
 	fi
 	check_backup_storage
+}
+
+# copy_conf_whole: the config of the copy timer is missing (no timer) or
+# names a storage type and path (T-269). An older --restore wrote one
+# without them (F2 of T-263).
+copy_conf_whole() {
+	[[ -e $COPY_CONF ]] || return 0
+	[[ -n $(sed -n 's/^storage_type=//p' "$COPY_CONF" | head -n1) && -n $(sed -n 's/^storage_path=//p' "$COPY_CONF" | head -n1) ]]
 }
 
 # setup_copy_timer is the --backup-storage part of an install or repair run.
@@ -2138,21 +2206,20 @@ pool_has_guests() {
 	[[ $members =~ \"vmid\" ]]
 }
 
-# check_restore_flags compares the rights flags of a --restore with those
-# of the kept install (T-265). A restore without them gives no rights for
-# those networks and turns guest backups off (D-401, D-405); that may be
-# wanted, so it warns and the confirm decides.
+# check_restore_flags compares the flags of a --restore with those of the
+# kept install (T-265, T-269). A restore without them gives no rights for
+# those networks, turns guest backups off (D-401, D-405), and takes the
+# defaults for DNS, VMID range and schedules; that may be wanted, so it
+# warns and the confirm decides. Keys that an old state lacks are named.
 check_restore_flags() {
-	local k kept now diff=0 a b
-	for k in "${RIGHTS_KEYS[@]}"; do
-		if ! state_has "$k"; then
-			say "WARNING: $STATE_FILE is older than T-265 and does not hold the flags of the old install. Give its"
-			say "--bridge, --disk-storage, --image-storage, --extra-bridge, --extra-vlan and --guest-backup-* flags again:"
-			say "a run without them gives no rights for those networks and turns guest backups off (D-401, D-405)."
-			return 0
-		fi
-	done
+	local k kept now diff=0 a b missing=() row flag
 	while IFS='=' read -r k now; do
+		if ! state_has "$k"; then
+			for row in "${RERUN_TABLE[@]}"; do
+				[[ ${row%%|*} != "$k" ]] || { IFS='|' read -r _ flag _ <<<"$row"; missing+=("${flag:---extra-bridge/--extra-vlan}"); }
+			done
+			continue
+		fi
 		kept=$(state_get "$k")
 		if [[ $k == extra_nets ]]; then # the same networks in any order
 			a=$(tr , '\n' <<<"$kept" | sort -u)
@@ -2161,11 +2228,17 @@ check_restore_flags() {
 		elif [[ $kept != "$now" ]]; then
 			diff=1
 		fi
-	done <<<"$(rights_state)"
+	done <<<"$(rerun_state)"
+	if ((${#missing[@]} > 0)); then
+		say "WARNING: $STATE_FILE is older than T-269 and does not hold these flags of the old install: ${missing[*]}."
+		say "Give them again if the old install had them: a run without them gives no rights for those networks, turns"
+		say "guest backups off (D-401, D-405), and takes the defaults for DNS, VMID range and schedules."
+	fi
 	((diff == 0)) && return 0
-	say "WARNING: this run's rights flags differ from those of the old install. The old install had:"
+	say "WARNING: this run's flags differ from those of the old install. The old install had:"
 	say "  install.sh --plumb-binary FILE$(rerun_flags) (plus --restore, --lxc-ip, --lxc-gw and --backup-storage)"
-	say "A network or guest backup storage that this run does not name loses its rights (D-401, D-405)."
+	say "A network or guest backup storage that this run does not name loses its rights (D-401, D-405); DNS,"
+	say "VMID range and schedules take this run's values."
 }
 
 # check_restore runs before any change of --restore FILE (D-290, D-304).
@@ -2737,10 +2810,10 @@ do_remove_keep() {
 	new_tmp tmp
 	printf 'lxc_id=\npool=%s\nsnippet_storage=%s\nsnippet_dir=%s\nimage_dir=%s\ninstall_id=%s\nbackup_storage=%s\nkept_guests=1\nnode=%s\nold_address=%s\nold_gateway=%s\n' \
 		"$POOL" "$SNIPPET_STORAGE" "$(state_get snippet_dir)" "$(state_get image_dir)" "$INSTALL_ID" "$kept_backup_storage" "$NODE" "$addr" "$gw" >"$tmp"
-	# The rights flags stay as they are: a key that an old state lacks stays
-	# missing, so the restore still names it as unknown (T-265).
+	# The flags stay as they are: a key that an old state lacks stays
+	# missing, so the restore still names it as unknown (T-265, T-269).
 	local k v
-	for k in "${RIGHTS_KEYS[@]}"; do
+	for k in "${RERUN_KEYS[@]}"; do
 		# Only a plain value is kept (an empty one too); a bad one is dropped,
 		# so the restore names that flag as unknown (M1 of #396).
 		v=$(state_get "$k")
