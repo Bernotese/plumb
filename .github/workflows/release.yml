@@ -157,6 +157,11 @@ jobs:
             echo 'The artifact is not the attested tarball; refusing the draft.' >&2
             exit 1
           fi
+          # N2: the published SHA256SUMS must name exactly the attested tarball.
+          if [[ $(< "$RUNNER_TEMP/release-files/SHA256SUMS") != "$BUILT  plumb-${VERSION}-linux-amd64.tar.gz" ]]; then
+            echo 'SHA256SUMS is not the one of the attested tarball; refusing the draft.' >&2
+            exit 1
+          fi
       - name: Create a draft for a person to publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -165,6 +170,6 @@ jobs:
         run: |
           gh release create "$VERSION" \
             --draft --target "$GITHUB_SHA" --title "$VERSION" \
-            --notes 'Linux/amd64. Check it before unpacking: gh attestation verify <tarball> --repo Bernotese/plumb --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main, then sha256sum -c SHA256SUMS (docs/RELEASE.md). A person must review and publish this draft.' \
+            --notes 'Linux/amd64. Check it before unpacking: gh attestation verify <tarball> --repo Bernotese/plumb --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main (gh 2.102.0 or newer, from https://cli.github.com), then sha256sum -c SHA256SUMS (docs/RELEASE.md). A person must review and publish this draft.' \
             "$RUNNER_TEMP/release-files/plumb-${VERSION}-linux-amd64.tar.gz" \
             "$RUNNER_TEMP/release-files/SHA256SUMS"
