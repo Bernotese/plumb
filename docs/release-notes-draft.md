@@ -5,6 +5,14 @@ A **draft** made from `docs/RELEASE-NOTES-TEMPLATE.md`, `CHANGELOG.md` ("Unrelea
 Open before use:
 
 - Fill `<version>` and `<date>`.
+- **Expected for commit `bc8350e` with version `0.1.0`** (a local build, T-263 R3-0; a later commit on `main` changes them):
+  - `plumb` `611a267c8fdacc80895271a92489a8d74349a98e12e8d398aacc7026dc797c27`
+  - `plumb-agent` `6605f9ce51d1636eaf48b7e1a3c3974d0da985f53d72ddd0e0e5feb5862692a8`
+  - `install.sh` `a41102dcf2bc0f9e792bd430af108f333c95a2a94023ff173805ae7365d33e05`
+  - `plumb-v0.1.0-linux-amd64.tar.gz` `83d7976fd638f36993b7f40336afe4682e4ee50a9c11c2e115400979ce975189`
+
+  The draft release's `SHA256SUMS` must equal these when it is built from that commit.
+
 - Keep step 1 of "Install or upgrade" only if the release has a build attestation (the release workflow of PR #392).
 - Update the O1 line with the newest count of the CI loop.
 - Add the C5b scan result of T-263 to "Proven on a real Proxmox host" when pl-reviewer has reported.
