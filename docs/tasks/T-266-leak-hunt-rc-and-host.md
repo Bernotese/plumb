@@ -14,4 +14,5 @@ Release slice, card **C5b** of `docs/plans/release-slice.md` (section 5a "P4", P
 - [ ] When done: tell `pl-lead`; `pl-backend` deletes the folder. The log (method, counts) as `docs/tasks/T-266.log.md` in a PR; report.
 
 ## Result (owner, max 8 lines)
-branch · commit · tests · notes
+- **No secret** in the RC tarballs (0 places of any kind), in the host data of T-263 (DB, backups, events, journals, export, sample guest backup, raw outputs) or in the repo since #389 (refs, 56 texts, 31 Actions runs). 0 unreadable in every scan.
+- Method and counts: [T-266.log.md](T-266.log.md). The place lists are 0600 files outside the repo, given to pl-lead. The C5b folder is deleted (pl-backend, after my OK).
