@@ -33,7 +33,8 @@
   <!-- GET /restore is refused before this change: a static note (review L1 of #227). -->
   <p class="muted" id="restored-note">
     After a restore from a backup, Plumb starts in restored mode: it changes nothing until an admin
-    confirms in Settings → Backups that the old controller is off.
+    confirms in Settings → Backups that the old controller is off. Set your new password first:
+    until then nobody can confirm the restore or enable an API token with this login.
   </p>
   <ProblemBox {error} />
   <form class="card" onsubmit={submit}>
