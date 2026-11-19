@@ -105,7 +105,6 @@ Before this release, its release candidates went through a full run on a real Pr
 - **A test that failed without a known cause:** the firewall test of the CI (`TestGuestFirewall`) failed twice in an early step, before Plumb's firewall code ran. The cause was not found.
   - Since then, a loop runs in the guest CI jobs (first after the boot in the firewall job). It builds the same network for each round and probes it once: in 7 CI runs, **4000 of 4000 rounds connected, 0 failed** (status of 2026-11-19).
   - The cause stays unexplained. A new failure stops the loop with a dump of the network state.
-- **Dependencies:** `npm audit` reports one low advisory (GHSA-gcqx-w48m-w2h4, prototype poisoning in `deepmerge` 4.3.1). It comes only with the build tool of the web UI (a dev dependency), it is not in the shipped web files, and no fixed version exists yet.
 - **A stock Ubuntu 26.04 image** used directly by a Target can stay on DHCP until its first restart. Use DHCP, or let Plumb build the Image: a built Image does not have this limit.
 - **Proxmox Backup Server:** Plumb reads from the storage config whether a backup storage encrypts. This was not tested on a real Proxmox Backup Server.
 - **A gone guest:** Plumb restores a guest backup only over the same guest, not after the guest is gone. Restore it in Proxmox into the pool `plumb`, then adopt the guest.
