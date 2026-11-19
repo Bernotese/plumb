@@ -644,8 +644,7 @@ fails, the guest is left empty. So the Run first takes a safety backup of the gu
 the list as "safety backup before a restore", and "keep" never counts or deletes it. After a
 restore that worked, it stays, so you can undo the restore; it replaces the older safety backup of
 the guest. After the restore of a safety backup itself, Plumb keeps that one and every newer one,
-and deletes only older safety backups. If the controller stops during a restore, the older safety
-backups of that guest stay until its next restore that works; you may delete them in Proxmox.
+and deletes only older safety backups. If the controller stops during a restore, Plumb deletes the older safety backups at its next start when the restore had already worked and Plumb knows the volume to keep: this restore's safety backup, or the restored safety backup itself. Otherwise they stay until the next restore that works, and you may delete them in Proxmox.
 
 If the restore fails, the Run says that the guest may have no disk, and Plumb opens the Issue
 `guest:restore-failed`. It names the safety backup, and its link opens the restore of that backup.
