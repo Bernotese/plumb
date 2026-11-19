@@ -4,6 +4,7 @@ package install
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -207,5 +208,36 @@ func TestT265StateNamesNewFlagsUnknown(t *testing.T) {
 		if strings.Contains(st, "\n"+k+"=") {
 			t.Errorf("the kept state invents %s", k)
 		}
+	}
+}
+
+// The guard of install_copy_timer: with the F2 bug put back (a copy of
+// install.sh without the main-shell check), the restore stops before it
+// writes a copy config without type or path.
+func TestCopyTimerGuardStopsWithoutType(t *testing.T) {
+	t.Parallel()
+	b, file := keptHost(t)
+	src := string(mustRead(t, "install.sh"))
+	fix := "\t\t\tcheck_backup_storage\n\t\t\treturn 0\n"
+	if strings.Count(src, fix) != 1 {
+		t.Fatal("the F2 fix is not in install.sh as expected")
+	}
+	bugged := filepath.Join(t.TempDir(), "install.sh")
+	if err := os.WriteFile(bugged, []byte(strings.Replace(src, fix, "\t\t\treturn 0\n", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", bugged, "--snippet-dir", b.snippet, "--image-dir", b.images(), "--yes", "--plumb-binary", b.plumb,
+		"--restore", file, "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
+	cmd.Env = append(append([]string{}, b.env...), asRoot...)
+	var out, errOut strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	if err := bounded(t, cmd); err == nil {
+		t.Fatalf("the bugged restore went through:\n%s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "the copy timer of storage backups has no type or path") {
+		t.Errorf("no guard text:\n%s", errOut.String())
+	}
+	if c := b.copyConf(); c != nil {
+		t.Errorf("a copy config was written: %v", c)
 	}
 }
