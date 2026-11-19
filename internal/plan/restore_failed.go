@@ -351,6 +351,10 @@ func (e *Engine) recoverRestores(ctx context.Context) error {
 			}
 		}
 		if restored {
+			// O9 (a): the drop of the older safety backups (D-429) that the
+			// cut Run did not reach. It reads the way back from the Issue,
+			// so it runs before restoredIssue replaces the changes.
+			e.dropAfterCutRestore(ctx, p, iss.Target, ch)
 			if err := e.restoredIssue(ctx, iss.Target, run.ID, "restored: the follow-up (a re-enroll Plan, or the install command of an adopted Target) comes next"); err != nil {
 				e.log.Error("mark the Issue of the restore as restored", "target", iss.Target, "err", err)
 				continue
@@ -368,4 +372,39 @@ func (e *Engine) recoverRestores(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// dropAfterCutRestore is the D-429 drop of a restore Run that a controller
+// stop cut after the restore call (O9 (a)). The live Run drops the older
+// safety backups right after the restore call; a cut Run never got there,
+// so the old pre-restore volumes stayed until the next restore that worked.
+// The volume to keep is the one the live Run keeps: this Run's safety
+// backup (the way back of the Issue), or, when the Plan skipped the safety
+// backup, the restored volume if it is a safety backup itself. When neither
+// is known (the stop came after the Issue said "restored"), nothing is
+// dropped: the next restore that works does it, as before.
+func (e *Engine) dropAfterCutRestore(ctx context.Context, p store.Plan, target string, ch []wire.Change) {
+	if e.cfg.GuestRestore == nil {
+		return
+	}
+	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
+	if err != nil {
+		return
+	}
+	id := ""
+	if w, _ := RestoreWayBack(ch); w != nil {
+		id = w.BackupID
+	} else if tp, _, bid, err := restorePlanned(p); err == nil && skipSafety(tp) {
+		id = bid
+	}
+	if id == "" {
+		return
+	}
+	v, err := e.cfg.GuestRestore.FindBackup(ctx, target, b.Ref, id)
+	if err != nil || !isPreRestore(v) {
+		return
+	}
+	if err := e.cfg.GuestRestore.DropSafetyBackups(ctx, target, v.Volid); err != nil {
+		e.log.Warn("delete the older safety backups after a cut restore", "target", target, "err", err)
+	}
 }
