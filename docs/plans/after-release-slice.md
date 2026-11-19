@@ -46,3 +46,95 @@
 
 - Card 4: worth its risk at all, given D-440's way out? The plan would answer the cost; the recommendation is "plan yes, build only if the plan shows a narrow rule".
 - The `vmbr9` undo on the test host and step 7 of T-263 (U12) belong to the release slice, not here.
+
+## Plan: card 2, the "restore call begins" mark
+
+**The fault** (#374 L2, T-260 row 69). The start rule `recoverRestores` (D-427) knows only two facts about a cut restore Run:
+
+- the open `guest:restore-failed` Issue in the "running:" state, written by `restoreRunningIssue` before anything changes;
+- the step output with the `restored ` mark, written right after the Proxmox restore call worked.
+
+Without the mark it says "failed: the controller stopped during the restore; **the guest may have no disk**". That is true only once the Proxmox restore task exists. A stop earlier in the Run gets the same text, although no disk was touched.
+
+**The Run today** (`internal/plan/restore_guest.go`, the guest:config step of a restore Plan), in order, with the stop points that matter:
+
+| #   | Step                                                             | What a stop here leaves                            | Today's start rule | Right answer                                                               |
+| --- | ---------------------------------------------------------------- | -------------------------------------------------- | ------------------ | -------------------------------------------------------------------------- |
+| 1   | stop the guest (`stopGuest`), if it ran                          | the guest stopped or stopping; no Issue            | nothing (no Issue) | as today                                                                   |
+| 2   | the safety backup (`SafetyBackup`, D-420)                        | a backup job; no Issue                             | nothing            | as today                                                                   |
+| 3   | `restoreRunningIssue` (the Issue "running:", with the way back)  | the Issue, the guest stopped, the credential valid | "may have no disk" | **"did not start; the disks are as before"**                               |
+| 4   | `Agents.Revoke`                                                  | the credential revoked                             | "may have no disk" | "did not start; disks as before; **the credential is revoked**: re-enroll" |
+| 5   | `DropHostKeys`                                                   | the pins dropped                                   | "may have no disk" | as 4                                                                       |
+| 6   | `RestoreGuest`: the driver's checks (the volume's size and time) | no Proxmox task yet                                | "may have no disk" | as 4                                                                       |
+| 7   | `RestoreGuest`: the Proxmox task is created and runs             | the disks may be gone                              | "may have no disk" | as today (correct)                                                         |
+| 8   | the `restored ` mark                                             | the restored disks                                 | the follow-up      | as today                                                                   |
+
+**The design:**
+
+- **A new step output mark, `restore call `** (a fixed prefix like `restoredMark`), is written with the same `s.set` **right before** `RestoreGuest`, after `DropHostKeys`.
+  - **Fail closed:** when the mark cannot be written, the Run stops before the call, with "nothing was restored". It also runs `endRunning()`, revokes nothing more, and starts a guest that ran (the path of `ErrRestoreNotStarted`).
+  - Stop points 6–7 then read as "may have no disk". That is safe: the mark means "maybe called".
+- **What the start rule reads:**
+  - the `restored ` mark → the follow-up (as today);
+  - the `restore call ` mark → "failed: the controller stopped during the restore; the guest may have no disk" (as today);
+  - **no mark** → a new text in the Issue: "the controller stopped before the restore call: the guest's disks are as before; it is stopped".
+    - **The credential:** the start rule reads it from the store (`Agents`: revoked or not). It does not need another mark.
+    - **When it is revoked:** the Issue stays open in a "not restored, re-enroll needed" state with the way out "propose the re-enroll" (one re-enroll Plan, as D-440 makes; the disks are the old ones, so a re-enroll gives the old guest its agent back).
+    - **When it is not revoked:** the Issue ends (D-428 comment "the restore did not start"), and the gate opens again.
+  - **The guest stays stopped** in both no-mark cases; the text says so. Plumb does not start it at start time: that would be a guest change without a Plan.
+- **Narrowing step 6** (optional; the recommendation is not in this card): split `RestoreGuest` into a check and a call, so a stop during the driver's checks also reads "did not start". Steps 6–7 are milliseconds apart, and the safe side costs only a too-careful text.
+
+**Tests** (in `internal/api`, with the `cutRestore` helper and the fake restorer):
+
+- a cut with no mark and the credential valid → the Issue ends with "did not start", the gate is open, no re-enroll Plan;
+- a cut with no mark and the credential revoked → the Issue in "re-enroll needed" with the way out, exactly one re-enroll Plan after the way out, no "may have no disk";
+- a cut with the `restore call ` mark → "may have no disk" (today's text, the way back named);
+- a cut with the `restored ` mark → the follow-up, as today;
+- the mark write fails (a store error) → the fake records **no** `RestoreGuest` call; the Run says "nothing was restored";
+- **mutants:** move the mark after the call (the "may have no disk" test with a cut after the call must fail); drop the credential read (the revoked case must fail).
+
+**Host proof** (`pve-dev`, one short run, dry run → `pl-lead` → go for each installer step; announced controller stops):
+
+- **(a) A stop during the guest stop (step 1) or the safety backup (step 2):** these are windows of seconds. A guest with `allow_restart` and a slow shutdown gives one; `systemctl stop plumb` in the LXC. Then the start rule must leave no Issue, or end it.
+- **(b) A stop right at the mark (steps 6–7):** with the T-247 method (an in-LXC read-only trigger on the step output change, a window of about 15 ms). Then "may have no disk", and the way back works.
+- **Steps 3–5** are milliseconds wide and only practical in the unit tests; the log says so. Both stops are announced to `pl-lead`; all objects are `t-*` objects in the pool.
+
+**Size and risk:** S–M, risk medium: the restore path, a new Issue state, and the first time the start rule reads the agent store. The review is critical.
+
+## Plan: card 4, a re-enroll Plan that survives a head move
+
+**The fault** (#382 O9 (b), T-247 F4, seen again in T-263 4f). A re-enroll Plan is pinned to the head revision at its making, like every Plan. `ApprovePlan` (`internal/store/plan.go`) marks it stale when the head moved: any approved Plan of any Target moves the head. After two restores, approving the first re-enroll makes the second stale. D-440 handles it: the Issue says "the re-enroll Plan N can no longer run (stale): plan the re-enroll again", and one click makes a new one. So this is a comfort, not a safety fault.
+
+**What "equal documents" would have to mean.** A re-enroll Run writes the whole desired guest config of the Target, makes a new enrollment, and starts the guest. So "the head move does not matter" needs the **rendered input of that Run** to be equal at the Plan's base and at the head:
+
+- the Target document itself (spec, `guest`, `blocks` with their params, `allow_restart`);
+- every Block the Target uses, by name (the rendered resources, not only the name);
+- the Image document the Target names (the guest spec reads it);
+- the **secret values** that the rendered Blocks reference. They are not in the revision; their counters live in the store, so the comparison must cover them, or a changed secret would be sent under an old Plan;
+- the Settings and the install values that the render reads (DNS, the vendor snippet). These come from the install, not from the revision; they cannot change by a head move.
+
+The safe form is a byte compare of the canonical render (the same function the Plan shows), at the base and at the head, plus the secret counters. Any error → stale (fail closed).
+
+**What the approve path and the D-439/D-440 gate must re-check** (in the same transaction as the approve, so the head cannot move between the compare and the commit):
+
+- the Target still exists, with the same binding (VMID and `gen`), not deleted and made again;
+- its `guest:restore-failed` Issue is still open in the "restored" state, and names **this** restore Run (`restore_run`). A second restore of the same Target makes the old Plan stale;
+- no other re-enroll Run of the Target worked in between (the agent is not enrolled already);
+- no other Plan of the Target is pending or running (the D-440 one-per-Target rule).
+
+**Where it must still go stale:** a change of the Target document, of any Block it uses, of its Image, of a referenced secret; a delete and re-make of the Target; a second restore; a worked re-enroll by another path; and any compare error.
+
+**The risks:**
+
+- It is the **first exception to "a Plan is pinned to its base"**, the rule that every review since slice 1 relies on.
+- The Plan's shown changes stay true only because the render is equal, so a bug in the compare means approving something other than what was shown. That is the class of fault that D-323 and D-441 close elsewhere.
+- The secret counters add a second source next to the revision.
+- And the gain is one click, in a rare case (two restores at the same time).
+
+**Recommendation: do not build the exception.** If the click must go, there is a narrower way that keeps every Plan pinned:
+
+- **When a re-enroll Plan goes stale** while its Issue is in the "restored" state (the place where D-440 already notices it), **the system proposes a fresh re-enroll Plan for the head** (origin `reenroll`, author `system`; one per Target, as D-440 already allows).
+- The Issue names the new Plan, and the person approves it as usual.
+- That needs no new staleness rule, no render compare and no secret compare. It needs one test per path (the stale mark at approve, and the head move seen by the Issue note), and the T-247 F4 host case as the proof.
+- The re-proposal is size S, risk low–medium (it adds system-made Plans; a loop guard: at most one re-proposal per stale Plan).
+- **Decision for `pl-lead`:** keep today's one click (no card), or the re-proposal (S). The exception itself is not recommended.
