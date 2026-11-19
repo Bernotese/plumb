@@ -5,7 +5,7 @@ A **draft** made from `docs/RELEASE-NOTES-TEMPLATE.md`, `CHANGELOG.md` ("Unrelea
 Open before use:
 
 - Fill `<version>` and `<date>`.
-- **Expected for commit `c8d5c15` with version `0.1.0`** (a local build, T-263 R4-0; a later commit on `main` changes them):
+- **Expected for commit `c8d5c15` with version `0.1.0`** (a local build, T-263 R4-0; a commit that changes a build input changes the hashes):
   - `plumb` `611a267c8fdacc80895271a92489a8d74349a98e12e8d398aacc7026dc797c27`
   - `plumb-agent` `6605f9ce51d1636eaf48b7e1a3c3974d0da985f53d72ddd0e0e5feb5862692a8`
   - `install.sh` `c6bc04c6bf2383dfb9c98d7faca88519d50f2947c82521230d300ff4e4fcd5ae`
@@ -94,7 +94,7 @@ Before this release, its release candidates went through a full run on a real Pr
 - **The restore of Plumb itself** (remove the controller and keep the guests, then a clean install with the restore of a backup):
   1. every Target reconciles, and no drift Issue opened in 15 minutes;
   2. every agent is online without a re-enrollment, and the SSH host keys stay pinned;
-  3. the admin logs in with the password that the restore showed and must set a new one first (after it only the new one works), the tokens work within their tier once a person enables them again, and a revoked token stays revoked;
+  3. the admin logs in with the password that the restore showed and must set a new one first (after it only the new one works), the tokens work within their tier once a person enables them again, and a revoked token stays revoked. The other users are locked by the restore; their unlock by a one-time password was not run on the host (it is covered by the automated tests only);
   4. the guest backups are still listed, and a guest with a data disk restores from one;
   5. the guests, their data disks and their network cards are unchanged;
   6. the Proxmox rights and the storage config are equal;
