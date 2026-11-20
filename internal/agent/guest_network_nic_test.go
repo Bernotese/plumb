@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,6 +15,42 @@ import (
 	"github.com/Bernotese/plumb/internal/resource"
 	"github.com/Bernotese/plumb/internal/wire"
 )
+
+// mainAddrBound is how long the main address may be missing after the
+// apply of the second card. The agent writes only the card's entry
+// (D-419), but netplan apply makes networkd ask DHCP again on the main
+// NIC: a refreshed lease with the same address and a gap of at most the
+// bound is accepted
+// (D-443, CI of #419: valid_lft 3595 s before, 3600 s after; the gap is
+// measured by meterNetwork from before the apply and logged). A
+// longer gap, or another address, fails.
+const mainAddrBound = 2 * time.Second
+
+// lftForever is the valid_life_time of an address without a lease.
+const lftForever = 4294967295
+
+// mainValidLft returns the valid_life_time (seconds) of the address a on
+// dev, and whether dev has it.
+func mainValidLft(t *testing.T, dev string, a netip.Addr) (uint64, bool) {
+	t.Helper()
+	var links []struct {
+		AddrInfo []struct {
+			Local         string `json:"local"`
+			ValidLifeTime uint64 `json:"valid_life_time"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal(mustOut(t, "ip", "-j", "addr", "show", "dev", dev), &links); err != nil {
+		t.Fatalf("ip -j addr show dev %s: %v", dev, err)
+	}
+	for _, l := range links {
+		for _, ai := range l.AddrInfo {
+			if ai.Local == a.String() {
+				return ai.ValidLifeTime, true
+			}
+		}
+	}
+	return 0, false
+}
 
 // TestGuestNetworkNIC proves the network resource of a more NIC (T-220,
 // D-403) with real netplan apply: lxd.sh hot-plugs a second virtio card
@@ -103,15 +140,57 @@ func TestGuestNetworkNIC(t *testing.T) {
 	// 1. Apply: the own entry matches the MAC; the address is live on the
 	// card; the main NIC keeps its address and default route.
 	r := res(mac, "10.99.20.5/24")
+	lft0, ok := mainValidLft(t, dev, main)
+	if !ok {
+		t.Fatalf("the main address %s is not on %s before the apply", main, dev)
+	}
+	// A lease that a test before just renewed has the full time, and a new
+	// lease at the apply would show the same value. So wait until it
+	// counted down by 5 s first; the log then tells a new lease (a higher
+	// value) from the same one (D-443: logged, not a failure).
+	if lft0 != lftForever {
+		first := lft0
+		for end := time.Now().Add(15 * time.Second); lft0+5 > first; time.Sleep(500 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Logf("valid_lft of %s did not count down by 5 s: %d s, then %d s", main, first, lft0)
+				break
+			}
+			if lft0, ok = mainValidLft(t, dev, main); !ok {
+				t.Fatalf("the main address %s left %s before the apply", main, dev)
+			}
+		}
+	}
+	meter := meterNetwork(dev, gw, main) // from before the apply (#419 L2)
 	apply(r)
 	b, err := os.ReadFile(file)
 	if err != nil || !strings.Contains(string(b), "plumb-ci-nic:") || !strings.Contains(string(b), "macaddress: "+mac) {
 		t.Fatalf("file: %s %v", b, err)
 	}
 	waitLive("10.99.20.5/24", true)
-	if !strings.Contains(string(mustOut(t, "ip", "-o", "addr", "show", "dev", dev)), " "+main.String()+"/") {
-		t.Fatalf("the main address of %s is gone", dev)
+	// The main address may be gone for a moment (mainAddrBound): wait for
+	// it, and log how long it was missing.
+	start := time.Now()
+	lft1, ok := mainValidLft(t, dev, main)
+	for ; !ok; lft1, ok = mainValidLft(t, dev, main) {
+		if time.Since(start) > mainAddrBound {
+			t.Fatalf("the main address %s of %s is gone or changed for more than %v (D-443)", main, dev, mainAddrBound)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	if d := time.Since(start); d > 20*time.Millisecond {
+		t.Logf("the main address of %s was back after %v", dev, d.Round(time.Millisecond))
+	}
+	// D-443: the same address within the bound is enough; a new lease is
+	// only logged (valid_lft starts again at the full lease time).
+	gaps := meter.end(gw)
+	if meter.addrLong > mainAddrBound {
+		t.Fatalf("the main address %s of %s was gone for %v at the apply (bound %v, D-443): %s", main, dev, meter.addrLong, mainAddrBound, gaps)
+	}
+	lease := "the same lease"
+	if lft0 != lftForever && lft1 > lft0 {
+		lease = "a new lease (D-443: accepted, same address)"
+	}
+	t.Logf("main address %s: valid_lft %d s before the apply, %d s after: %s; measured from before the apply: %s", main, lft0, lft1, lease, gaps)
 	if rs, _, _ := waitDefaultRoute(30 * time.Second); len(rs) == 0 || rs[0].Dev != dev {
 		t.Fatalf("the default route moved: %+v", rs)
 	}
