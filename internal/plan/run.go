@@ -664,7 +664,7 @@ func (e *Engine) waitOnline(ctx context.Context, target string, after int) error
 		select {
 		case <-tick.C:
 		case <-deadline.C:
-			return fmt.Errorf("the agent of %s did not come online within %v", target, e.cfg.EnrollTimeout)
+			return fmt.Errorf("the agent of %s did not come online within %v; in the guest, journalctl -u plumb-agent-install -u plumb-agent says why (a VM: also /var/log/cloud-init-output.log)", target, e.cfg.EnrollTimeout)
 		case <-ctx.Done():
 			return ctx.Err()
 		}

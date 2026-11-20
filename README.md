@@ -316,6 +316,15 @@ the update Plan by itself only when the new agent can do other things than the o
 that does not reach Plumb within 5 minutes after the update goes back to its old version by
 itself.
 
+**Container Images built before this release.** A built container Image keeps the first-boot
+files of the Plumb that built it. With a version built before this release, a new container can
+miss its agent at its first boot: the create Run ends with "the agent of … did not come online",
+and the agent page says "no agent yet". Before you make new containers from such an Image,
+use **Build now** on its Image page: the new version has the fixed files. For a container that
+missed its agent, the repair over SSH cannot help (its agent never wrote the repair key line):
+use **Make an install command** on its agent page and run the command in the container. A stock
+container Image needs nothing: Plumb packs its template again the next time it is used.
+
 ### Repair a dead agent
 
 When the agent of a running guest is offline, the agent page offers **Propose repair**. Plumb
