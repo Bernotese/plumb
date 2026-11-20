@@ -3,7 +3,7 @@
 Rules for every agent in this repo. Keep this file short; details live in `docs/`.
 
 ## Project
-- **Plump**: new full-stack project of the user. Product/stack decisions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`. Current state: `docs/STATUS.md`.
+- **Plump**: new full-stack project of the user. Product/stack decisions: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md` (look a decision up in `docs/DECISIONS-index.md` before you rely on it). Current state: `docs/STATUS.md`.
 - Repo: `/home/jannes/workspcae/plump` (git, `main` = merged + tested).
 - Agents run on a dedicated dev VM in **auto mode** (see Permissions). You may install tools and packages. Never delete data outside this repo and its worktrees, never push secrets.
 
