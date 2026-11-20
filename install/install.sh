@@ -625,11 +625,14 @@ $(sed 's/^/      /' "$ca")
     content: |
       #!/bin/sh
       # Install the Plumb agent from the controller. Idempotent: it does
-      # nothing when the agent runs. Only the pinned Plumb CA is trusted:
-      # --capath/--ca-directory replace the system CA store with a directory
-      # that holds no hashed CA names (review S1 of T-076).
+      # nothing when the agent is installed and runs. Only the pinned Plumb CA
+      # is trusted: --capath/--ca-directory replace the system CA store with a
+      # directory that holds no hashed CA names (review S1 of T-076).
       set -eu
-      if systemctl is-active --quiet plumb-agent.service; then exit 0; fi
+      # The binary decides, not the unit alone: at boot plumb-agent.service is
+      # "active" for a moment after its fork also when its binary is missing
+      # (T-278), and a skip then left the guest without an agent.
+      if [ -x /usr/local/bin/plumb-agent ] && systemctl is-active --quiet plumb-agent.service; then exit 0; fi
       url='$url/agent/v1/binary'
       ca=/etc/plumb-agent/ca.pem
       tmp=\$(mktemp)

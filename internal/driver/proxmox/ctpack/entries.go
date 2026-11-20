@@ -21,11 +21,14 @@ var mtime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 // (D-082), with @URL@ for the agent URL. A test keeps both texts equal.
 const firstBootScript = `#!/bin/sh
 # Install the Plumb agent from the controller. Idempotent: it does
-# nothing when the agent runs. Only the pinned Plumb CA is trusted:
-# --capath/--ca-directory replace the system CA store with a directory
-# that holds no hashed CA names (review S1 of T-076).
+# nothing when the agent is installed and runs. Only the pinned Plumb CA
+# is trusted: --capath/--ca-directory replace the system CA store with a
+# directory that holds no hashed CA names (review S1 of T-076).
 set -eu
-if systemctl is-active --quiet plumb-agent.service; then exit 0; fi
+# The binary decides, not the unit alone: at boot plumb-agent.service is
+# "active" for a moment after its fork also when its binary is missing
+# (T-278), and a skip then left the guest without an agent.
+if [ -x /usr/local/bin/plumb-agent ] && systemctl is-active --quiet plumb-agent.service; then exit 0; fi
 url='@URL@/agent/v1/binary'
 ca=/etc/plumb-agent/ca.pem
 tmp=$(mktemp)
@@ -77,11 +80,13 @@ RestartSec=10
 WantedBy=multi-user.target
 `
 
-// installUnit runs the first-boot script at every boot; the script exits
-// at once when the agent runs. No ConditionPathExists: a container whose
-// first fetch failed tries again at the next boot (D-230). The script
-// retries up to 10 minutes, so the start has no time limit.
-const installUnit = `[Unit]
+// InstallUnit runs the first-boot script at every boot; the script exits
+// at once when the agent is installed and runs. No ConditionPathExists: a
+// container whose first fetch failed tries again at the next boot (D-230).
+// The script retries up to 10 minutes, so the start has no time limit. It
+// has no order to plumb-agent.service: the script checks the binary, so
+// no start order of the two units can skip the download (T-278).
+const InstallUnit = `[Unit]
 Description=Install the Plumb agent from the controller
 After=network-online.target
 Wants=network-online.target
@@ -129,7 +134,7 @@ func plumbEntries(o Options) ([]entry, error) {
 		{name: "etc/plumb-agent/ca.pem", flag: tar.TypeReg, mode: 0o644, body: normPEM(o.CA)},
 		{name: "etc/plumb-agent/agent.json", flag: tar.TypeReg, mode: 0o644, body: string(js)},
 		{name: "usr/local/sbin/plumb-agent-install", flag: tar.TypeReg, mode: 0o755, body: FirstBootScript(o.AgentURL)},
-		{name: "etc/systemd/system/plumb-agent-install.service", flag: tar.TypeReg, mode: 0o644, body: installUnit},
+		{name: "etc/systemd/system/plumb-agent-install.service", flag: tar.TypeReg, mode: 0o644, body: InstallUnit},
 		{name: "etc/systemd/system/plumb-agent.service", flag: tar.TypeReg, mode: 0o644, body: AgentUnit},
 		{name: "etc/systemd/system/multi-user.target.wants/plumb-agent-install.service", flag: tar.TypeSymlink, mode: 0o777,
 			target: "/etc/systemd/system/plumb-agent-install.service"},
