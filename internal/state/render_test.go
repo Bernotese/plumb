@@ -316,9 +316,9 @@ func TestRestartsRules(t *testing.T) {
 			t.Errorf("restart_on = %v", got)
 		}
 	})
-	t.Run("the service is not on the target", func(t *testing.T) {
+	t.Run("the service is not on the Target", func(t *testing.T) {
 		wantErr(t, orderFixture(target(`"blocks":[{"use":"motd"},{"use":"site","id":"site-a"}]`)), "/spec/blocks/1",
-			`Block "site" (use "site-a") restarts service:nginx, but service:nginx is not on this target; add the Block that provides it`)
+			`Block "site" (use "site-a") restarts service:nginx, but service:nginx is not on this Target; add the Block that provides it`)
 	})
 	t.Run("a bad id in the merged list still fails the restart_on check", func(t *testing.T) {
 		bad := doc(KindBlock, "nginx", `{"resources":[{"package":{"name":"nginx"}},{"service":{"name":"nginx","restart_on":["file:/nope"]}}]}`)
@@ -343,11 +343,11 @@ func TestAfterRules(t *testing.T) {
 		wantErr(t, fixture(block("b", `{"after":["file:/etc/motd","guest:config"],"resources":[{"file":{"path":"/b","content":"b"}}]}`)),
 			"/spec/after/1", `after: "guest:config" has no known resource type`)
 	})
-	t.Run("the id is not on the target", func(t *testing.T) {
+	t.Run("the id is not on the Target", func(t *testing.T) {
 		wantErr(t, orderFixture(
 			doc(KindBlock, "plain", `{"resources":[{"service":{"name":"nginx"}}]}`),
 			target(`"blocks":[{"use":"plain"},{"use":"site","id":"site-a"}]`)), "/spec/blocks/1",
-			`Block "site" (use "site-a") comes after package:nginx, but package:nginx is not on this target; add the Block that provides it`)
+			`Block "site" (use "site-a") comes after package:nginx, but package:nginx is not on this Target; add the Block that provides it`)
 	})
 	t.Run("the id is a resource of the same use", func(t *testing.T) {
 		wantErr(t, fixture(
@@ -436,7 +436,7 @@ func TestRenderRules(t *testing.T) {
 		wantErr(t, fixture(target(`"blocks":[{"use":"motd","params":{"path":"relative"}}]`)), "/spec/blocks", "file:relative")
 	})
 	t.Run("override unknown resource", func(t *testing.T) {
-		wantErr(t, fixture(target(`"blocks":[{"use":"motd"}],"overrides":{"file:/x":{"mode":"0600"}}`)), "/spec/overrides/file:~1x", "not on the target")
+		wantErr(t, fixture(target(`"blocks":[{"use":"motd"}],"overrides":{"file:/x":{"mode":"0600"}}`)), "/spec/overrides/file:~1x", "not on the Target")
 	})
 	t.Run("override cannot change the key", func(t *testing.T) {
 		wantErr(t, fixture(target(`"blocks":[{"use":"motd"}],"overrides":{"file:/etc/motd":{"path":"/other"}}`)), "/spec/overrides/file:~1etc~1motd/path", "key attribute")

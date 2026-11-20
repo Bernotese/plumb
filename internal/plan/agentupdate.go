@@ -436,7 +436,7 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 	}
 	head, err := e.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if err != nil {
 		return store.Plan{}, err
@@ -444,7 +444,7 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 	if r, err := e.headRender(ctx, target); err != nil {
 		return store.Plan{}, err
 	} else if r == nil {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if err := e.restoreFailedOne(ctx, target); err != nil { // T-234
 		return store.Plan{}, err

@@ -142,7 +142,7 @@ func explainIssue(ctx context.Context, c *Client, arg string) (*mcp.GetPromptRes
 			parts = append(parts, part{"block", fetchPart(ctx, c, "/api/v1/blocks/"+b)})
 		}
 	} else {
-		parts = append(parts, part{"block", map[string]any{"note": "the resource is the Target's own (no Block); see the target part"}})
+		parts = append(parts, part{"block", map[string]any{"note": "the resource is the Target's own (no Block); see the Target part"}})
 	}
 	parts = append(parts, part{"runs", targetRuns(ctx, c, target)}, part{"comments", comments})
 	text, err := message(parts)

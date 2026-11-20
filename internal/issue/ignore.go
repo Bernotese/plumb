@@ -221,10 +221,10 @@ func ruleProposal(iss store.Issue, scope RuleScope, principal string) (plan.Inpu
 	}
 	where := iss.Target
 	if scope.AllTargets {
-		where = "every target"
+		where = "every Target"
 	}
 	return plan.Input{Author: principal, IssueID: iss.ID, Origin: plan.OriginIgnoreRule,
-		Reason:   fmt.Sprintf("ignore drift of %s on %s by rule (issue %d)", iss.Resource, where, iss.ID),
+		Reason:   fmt.Sprintf("ignore drift of %s on %s by rule (Issue %d)", iss.Resource, where, iss.ID),
 		Proposal: plan.Proposal{Put: []state.Doc{doc}}}, nil
 }
 

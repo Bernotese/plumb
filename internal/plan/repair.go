@@ -353,7 +353,7 @@ func (e *Engine) ProposeRepair(ctx context.Context, target, reason, acceptHostKe
 	}
 	head, err := e.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if err := e.restoreFailedOne(ctx, target); err != nil { // T-234
 		return store.Plan{}, err
@@ -364,7 +364,7 @@ func (e *Engine) ProposeRepair(ctx context.Context, target, reason, acceptHostKe
 	if r, err := e.headRender(ctx, target); err != nil {
 		return store.Plan{}, err
 	} else if r == nil {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if err := e.repairNeeded(ctx, target); err != nil {
 		return store.Plan{}, err
@@ -468,7 +468,7 @@ func (e *Engine) approveRepair(ctx context.Context, p store.Plan, principal stri
 	if r, err := e.headRender(ctx, tp.Target); err != nil {
 		return store.Run{}, err
 	} else if r == nil {
-		return store.Run{}, &ProposalError{Target: tp.Target, Msg: "no such target"}
+		return store.Run{}, &ProposalError{Target: tp.Target, Msg: "no such Target"}
 	}
 	if err := e.repairNeeded(ctx, tp.Target); err != nil {
 		return store.Run{}, err

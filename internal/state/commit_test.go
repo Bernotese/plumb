@@ -201,7 +201,7 @@ func TestLoadKeepsAStoredCycle(t *testing.T) {
 	bad := []Doc{doc(KindImage, "img", image),
 		doc(KindBlock, "b", `{"after":["file:/nope"],"resources":[{"file":{"path":"/b","content":"b"}}]}`),
 		target(`"blocks":[{"use":"b"}]`)}
-	if _, err := validate(bad, DefaultLimits, true); err == nil || !strings.Contains(err.Error(), "is not on this target") {
+	if _, err := validate(bad, DefaultLimits, true); err == nil || !strings.Contains(err.Error(), "is not on this Target") {
 		t.Fatalf("an unknown after id in a stored set: %v", err)
 	}
 }
