@@ -15,3 +15,4 @@ coverage/
 /cmd/plumb/agentbin/plumb-agent
 pve-record/
 /plumb
+/plumb-agent
