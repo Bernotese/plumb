@@ -5,7 +5,7 @@ Each entry: ID · date · state (who) · decision · why. Most entries are one l
 - **Which line wins:** the newer decision wins over an older one and over `docs/BRIEF.md`. An "amended" line wins over the line it amends. The file order is mostly, not always, the number order. Read the table "Changed or replaced" below before you rely on an old decision.
 - **New decisions:** in a PR, write them to `docs/decisions/T-NNN.md` (one line each, this format, the numbers that `pl-lead` gives). `pl-lead` appends them at the end of this file after the merge. Next number: **D-443**.
 - **Numbers:** D-057 … D-059, D-114, D-116 … D-119 and D-129 were never used. D-362, D-366, D-376, D-385, D-389 and D-393 have a second, "amended" line.
-- **State "proposed":** 18 decisions of slice 8 and earlier still say "proposed". Their state today is in the table "Proposed: state today".
+- **State "proposed":** 18 decisions of slice 8 and earlier still say "proposed" in their line. Their state is in the table "Proposed: state today": 16 are accepted, D-432 and D-434 are open.
 
 The tables below were made by T-273 (2026-11-20, `main` fa4b299) from the decision texts and the code. They add no decision.
 
@@ -155,26 +155,26 @@ The decision stays; only the named part of its text is old.
 
 ## Proposed: state today
 
-| Decision | Today |
+| Decision | State (pl-lead, 2026-11-20) |
 | --- | --- |
-| D-219 | built: driver.OverLimit in internal/driver/driver.go:548, gate in internal/plan/disk.go, cmd/plumb/disklimit.go (Sys.Audit by D-239/240); state never updated |
-| D-421 | built: slice 8 done per docs/STATUS.md row T-236 ("Done 2026-11-16"); scope decision, release slice in progress |
-| D-422 | built: internal/mcp/prompts.go (explain_issue), internal/api/mcp_prompt_qa_test.go, README "explain_issue" |
-| D-423 | built: internal/api/disks_test.go, disks_qa_test.go (T-238); README data disks |
-| D-424 | n/a (no-build choice): README line 196 "The main address, the gateway and DHCP do not change"; holds |
-| D-425 | n/a (no-build choice): dropped by D-433; no strictness for other types in code |
-| D-426 | built: web/src/screens/BlockForm.svelte preview (PreviewResource), README line 200 |
-| D-427 | built: internal/plan/restore_failed.go:365, internal/api/restore_recover_test.go |
-| D-428 | built: internal/api/restore_recover_test.go "D-428 sweep", restore_qa_test.go, disks_qa_test.go |
-| D-429 | built: internal/api/restore_safety_test.go, restore_cut_drop_test.go, cmd/plumb/restoreguest.go DropSafetyBackups |
-| D-430 | built: internal/api/stock_image_delete_test.go (T-242), internal/driver/proxmox/images.go:580 |
-| D-431 | built: internal/agent/logscan_test.go, guest_logscan_test.go, internal/api/env_test.go:66 (log capture) |
-| D-432 | not done yet (by design): vmbr9 still on pve-dev; undo is release-slice card C8, waits for U12 (docs/STATUS.md) |
-| D-433 | n/a (drop list): the dropped items are not built, as decided |
-| D-434 | not built/open: user question U9 still open (docs/STATUS.md "Waits for the user ... U9, U10"); README states the PBS limit |
-| D-435 | not built (recommendation "no"): U10 still open; README documents the way by hand (ROADMAP row 34) |
-| D-436 | built: README slots/serial plumb-<slot>, internal/api/disks_test.go (T-237 #360, #365) |
-| D-437 | built: internal/api/disks_qa_test.go:201 ("stopped container gets its disk written cold"), disks_test.go |
+| D-219 | accepted (built: #127, #211) |
+| D-421 | accepted (built: slice 8, #360 … #384) |
+| D-422 | accepted (built: #367) |
+| D-423 | accepted (built: #360, #373) |
+| D-424 | accepted (a no-build choice that holds: the main address, the gateway and DHCP do not change) |
+| D-425 | accepted (a no-build choice that holds: no strictness for other types; D-433) |
+| D-426 | accepted (built: #361) |
+| D-427 | accepted (built: #374, #380) |
+| D-428 | accepted (built: #374, #375) |
+| D-429 | accepted (built: #369, #374) |
+| D-430 | accepted (built: #364) |
+| D-431 | accepted (built: #363, #371) |
+| D-432 | open: the `vmbr9` undo on `pve-dev` (release card C8) waits for U12 |
+| D-433 | accepted (a drop list that holds: the dropped items are not built) |
+| D-434 | open: waits for U9 (a PBS for one test run); until then the README states the PBS limit |
+| D-435 | accepted (a no-build choice that holds: no new right; the README documents the way by hand) |
+| D-436 | accepted (built: #360, #366) |
+| D-437 | accepted (built: #366, #373) |
 
 ## The decisions
 
