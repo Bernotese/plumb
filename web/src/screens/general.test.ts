@@ -152,6 +152,9 @@ describe("Settings → General: repair key (T-194, D-382)", () => {
     await until(() => document.querySelector("#key-left-behind"));
     expect(document.querySelector("#key-previous")).toBeNull();
     expect(text(el("#key-left-behind"))).toContain("Left behind (1): wiki (VMID 150).");
+    expect(text(el("#key-left-behind"))).toContain(
+      "until you make a new repair key and then revoke the previous one",
+    );
   });
 
   it("shows no left-behind line when the list is empty", async () => {
