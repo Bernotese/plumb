@@ -296,7 +296,9 @@ def ipv6_kind(text, nets):
     for net, kind in nets:
         if ip in net:
             return kind
-    if ip in IPV6_GLOBAL and not any(ip in d for d in IPV6_DOC):
+    # "2000::" as in "2000::/3" names a range, not a host: an address with
+    # only its first group set is no place.
+    if ip in IPV6_GLOBAL and not any(ip in d for d in IPV6_DOC) and int(ip) & ((1 << 112) - 1):
         return "global IPv6 address (any)"
     return None
 

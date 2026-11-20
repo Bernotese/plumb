@@ -197,7 +197,7 @@ class LeakScan(unittest.TestCase):
             "other " + glob,                          # global, no prefix
             "doc 2001:db8::1 and 3fff:999::1",        # documentation ranges
             "mac aa:bb:cc:dd:ee:ff link fe80::1 lo ::1 ula fd00::1",
-            "time 12:34:56 port [::]:8443",
+            "time 12:34:56 port [::]:8443 range 2000::/3",
         ]) + "\n")
         p, hits, _ = self.scan()
         self.assertEqual(p.returncode, 0, p.stderr)
