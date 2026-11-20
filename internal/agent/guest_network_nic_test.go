@@ -19,8 +19,10 @@ import (
 // mainAddrBound is how long the main address may be missing after the
 // apply of the second card. The agent writes only the card's entry
 // (D-419), but netplan apply makes networkd ask DHCP again on the main
-// NIC: a refreshed lease with the same address and no gap is accepted
-// (D-443, CI of #419: valid_lft 3595 s before, 3600 s after, no gap). A
+// NIC: a refreshed lease with the same address and a gap of at most the
+// bound is accepted
+// (D-443, CI of #419: valid_lft 3595 s before, 3600 s after; the gap is
+// measured by meterNetwork from before the apply and logged). A
 // longer gap, or another address, fails.
 const mainAddrBound = 2 * time.Second
 
@@ -158,6 +160,7 @@ func TestGuestNetworkNIC(t *testing.T) {
 			}
 		}
 	}
+	meter := meterNetwork(dev, gw, main) // from before the apply (#419 L2)
 	apply(r)
 	b, err := os.ReadFile(file)
 	if err != nil || !strings.Contains(string(b), "plumb-ci-nic:") || !strings.Contains(string(b), "macaddress: "+mac) {
@@ -179,11 +182,15 @@ func TestGuestNetworkNIC(t *testing.T) {
 	}
 	// D-443: the same address within the bound is enough; a new lease is
 	// only logged (valid_lft starts again at the full lease time).
+	gaps := meter.end(gw)
+	if meter.addrLong > mainAddrBound {
+		t.Fatalf("the main address %s of %s was gone for %v at the apply (bound %v, D-443): %s", main, dev, meter.addrLong, mainAddrBound, gaps)
+	}
 	lease := "the same lease"
 	if lft0 != lftForever && lft1 > lft0 {
-		lease = "a new lease (D-443: accepted, same address, no gap)"
+		lease = "a new lease (D-443: accepted, same address)"
 	}
-	t.Logf("main address %s: valid_lft %d s before the apply, %d s after: %s", main, lft0, lft1, lease)
+	t.Logf("main address %s: valid_lft %d s before the apply, %d s after: %s; measured from before the apply: %s", main, lft0, lft1, lease, gaps)
 	if rs, _, _ := waitDefaultRoute(30 * time.Second); len(rs) == 0 || rs[0].Dev != dev {
 		t.Fatalf("the default route moved: %+v", rs)
 	}
