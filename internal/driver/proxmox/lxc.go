@@ -32,7 +32,7 @@ const ctSwapMB = 512
 // copy, so Observe reads the create-only attribute ssh_keys from here (as
 // the image marker, D-189). Public keys only. A person who edits or removes
 // a line makes ssh_keys differ: a guest:config Issue, and a Plan says
-// "create a new target"; the driver never re-creates. state.lxcKeyLine is
+// "create a new Target"; the driver never re-creates. state.lxcKeyLine is
 // the same text.
 const sshKeyMarker = "plumb-ssh-key: "
 

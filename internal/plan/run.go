@@ -1022,7 +1022,7 @@ func (e *Engine) clearStep(ctx context.Context, s *stepper, target string) {
 	s.set(ctx, StepGuestBootstrap, wire.StatusRunning, nil, "")
 	fail := func(err error) {
 		s.set(ctx, StepGuestBootstrap, wire.StatusFailed, nil,
-			"the used enrollment token is still in the container config: "+err.Error()+"; it is dead, and the next Run of the target removes it")
+			"the used enrollment token is still in the container config: "+err.Error()+"; it is dead, and the next Run of the Target removes it")
 	}
 	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	if err != nil {
@@ -1171,7 +1171,7 @@ func (e *Engine) finishDeletes(ctx context.Context, run store.Run) error {
 		}
 		if _, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); !errors.Is(err, driver.ErrNotFound) {
 			if err != nil {
-				e.log.Warn("recover: guest of a deleted target not checked; agent kept", "target", tp.Target, "err", err)
+				e.log.Warn("recover: guest of a deleted Target not checked; agent kept", "target", tp.Target, "err", err)
 			}
 			continue
 		}
@@ -1192,7 +1192,7 @@ func (e *Engine) checkIdle(targets []string) error {
 	defer e.mu.Unlock()
 	for _, t := range targets {
 		if e.busy[t] > 0 {
-			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; wait for it to finish, then plan again"}
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this Target; wait for it to finish, then plan again"}
 		}
 	}
 	return nil
@@ -1204,7 +1204,7 @@ func (e *Engine) reserve(targets []string) error {
 	defer e.mu.Unlock()
 	for _, t := range targets {
 		if e.busy[t] > 0 {
-			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; approve after it finished"}
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this Target; approve after it finished"}
 		}
 	}
 	for _, t := range targets {

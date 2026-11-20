@@ -630,7 +630,7 @@ func TestPendingCreateOnlyText(t *testing.T) {
 			t.Errorf("text lacks %q: %v", part, err)
 		}
 	}
-	if strings.Contains(err.Error(), "create a new target") {
+	if strings.Contains(err.Error(), "create a new Target") {
 		t.Errorf("the old text: %v", err)
 	}
 }

@@ -199,7 +199,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 			svc, ok := byID[id]
 			if !ok {
 				return nil, errf(ptr(u.blocksPath, i),
-					"Block %q (use %q) restarts %s, but %s is not on this target; add the Block that provides it",
+					"Block %q (use %q) restarts %s, but %s is not on this Target; add the Block that provides it",
 					use.Use, use.id(), id, id)
 			}
 			list, isList := svc.Attrs["restart_on"].([]any)
@@ -234,7 +234,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 		path := ptr("/spec/overrides", id)
 		r, ok := byID[id]
 		if !ok {
-			return nil, errf(path, "resource %s is not on the target", id)
+			return nil, errf(path, "resource %s is not on the Target", id)
 		}
 		keyAttr := ""
 		if rt, ok := resource.Lookup(r.Type); ok {
@@ -290,7 +290,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 	for _, r := range out.Resources {
 		for k, id := range wire.RestartOn(r) {
 			if _, ok := byID[id]; !ok || id == wire.GuestConfigID || id == r.ID {
-				return nil, errf(u.blocksPath, "resource %s from %s: restart_on/%d: %q is not another resource on this target",
+				return nil, errf(u.blocksPath, "resource %s from %s: restart_on/%d: %q is not another resource on this Target",
 					r.ID, where[r.ID], k, id)
 			}
 		}
@@ -312,7 +312,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 			switch _, ok := byID[id]; {
 			case !ok || id == wire.GuestConfigID:
 				return nil, errf(ptr(u.blocksPath, i),
-					"Block %q (use %q) comes after %s, but %s is not on this target; add the Block that provides it",
+					"Block %q (use %q) comes after %s, but %s is not on this Target; add the Block that provides it",
 					use.Use, use.id(), id, id)
 			case own[id]:
 				return nil, errf(ptr(u.blocksPath, i),
