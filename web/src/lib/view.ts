@@ -364,6 +364,18 @@ export function reportedText(r: { ips: string[]; more: boolean }): string {
   return r.ips.join(", ") + (r.more ? " + more" : "");
 }
 
+/**
+ * The short form for a table cell (T-279): the first address and "N more",
+ * so a long IPv6 address next to the IPv4 one does not push the columns
+ * after it off the page. The Target page shows the whole list.
+ */
+export function reportedShort(r: { ips: string[]; more: boolean }): string {
+  if (r.ips.length === 0) return r.more ? "+ more" : "no address";
+  const rest = r.ips.length - 1;
+  if (rest === 0) return r.ips[0] + (r.more ? " + more" : "");
+  return `${r.ips[0]} + ${rest}${r.more ? "+" : ""} more`;
+}
+
 /** The list of a guest:address change: "192.0.2.107" or "no address". */
 function listText(v: unknown): string {
   const list = Array.isArray(v) ? v.map(String) : [];

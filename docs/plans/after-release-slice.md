@@ -154,3 +154,9 @@ Points that the release QA sweep (T-260, `docs/tasks/T-260.log.md`) found worth 
 ## Added 2026-11-20 (D-443)
 
 - **Card 8: apply a more NIC without touching the main NIC.** Today `netplan apply` makes networkd ask DHCP again on the main NIC (same address, no gap, measured in CI, PR #419). Try `networkctl reload` + `reconfigure <interface>` (or `netplan apply` limited to the generated file) for the `network` resource of a more NIC; keep the safe-apply window; prove on Debian 13 and Ubuntu 26.04 guests and once on the host. Size S, risk medium (the network path), critical review.
+
+## Added 2026-11-20 (the RC5 host run, T-277 and T-279)
+
+- **U3: the Plan page names a token by its id.** A Plan that a token proposed shows the token's id as "proposed by". Show the token's name (and keep the id in the title or the link). Size XS, web only.
+- **N1: events are a stream only.** `/api/v1/events` is an SSE stream (8 per principal); there is no call that lists past events. A client that was away reads History and the Runs instead. Write it in the API reference, or add a short list call if a user asks. Size XS (docs) or S (call).
+- **The first agent fetch on a container fails once.** At unit start the container's network is not up yet: the first fetch fails, and the retry after 10 s works. Harmless (seen on every container of T-277). A unit order `After=network-online.target` (with `Wants=`) would end the noise; check that it does not delay the boot of a container without network. Size XS.
