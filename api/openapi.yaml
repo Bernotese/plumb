@@ -3375,7 +3375,7 @@ components:
             status: 422
             errors:
               - pointer: /put/0/spec/guest/disk
-                message: disk is create-only in this version. Create a new target instead.
+                message: disk is create-only in this version. Create a new Target instead.
     TooManyRequests:
       description: Too many failed logins, or too many requests of one kind at a time.
       headers:

@@ -307,7 +307,7 @@ describe("mock order: after and restarts (T-049)", () => {
     const blocks = await seeded();
     expect(err(() => render({ ...base, blocks: [site("a")] }, new Map()))).toContain("422");
     expect(err(() => render({ ...base, blocks: [site("a")] }, blocks))).toBe(
-      '422 Block "nginx-site" (use "site-a") restarts service:nginx, but service:nginx is not on this target; add the Block that provides it',
+      '422 Block "nginx-site" (use "site-a") restarts service:nginx, but service:nginx is not on this Target; add the Block that provides it',
     );
   });
 

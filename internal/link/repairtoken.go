@@ -24,7 +24,7 @@ type RepairToken struct {
 // repair bundle.
 func (l *Link) NewRepairToken(ctx context.Context, target string) (RepairToken, error) {
 	if target == "" {
-		return RepairToken{}, errors.New("link: token needs a target")
+		return RepairToken{}, errors.New("link: token needs a Target")
 	}
 	if err := l.checkTokenParked(ctx, target); err != nil {
 		return RepairToken{}, err

@@ -566,7 +566,7 @@ func (e *Engine) bound(ctx context.Context, target string) (bool, error) {
 	}
 	_, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	if errors.Is(err, store.ErrNotFound) {
-		e.log.Warn("agent report for a target without a guest dropped", "target", target)
+		e.log.Warn("agent report for a Target without a guest dropped", "target", target)
 		return false, nil
 	}
 	return err == nil, err

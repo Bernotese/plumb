@@ -262,7 +262,7 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
           "validation",
           "Validation failed",
           422,
-          `Block "${u.block.name}" (use "${u.useId}") restarts ${svc}, but ${svc} is not on this target; add the Block that provides it`,
+          `Block "${u.block.name}" (use "${u.useId}") restarts ${svc}, but ${svc} is not on this Target; add the Block that provides it`,
         );
       const on = [...((s.attrs["restart_on"] as string[] | undefined) ?? [])];
       for (const id of u.ids) if (id !== svc && !on.includes(id)) on.push(id);
@@ -287,7 +287,7 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
           "validation",
           "Validation failed",
           422,
-          `${who}, but ${id} is not on this target; add the Block that provides it`,
+          `${who}, but ${id} is not on this Target; add the Block that provides it`,
         );
     }
   }
@@ -355,7 +355,7 @@ export function planTarget(
           errors: [
             {
               pointer: `/put/0/spec/guest/${attr}`,
-              message: `${attr} is create-only in this version. Create a new target instead.`,
+              message: `${attr} is create-only in this version. Create a new Target instead.`,
             },
           ],
         });
