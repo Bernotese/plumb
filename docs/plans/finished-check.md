@@ -12,7 +12,7 @@
 | O-2 | the user's own install (U7, U8)                             | the text to send (#405)                                                                                   | the user's repair run with the release tarball                               | S    | **user** (U7, U8)                                                    |
 | O-3 | 5.3 restore a guest that is gone; ROADMAP 34                | the manual way in the README; D-411, D-435                                                                | Plumb does it itself                                                         | M    | **new right** `Datastore.Allocate` (U10, answer: no). Not planned    |
 | O-4 | §7 every UI change with a `browser-shot`                    | 24 of 51 merged PRs with `.svelte` changes name a screenshot                                              | screenshots for the other 27 (e.g. #338, #350, #374, #376, #382, #395, #401) | S    | no; point 6 (README screenshots) can retake the current screens once |
-| O-5 | 5.1 "ends by printing the web UI address and initial login" | `install/install.sh` "Plumb runs: https://…" and "Initial login"                                          | a test of these lines (only the T-013 host log shows them)                   | XS   | no                                                                   |
+| O-5 | 5.1 "ends by printing the web UI address and initial login" | `install/install.sh` "Plumb runs: https://…" and "Initial login" | **done:** #415 (`TestInstallEndsWithAddressAndLogin`, `TestRestoreEndsWithAddressAndLoginHint`) | XS | no |
 | O-6 | the first upgrade from the user's version (U12)             | step 7 of T-263, closed                                                                                   | the upgrade test from the user's commit; `vmbr9` undo (C8)                   | S    | **user** (U12)                                                       |
 | O-7 | O1: the unexplained `TestGuestFirewall` failure             | probe loop in every guest CI job (4000 of 4000 rounds clean, 2026-11-19)                                  | the cause; a card starts from the next dump                                  | –    | no                                                                   |
 
@@ -20,27 +20,35 @@ Stale texts found (no code gap): D-422 is still "proposed" in `docs/DECISIONS.md
 
 ## 2. Proven only by tests, never on the host
 
-- **The web UI as a whole (5.2):** every host run used the API. The screens are proven by vitest and Playwright against `serve --dev` only (ROADMAP 8, 13, 18 screen, 32, 36; settings screen of 9).
-- **5.3:**
-  - rollback to a revision;
-  - import (export ran on the host);
-  - the unlock of other users by a one-time password after a restore (`TestResetUserPassword`; L1 of #404);
-  - PBS encryption (no PBS; U9, D-434).
-- **5.4:** a new Image version does not change existing Targets (`TestImageChangeOfTargetRefused`).
-- **5.6:**
-  - a timer `unit` and the `command` resource;
-  - the UI kind filter (the server refusal of `sysctl` on an LXC was seen in T-100);
-  - the Blocks `shell` and `common-tools`, only in the CI guest harness.
+**Update (T-277, RC5 on `pve-dev`, log `docs/tasks/T-277.log.md`, read by pl-reviewer at 82056eb).** These points are now proven on the host:
+
+| Point                                                              | Step of T-277         | What the host showed                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The web UI as a whole (5.2)                                        | c1                    | Targets, a VM and an LXC Target, a Plan with its risk, a Run, the Issue inbox and one Issue, History with a diff, Settings, Backups, tokens, secrets, export/import and users. They were shown on the real controller with the roles read and admin, through a read-only proxy, at desktop width, 390 px and dark. 0 console errors. pl-lead looked at the pictures; they are not committed |
+| Rollback to a revision (5.3)                                       | c2                    | the rollback Plan named the old revision, and the guest file had the old text again                                                                                                                                                                                                                                                                                                         |
+| Import (5.3)                                                       | c3                    | the import Plan named exactly the one changed Block; the export held no secret value; a token is refused (humans only)                                                                                                                                                                                                                                                                      |
+| The unlock of a restore-locked user by a one-time password (5.3)   | c4, in pl-lead's form | a user locked by the T-263 restore: `password-change-required` before the change, the role works after it, and the used one-time password is refused. No new restore                                                                                                                                                                                                                        |
+| A new Image version leaves existing Targets alone (5.4)            | c9                    | after build v2, the Target keeps `image_version` 1, no Plan or Issue, and the same Proxmox config hash                                                                                                                                                                                                                                                                                      |
+| A timer `unit` and the `command` resource (5.6)                    | c5                    | the timer is active and its marker grows; the command ran once and is `unchanged` at a later apply                                                                                                                                                                                                                                                                                          |
+| The Blocks `shell` and `common-tools` (5.6)                        | c6                    | all 13 packages and the profile file in a VM and an LXC                                                                                                                                                                                                                                                                                                                                     |
+| Ignore by rule (5.8)                                               | c7                    | the same drift opened no Issue for 16 min (more than one full check); it opened one 2 s after the rule went                                                                                                                                                                                                                                                                                 |
+| Adopt a file as raw (5.8)                                          | c8                    | `accept_mode` raw; after the Plan, the resource is an override with the guest's content                                                                                                                                                                                                                                                                                                     |
+| The agent-path guard, also through a relative symlink (5.6, T-271) | b2                    | five refusals (422), no Plan                                                                                                                                                                                                                                                                                                                                                                |
+| A container's first boot from a template packed by RC5 (T-278)     | b6                    | 5 + 1 containers, each with a real download and one enrollment; a reboot skips the install; an old stock Image is packed again at its next use, and its old file is listed as unused                                                                                                                                                                                                        |
+
+**Still proven only by tests, never on the host:**
+
+- **5.3:** PBS encryption (no PBS; U9, D-434).
+- **5.6:** the UI's kind filter (Blocks that do not fit an LXC are hidden). The server refusal of `sysctl` on an LXC was seen in T-100.
 - **5.8:**
-  - "only managed resources count as drift";
-  - ignore by rule (ignore once ran in T-158);
-  - adopting a file as raw (T-192 A13.3 offered raw, then reverted);
+  - "only managed resources count as drift" (no unmanaged change was made on the host);
   - strictness exists only for `package` (other types: D-425, D-433).
+- **T-278:** a container from a **built** container Image version made after the fix ("Build now"). Only containers from stock templates packed by RC5 ran on the host (b6); the built path follows from the code (the build guest starts from the newly packed template).
 - **ROADMAP rows:**
-  - 21 (drift rate limit), 24 (`permaddr`, netplan tests run in CI only), 25 (newer signed pin end to end), 27, 28, 30, 31 (test infrastructure and fixes by nature);
+  - 21 (drift rate limit), 24 (`permaddr`, the netplan tests run in CI only), 25 (a newer signed pin end to end), 27, 28, 30, 31 (test infrastructure and fixes by nature);
   - #354 L1 of row 39;
   - row 37: the log scan is a test; the host leak hunts (T-158, T-266) were separate manual scans.
-- **Row 2:** the last-admin refusal (409) is not reachable on the host by the API order; unit test only.
+- **Row 2:** the last-admin refusal (409) cannot be reached on the host in the API order; unit test only.
 
 ## 3. The tables
 
