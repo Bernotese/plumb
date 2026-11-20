@@ -46,7 +46,7 @@ var ErrNotOpen = store.ErrIssueNotOpen
 
 // ErrAcceptImage is returned for accept of an image or kind drift: a guest
 // cannot take another image or kind, so there is nothing to write.
-var ErrAcceptImage = errors.New("issue: accept is not possible for the image or the kind of a guest; revert it or create a new target")
+var ErrAcceptImage = errors.New("issue: accept is not possible for the image or the kind of a guest; revert it or create a new Target")
 
 // containerAttrs are the container settings of guest:config that a Target
 // cannot hold (driver.AttrFeatures and driver.Outside).
@@ -373,11 +373,11 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	switch action {
 	case ActionRevert:
 		in.Origin = plan.OriginRevert
-		in.Reason = fmt.Sprintf("revert drift of %s on %s (issue %d)", iss.Resource, iss.Target, id)
+		in.Reason = fmt.Sprintf("revert drift of %s on %s (Issue %d)", iss.Resource, iss.Target, id)
 		in.Proposal.Targets = []string{iss.Target}
 	case ActionAccept:
 		in.Origin = plan.OriginAccept
-		in.Reason = fmt.Sprintf("accept drift of %s on %s (issue %d)", iss.Resource, iss.Target, id)
+		in.Reason = fmt.Sprintf("accept drift of %s on %s (Issue %d)", iss.Resource, iss.Target, id)
 		doc, err := s.acceptDoc(ctx, iss, changes)
 		if err != nil {
 			return store.Plan{}, err
