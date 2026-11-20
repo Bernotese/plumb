@@ -587,10 +587,10 @@ snippet_yaml() {
 	pem_json=$(awk 'BEGIN{ORS="\\n"} {sub(/\r$/, ""); print}' "$ca")
 	cat <<EOF
 #cloud-config
-# Plumb vendor data, written once by install.sh (D-025). No secret: each VM
+# Plumb vendor data, written by install.sh. No secret: each VM
 # gets its one-time enrollment token as its SMBIOS serial.
 # A new cloud-init instance (a cloud-init field changed outside Plumb, or
-# the host DNS) keeps the SSH host keys (D-185).
+# the host DNS) keeps the SSH host keys.
 ssh_deletekeys: false
 write_files:
   - path: /etc/plumb-agent/ca.pem

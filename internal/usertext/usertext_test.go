@@ -95,26 +95,30 @@ func TestLiteralHitsSkipsComments(t *testing.T) {
 	}
 }
 
-// shellOutput matches an install.sh line that prints: say, die, warn,
-// echo, printf. The --help text is the here-document of usage().
-var shellOutput = regexp.MustCompile(`^\s*(say|die|warn|echo|printf)\b`)
+// shellOutput matches a shell line that prints: say, die, warn, echo or
+// printf, at the start or after ||, &&, ;, { , then or else. The --help text is the here-document of usage().
+var shellOutput = regexp.MustCompile(`(^\s*|[;&|{]\s*|\bthen\s+|\belse\s+)(say|die|warn|echo|printf)\b`)
 
 // TestInstallerOutputNamesNoTeamNumber reads install/install.sh: the
 // lines that print, and the --help text (the usage here-document). A
 // comment line or a trailing comment keeps its number.
+// It reads the agent's install script too: a person runs it in a guest
+// and reads its plumb-install: lines.
 func TestInstallerOutputNamesNoTeamNumber(t *testing.T) {
-	f, err := os.Open("../../install/install.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	hits := installerHits(bufio.NewScanner(f))
-	if len(hits) > 0 {
-		t.Errorf("install.sh prints a team number:\n%s", strings.Join(hits, "\n"))
+	for _, p := range []string{"../../install/install.sh", "../../internal/link/agentinstall/install.sh"} {
+		f, err := os.Open(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hits := installerHits(filepath.Base(filepath.Dir(p))+"/"+filepath.Base(p), bufio.NewScanner(f))
+		f.Close()
+		if len(hits) > 0 {
+			t.Errorf("%s prints a team number:\n%s", p, strings.Join(hits, "\n"))
+		}
 	}
 }
 
-func installerHits(sc *bufio.Scanner) []string {
+func installerHits(name string, sc *bufio.Scanner) []string {
 	var hits []string
 	inHelp := false
 	for n := 1; sc.Scan(); n++ {
@@ -134,16 +138,16 @@ func installerHits(sc *bufio.Scanner) []string {
 			l = l[:i] // a trailing comment
 		}
 		if w := teamWord.FindString(l); w != "" {
-			hits = append(hits, "install.sh:"+strconv.Itoa(n)+": "+w)
+			hits = append(hits, name+":"+strconv.Itoa(n)+": "+w)
 		}
 	}
 	return hits
 }
 
 func TestInstallerHitsSkipsComments(t *testing.T) {
-	src := "# D-1 comment\nsay \"fine\" # T-22\ndie \"bad (D-333)\"\nx=1 # D-4\nusage() {\n\tcat <<'EOF'\n  --x  a flag (D-55)\nEOF\n}\n"
-	got := installerHits(bufio.NewScanner(strings.NewReader(src)))
-	if len(got) != 2 || got[0] != "install.sh:3: D-333" || got[1] != "install.sh:7: D-55" {
+	src := "# D-1 comment\nsay \"fine\" # T-22\ndie \"bad (D-333)\"\nx=1 # D-4\n[ -n \"$x\" ] || die \"bad (D-444)\"\nusage() {\n\tcat <<'EOF'\n  --x  a flag (D-55)\nEOF\n}\n"
+	got := installerHits("install.sh", bufio.NewScanner(strings.NewReader(src)))
+	if len(got) != 3 || got[0] != "install.sh:3: D-333" || got[1] != "install.sh:5: D-444" || got[2] != "install.sh:8: D-55" {
 		t.Fatalf("hits %v", got)
 	}
 }
