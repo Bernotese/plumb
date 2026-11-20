@@ -14,5 +14,11 @@ What the first look at the web UI on a real controller showed (T-277 c1) and two
 - [ ] Notes for `docs/plans/after-release-slice.md` (no code): U3 the Plan page names a token by its id (show its name); N1 events are stream-only.
 - [ ] No API field, key, code or stored value changes. `make lint test`; the e2e job green; evidence in the PR first; PR; report.
 
+## After the merge: RC6 and a short host check (same hard rules as T-277)
+- [ ] RC6 built locally from main's head (commit, 4 hashes, the 4 expected release hashes R6-0, the repro check vs the CI build); the bundle check; the RC5 → RC6 upgrade (dry run → `pl-lead` → go; 0 `pveum` lines).
+- [ ] The findings seen fixed on the real controller: the Target form's hints without numbers and the Targets table with a dual-stack guest at 1280 and 390 px (pictures through the read-only proxy, never committed), the 'Left behind' text.
+- [ ] The built-container path, which no host run has proven (review note of #424): one container Image BUILT with a Block → a Target from it → it enrolls once, and again after a reboot.
+- [ ] C5b of the RC6 tarball (pl-reviewer), cleanup with `pl-lead`'s go, end proof; the log as `docs/tasks/T-279.log.md`.
+
 ## Result (owner, max 8 lines)
 branch · commit · tests · notes
