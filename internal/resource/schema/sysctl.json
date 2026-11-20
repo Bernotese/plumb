@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://plumb.invalid/schema/resource/sysctl.json",
   "title": "sysctl",
-  "description": "A kernel parameter, set now and kept in /etc/sysctl.d/60-plumb-<name>.conf (D-260). Key: name. VM only: a container shares the host kernel. Risk: create and change disruptive (a kernel setting can cut the network); absent removes the file and keeps the running value (reversible).",
+  "description": "A kernel parameter, set now and kept in /etc/sysctl.d/60-plumb-<name>.conf. Key: name. VM only: a container shares the host kernel. Risk: create and change disruptive (a kernel setting can cut the network); absent removes the file and keeps the running value (reversible).",
   "type": "object",
   "required": [
     "name"

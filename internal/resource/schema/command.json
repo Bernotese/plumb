@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://plumb.invalid/schema/resource/command.json",
   "title": "command",
-  "description": "An escape hatch: runs a program once, as root, without a shell (D-260). Key: name. It runs only while the path in creates does not exist; the program must create it. No drift: a changed argv on a guest where creates exists changes nothing. Every run is destructive (D-031): only a human session approves it, and an Image whose build Blocks hold a command is refused. Output is shown like every resource output (hidden when the resource has a secret). Kinds: vm, lxc.",
+  "description": "An escape hatch: runs a program once, as root, without a shell. Key: name. It runs only while the path in creates does not exist; the program must create it. No drift: a changed argv on a guest where creates exists changes nothing. Every run is destructive: only a human session approves it, and an Image whose build Blocks hold a command is refused. Output is shown like every resource output (hidden when the resource has a secret). Kinds: vm, lxc.",
   "type": "object",
   "required": [
     "name",

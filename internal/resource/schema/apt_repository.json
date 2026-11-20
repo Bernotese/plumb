@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://plumb.invalid/schema/resource/apt_repository.json",
   "title": "apt_repository",
-  "description": "An apt source in deb822 form with its own signing key (D-260). Key: name. The agent writes /etc/apt/sources.list.d/plumb-<name>.sources and the key to /etc/apt/keyrings/plumb-<name>.asc; the sources file names that key in Signed-By. Plumb writes no other option: Trusted and trusted.gpg.d cannot be expressed. Apply runs apt-get update. Risk: create, change and delete are reversible (installed packages stay). Kinds: vm, lxc.",
+  "description": "An apt source in deb822 form with its own signing key. Key: name. The agent writes /etc/apt/sources.list.d/plumb-<name>.sources and the key to /etc/apt/keyrings/plumb-<name>.asc; the sources file names that key in Signed-By. Plumb writes no other option: Trusted and trusted.gpg.d cannot be expressed. Apply runs apt-get update. Risk: create, change and delete are reversible (installed packages stay). Kinds: vm, lxc.",
   "type": "object",
   "required": [
     "name"
