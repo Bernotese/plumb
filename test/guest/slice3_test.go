@@ -97,13 +97,13 @@ func TestAptRepositoryInGuest(t *testing.T) {
 	const pkgName = "plumb-t093-hello"
 	repo := newTestRepo(t, pkgName)
 	trustedBefore := sh(t, "sh", "-c", "ls -A /etc/apt/trusted.gpg.d; ls -l /etc/apt/trusted.gpg 2>/dev/null || true")
+	onlyLocalAptSources(t)
 	t.Cleanup(func() {
 		_ = exec.Command("apt-get", "-y", "purge", "--", pkgName).Run()
 		for _, n := range []string{"t093", "t093-wrong"} {
 			_ = os.Remove("/etc/apt/sources.list.d/plumb-" + n + ".sources")
 			_ = os.Remove("/etc/apt/keyrings/plumb-" + n + ".asc")
 		}
-		_ = exec.Command("apt-get", "update").Run()
 	})
 
 	changes := converge(t, repoRes("t093", repo, repo.key))
@@ -270,4 +270,54 @@ func TestSysctlInGuest(t *testing.T) {
 	if got := sh(t, "sysctl", "-n", name); got != "1" {
 		t.Fatalf("value after absent: %s", got)
 	}
+}
+
+// onlyLocalAptSources moves the distribution's apt sources aside, so the
+// apt-get update of the apt_repository resource reads only the local test
+// repository (T-276: an outside mirror ran TestAptRepositoryInGuest into
+// the 5 min timeout on #416; the meaning of the test needs no mirror).
+// A cleanup puts the sources and the apt lists of before back without a
+// download; it runs after the cleanups that the test registers later.
+func onlyLocalAptSources(t *testing.T) {
+	t.Helper()
+	// Beside the sources (a rename across file systems fails); apt reads
+	// no other directory under /etc/apt for sources.
+	aside, err := os.MkdirTemp("/etc/apt", "t276-aside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var moved []string
+	lists := filepath.Join(t.TempDir(), "lists")
+	t.Cleanup(func() {
+		back := true
+		for _, p := range moved {
+			if err := os.Rename(filepath.Join(aside, filepath.Base(p)), p); err != nil {
+				t.Errorf("put back %s: %v (it stays in %s)", p, err, aside)
+				back = false
+			}
+		}
+		if back {
+			_ = os.Remove(aside)
+		}
+		if _, err := os.Stat(lists); err != nil {
+			return
+		}
+		if out, err := exec.Command("sh", "-c", `rm -rf /var/lib/apt/lists && cp -a "$1" /var/lib/apt/lists`, "sh", lists).CombinedOutput(); err != nil {
+			t.Errorf("put back the apt lists: %v %s", err, out)
+		}
+	})
+	if out, err := exec.Command("cp", "-a", "/var/lib/apt/lists", lists).CombinedOutput(); err != nil {
+		t.Fatalf("save the apt lists: %v %s", err, out)
+	}
+	srcs, _ := filepath.Glob("/etc/apt/sources.list.d/*")
+	for _, p := range append(srcs, "/etc/apt/sources.list") {
+		if _, err := os.Lstat(p); err != nil || strings.HasPrefix(filepath.Base(p), "plumb-") {
+			continue
+		}
+		if err := os.Rename(p, filepath.Join(aside, filepath.Base(p))); err != nil {
+			t.Fatal(err)
+		}
+		moved = append(moved, p)
+	}
+	t.Logf("apt sources moved aside for this test: %v", moved)
 }
