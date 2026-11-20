@@ -103,7 +103,7 @@ func outsideText(id string, observed driver.GuestState) string {
 	if len(raw) > 0 {
 		do = append(do, fmt.Sprintf("remove the line %s from /etc/pve/lxc/%s.conf", strings.Join(raw, " and the line "), id))
 	}
-	return fmt.Sprintf("the container has additions that were made outside Plumb: %s. The Plumb token cannot remove them; only root on the Proxmox host can (D-250). "+
+	return fmt.Sprintf("the container has additions that were made outside Plumb: %s. The Plumb token cannot remove them; only root on the Proxmox host can. "+
 		"On the host: %s. Then plan again, or ignore the Issue", strings.Join(parts, ", "), strings.Join(do, "; "))
 }
 
@@ -667,7 +667,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		tp.Adopted = &a
 	}
 	if reenroll && r.Adopted != nil {
-		return tp, &ProposalError{Target: target, Err: ErrAdoptedTarget, Msg: "an adopted Target is not re-enrolled: it would write the Proxmox config of a guest that a person made; use the install command (D-392)"}
+		return tp, &ProposalError{Target: target, Err: ErrAdoptedTarget, Msg: "an adopted Target is not re-enrolled: it would write the Proxmox config of a guest that a person made; use the install command"}
 	}
 	desired, err := e.guestSpec(target, r)
 	if err != nil {

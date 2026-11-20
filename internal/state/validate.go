@@ -747,23 +747,23 @@ func (s *Set) checkTarget(name string) Errors {
 		want, _ := intOf(img.Build.Guest["disk"])
 		if have, ok := intOf(t.Guest["disk"]); ok && have < want {
 			errs = append(errs, errf("/spec/guest/disk",
-				"disk %d GiB is smaller than the disk of Image %q (%d GiB); a disk cannot shrink (D-202)", have, t.Image, want))
+				"disk %d GiB is smaller than the disk of Image %q (%d GiB); a disk cannot shrink", have, t.Image, want))
 		}
 	}
 	// A Run may stop the guest only with allow_restart (D-291, D-299),
 	// also when an override of guest:config sets the power.
 	if !t.AllowRestart {
 		if p, _ := t.Guest["power"].(string); p == "stopped" {
-			errs = append(errs, errf("/spec/guest/power", "power: stopped needs allow_restart: true (a Run may stop the guest only then, D-291)"))
+			errs = append(errs, errf("/spec/guest/power", "power: stopped needs allow_restart: true (a Run may stop the guest only then)"))
 		}
 		if p, _ := t.Overrides["guest:config"]["power"].(string); p == "stopped" {
-			errs = append(errs, errf("/spec/overrides/guest:config/power", "power: stopped needs allow_restart: true (a Run may stop the guest only then, D-291)"))
+			errs = append(errs, errf("/spec/overrides/guest:config/power", "power: stopped needs allow_restart: true (a Run may stop the guest only then)"))
 		}
 	}
 	if t.Type == string(wire.KindLXC) {
 		// Proxmox has no cloud-init for containers: keys go to root (D-226).
 		if _, ok := t.Guest["user"]; ok {
-			errs = append(errs, errf("/spec/guest/user", "an LXC Target has no bootstrap user; use a Block such as deploy-user (D-226)"))
+			errs = append(errs, errf("/spec/guest/user", "an LXC Target has no bootstrap user; use a Block such as deploy-user"))
 		}
 		if have, ok := intOf(t.Guest["disk"]); ok && have < minLXCDisk {
 			errs = append(errs, errf("/spec/guest/disk", "the root file system of an LXC Target needs at least %d GiB", minLXCDisk))
@@ -772,7 +772,7 @@ func (s *Set) checkTarget(name string) Errors {
 		// file, never at a clone of a version (D-251).
 		if img, ok := s.images[t.Image]; ok && img.Build != nil {
 			if keys, _ := t.Guest["ssh_keys"].([]any); len(keys) > 0 {
-				errs = append(errs, errf("/spec/guest/ssh_keys", "a container from the built Image %q gets no SSH keys from Proxmox; add them with a Block such as deploy-user (D-251)", t.Image))
+				errs = append(errs, errf("/spec/guest/ssh_keys", "a container from the built Image %q gets no SSH keys from Proxmox; add them with a Block such as deploy-user", t.Image))
 			}
 		}
 		// Proxmox keeps no copy of a container's keys; the driver writes
@@ -786,23 +786,23 @@ func (s *Set) checkTarget(name string) Errors {
 					// The line must come back byte-equal from the
 					// description (review S1 of #162).
 					if strings.TrimSpace(s) != s || strings.IndexFunc(s, isControl) >= 0 {
-						errs = append(errs, errf(fmt.Sprintf("/spec/guest/ssh_keys/%d", i), "an SSH key of an LXC Target must not start or end with white space or hold a control character (D-249)"))
+						errs = append(errs, errf(fmt.Sprintf("/spec/guest/ssh_keys/%d", i), "an SSH key of an LXC Target must not start or end with white space or hold a control character"))
 					}
 				}
 			}
 			if n > maxLXCKeyBytes {
-				errs = append(errs, errf("/spec/guest/ssh_keys", "the SSH keys of an LXC Target take %d bytes; at most %d fit (Plumb keeps them in the container description, D-249)", n, maxLXCKeyBytes))
+				errs = append(errs, errf("/spec/guest/ssh_keys", "the SSH keys of an LXC Target take %d bytes; at most %d fit (Plumb keeps them in the container description)", n, maxLXCKeyBytes))
 			}
 		}
 	}
 	// guest and overrides never hold a reference, at any depth (D-088).
 	if at := findRef(t.Guest, "/spec/guest"); at != "" {
-		errs = append(errs, errf(at, "guest settings cannot hold a secret reference (D-088)"))
+		errs = append(errs, errf(at, "guest settings cannot hold a secret reference"))
 	}
 	for id, attrs := range t.Overrides {
 		for attr, v := range attrs {
 			if at := findRef(v, ptr("/spec/overrides", id, attr)); at != "" {
-				errs = append(errs, errf(at, "an override cannot hold a secret reference (D-088)"))
+				errs = append(errs, errf(at, "an override cannot hold a secret reference"))
 			}
 		}
 	}
@@ -837,17 +837,17 @@ func checkImageSpec(name string, img imageSpec) Errors {
 	var errs Errors
 	if img.Type == string(wire.KindLXC) {
 		if img.SHA256 != "" {
-			errs = append(errs, errf("/spec/sha256", "an LXC Image pins sha512, not sha256 (D-224)"))
+			errs = append(errs, errf("/spec/sha256", "an LXC Image pins sha512, not sha256"))
 		}
 		if img.SHA512 == "" {
-			errs = append(errs, errf("/spec", "an LXC Image needs sha512: the sha512sum of the template in the signed Proxmox index (D-224)"))
+			errs = append(errs, errf("/spec", "an LXC Image needs sha512: the sha512sum of the template in the signed Proxmox index"))
 		}
 		if img.Build != nil {
 			if have, ok := intOf(img.Build.Guest["disk"]); ok && have < minLXCDisk {
 				errs = append(errs, errf("/spec/build/guest/disk", "the root file system of an LXC build needs at least %d GiB", minLXCDisk))
 			}
 			if _, ok := img.Build.Guest["user"]; ok {
-				errs = append(errs, errf("/spec/build/guest/user", "an LXC build has no bootstrap user (D-226)"))
+				errs = append(errs, errf("/spec/build/guest/user", "an LXC build has no bootstrap user"))
 			}
 		}
 		return append(errs, checkVerify(img, errf)...)
@@ -857,9 +857,9 @@ func checkImageSpec(name string, img imageSpec) Errors {
 	}
 	switch {
 	case img.SHA256 != "" && img.SHA512 != "":
-		errs = append(errs, errf("/spec/sha512", "a VM Image pins one checksum: sha256 or sha512, not both (D-345)"))
+		errs = append(errs, errf("/spec/sha512", "a VM Image pins one checksum: sha256 or sha512, not both"))
 	case img.SHA256 == "" && img.SHA512 == "":
-		errs = append(errs, errf("/spec", "a VM Image needs sha256 (or sha512 for a Debian list, D-345)"))
+		errs = append(errs, errf("/spec", "a VM Image needs sha256 (or sha512 for a Debian list)"))
 	}
 	return append(errs, checkVerify(img, errf)...)
 }
@@ -888,17 +888,17 @@ func checkVerify(img imageSpec, errf func(path, format string, args ...any) *Err
 	}
 	var errs Errors
 	if string(r.kind) != img.Type {
-		errs = append(errs, errf("/spec/verify/source", "source %s is for a %s Image (D-344)", img.Verify.Source, r.kind))
+		errs = append(errs, errf("/spec/verify/source", "source %s is for a %s Image", img.Verify.Source, r.kind))
 	}
 	url := img.URL
 	if r.kind == wire.KindLXC {
 		url = strings.TrimPrefix(strings.TrimPrefix(url, "http://"), "https://")
 	}
 	if !strings.HasPrefix(url, r.prefix) {
-		errs = append(errs, errf("/spec/url", "source %s needs a url under %s (D-344)", img.Verify.Source, r.prefix))
+		errs = append(errs, errf("/spec/url", "source %s needs a url under %s", img.Verify.Source, r.prefix))
 	}
 	if (r.field == "sha256" && img.SHA256 == "") || (r.field == "sha512" && img.SHA512 == "") {
-		errs = append(errs, errf("/spec/"+r.field, "source %s gives a %s pin; set %s (D-344)", img.Verify.Source, r.field, r.field))
+		errs = append(errs, errf("/spec/"+r.field, "source %s gives a %s pin; set %s", img.Verify.Source, r.field, r.field))
 	}
 	return errs
 }
@@ -915,7 +915,7 @@ func (s *Set) checkUses(u *unit) Errors {
 		path := ptr(u.blocksPath, i)
 		if first, dup := ids[use.id()]; dup {
 			errs = append(errs, errf(path+"/id",
-				"Block use id %q is already used by %s/%d; give each use of a Block its own id (D-048)", use.id(), u.blocksPath, first))
+				"Block use id %q is already used by %s/%d; give each use of a Block its own id", use.id(), u.blocksPath, first))
 		} else {
 			ids[use.id()] = i
 		}
@@ -928,7 +928,7 @@ func (s *Set) checkUses(u *unit) Errors {
 			// Also a secret parameter without a value: the Block is made
 			// for secrets, and a later Target-only change must not reach
 			// a template (D-202, n3).
-			errs = append(errs, errf(path+"/use", "Block %q has the secret parameter %q; the Blocks of an Image cannot use secrets (D-202)",
+			errs = append(errs, errf(path+"/use", "Block %q has the secret parameter %q; the Blocks of an Image cannot use secrets",
 				use.Use, sortedKeys(b.secrets)[0]))
 			continue
 		}

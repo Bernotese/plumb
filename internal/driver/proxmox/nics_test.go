@@ -137,10 +137,10 @@ func TestNICNetworkNotAllowed(t *testing.T) {
 			t.Errorf("update %+v sent a request", n)
 		}
 	}
-	if !strings.Contains((&NetworkNotAllowedError{NIC: 1, Bridge: "vmbr9", Tag: 30}).Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-bridge vmbr9 --extra-vlan vmbr9:30 (") {
+	if !strings.HasSuffix((&NetworkNotAllowedError{NIC: 1, Bridge: "vmbr9", Tag: 30}).Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-bridge vmbr9 --extra-vlan vmbr9:30") {
 		t.Error("an unnamed bridge with a tag needs both flags (T-253)")
 	}
-	if !strings.Contains((&NetworkNotAllowedError{NIC: 1, Bridge: "vmbr0", Tag: 30, BridgeNamed: true}).Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-vlan vmbr0:30 (") {
+	if !strings.HasSuffix((&NetworkNotAllowedError{NIC: 1, Bridge: "vmbr0", Tag: 30, BridgeNamed: true}).Error(), "every --extra-bridge and --extra-vlan that the install has now, plus --extra-vlan vmbr0:30") {
 		t.Error("the message does not name the flag")
 	}
 }

@@ -73,7 +73,7 @@ test("secret picker: a new binding is human-only and unverified", async ({ page 
   await expect(res).toContainText("changed (hidden)");
   await expect(res).toContainText("Not observed before the approval");
   await expect(
-    page.getByText(/not observed before the approval: they get a new secret.*\(D-156/),
+    page.getByText(/not observed before the approval: they get a new secret/),
   ).toBeVisible();
   expect(await page.content()).not.toContain(value);
 

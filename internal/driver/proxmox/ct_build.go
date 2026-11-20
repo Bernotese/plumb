@@ -189,7 +189,7 @@ func (d *Driver) nameVersionCT(ctx context.Context, id int, img driver.BuiltImag
 		return err
 	}
 	if where != "" {
-		return fmt.Errorf("proxmox: CT %d still has an env value (%s); no template is made from it (D-234)", id, where)
+		return fmt.Errorf("proxmox: CT %d still has an env value (%s); no template is made from it", id, where)
 	}
 	params := url.Values{"digest": {cfg["digest"]}, "hostname": {versionName(img.Image, img.Version)}, "description": {versionDescription(img)}}
 	var del []string
@@ -243,7 +243,7 @@ func (d *Driver) cloneCT(ctx context.Context, spec driver.GuestSpec, boot driver
 		return "", err
 	}
 	if len(spec.SSHKeys) > 0 {
-		return "", errors.New("proxmox: a container from a built Image gets no SSH keys from Proxmox; use a Block such as deploy-user (D-251)")
+		return "", errors.New("proxmox: a container from a built Image gets no SSH keys from Proxmox; use a Block such as deploy-user")
 	}
 	if err := d.checkBridge(spec.Bridge); err != nil {
 		return "", err
@@ -279,7 +279,7 @@ func (d *Driver) cloneCT(ctx context.Context, spec driver.GuestSpec, boot driver
 	if where, err := d.ctEnvLeft(ctx, id); err != nil {
 		return fail(err)
 	} else if where != "" {
-		return fail(fmt.Errorf("proxmox: the clone %d inherited an env value (%s) from template %d; not used (D-234)", id, where, tpl))
+		return fail(fmt.Errorf("proxmox: the clone %d inherited an env value (%s) from template %d; not used", id, where, tpl))
 	}
 	cfg, err := d.ctConfig(ctx, id, true)
 	if err != nil {

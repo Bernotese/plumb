@@ -485,7 +485,7 @@ type DiskSpace struct {
 }
 
 // ErrNotImplemented is returned by the image build methods until T-061.
-var ErrNotImplemented = errors.New("driver: image builds are not implemented yet (T-061)")
+var ErrNotImplemented = errors.New("driver: image builds are not implemented yet")
 
 // ErrNotFound is returned when a guest or an image does not exist.
 var ErrNotFound = errors.New("driver: not found")

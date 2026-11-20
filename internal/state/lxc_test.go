@@ -39,7 +39,7 @@ func TestImageTypeRules(t *testing.T) {
 		{"lxc without pin", `{"type":"lxc","url":"` + ctURL + `"}`, "/spec", "needs sha512"},
 		{"lxc build disk", `{"type":"lxc","url":"` + ctURL + `","sha512":"` + sha512 + `"` + strings.Replace(build, `"disk":10`, `"disk":1`, 1) + `}`, "/spec/build/guest/disk", "at least 2 GiB"},
 		{"vm over http", `{"type":"vm","url":"http://example.org/x.img","sha256":"` + sha + `"}`, "/spec/url", "needs an https:// url"},
-		{"vm with both pins", `{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","sha512":"` + sha512 + `"}`, "/spec/sha512", "not both (D-345)"},
+		{"vm with both pins", `{"type":"vm","url":"https://example.org/x.img","sha256":"` + sha + `","sha512":"` + sha512 + `"}`, "/spec/sha512", "not both"},
 		{"vm without pin", `{"type":"vm","url":"https://example.org/x.img"}`, "/spec", "needs sha256"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,7 +118,7 @@ func TestLXCBuild(t *testing.T) {
 		t.Fatalf("lxc build: %v", err)
 	}
 	_, err := Validate([]Doc{built, lxcTarget(`"disk":4,"ssh_keys":["ssh-ed25519 AAAAC3Nza k"]`)})
-	errAt(t, err, KindTarget, "/spec/guest/ssh_keys", "deploy-user (D-251)")
+	errAt(t, err, KindTarget, "/spec/guest/ssh_keys", "deploy-user")
 	if _, err := Validate([]Doc{lxcImage(""), lxcTarget(`"disk":4,"ssh_keys":["ssh-ed25519 AAAAC3Nza k"]`)}); err != nil {
 		t.Errorf("stock lxc Image with keys: %v", err)
 	}

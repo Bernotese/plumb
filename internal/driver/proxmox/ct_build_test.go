@@ -149,7 +149,7 @@ func TestCTBuildEnvGuards(t *testing.T) {
 		ref, _ := d.MakeImage(ctx, gid, ctBuilt)
 		s := ctSpec()
 		s.Image = ref
-		if _, err := d.Create(ctx, s, driver.Bootstrap{Token: ctToken}); err == nil || !strings.Contains(err.Error(), "D-251") {
+		if _, err := d.Create(ctx, s, driver.Bootstrap{Token: ctToken}); err == nil || !strings.Contains(err.Error(), "deploy-user") {
 			t.Errorf("keys on a clone: %v", err)
 		}
 	})

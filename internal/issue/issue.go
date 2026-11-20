@@ -154,7 +154,7 @@ var ErrAcceptNIC = errors.New("issue: accept is not possible for a NIC (nic1 …
 // ErrAcceptOutside is returned for accept of the features, mount points,
 // devices or raw lxc lines of a container: a Target cannot hold them
 // (D-227, T-038 §3).
-var ErrAcceptOutside = errors.New("issue: accept is not possible for container features, mount points, devices or raw lxc lines; Plumb runs only unprivileged containers with nesting (D-227): revert the features, remove the rest on the Proxmox host, or ignore the Issue")
+var ErrAcceptOutside = errors.New("issue: accept is not possible for container features, mount points, devices or raw lxc lines; Plumb runs only unprivileged containers with nesting: revert the features, remove the rest on the Proxmox host, or ignore the Issue")
 
 // ErrAddressFix is returned for revert and accept of a guest:address
 // Issue: ip is create-only, and the Proxmox config is right; the guest
@@ -330,7 +330,7 @@ func (s *Service) dropIssue(ctx context.Context, target, resource string) error 
 		return err
 	}
 	// D-428: the system resolution says why.
-	if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: a Rule covers all of its drift now (D-092)."}); err != nil {
+	if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: a Rule covers all of its drift now."}); err != nil {
 		return err
 	}
 	s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": store.ResolutionIgnore})
