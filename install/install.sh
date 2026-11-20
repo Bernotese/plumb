@@ -2467,8 +2467,8 @@ fi
 # The host builds the name from the checked parts.
 ts=${BASH_REMATCH[1]}
 final="plumb-${ts}${BASH_REMATCH[2]}.pbk"
-# A time far ahead would name a copy that no later backup replaces
-# (review M1 of #221): at most 1 day ahead of this host's clock.
+# A time far ahead would name a copy that no later backup replaces:
+# at most 1 day ahead of this host's clock.
 when=$(date -u -d "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2}" +%s 2>/dev/null) || fail "the backup pointer has no valid time"
 ((when <= $(date -u +%s) + 86400)) || fail "the backup pointer names a time more than 1 day ahead of this host"
 [[ $sha =~ ^[0-9a-f]{64}$ ]] || fail "the backup pointer has no valid sha256"
@@ -2476,7 +2476,7 @@ when=$(date -u -d "${ts:0:4}-${ts:4:2}-${ts:6:2} ${ts:9:2}:${ts:11:2}:${ts:13:2}
 ((size <= max)) || fail "the backup has $size bytes, more than the limit of $max bytes (--backup-max-size)"
 
 # 3. Copied already: nothing to do but the retention. A copy is never
-# replaced: the same name with other content fails (review M1 of #221).
+# replaced: the same name with other content fails.
 if [[ -e $dest/$final ]]; then
 	[[ $(sha256sum <"$dest/$final") == "$sha  -" ]] || fail "refuses to overwrite $final: the copy on the storage has other content"
 else
@@ -2496,8 +2496,8 @@ else
 	sync -f "$dest/$final" 2>/dev/null || true
 fi
 
-# 5. Retention by the time this host made each copy, never by the name
-# (review M1 of #221); only names of the strict form go.
+# 5. Retention by the time this host made each copy, never by the name;
+# only names of the strict form go.
 mapfile -t all < <(find "$dest" -maxdepth 1 -type f -name 'plumb-*.pbk' -printf '%T@ %f\n' | sort -rn | cut -d' ' -f2 | grep -E "$re")
 for old in "${all[@]:keep}"; do
 	rm -f -- "${dest:?}/$old"

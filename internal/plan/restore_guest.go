@@ -258,7 +258,7 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 	}
 	rec, ok := recs[v.Volid]
 	if !ok || rec.Lineage != lineage || rec.Trigger != trigger || rec.Size != v.Size || rec.CTime != v.Time.Unix() {
-		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is not the volume that a finished backup job of this controller recorded for this guest (M1 of #331)", id))
+		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is not the volume that a finished backup job of this controller recorded for this guest", id))
 	}
 	return v, nil
 }

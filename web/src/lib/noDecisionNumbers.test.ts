@@ -10,7 +10,8 @@ import { describe, expect, it } from "vitest";
 // comments and fails on a number that is left in a template or a string.
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
-const NUMBER = /\b[DT]-\d{2,4}\b|§ ?\d+|\b[Ss]lice \d+\b/g;
+const NUMBER =
+  /\b[DT]-\d{2,4}\b|§ ?\d+|\b[Ss]lice \d+\b|(?<![\w&])#\d{2,4}\b|\b[Rr]eview (?:of )?[A-Z]\d{1,2}\b/g;
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
@@ -48,9 +49,11 @@ describe("user-visible texts", () => {
       "<!-- note (D-1) -->",
       'const url = "https://example.org/a"; // trailing (D-9)',
       "<p>Plumb never deletes one (D-233).</p>",
+      "<p>As in #244, review G1 asked.</p>",
+      "<p>&#123; 8#022</p>",
     ].join("\n");
     const left = withoutComments(sample);
-    expect(left.match(NUMBER)).toEqual(["D-233"]);
+    expect(left.match(NUMBER)).toEqual(["D-233", "#244", "review G1"]);
     expect(left).toContain("https://example.org/a");
   });
 });

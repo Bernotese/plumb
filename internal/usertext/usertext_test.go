@@ -20,8 +20,9 @@ import (
 )
 
 // teamWord is a decision (D-123), a task (T-123), an ARCHITECTURE
-// section (§ 5) or a slice ("slice 3").
-var teamWord = regexp.MustCompile(`\b[DT]-\d{2,4}\b|§ ?\d+|\b[Ss]lice \d+\b`)
+// section (§ 5), a slice ("slice 3"), a PR or issue (#244) or a review
+// finding ("review G1", T-279).
+var teamWord = regexp.MustCompile(`\b[DT]-\d{2,4}\b|§ ?\d+|\b[Ss]lice \d+\b|(?:^|[^\w&])#\d{2,4}\b|\b[Rr]eview (?:of )?[A-Z]\d{1,2}\b`)
 
 // literalHits returns every string literal of the Go source that holds a
 // team word, as "file:line: text".
@@ -223,5 +224,26 @@ func TestSchemaHitsReadsOnlyTexts(t *testing.T) {
 	got := schemaHits(t, "x.json", []byte(src))
 	if len(got) != 2 {
 		t.Fatalf("hits %v, want the two texts", got)
+	}
+}
+
+// TestTeamWordForms: the PR and review forms are hits (T-279); bash octal
+// and an HTML entity are not.
+func TestTeamWordForms(t *testing.T) {
+	for s, hit := range map[string]bool{
+		"see #244":              true,
+		"(#22)":                 true,
+		"#331 at the start":     true,
+		"review G1 of the PR":   true,
+		"Review of M2":          true,
+		"8#022":                 false,
+		"&#123;":                false,
+		"issue#5":               false,
+		"review the G1 key":     false,
+		"a VM with 4 cores (#)": false,
+	} {
+		if got := teamWord.MatchString(s); got != hit {
+			t.Errorf("%q: hit %v, want %v", s, got, hit)
+		}
 	}
 }
