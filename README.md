@@ -5,18 +5,20 @@ your own network.
 
 - **Images:** Plumb downloads cloud images and container templates. It can build its own Image
   versions from them, on a schedule, and keeps a fixed number of versions.
-- **Targets:** a Target is one guest, a VM or an LXC container. Plumb creates it from an Image.
-- **Blocks:** a Block is a reusable piece of configuration: files, packages, services, users and
-  more. You add Blocks to a Target. An agent in the guest applies them.
+- **Targets:** a Target is one guest, a VM or an LXC container. Plumb creates it from an Image, or
+  adopts a guest that you made.
+- **Blocks:** a Block is a reusable piece of configuration: files, packages, services, users,
+  firewall, network and more. You add Blocks to a Target. An agent in the guest applies them.
 - **Plans:** every change is a Plan first. The Plan shows each change and its risk. Nothing
   changes until you approve it.
-- **Users:** each person has their own login and a role: read, plan, apply or admin.
 - **Issues:** when a guest no longer matches its Target, Plumb opens an Issue. You revert the
   change, accept it, or ignore it.
-- **History:** every approved change is a revision. You can see who changed what, and why.
+- **Users:** each person has their own login and a role: read, plan, apply or admin.
+- **History and backups:** every approved change is a revision: who changed what, and why. Plumb
+  backs up its own state every day, and can back up your guests.
 
-You use Plumb in the web UI. Everything in the UI is also in the API. Guests run Debian 13 or
-Ubuntu 26.04.
+You use Plumb in the web UI. Everything in the UI is also in the API, and an AI client can read
+Plumb and propose Plans ([MCP](docs/guide/mcp.md)). Guests run Debian 13 or Ubuntu 26.04.
 
 ## Requirements
 
@@ -42,23 +44,19 @@ cd plumb && make build          # makes bin/plumb
 
 Copy `bin/plumb` and `install/install.sh` to the Proxmox host.
 
-**From a release tarball** (when there is one): unpack it on the host as root, into a folder that only root can write (the installer refuses a folder or file that another account can write), and run its `install.sh` with
-`--plumb-binary ./plumb` from that folder. Before it uses any file, the installer checks the
-tarball's `SHA256SUMS`: every file must be there and match, and `--plumb-binary` must be the
-`plumb` of the tarball; else it stops, names the file and changes nothing (the dry run shows the
-check too). This proves only that the files are whole, not who made them.
+**From a release tarball** (when there is one): check it **before** you unpack it, with
+`gh attestation verify` (who built it) and the outer `SHA256SUMS` (see `docs/RELEASE.md`). Only
+these two steps prove the whole tarball, `install.sh` included. Then unpack it as root into a
+folder that only root can write, and run its `install.sh` with `--plumb-binary ./plumb` from there.
 
-**Check the installer before you run it.** `install.sh` can check itself only while it runs, so it
-cannot prove that it is the right one. Only these two steps, **before** you unpack, prove the
-whole tarball, `install.sh` included: `gh attestation verify` (who built it) and the outer
-`SHA256SUMS` (see `docs/RELEASE.md`). The installer of a release says "Bundle check of release
-…"; if the installer of a tarball says "source build" instead, stop: it is not the installer of
-a release. A build from source has no `SHA256SUMS`; it says so and checks nothing.
-
-Run it from a clean root shell (for example `sudo -i`), not through `sudo -E` or a wrapper that
-passes your environment: `BASH_ENV` and `PATH` act before the first line of the script, so no
-check in it can stop them. A release installer refuses the test settings `PLUMB_INSTALL_*`, and it uses `/tmp` for its temp
-files: it refuses any other `TMPDIR`.
+- The installer checks the tarball's own `SHA256SUMS` before it uses any file: every file must be
+  there and match. Else it stops, names the file and changes nothing. This proves only that the
+  files are whole, not who made them.
+- The installer of a release says "Bundle check of release …". If the installer of a tarball says
+  "source build" instead, stop: it is not the installer of a release.
+- Run it from a clean root shell (for example `sudo -i`), not through `sudo -E` or a wrapper that
+  passes your environment: `BASH_ENV` and `PATH` act before the first line of the script. A
+  release installer uses `/tmp` for its temp files and refuses any other `TMPDIR`.
 
 ### 2. Dry run
 
@@ -72,36 +70,35 @@ Read the list. Use `bash install.sh --help` for all options (storages, bridge, V
 
 ### 3. Real run
 
-Run the same command without `--dry-run`. The installer asks before it changes anything.
-
-It makes:
+Run the same command without `--dry-run`. The installer asks before it changes anything. It makes:
 
 - an unprivileged Debian 13 LXC with the name `plumb` (2 cores, 1 GiB memory, 8 GB disk);
 - a pool `plumb` for your guests, a user `plumb@pve` with an API token, and roles for it;
 - the storages `plumb-snippets` and `plumb-images` (two directories on the host).
 
-Two kinds of options are off unless you name them:
+At the end it prints the address of the web UI and the first password of the user `admin`.
+
+Two kinds of options are off unless you name them. The dry run lists each right that they add.
 
 - **More networks for guests:** `--extra-bridge <bridge>` lets a guest network card use one more
   bridge, untagged. `--extra-vlan <bridge>:<tag>[,<tag>…]` allows these VLAN tags on a VLAN-aware
-  bridge. Repeat each option for more. A Target can use only the bridges and tags named here. A
-  later run (a repair run) sets this list from its options alone: give every extra bridge and VLAN
-  again, or its right is removed.
+  bridge. Repeat each option for more. A Target can use only the bridges and tags named here.
 - **Guest backups:** `--guest-backup-storage <storage>` names the one storage for backups of your
   guests. The installer refuses a storage that can also hold guest disks or snippets (content
-  `images`, `rootdir` or `snippets`). A Proxmox Backup Server storage with an encryption key keeps the backups encrypted.
-  On any other storage, Plumb makes guest backups only when you add `--guest-backup-clear`: the
-  backups are then **not encrypted**, and each one holds the whole guest disk with every secret in
-  it.
+  `images`, `rootdir` or `snippets`). A Proxmox Backup Server storage with an encryption key keeps
+  the backups encrypted. On any other storage, Plumb makes guest backups only when you add
+  `--guest-backup-clear`: the backups are then **not encrypted**, and each one holds the whole
+  guest disk with every secret in it.
 
-The dry run lists each right that these options add.
+A later installer run (an update or a repair run) sets these rights from its options alone: give
+every extra bridge, VLAN and the guest backup storage again, or its right is removed.
 
 ### 4. The recovery key
 
 During the install, Plumb shows a **recovery key** once. Plumb does not store it.
 
 - Write it down and keep it offline, for example in a password manager or on paper.
-- Without it, Plumb cannot read its stored secrets again after a restore.
+- Without it, Plumb cannot read its backups or its stored secrets after a restore.
 - Do not put it in a file on the Proxmox host or in a Plumb guest.
 
 ### What the Plumb token may do
@@ -110,7 +107,7 @@ Plumb never gets root access to Proxmox. Its token may:
 
 - create, change, start, stop and delete guests in the pool `plumb`;
 - use space on the disk storage and on `plumb-snippets`, and connect guests to the guest bridge;
-- download images and templates into `plumb-images`.
+- download images and templates into `plumb-images`;
 - with `--extra-bridge` or `--extra-vlan`: connect guests to exactly those bridges and VLAN tags;
 - with `--guest-backup-storage`: back up the guests of the pool to that storage, and use its space.
 
@@ -129,16 +126,9 @@ Plumb can read:
   cluster firewall rules.
 
 It cannot read the configuration of a guest outside the pool, the syslog or the network settings.
-
-It may not:
-
-- change guests outside the pool;
-- change the host, its network, its storages or its users;
-- give rights to anybody, or make new pools;
-- open a console or use the QEMU guest agent.
-
-The Plumb LXC itself is not in the pool, so Plumb cannot change itself. The installer prints the
-full list of rights.
+It may not change guests outside the pool; change the host, its network, its storages or its
+users; give rights to anybody or make new pools; open a console or use the QEMU guest agent. The
+Plumb LXC itself is not in the pool, so Plumb cannot change itself.
 
 **The rights in detail.** The installer makes one Proxmox role per line and gives each line to the
 user `plumb@pve` and to its token `plumb@pve!plumb` (privilege separation). "Inherited" means that
@@ -162,7 +152,7 @@ the guests in the pool get the right too. Nothing else is given.
 
 1. Open `https://<plumb-address>:8443`. The certificate comes from Plumb's own CA, so your browser
    warns you once. Plumb is for your local network only.
-2. Log in as `admin`. The installer prints the first password once. If you lost it:
+2. Log in as `admin` with the password that the installer printed. If you lost it:
    `pct exec <plumb-vmid> -- journalctl -u plumb.service | grep Password`.
 3. Set a new password. Plumb asks for it at the first login.
 4. **Images:** add an Image (a Debian or Ubuntu cloud image, or a container template). You can
@@ -172,15 +162,14 @@ the guests in the pool get the right too. Nothing else is given.
    <br>_An Image: where the base image comes from, and its checksum._
 
    An Image keeps a fixed checksum (the pin). To move it to a newer file, choose a **signed
-   checksum source** on the Image:
+   checksum source** on the Image, then click **Refresh base**. When the file changed, Plumb
+   proposes a Plan that changes only the checksum. Existing Targets do not change; new Targets and
+   new builds use the new file.
    - Ubuntu cloud images: Plumb checks `SHA256SUMS` with the Ubuntu key that is built into Plumb.
    - Proxmox container templates: Plumb checks the appliance index with the Proxmox key that is
      built into Plumb.
-   - Debian cloud images: Plumb reads `SHA512SUMS` over HTTPS. Debian does not sign this list.
-
-   Then click **Refresh base** on the Image. When the file changed, Plumb proposes a Plan that
-   changes only the checksum. Existing Targets do not change; new Targets and new builds use the
-   new file.
+   - Debian cloud images: Plumb reads `SHA512SUMS` over HTTPS. Debian does not sign this list, so
+     every new Debian checksum needs a person.
 
    ![Image page of ubuntu-26.04 with the checksum source "Ubuntu cloud images, signed SHA256SUMS" and the card Refresh base](docs/screenshots/readme-image-verify.png)
    <br>_An Image with a signed checksum source, and the "Refresh base" button._
@@ -190,17 +179,15 @@ the guests in the pool get the right too. Nothing else is given.
    "Add" copies one into your Blocks. When your copy differs from the catalogue, "Show difference"
    shows how, and "Update from the catalogue" replaces your copy. Both make a normal Plan. Plumb
    never adds or changes a Block by itself. Change the Blocks or write your own.
-   - The `firewall` Block drops incoming traffic except the ports you list, on every network card of
-     the guest. SSH always stays open.
-   - The `network` Block adds addresses, routes, name servers and search domains to the network
-     card of a VM. The main address, the gateway and DHCP do not change.
+   - The `firewall` Block drops incoming traffic except the ports you list, on every network card
+     of the guest. SSH always stays open.
+   - The `network` Block adds addresses, routes, name servers and search domains to the first
+     network card of a VM. The main address, the gateway and DHCP do not change.
    - When a `firewall` or `network` change cuts the guest off from Plumb, the agent puts the old
      settings back after 90 seconds.
-   - A Block can also hold a local `group` (`groupadd`). Users join it through their `groups`.
    - While you edit a Block, a **preview** next to its YAML shows the form that a Target gets for
-     its parameters, and the resources that it makes, with their names filled from the values you
-     type in the preview; a resource that Plumb would refuse is marked. It changes as you type, and
-     nothing is saved until you make the Plan.
+     its parameters and the resources that it makes; a resource that Plumb would refuse is marked.
+     Nothing is saved until you make the Plan.
 
    ![Starter catalogue: motd and nginx are added but differ, with Show difference and Update from the catalogue; network is not added, with Add](docs/screenshots/readme-catalogue.png)
    <br>_The starter catalogue: "Add" and "Update" make a Plan. Plumb never changes a Block by itself._
@@ -215,76 +202,13 @@ the guests in the pool get the right too. Nothing else is given.
    - **Tags:** the Proxmox tags of the guest. Plumb keeps exactly these. With no entry, Plumb does
      not touch the tags of the guest.
    - **Disk:** it only grows. Proxmox cannot make a disk smaller, so a grow cannot be undone.
-   - **More network cards:** up to 3 more, each on a bridge, or a bridge with a VLAN tag, that the
-     install named. Each card has no address, DHCP, or a static address; at most one card has a
-     gateway. Plumb chooses the MAC addresses. Adding or removing a card, or changing its bridge or
-     tag, is disruptive: the Plan says so.
-     - A container gets the address of each card from Proxmox.
-     - In a VM, the agent sets it with netplan and finds the card by Plumb's MAC address. It
-       refuses, and changes nothing, when a netplan entry names the card only by a pattern, or when
-       two entries name it.
-     - A VM card gets a gateway only while the first card has no default route (also none from
-       DHCP).
-     - A running VM gets or loses a card without a restart while network hot-plug is on (the
-       Proxmox default); else the change waits for a restart. The agent removes the netplan file of
-       a removed card. A card that comes back gets the same MAC address.
-     - Plumb refuses the Plan for a bridge or a VLAN tag that the install did not name. The message
-       names the installer options that it needs (`--extra-bridge`, `--extra-vlan`). Run the
-       installer again with every extra bridge and VLAN that the install has now, plus these (see
-       "Updates and repair").
-   - **Data disks:** up to 3 more disks after the main disk, on the disk storage that the install
-     named. Tick "Plumb manages the data disks of this guest" to manage them; then each disk has a
-     **slot** (1 to 3) and a size. The slot is the disk's fixed name (a VM `scsi1` … `scsi3`, a
-     container `mp1` … `mp3`): removing one disk never renames another.
-     - **VM:** a data disk is a raw block device with the serial `plumb-<slot>`. Find it in the
-       guest with `lsblk -o NAME,SERIAL` (it is not in `/dev/disk/by-id`). Formatting and mounting
-       it is yours: with a Block or by hand. Plumb adds it live (reversible).
-     - **Container:** give a mount path, for example `/srv/data`. Proxmox makes a file system on the
-       disk and mounts it there. The path cannot change later, and it cannot be in a system folder
-       (`/etc`, `/usr`, `/var`, `/lib…` and the others) or inside another disk's path. Plumb adds a
-       container disk only while the container is stopped: the Run stops a running container,
-       adds the disk and starts it again. That needs "Plumb may restart this container", and the
-       Plan is disruptive. If the container does not start with the new disk (for example because
-       a part of the path is a symbolic link in the guest), the Run removes the disk again and
-       starts the container as before. A stopped container gets the disk and stays stopped (the
-       Plan is reversible); the disk is then tried only at its next start, and if that start
-       fails, remove the disk with a Plan.
-     - A disk only grows. A grow is disruptive, as for the main disk.
-     - **Removing a disk deletes its data.** The Plan is destructive, and only a person can approve
-       it. A running guest needs "Plumb may restart this VM" (for a container: "this container").
-       The Run detaches the disk first, then frees its volume in a second step. A disk that Plumb
-       did not make is only detached, never freed.
-     - **If Plumb cannot free a volume**, the Run says so and Plumb opens the Issue
-       `guest:volume-left`, which names the volume. No disk is added to the Target until it is gone.
-       Remove it on the Proxmox host as root: `qm set <vmid> --delete unusedN` (for a container
-       `pct set`), with the `unusedN` line that names the volume, or `pvesm free <volume>` when no
-       such line names it. A delete of the Target also frees it. The Issue ends by itself at the
-       next check (about a minute) when the guest config no longer names the volume.
-       - A common cause is a **snapshot** of the guest that still uses the disk ("volume is still in
-         use (snapshot?)"). Remove the snapshot first (`qm delsnapshot <vmid> <name>`), then the
-         `unusedN` line.
-       - Never `pvesm free` a volume that an `unusedN` line still names: the line stays, the Issue
-         stays open, and a later snapshot delete can leave the guest locked.
-     - A disk that grew in Proxmox is drift: "Accept" takes the bigger size into the Target, and
-       there is no Revert (a disk cannot shrink). Deleting the Target deletes its data disks too;
-       the Plan names each of them.
-     - With the box off, Plumb does not touch data disks, and a disk that a person adds is no
-       drift. Switching it off deletes nothing. Switching it on manages slots 1 to 3. Read that Plan
-       before you approve it:
-       - A disk of a slot that the list does not name is removed, or detached when Plumb did not
-         make it.
-       - **A disk that a person added to a VM** has no serial `plumb-N`, so Plumb never takes it
-         over. If the list names its slot, Plumb refuses the Plan (remove the disk in Proxmox, or use
-         another slot); else the Plan detaches it and does not free it. To keep it as it is, leave
-         the box off.
-       - **A disk that a person added to a container** on the disk storage of the install counts as
-         Plumb's: list it with its slot, size and path to keep it. A disk on another storage, a bind
-         mount or a device, Plumb did not make: as for a VM, the Plan refuses or detaches it.
-     - Every disk counts for the disk gate of the disk storage (85 % by default). A user or token with the role
-       apply can approve an add (up to 3 × 4096 GiB per Target), but no remove.
-     - An adopted Target keeps the disks that the guest has; Plumb adds none.
-   - **Guest backups:** daily or weekly at a time (UTC), and how many to keep. See "Guest backups"
-     below.
+   - **More network cards:** up to 3 more, on the bridges and VLAN tags that the install named.
+   - **Data disks:** up to 3 more disks on the disk storage of the install. **Removing a disk
+     deletes its data**, and only a person can approve it.
+   - **Guest backups:** daily or weekly at a time (UTC), and how many to keep (see
+     [Guest backups](#guest-backups)).
+
+   The details of network cards and data disks: [docs/guide/targets.md](docs/guide/targets.md).
 
    ![Targets list with four Targets: app1 in Plumb; db1, web1 and web2 out of Plumb; each with image, size, address and agent version](docs/screenshots/readme-targets.png)
    <br>_The Targets: one is in Plumb, three have drift._
@@ -292,10 +216,7 @@ the guests in the pool get the right too. Nothing else is given.
    ![Edit page of Target web2: configured and reported address, image, type, and the guest settings cores, memory, disk, bridge and power](docs/screenshots/readme-target.png)
    <br>_One Target: its address, its Image and its guest settings._
 
-   ![Data disks of the VM db1: the box "Plumb manages the data disks of this guest", disk 1 of 50 GiB in its fixed slot scsi1, a new disk 2 of 10 GiB (the default size) with a slot choice, and the restore note](docs/screenshots/readme-target-disks.png)
-   <br>_The data disks of a VM: the slot is the disk's fixed name, and a disk only grows._
-
-7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
+7. **Plan:** "Show the Plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
    each step. A Run can end as "succeeded, N warnings": then read the steps marked `warning`. The
    Plan shows two things:
    - **Document changes:** what changes in your Images, Blocks, Targets and rules, as a diff. Secret
@@ -313,17 +234,14 @@ the guests in the pool get the right too. Nothing else is given.
    <br>_A Plan that changes only a Block: its document changes, line by line._
 
 8. **Issues:** when somebody changes a guest by hand, an Issue opens. Choose "Revert", "Accept" or
-   "Ignore". A Plan that accepts a value from the guest needs a person: an API token cannot approve
-   it. The same holds for every Plan that takes a value that a guest reported into the desired
-   state, also when you type it yourself: only a person can approve it.
+   "Ignore" (once, or by a rule for this or every Target).
+   - **Only a person** can approve a Plan that takes a value that a guest reported into the desired
+     state (an Accept, also when you type the value yourself), and a Plan that removes the
+     `firewall` of a Target (it opens every port at once). An API token cannot.
    - **Accept into a parameter:** when the changed value comes from one Block parameter, Accept
-     writes the guest value into that parameter of this Target ("Accept into parameter message of
-     motd"). The Block itself does not change. When no parameter fits, Accept keeps the value as a
-     raw resource of this Target, and the Issue says why.
-   - A Plan that removes the `firewall` of a Target always needs a person, because it opens every
-     port at once.
-   - A network card changed in Proxmox (bridge, tag, MAC, a card added or removed) cannot be
-     accepted. Revert it, or change the network cards of the Target.
+     writes the guest value into that parameter of this Target. The Block itself does not change.
+     When no parameter fits, Accept keeps the value as a raw resource of this Target, and the Issue
+     says why.
 
    ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
    <br>_An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it._
@@ -336,68 +254,6 @@ and the repair key. It never shows a secret.
 
 ![Settings, General tab: the backup schedule with the source of each value, and the read-only Proxmox view with the rights of the install](docs/screenshots/readme-settings-general.png)
 <br>_Settings → General: the backup schedule and the Proxmox connection._
-
-### AI clients (MCP)
-
-`plumb mcp` lets an AI client (for example Claude) read Plumb and propose changes, through the
-Model Context Protocol over stdio. It uses the public API with an API token.
-
-1. In **Settings → API tokens**, make a token with the tier **plan**. Plumb shows it once. Save it
-   in a file that only you can read: `chmod 600 ~/.config/plumb/token`.
-2. Copy the CA of Plumb, on the Proxmox host:
-   `pct pull <plumb-vmid> /var/lib/plumb/link/ca.crt ~/.config/plumb/ca.crt`.
-3. Add Plumb to the client's MCP configuration:
-
-   ```json
-   {
-     "mcpServers": {
-       "plumb": {
-         "command": "plumb",
-         "args": [
-           "mcp",
-           "--url",
-           "https://<plumb-address>:8443",
-           "--token-file",
-           "/home/<you>/.config/plumb/token",
-           "--ca",
-           "/home/<you>/.config/plumb/ca.crt"
-         ]
-       }
-     }
-   }
-   ```
-
-What the client **can** do (and nothing else):
-
-- read Targets, Issues (with the difference and the comments), Plans (with their changes and
-  documents), Runs, revisions and their difference, Blocks, Images, the starter catalogue, and the
-  events since a given point;
-- propose a change of Targets, Blocks or Images (a Plan);
-- Revert or Accept an Issue (a Plan), re-enroll a Target (a Plan), and drop a Plan;
-- comment on an Issue.
-
-What it can **never** do: approve a Plan, ignore drift (once or by rule), or touch secrets,
-tokens, users, settings, backups, restore, export or import; nor update an agent or build or refresh
-an Image. You approve every Plan in the web UI; the Plan shows the client's reason below the
-changes, marked "written by API token". A Plan that takes a value a guest reported, or that removes
-a firewall, needs a person in any case. A token may make 30 Plans and 30 comments per minute; above
-that Plumb refuses the call and says how long to wait.
-
-#### Explain an Issue
-
-The prompt **explain_issue** (argument: the Issue id) gives the client one Issue with what it
-needs: the difference, the Target and its Blocks, the source of the resource, the last 5 Runs of
-the Target and the last 20 comments (comments of people and of Plumb first, then those of tokens). The client then explains the Issue in a comment and may
-propose **one** Revert or Accept of this Issue. You approve it in the web UI, as every Plan.
-
-- Use a token with the tier **plan**. A **read** token gets an error for this prompt.
-- Everything that comes from a guest or a person (reported values, comments, Run output, Block
-  text, parameters) is marked as untrusted data in the prompt. Plumb tells the client never to
-  follow instructions found in it, but to report them in its comment. If a comment of the client
-  says that it found such instructions, look at who wrote them.
-- The prompt holds no secret: a sensitive value shows only that it differs.
-- Long texts and long lists are cut, and the prompt says where and how much. The client then has a
-  partial view. An Issue too big for the prompt shows only its id and no action: read it in Plumb.
 
 ### Users and roles
 
@@ -415,14 +271,26 @@ An admin adds people in **Settings → Users**. Each user has one role:
 - Plumb never deletes a user. Disable it instead. A name is never given twice.
 - A role change ends every session of that user.
 - The web UI hides the buttons that your role may not use. Plumb also checks every call itself.
+- An API token has the tier read, plan or apply. A token never approves a Plan that only a person
+  may approve.
 
 ![Settings, Users tab: admin, dev, ops with role apply and viewer with role read, each with the actions Role, Disable and One-time password, and the form for a new user](docs/screenshots/readme-users.png)
 <br>_Settings → Users: each person with their role and state._
 
+### AI clients (MCP)
+
+`plumb mcp` lets an AI client (for example Claude) read Plumb and propose Plans, through the Model
+Context Protocol with an API token of the tier plan. It can never approve a Plan, ignore drift, or
+touch secrets, tokens, users, settings or backups. The prompt **explain_issue** lets it explain an
+Issue and propose one Revert or Accept. Setup and the full list:
+[docs/guide/mcp.md](docs/guide/mcp.md).
+
 ## Updates and repair
 
 To update Plumb, run the new `install.sh` with the new `plumb` binary. Use the same options as at
-the install. The same run repairs a broken install. Try `--dry-run` first.
+the install, with every extra bridge, VLAN and the guest backup storage: a run without one of them
+removes its rights. The same run repairs a broken install, and adds rights when you add
+`--extra-bridge`, `--extra-vlan` or `--guest-backup-storage`. Try `--dry-run` first.
 
 Agents in the guests never update by themselves: each update is a Plan that a person approves.
 After an update of Plumb, the agent page of each Target shows one of these states:
@@ -436,16 +304,9 @@ After an update of Plumb, the agent page of each Target shows one of these state
   or make the Target again.
 
 For the first two, use **Propose agent update** on the agent page, once per Target. Plumb proposes
-the update Plan by itself only when the new agent can do other things than the old one.
-
-New rights come only with an installer run. To use more networks or guest backups on an existing
-install, run the installer again with your usual options and the new ones (`--extra-bridge`,
-`--extra-vlan`, `--guest-backup-storage`). Until then Plumb refuses such a network card and every
-guest backup, and says why. Give these options again at every later run: a run without one of them
-removes its rights.
-
-- An agent that does not reach Plumb within 5 minutes after the update goes back to its old
-  version by itself.
+the update Plan by itself only when the new agent can do other things than the old one. An agent
+that does not reach Plumb within 5 minutes after the update goes back to its old version by
+itself.
 
 ### Repair a dead agent
 
@@ -460,8 +321,8 @@ leaves the guest as it was.
   `permit_root_login` values `prohibit-password` (the default) and `forced-commands-only` both allow
   the repair; `no` turns it off.
 - Plumb pins the SSH host keys that the agent reported, and the repair connects only to a pinned
-  key. A new host key shows as a warning. When no pinned key is left (the guest got new host keys), the
-  repair is off until you accept one of the new keys in the repair Plan; check it on the guest
+  key. A new host key shows as a warning. When no pinned key is left (the guest got new host keys),
+  the repair is off until you accept one of the new keys in the repair Plan; check it on the guest
   first, for example with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
 - **Settings → General** shows the repair key. "Make a new repair key" makes a new one; the old key
   stays valid until you revoke it.
@@ -469,15 +330,14 @@ leaves the guest as it was.
   guest), an admin makes an **install command** on the agent page: one root command for the guest,
   valid once for 15 minutes. It holds a one-time token, so treat it as a secret; Plumb shows it only
   once. **It needs `curl` in the guest**; a stock Debian LXC has none. Install it first
-  (`apt-get install -y curl`). Every error line of the command and of the install script starts
-  with `plumb-install:`. Without `curl`, or when the download fails or is cut, the command stops
-  with one such line, installs nothing and leaves no file; you can run the same command again.
+  (`apt-get install -y curl`). Every error line starts with `plumb-install:`. Without `curl`, or
+  when the download fails or is cut, the command stops with one such line, installs nothing and
+  leaves no file; you can run the same command again.
 - The shell keeps a pasted command, with the token, in root's history. Run `unset HISTFILE` before
-  you paste it, or `history -c` after it. After a failed try, the token stays valid until its time
-  ends.
+  you paste it, or `history -c` after it.
 
 ![Agent page of web3: repair over SSH is ready, the pinned host key, and the button Propose repair](docs/screenshots/readme-repair.png)
-<br>_A dead agent: Plumb can install it again over SSH, after a person approves the plan._
+<br>_A dead agent: Plumb can install it again over SSH, after a person approves the Plan._
 
 ### Adopt a guest
 
@@ -487,16 +347,16 @@ first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a 
 - The list shows each free guest of the pool, and why a guest cannot be adopted (for example more
   than one disk, a VLAN tag, a privileged container).
 - The new Target has the Proxmox name of the guest; rename the guest in Proxmox to change it.
-- An adopted Target keeps one network card: Plumb adds no more cards to it.
+- An adopted Target keeps one network card and the disks that it has: Plumb adds none.
 - Adopting is a Plan that only a person can approve. Plumb writes nothing to Proxmox for it.
 - The guest is **not sealed**: its SSH host keys, machine-id and root users stay as they are.
   Plumb never keeps or shows its password, SSH keys, description or container environment.
 - Install the agent with the install command on the agent page (it needs `curl` in the guest; see
   "Repair a dead agent").
 - **Delete:** deleting an adopted Target lets the guest go: Plumb removes its agent, and the guest
-  and its disks stay in Proxmox. Only when you first allow it with a separate plan ("Allow Plumb to
-  delete the guest", it sets `delete_guest`) does deleting the Target delete the Proxmox guest and its
-  disks. Both need a person.
+  and its disks stay in Proxmox. Only when you first allow it with a separate Plan ("Allow Plumb to
+  delete the guest") does deleting the Target delete the Proxmox guest and its disks. Both need a
+  person.
 - When the agent does not answer during the delete, the Run ends as "succeeded, 1 warning" and the
   agent stays in the guest with its repair key line. The guest then shows under **Adopt a guest**
   as not adoptable ("the Plumb agent of a deleted Target is still in it"). Plumb removes the agent
@@ -504,11 +364,11 @@ first; Plumb never moves a guest into the pool. Then open **Targets → Adopt a 
   "Forget the agent…" (admin).
 
 ![Adopt a guest: the free guests of the pool, one adoptable and one with its reasons, and the wizard with the warnings in red](docs/screenshots/readme-adopt.png)
-<br>_Adopt a guest: the warnings come before the plan._
+<br>_Adopt a guest: the warnings come before the Plan._
 
 ### Guests made before the agent self-update
 
-**Guests made before the agent self-update existed** need one root command per guest, once:
+These guests need one root command per guest, once:
 
 ```sh
 # LXC, on the Proxmox host:
@@ -523,13 +383,15 @@ After it, the Target page shows the new agent version. A guest without
 An update never changes a stored Block. If your `nginx` or `nginx-site` Block answers 403, replace
 its `index index.html;` line with `index index.html index.htm index.nginx-debian.html;`.
 
-To remove Plumb: `bash install.sh --remove`. It refuses while the pool still holds guests or
-templates. Delete the Targets and Images through Plumb first, then remove in Proxmox the templates
-that stay (see "Known limits").
+### Remove Plumb
+
+`bash install.sh --remove`. It refuses while the pool still holds guests or templates. Delete the
+Targets and Images through Plumb first, then remove in Proxmox the templates that stay (see "Known
+limits").
 
 ## Backup and restore
 
-### What a backup holds
+### Plumb's own backups
 
 Plumb backs up its whole state every day at 03:00 UTC and keeps the last 7 backups (installer
 options `--backup-time` and `--backup-keep`, or **Settings → General**). **Settings → Backups**
@@ -545,146 +407,6 @@ A backup is encrypted. Only your recovery key opens it.
   tokens, which guest belongs to which Target, and the identities of the agents.
 - It does not hold: the recovery key, the Proxmox token of Plumb (the installer makes a new one),
   and the guests themselves. Back up the guests with Plumb's guest backups (below) or with Proxmox.
-
-### Guest backups
-
-With `--guest-backup-storage` at the install, Plumb backs up the guests of your Targets. Set
-**Guest backups** on a Target: daily or weekly, a time (UTC), and how many backups to keep (1 to
-30). A backup does not change the guest. It is a snapshot: a VM without the QEMU guest agent is
-backed up like after a power cut, so open files can be half written. A container backup leaves out
-only the agent's secrets (its credential, a left-over enroll token and its desired list); its
-config stays.
-
-The **Backups** page of a Target shows:
-
-- the storage, whether it encrypts, and its free space. Below 10 % free, Plumb refuses new
-  backups;
-- the schedule, the next and the last backup;
-- **Back up now** (role apply or admin). Plumb keeps at most 2 of these beside the scheduled ones,
-  so they never push out a scheduled backup;
-- the backups, in three groups:
-  - **this guest:** Plumb made them. Plumb keeps the newest scheduled ones as set, restores them
-    and deletes the oldest;
-  - **an older guest of this Target**, for example before the guest was made again: Plumb never
-    restores them and never deletes them by itself;
-  - **not known to Plumb:** a person made them, the mark failed, or the record was lost with a
-    restore of Plumb. Plumb never touches them. Delete them in Proxmox. When another backup of the
-    guest ran at the same time as Plumb's, Plumb finds its own one by its Proxmox task and lists
-    it under this guest; only the other one shows here.
-
-A person with the role admin can delete one backup of the first two groups, after a confirm.
-
-A change of the backup setting is destructive only when the next backup job would delete more
-backups than it would now. The Plan says how many. Removing the
-backup setting stops the backups and deletes none.
-
-![Backups page of db1: an unencrypted storage with the warning, the schedule, Back up now, and the backups in three groups](docs/screenshots/readme-guest-backups.png)
-<br>_The backups of one guest: the storage state, the schedule and the backups by group._
-
-**Restore.** "Restore…" on a backup of this guest opens a wizard. It makes a Plan with the risk
-destructive, and only a person with the role admin can approve it; an API token never can.
-
-Before anything changes, Plumb reads the network settings in the backup. If a network card of the
-backup is on a bridge or VLAN tag that the install does not name, Plumb refuses the restore (also
-the restore of a safety backup), and nothing is changed. The message names the options that it
-needs: run the installer again (a repair run) with every extra bridge and VLAN that the install
-has now, plus these; or restore another backup. The Run:
-
-1. stops the guest. A running guest needs "Plumb may restart this VM" (for a container: "this
-   container") on the Target, or stop it yourself first;
-2. takes a safety backup of the guest as it is now (see below). If that backup fails, nothing is
-   changed, and a guest that ran starts again;
-3. revokes the agent credential and drops the pinned SSH host keys, before the guest starts again;
-4. lets Proxmox overwrite the whole guest with the backup;
-5. then Plumb proposes a re-enrollment of the agent (the guest stays stopped until you approve it).
-   When a re-enrollment Plan of the Target is still open, Plumb makes no second one: approve that
-   one. An adopted guest starts without an agent: run an install command from its agent page.
-
-The restored guest runs the agent that was in the backup. When that is an older version, its agent
-page shows **Update available**: propose the agent update (see [Updates and repair](#updates-and-repair)).
-
-After a restore that worked, the Issue `guest:restore-failed` stays open with "restored; the agent
-is not enrolled yet" until the re-enrollment **Run** worked; then it ends with a comment. Its page
-names the re-enrollment Plan to approve. If that Plan can no longer run (another Plan changed the
-configuration first, it was dropped, or its Run failed), the Issue says so: plan the re-enrollment
-again ("Propose the re-enroll" on the Issue page). While the guest waits for its agent:
-
-- the disks are the restored ones, so Plans of the Target are allowed, and Plumb compares the guest
-  again (a drift Issue gets its actions). Use this to fix the Target when the re-enrollment failed
-  because of it;
-- a Run of such a Plan changes the guest in Proxmox and skips the steps inside the guest. The
-  re-enrollment Run does them with the new agent, and it also grows the root file system when a
-  disk grow is still waiting for it.
-
-If the controller stops during a restore, it checks the restore at its next start: when the restore
-worked, it makes the re-enrollment Plan then; when it cannot tell, the Issue `guest:restore-failed`
-(below) says that the guest may have no disk. The Proxmox restore task may still have ended well:
-look at the guest in Proxmox, or restore the safety backup that the Issue names.
-
-If the restore worked but Plumb cannot plan the re-enrollment (for example because a person added a
-mount point to the container in Proxmox), the Issue says why, with the way out: fix it in Proxmox,
-then re-enroll.
-
-**A backup older than a data disk** does not hold that disk. The restore Plan names each such disk
-and what happens to it:
-
-- a **VM** keeps the disk as an unused volume. Free it in Proxmox when you no longer need it. If
-  the Target's disk list names that slot, the next Run attaches a new, empty disk there;
-- a **container** loses the data on that disk. If the Target's disk list names that slot, the next
-  Run makes a new, empty disk at its path.
-
-The safety backup (below) holds the disk in both cases.
-
-Everything written in the guest after the backup is lost. Access comes back as it was then: SSH
-keys, passwords and users that a person removed later work again. The Target is not rolled back:
-the next Run sets the guest to the current Target again.
-
-**Safety backup.** Proxmox removes the guest's disks before it writes the backup. If the restore
-fails, the guest is left empty. So the Run first takes a safety backup of the guest. It shows in
-the list as "safety backup before a restore", and "keep" never counts or deletes it. After a
-restore that worked, it stays, so you can undo the restore; it replaces the older safety backup of
-the guest. After the restore of a safety backup itself, Plumb keeps that one and every newer one,
-and deletes only older safety backups. If the controller stops during a restore, the older safety
-backups of that guest stay until its next restore that works; you may delete them in Proxmox.
-
-If the restore fails, the Run says that the guest may have no disk, and Plumb opens the Issue
-`guest:restore-failed`. It names the safety backup, and its link opens the restore of that backup.
-A restore that works moves the Issue to "restored; the agent is not enrolled yet" (above). When
-Proxmox refuses a restore before it begins (for example a network that the install does not name),
-the guest's disks are as before, and the Run says so.
-
-While the Issue says that the restore failed (or that a restore runs), the guest may be empty, so
-Plumb protects it:
-
-- Plumb opens no drift Issue for the guest.
-- Every Plan for the Target is refused, except a restore and a delete of the Target. Only a person
-  can approve the delete.
-- The other Issues of the Target show no action. They name the Issue of the failed restore, and
-  their actions come back after a restore that works.
-- Only a person with the role admin can end the Issue by hand ("End the issue"), and only when the
-  guest has a disk again (for example after a repair in Proxmox). Do not revert an empty guest:
-  Plumb would make it again, and then no backup of it can be restored through Plumb.
-
-Two cases take no new safety backup:
-
-- the last restore failed: the guest may be empty, so the safety backup from before stays the way
-  back. The Plan says so. After a restore that worked, the guest is not broken: the next restore
-  takes a new safety backup, and "skip the safety backup" is refused;
-- the guest has no disk: a person may tick "The guest is broken already: skip the safety backup" in
-  the wizard. Plumb checks it and refuses for a guest with a disk. An API token never can.
-
-**What a backup holds.** A container backup leaves out the agent's secrets (its credential and
-its desired list); a restored container starts its agent and re-enrolls. A VM backup holds the
-whole disk, also the agent credential. Plumb revokes that credential at the restore, and every
-re-enroll makes the credential in older backups useless.
-
-![Restore wizard: only a person can approve, Proxmox empties the guest first, the steps of the Run with the safety backup, what is lost, the skip box, a confirm box and the reason](docs/screenshots/readme-guest-restore.png)
-<br>_The restore wizard says what is lost, and that Plumb first takes a safety backup._
-
-- Plumb restores only over the same guest. For a guest that is gone, restore the backup in Proxmox
-  into the pool `plumb`, then adopt the guest ("Adopt a guest").
-- After a delete of the Target the backups stay in Proxmox, and Plumb forgets them. This includes
-  the safety backups. Delete them in Proxmox when you no longer need them.
 
 ### Copy the backups off the host
 
@@ -725,95 +447,104 @@ To move Plumb to a new LXC, or after the Plumb LXC broke, keep the guests and re
 
 2. Restore. Use the whole line that the installer prints at the end of step 1, not a line of your
    own. It has the same address as before (the agents in the guests know only this address), the
-   backup storage, and every flag of the install that is not the default: the rights and storages
-   (`--extra-bridge`, `--extra-vlan`, `--guest-backup-storage`, `--guest-backup-clear`, `--pool`,
-   `--bridge`, `--disk-storage`, `--image-storage`, `--template-storage`, `--snippet-dir`,
-   `--image-dir`), `--lxc-id` when you gave it, `--vmid-range`, the DNS of new VMs (`--nameserver`,
-   `--searchdomain`) and the backup settings (`--backup-time`, `--backup-keep`, `--backup-copy-time`,
-   `--backup-copy-keep`, `--backup-max-size`). Defaults are left out on purpose. It looks like this:
+   backup storage, and every option of the install that is not the default (rights, storages,
+   VMID range, DNS, backup settings). It looks like this:
 
    ```sh
-   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway> --backup-storage <storage> <the other flags of the install>
+   bash install.sh --plumb-binary ./plumb --restore <file>.pbk --lxc-ip <address>/<prefix> --lxc-gw <gateway> --backup-storage <storage> <the other options of the install>
    ```
 
    The installer asks for the recovery key and checks the file before it changes anything. A wrong
-   key stops the run. A restore without the flags of the old install gives the restored Plumb no
+   key stops the run. A restore without the options of the old install gives the restored Plumb no
    rights for those networks, turns guest backups off, and takes the defaults for the rest; the
    installer warns before it starts. An install made before this version did not store all its
-   flags. Then the printed line ends with `<UNKNOWN: …>`, and the shell refuses to run it: add the
-   flags of the old install by hand.
+   options. Then the printed line ends with `<UNKNOWN: …>`, and the shell refuses to run it: add
+   the options of the old install by hand.
 
 ### After a restore
 
 Do these in this order: set the new admin password, confirm the restore, then enable the users and
 the API tokens that you still need. Until the password is changed, the login can do nothing else.
 
-- The installer shows a new password for `admin` once. Write it down. It works until you set a new
-  one: each login with it asks for the new password first. After the change only the new password
-  works. The old passwords do not work any more.
+- The installer shows a new password for `admin` once. Write it down. Each login with it asks for
+  the new password first. After the change only the new password works; the old passwords do not
+  work any more.
 - Plumb starts in **restored mode**: it reads Proxmox and the agents, but it changes nothing. No
   Plan is applied and no backup runs. A banner says so.
 - Every other user is locked. **Settings → Backups** lists them: give a user a one-time password
   there; they choose their own password at their first login.
 - Every API token is disabled. Enable only the ones you still need, in Settings → API tokens (a
-  person must do it; a token cannot, and not before the new admin password is set).
+  person must do it, after the new admin password is set).
 - When the old controller is off for good, confirm it in **Settings → Backups**. Only then does
-  Plumb work normally again. Plumb asks because two controllers must never manage the same guests:
-  both would change them. With the API, a person confirms with `POST /api/v1/restore/confirm` and
-  the body `{"old_controller_off": true}`, after the password change; without that field the call
-  is refused.
+  Plumb work normally again. Two controllers must never manage the same guests: both would change
+  them. With the API, a person confirms with `POST /api/v1/restore/confirm` and the body
+  `{"old_controller_off": true}`, after the password change.
 - Guests that were made after the backup are listed as unknown guests. Plumb never changes or
   deletes them. A guest that was deleted after the backup gets an Issue; Plumb does not make it
   again by itself.
 - Guest backups made after the backup of Plumb show as "not known to Plumb": Plumb never deletes
-  them. Delete them in Proxmox when you no longer need them.
+  them.
+
+### Guest backups
+
+With `--guest-backup-storage` at the install, Plumb backs up the guests of your Targets on a
+schedule that you set per Target, and keeps as many as you say. The **Backups** page of a Target
+lists them and has **Back up now**.
+
+A restore over the same guest is a Plan with the risk destructive: only a person with the role
+admin can approve it. Proxmox empties the guest before it writes the backup, so Plumb first takes a
+**safety backup** of the guest as it is. After the restore the agent enrolls again through a Plan
+that you approve. Everything written in the guest after the backup is lost, and access that a
+person removed later (SSH keys, passwords) works again.
+
+The details, the safety backup, and what to do when a restore fails:
+[docs/guide/guest-backups.md](docs/guide/guest-backups.md).
 
 ### Export and import
 
 **Settings → Export and import** saves one YAML file with every Image, Block, Target and rule. It
 does not hold the history, the Issues, the users or the tokens. It does not hold which guest belongs
 to which Target, or the agent identities: a new Plumb made from it creates new guests. Secret
-values are in it only when you give a passphrase.
-
-Keep the recovery key in any case.
+values are in it only when you give a passphrase. Keep the recovery key in any case.
 
 ## Known limits
 
+- One Proxmox host only. No clusters.
+- A restored Plumb needs the same address as before.
+- The address and the gateway of the first network card cannot change after the guest is made.
+  For a new address, make a new Target, or change it by hand.
+- When Plumb applies a network change in a VM (the `network` Block or a network card), `netplan
+  apply` can drop the guest's address for a moment.
+- A change of cores or memory of a running VM waits for a restart. Switch on "Plumb may restart
+  this VM" on the Target if Plumb may restart it.
 - A **stock Ubuntu 26.04** image used directly by a Target can stay on DHCP until its first
   restart. Use DHCP, or let Plumb build the Image: a built Image does not have this limit.
 - The **5 minute agent guard:** when Plumb is not reachable for more than 5 minutes right after an
-  agent update, the agent also goes back to its old version. A new update Plan installs it again.
-- A change of cores or memory of a running VM waits for a restart. Switch on "Plumb may restart
-  this VM" on the Target if Plumb may restart it.
-- One Proxmox host only. No clusters.
+  agent update, the agent goes back to its old version. A new update Plan installs it again.
+- A guest has at most 4 network cards, on the bridges and VLAN tags named at install. The `network`
+  Block adds addresses and routes on the first card.
 - Data disks live only on the disk storage that the install named, at most 3 per guest. There are
-  no bind mounts and no mount options.
-- A container disk path is checked by its name only. If a Block makes a part of that path a
-  symbolic link in the guest, the container cannot start with the disk: Plumb removes the disk
-  again. A disk added to a container that is stopped is first tried at its next start.
-- The address and the gateway of the first network card cannot change after the guest is made.
-  For a new address, make a new Target, or change it by hand.
-- Proxmox Backup Server: Plumb reads from the storage config whether a backup storage encrypts. This
-  was not tested on a real Proxmox Backup Server.
-- A restored Plumb needs the same address as before.
-- A guest has at most 4 network cards, on the bridges and VLAN tags named at install. An adopted
-  Target keeps one. The `network` Block adds addresses and routes on the first card.
+  no bind mounts and no mount options. A container disk path is checked by its name only: if a
+  Block makes a part of that path a symbolic link in the guest, the container cannot start with the
+  disk, and Plumb removes the disk again.
 - Plumb restores a guest backup only over the same guest, not after the guest is gone: that would
   need a Proxmox right that opens every backup on the storage. Restore it in Proxmox into the pool
   `plumb`, then adopt the guest.
+- Proxmox Backup Server: Plumb reads from the storage config whether a backup storage encrypts.
+  This was not tested on a real Proxmox Backup Server.
 - A change by hand with `ip` or `nft` in a guest that uses the `network` or `firewall` Block is seen
   within seconds. When the agent cannot watch it live, its agent page says so, and the change is
   seen at the full check every 15 minutes.
 - Deleting an Image removes its templates in Proxmox, but only templates that Plumb made for this
   Image and that no guest still uses (a linked clone). A template in use stays, and the Run says
   which. The downloaded files (cloud images, container templates) always stay. The delete Plan names
-  each of them with the command that removes it; the page of a built or container Image lists them
-  too. Remove what you no longer need in Proxmox.
-- The first signed refresh of an Image needs a person: an API token cannot approve it.
-- Debian does not sign its cloud image checksums. Every new checksum of a Debian Image needs a
-  person.
+  each of them with the command that removes it. Remove what you no longer need in Proxmox.
+- The first signed refresh of an Image, and every new checksum of a Debian Image, needs a person:
+  an API token cannot approve it.
 
 ## More
 
-- [docs/BRIEF.md](docs/BRIEF.md): what Plumb is for.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it works inside.
+- [docs/guide/targets.md](docs/guide/targets.md): network cards and data disks in detail.
+- [docs/guide/guest-backups.md](docs/guide/guest-backups.md): guest backups and restore in detail.
+- [docs/guide/mcp.md](docs/guide/mcp.md): AI clients over MCP.
+- [docs/RELEASE.md](docs/RELEASE.md): how to check a release.
