@@ -156,12 +156,12 @@ describe("NIC list", () => {
 });
 
 describe("backup schedule in the form", () => {
-  it("lowering keep says the plan is destructive; unticking removes the field", async () => {
+  it("lowering keep says the Plan is destructive; unticking removes the field", async () => {
     const { doc } = await edit();
     expect(el<HTMLInputElement>("#backup-on").checked).toBe(true);
     type("#backup-keep", "3");
     expect(text(el("#backup-keep-lower"))).toContain(
-      "when the next backup job would delete backups with this value, the plan is destructive",
+      "when the next backup job would delete backups with this value, the Plan is destructive",
     );
     el<HTMLInputElement>("#backup-on").click();
     flushSync();

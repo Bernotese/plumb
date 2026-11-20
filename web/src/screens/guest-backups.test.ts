@@ -253,7 +253,7 @@ describe("restore wizard", () => {
     ]);
   });
 
-  it("does not promise a safety backup when the issues cannot be read (review L2 of #350)", async () => {
+  it("does not promise a safety backup when the Issues cannot be read (review L2 of #350)", async () => {
     const api = adminApi();
     vi.spyOn(api, "listIssues").mockRejectedValue(new Error("down"));
     await open(api);

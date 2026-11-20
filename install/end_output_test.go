@@ -55,7 +55,7 @@ func TestRestoreEndsWithAddressAndLoginHint(t *testing.T) {
 	}
 	want := "Plumb runs: https://192.0.2.50:8443 (certificate from the Plumb CA).\n" +
 		"Restored from " + file + ". Log in as admin with the password that plumb restore showed. Plumb is in\n" +
-		"restored mode: it observes, and changes nothing until you confirm that the old controller is off (D-290).\n"
+		"restored mode: it observes, and changes nothing until you confirm that the old controller is off.\n"
 	if got := endBlock(t, out); got != want {
 		t.Errorf("end of restore:\n%s\nwant:\n%s", got, want)
 	}

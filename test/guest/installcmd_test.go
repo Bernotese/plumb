@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -111,16 +112,20 @@ func TestGuestInstallCommandFailsLoudly(t *testing.T) {
 		refused(t, code, out, "curl is missing")
 	})
 
-	// The image has no apt lists (Dockerfile); this test may run before
-	// the one that refreshes them.
-	if out, err := exec.Command("apt-get", "update", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("apt-get update: %v\n%s", err, out)
+	// T-276: curl and its libraries come from the image (Dockerfile,
+	// /opt/plumb-test-debs), not from an outside mirror: a slow mirror ran
+	// this test into the 5 min timeout (#417). dpkg needs no apt lists.
+	debs, _ := filepath.Glob("/opt/plumb-test-debs/*.deb")
+	if len(debs) == 0 {
+		t.Fatal("no curl packages in /opt/plumb-test-debs: the guest image is older than T-276")
 	}
-	out, err := exec.Command("apt-get", "install", "-y", "-q", "--no-install-recommends", "curl").CombinedOutput()
+	start := time.Now()
+	out, err := exec.Command("dpkg", append([]string{"-i"}, debs...)...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("install curl: %v\n%s", err, out)
+		t.Fatalf("install curl from the image: %v\n%s", err, out)
 	}
-	t.Cleanup(func() { exec.Command("apt-get", "-y", "-q", "purge", "curl").Run() })
+	t.Logf("curl installed from %d local packages in %v", len(debs), time.Since(start).Round(time.Millisecond))
+	t.Cleanup(func() { exec.Command("dpkg", "--purge", "curl").Run() })
 
 	t.Run("wrong CA", func(t *testing.T) {
 		body = stub

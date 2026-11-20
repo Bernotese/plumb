@@ -123,7 +123,7 @@ describe("RevisionView", () => {
     expect(back.changes.find((c) => c.name === "motd")?.op).toBe("removed");
   });
 
-  it("rolls back with a reason and opens the plan", async () => {
+  it("rolls back with a reason and opens the Plan", async () => {
     const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
     show(RevisionView, { api, id: 6 });
     const submit = await until(() => button("Roll back to this revision"));

@@ -295,7 +295,7 @@ the guests in the pool get the right too. Nothing else is given.
    ![Data disks of the VM db1: the box "Plumb manages the data disks of this guest", disk 1 of 50 GiB in its fixed slot scsi1, a new disk 2 of 10 GiB (the default size) with a slot choice, and the restore note](docs/screenshots/readme-target-disks.png)
    <br>_The data disks of a VM: the slot is the disk's fixed name, and a disk only grows._
 
-7. **Plan:** "Show the plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
+7. **Plan:** "Show the Plan" opens the Plan. Read it, then click "Approve and apply". The Run shows
    each step. A Run can end as "succeeded, N warnings": then read the steps marked `warning`. The
    Plan shows two things:
    - **Document changes:** what changes in your Images, Blocks, Targets and rules, as a diff. Secret
@@ -661,7 +661,7 @@ Plumb protects it:
   can approve the delete.
 - The other Issues of the Target show no action. They name the Issue of the failed restore, and
   their actions come back after a restore that works.
-- Only a person with the role admin can end the Issue by hand ("End the issue"), and only when the
+- Only a person with the role admin can end the Issue by hand ("End the Issue"), and only when the
   guest has a disk again (for example after a repair in Proxmox). Do not revert an empty guest:
   Plumb would make it again, and then no backup of it can be restored through Plumb.
 

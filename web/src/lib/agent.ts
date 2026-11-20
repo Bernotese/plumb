@@ -33,13 +33,13 @@ const STATES: Record<AgentUpdate, AgentState> = {
   required: {
     label: "Update required",
     tone: "danger",
-    text: "The desired state needs things this agent does not know. Plumb refuses every plan for this Target until the agent is updated.",
+    text: "The desired state needs things this agent does not know. Plumb refuses every Plan for this Target until the agent is updated.",
     canUpdate: true,
   },
   manual: {
     label: "Manual update",
     tone: "warn",
-    text: "This agent is older than slice 3 and cannot update itself. Run the one-time install in the guest as root: stop plumb-agent, then run plumb-agent-install. Or re-create the Target.",
+    text: "This agent comes from a Plumb version from before agents could update themselves. Run the one-time install in the guest as root: stop plumb-agent, then run plumb-agent-install. Or re-create the Target.",
     canUpdate: false,
   },
   unknown: {

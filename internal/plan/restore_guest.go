@@ -198,7 +198,7 @@ func wayBack(target string, adopted bool) string {
 // goneGuest is the refusal of a restore whose guest left the pool (D-411,
 // S3 of T-225).
 func goneGuest(target string) error {
-	return notRestorable(target, "the guest of the Target is gone; there is no restore after the guest is gone. A person restores the volume in Proxmox into the pool and adopts it (D-411)")
+	return notRestorable(target, "the guest of the Target is gone; there is no restore after the guest is gone. A person restores the volume in Proxmox into the pool and adopts it")
 }
 
 func notRestorable(target, msg string) error {
@@ -224,7 +224,7 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 		return RestoreVolume{}, err
 	}
 	if v.Kind != "plumb" {
-		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is %s: only a backup of this guest's own lineage restores over it (D-417)", id, v.Kind))
+		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is %s: only a backup of this guest's own lineage restores over it", id, v.Kind))
 	}
 	lineage, err := e.st.BackupLineage(ctx, target, b.Gen)
 	if err != nil {
@@ -268,7 +268,7 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 func (e *Engine) restoreBinding(ctx context.Context, target string) (store.Binding, error) {
 	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && b.Ref == "") {
-		return store.Binding{}, notRestorable(target, "the Target has no guest; a restore is only over the bound guest. A person restores the volume in Proxmox into the pool and adopts it (D-411)")
+		return store.Binding{}, notRestorable(target, "the Target has no guest; a restore is only over the bound guest. A person restores the volume in Proxmox into the pool and adopts it")
 	}
 	return b, err
 }
@@ -287,7 +287,7 @@ func (e *Engine) checkRestoreStop(ctx context.Context, target string, r *state.R
 		return st, notRestorable(target, fmt.Sprintf("the guest has the name %q, not %q", st.Spec.Name, target))
 	}
 	if st.Power == driver.PowerRunning && !r.AllowRestart {
-		return st, &ProposalError{Target: target, Msg: "the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first (D-194)"}
+		return st, &ProposalError{Target: target, Msg: "the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first"}
 	}
 	return st, nil
 }
@@ -305,7 +305,7 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 	}
 	head, err := e.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if err != nil {
 		return store.Plan{}, err
@@ -315,7 +315,7 @@ func (e *Engine) ProposeRestore(ctx context.Context, target, backupID, reason, a
 		return store.Plan{}, err
 	}
 	if r == nil {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	b, err := e.restoreBinding(ctx, target)
 	if err != nil {
@@ -443,7 +443,7 @@ func (e *Engine) checkBroken(ctx context.Context, target string, st driver.Guest
 	} else if open {
 		return nil
 	}
-	return &ProposalError{Target: target, Msg: "the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)"}
+	return &ProposalError{Target: target, Msg: "the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not"}
 }
 
 // restorePlanned reads the Target and the planned change text of a
@@ -487,7 +487,7 @@ func skipSafety(tp TargetPlan) bool {
 // its binding and the same volume (id and time), still restorable.
 func (e *Engine) checkRestore(ctx context.Context, r *state.Rendered, target, text, id string) (store.Binding, RestoreVolume, error) {
 	if r == nil {
-		return store.Binding{}, RestoreVolume{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Binding{}, RestoreVolume{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if e.cfg.GuestRestore == nil {
 		return store.Binding{}, RestoreVolume{}, &ProposalError{Target: target, Msg: "this controller has no guest backups"}
@@ -850,11 +850,11 @@ func isPreRestore(v RestoreVolume) bool {
 // re-enroll leaves the Issue open in the "restored" state with Plumb's
 // reason and the way out (host D10); its gate lets only a re-enroll pass.
 func (e *Engine) restoreFollowUp(ctx context.Context, p store.Plan, target string, adopted bool) {
-	reason := fmt.Sprintf("a restore worked (plan %d)", p.ID)
+	reason := fmt.Sprintf("a restore worked (Plan %d)", p.ID)
 	var runID int64
 	if run, err := e.st.RunOfPlan(ctx, p.ID); err == nil {
 		runID = run.ID
-		reason = fmt.Sprintf("a restore worked in run %d (plan %d)", run.ID, p.ID)
+		reason = fmt.Sprintf("a restore worked in Run %d (Plan %d)", run.ID, p.ID)
 	}
 	switch {
 	case adopted:
@@ -877,7 +877,7 @@ func (e *Engine) restoreFollowUp(ctx context.Context, p store.Plan, target strin
 			return
 		}
 		re, err := e.Propose(ctx, Input{Proposal: Proposal{Reenroll: []string{target}}, Origin: OriginReenroll, Author: "system",
-			Reason: fmt.Sprintf("re-enroll %s after the restore of plan %d", target, p.ID)})
+			Reason: fmt.Sprintf("re-enroll %s after the restore of Plan %d", target, p.ID)})
 		if err != nil {
 			e.log.Error("re-enroll after the restore", "target", target, "plan", p.ID, "err", err)
 			e.reenrollRefused(ctx, target, runID, err)

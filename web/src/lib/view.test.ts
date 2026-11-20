@@ -44,8 +44,8 @@ describe("targetState", () => {
   ])("%#: %s", (t, label, tone) => {
     expect(targetState(t)).toMatchObject({ label, tone });
   });
-  it("counts the open issues", () => {
-    expect(targetState(target("drifted", "online", 1)).detail).toBe("1 open issue.");
+  it("counts the open Issues", () => {
+    expect(targetState(target("drifted", "online", 1)).detail).toBe("1 open Issue.");
   });
 });
 
@@ -138,7 +138,7 @@ describe("humanOnlyReasons (D-099)", () => {
     run_id: null,
     warnings: [],
   };
-  it("is empty for a normal plan", () => {
+  it("is empty for a normal Plan", () => {
     expect(humanOnlyReasons({ ...base, targets: [] })).toEqual([]);
   });
   it("names an image recipe change (D-201)", () => {
@@ -148,7 +148,7 @@ describe("humanOnlyReasons (D-099)", () => {
   });
   it("names the removal of a firewall (D-368)", () => {
     expect(humanOnlyReasons({ ...base, human_only: ["firewall-off"], targets: [] })).toEqual([
-      "It turns off the firewall of a target (D-368): every port of that guest is open then.",
+      "It turns off the firewall of a Target: every port of that guest is open then.",
     ]);
   });
   it("shows an unknown reason neutrally, never as a secret binding (T-182)", () => {
@@ -178,7 +178,7 @@ describe("humanOnlyReasons (D-099)", () => {
       "It accepts values from the guest: Plumb keeps what the guest reported. A person must check them.",
     ]);
   });
-  it("names the secrets and the target", () => {
+  it("names the secrets and the Target", () => {
     const plan = {
       ...base,
       human_only: ["secret-binding", "rule-change"],
@@ -203,9 +203,9 @@ describe("humanOnlyReasons (D-099)", () => {
       "It adds, changes or removes an ignore rule.",
     ]);
   });
-  it("has a general text when no target lists the secret", () => {
+  it("has a general text when no Target lists the secret", () => {
     expect(humanOnlyReasons({ ...base, human_only: ["secret-binding"], targets: [] })).toEqual([
-      "It gives a secret to a target that did not get it before.",
+      "It gives a secret to a Target that did not get it before.",
     ]);
   });
 });

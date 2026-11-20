@@ -84,7 +84,7 @@ describe("Target YAML mode", () => {
     expect(el<HTMLInputElement>("#guest-cores").value).toBe("7");
   });
 
-  it("YAML problems stay in YAML, with their line; no plan", async () => {
+  it("YAML problems stay in YAML, with their line; no Plan", async () => {
     const api = adminApi();
     const createPlan = vi.spyOn(api, "createPlan");
     show(TargetForm, { api, name: "web1" });

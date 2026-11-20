@@ -204,7 +204,7 @@
       </select>
       {#if errs["/max_risk"]}<span class="error" id="token-risk-error">{errs["/max_risk"]}</span
         >{/if}
-      <span class="hint" id="token-risk-hint">Destructive plans always need a person.</span>
+      <span class="hint" id="token-risk-hint">Destructive Plans always need a person.</span>
     </div>
   {/if}
   <ProblemBox error={createError} fields={FIELDS} />

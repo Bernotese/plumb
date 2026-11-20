@@ -64,7 +64,7 @@ test("Block defaults: a new default reaches the Target; a fixed value stays", as
   await page.getByRole("button", { name: "Add Block" }).click();
   await expect(page.getByLabel("Message")).toHaveValue("one");
   await page.locator("#t-reason").fill("e2e: use the defaults block");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await approveAndRun(page);
   const saved = await app1(page.request);
@@ -92,16 +92,16 @@ test("Block defaults: a new default reaches the Target; a fixed value stays", as
   await page.getByRole("button", { name: "Follow the Block default" }).click();
   await expect(page.getByRole("button", { name: "Follow the Block default" })).toHaveCount(0);
   await page.locator("#t-reason").fill("e2e: follow the default");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(
     page
       .getByRole("region", { name: "YAML diff of Target app1" })
       .locator("tr.del", { hasText: "msg: one" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Drop plan" }).click();
+  await page.getByRole("button", { name: "Drop Plan" }).click();
   await page.locator("#drop-confirm").click();
-  await expect(page.getByText("This plan is stale.")).toBeVisible();
+  await expect(page.getByText("This Plan is stale.")).toBeVisible();
 
   // Put app1 back, then remove the Block.
   await approve(page, (await plan(page, { reason: "e2e: back", put: [original] })).id);

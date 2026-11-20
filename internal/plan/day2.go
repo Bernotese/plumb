@@ -19,8 +19,8 @@ import (
 const (
 	textShrink = "the disk cannot shrink: the guest has %d GiB and the desired state %d GiB (Proxmox cannot shrink a disk). " +
 		"Keep the size, or accept the bigger disk into the Target"
-	textStopNeedsRestart = "power: stopped needs allow_restart on the Target (D-291): a Run may stop the guest only then"
-	textGrowNotRunning   = "a disk grow needs a running guest (D-299): set power: running, or start the guest, then plan again"
+	textStopNeedsRestart = "power: stopped needs allow_restart on the Target: a Run may stop the guest only then"
+	textGrowNotRunning   = "a disk grow needs a running guest: set power: running, or start the guest, then plan again"
 	textGrowAgent        = "the disk is %d GiB in Proxmox now, but the agent did not grow the root file system: %s. " +
 		"The bigger disk stays (it cannot shrink). Fix the cause in the guest, then plan again: the Plan then grows the root file system"
 	textStartedNote = "%s is stopped and the Run starts it: its resources were not observed, so the Plan shows them as unverified; the agent applies them after the start"
@@ -165,7 +165,7 @@ func (e *Engine) checkNoShrink(ctx context.Context, base, next *state.Set, names
 			return err
 		}
 		errs = append(errs, &state.Error{Kind: state.KindTarget, Name: t, Path: "/spec/guest/disk",
-			Msg: fmt.Sprintf("disk %d GiB is smaller than %d GiB of the current revision; a disk cannot shrink (D-299)", want, have)})
+			Msg: fmt.Sprintf("disk %d GiB is smaller than %d GiB of the current revision; a disk cannot shrink", want, have)})
 	}
 	if len(errs) > 0 {
 		return errs

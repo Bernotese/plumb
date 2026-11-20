@@ -50,7 +50,7 @@
   <div class="row">
     {#if can("adoptTarget")}<a class="btn" href={href({ name: "target-adopt" })}>Adopt a guest</a
       >{/if}
-    {#if can("createPlan")}<a class="btn primary" href={href({ name: "target-new" })}>New target</a
+    {#if can("createPlan")}<a class="btn primary" href={href({ name: "target-new" })}>New Target</a
       >{/if}
   </div>
 </div>
@@ -58,7 +58,7 @@
 {#if targets === null && !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {:else if targets && targets.length === 0}
-  <p class="muted">No targets yet. Create the first one.</p>
+  <p class="muted">No Targets yet. Create the first one.</p>
 {:else if targets}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
@@ -112,7 +112,7 @@
                 >{/if}{#if t.status.open_issues > 0}<a
                   class="ignored"
                   href={href({ name: "issues", target: t.document.name })}
-                  >{t.status.open_issues} open issue{t.status.open_issues === 1 ? "" : "s"}</a
+                  >{t.status.open_issues} open Issue{t.status.open_issues === 1 ? "" : "s"}</a
                 >{/if}{#if t.status.ignored_drift?.length}<span class="ignored"
                   >{t.status.ignored_drift.length} ignored by rule</span
                 >{/if}{#if t.status.agent_version || agent?.label}<span class="ignored agent"
@@ -136,7 +136,7 @@
             <td class="mono"
               >{#if t.status.not_adopted}<span
                   class="warn"
-                  title="The adopt Run did not bind the guest: adopt it again or delete the Target (D-395)"
+                  title="The adopt Run did not bind the guest: adopt it again or delete the Target"
                   >not adopted</span
                 >{:else if "adopted" in t.document.spec}<span class="muted">adopted</span>{:else}{t
                   .document.spec.image}{/if}{#if t.status.image_version}

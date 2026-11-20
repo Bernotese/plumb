@@ -504,7 +504,7 @@
     >
       <h2 id="restore-title" tabindex="-1">Restore the backup of {formatTime(b.time)}</h2>
       <p class="banner danger" role="note" id="restore-human-only">
-        <strong>Only a person can approve a restore.</strong> This makes a plan with the risk destructive.
+        <strong>Only a person can approve a restore.</strong> This makes a Plan with the risk destructive.
         A person with the role admin approves it; an API token never can.
       </p>
       <p class="banner warn" role="note" id="restore-disks">
@@ -529,7 +529,7 @@
           {:else if issuesUnknown}
             <span id="restore-issues-unknown"
               >Plumb decides: a safety backup of the guest as it is now, or it keeps the last one
-              (when the last restore failed). Plumb could not read the issues of this Target, so the
+              (when the last restore failed). Plumb could not read the Issues of this Target, so the
               line <span class="mono">safety_backup</span> of the Plan says which. If Plumb takes a safety
               backup and it fails, nothing is changed.</span
             >
@@ -551,7 +551,7 @@
           </li>
         {:else}
           <li>
-            A re-enrollment plan follows. The guest stays stopped until you approve it; then it
+            A re-enrollment Plan follows. The guest stays stopped until you approve it; then it
             starts with a new agent credential.
           </li>
         {/if}
