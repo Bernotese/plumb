@@ -318,12 +318,23 @@ itself.
 
 **Container Images built before this release.** A built container Image keeps the first-boot
 files of the Plumb that built it. With a version built before this release, a new container can
-miss its agent at its first boot: the create Run ends with "the agent of … did not come online",
-and the agent page says "no agent yet". Before you make new containers from such an Image,
-use **Build now** on its Image page: the new version has the fixed files. For a container that
-missed its agent, the repair over SSH cannot help (its agent never wrote the repair key line):
-use **Make an install command** on its agent page and run the command in the container. A stock
-container Image needs nothing: Plumb packs its template again the next time it is used.
+miss its agent at its first boot. Before you make new containers from such an Image, use **Build
+now** on its Image page: the new version has the fixed files. A stock container Image needs
+nothing: Plumb packs its template again the next time it is used.
+
+A container that missed its agent looks like this: the create Run ends with "the agent of … did not
+come online", the agent page says "no agent yet", and in the container `/usr/local/bin/plumb-agent`
+is missing while `plumb-agent.service` fails and restarts every 10 seconds. To fix it:
+
+1. As root on the Proxmox host: `pct exec <VMID> -- systemctl start plumb-agent-install`. The
+   agent is installed and enrolls. This works while the container's enrollment token is valid: 15
+   minutes after the create.
+2. Later than that: **Plan the re-enrollment** in the "Re-enroll the agent" part of the Target's
+   page. The Plan gives a new token and restarts the container; the install runs again at that
+   boot.
+
+The repair over SSH cannot help here (the agent never wrote its repair key line), and the install
+command needs `curl`, which the stock Debian container template does not have.
 
 ### Repair a dead agent
 

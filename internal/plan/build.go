@@ -374,7 +374,7 @@ func (e *Engine) waitOnlineFor(ctx context.Context, link string, after int, time
 		case <-tick.C:
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("the agent of the build guest did not come online within %v; in the guest, journalctl -u plumb-agent-install -u plumb-agent says why (a VM: also /var/log/cloud-init-output.log)", timeout)
+				return fmt.Errorf("the agent of the build guest did not come online within %v%s", timeout, notOnlineHint(""))
 			}
 			return ctx.Err()
 		}

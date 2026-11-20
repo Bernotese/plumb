@@ -653,6 +653,28 @@ func (e *Engine) hellos(target string) int {
 	return e.hello[target]
 }
 
+// notOnlineHint says where to look when an agent does not come online
+// (T-278). A container has the install unit: its journal, read from the
+// host. A VM installs the agent through cloud-init: its output log.
+func notOnlineHint(vmid string) string {
+	if !digitsOnly(vmid) {
+		vmid = "<VMID>"
+	}
+	return "; a container: as root on the Proxmox host, pct exec " + vmid + " -- journalctl -u plumb-agent-install -u plumb-agent; a VM: /var/log/cloud-init-output.log in the guest"
+}
+
+func digitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // waitOnline waits until the agent is online and, when after >= 0, has
 // sent a hello after the count after: a hello of a new boot.
 func (e *Engine) waitOnline(ctx context.Context, target string, after int) error {
@@ -664,7 +686,11 @@ func (e *Engine) waitOnline(ctx context.Context, target string, after int) error
 		select {
 		case <-tick.C:
 		case <-deadline.C:
-			return fmt.Errorf("the agent of %s did not come online within %v; in the guest, journalctl -u plumb-agent-install -u plumb-agent says why (a VM: also /var/log/cloud-init-output.log)", target, e.cfg.EnrollTimeout)
+			vmid := ""
+			if b, err := e.st.GetBinding(ctx, state.KindTarget, target); err == nil {
+				vmid = b.Ref
+			}
+			return fmt.Errorf("the agent of %s did not come online within %v%s", target, e.cfg.EnrollTimeout, notOnlineHint(vmid))
 		case <-ctx.Done():
 			return ctx.Err()
 		}
