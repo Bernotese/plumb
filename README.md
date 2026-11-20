@@ -224,13 +224,13 @@ the guests in the pool get the right too. Nothing else is given.
    - **Targets:** each change on each guest, with its old value, new value and risk. A change to a
      Block that no Target uses has document changes only.
 
-   ![Plan 2 for web1: reason, risk disruptive, three resource changes and one restart with old and new values, and the Approve form](docs/screenshots/readme-plan.png)
+   ![Plan 2 for web1: reason, risk disruptive, the document change, three resource changes and one restart with old and new values, and the Approve form](docs/screenshots/readme-plan.png)
    <br>_A Plan: every change with its old value, new value and risk. Nothing changes before you approve it._
 
-   ![Run 2 succeeded: the four steps on web1, each applied](docs/screenshots/readme-run.png)
+   ![Run 2 succeeded: the four changes on web1 applied, its network cards unchanged](docs/screenshots/readme-run.png)
    <br>_The Run of that Plan: each step on each Target._
 
-   ![Plan 4, an update of the Block motd from the catalogue: no resource changes, and the diff of the Block document](docs/screenshots/readme-plan-documents.png)
+   ![Plan 3, an update of the Block motd from the catalogue: no resource changes, and the diff of the Block document](docs/screenshots/readme-plan-documents.png)
    <br>_A Plan that changes only a Block: its document changes, line by line._
 
 8. **Issues:** when somebody changes a guest by hand, an Issue opens. Choose "Revert", "Accept" or
@@ -243,7 +243,7 @@ the guests in the pool get the right too. Nothing else is given.
      When no parameter fits, Accept keeps the value as a raw resource of this Target, and the Issue
      says why.
 
-   ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept as raw for this Target](docs/screenshots/readme-issue.png)
+   ![Issue 4: the file /etc/motd on web2 was edited by hand; the difference, and the buttons Revert and Accept into parameter message of motd](docs/screenshots/readme-issue.png)
    <br>_An Issue: someone edited a file in the guest by hand. Revert it, accept it, or ignore it._
 
 In **Settings** you make API tokens, store secrets, and export or import the whole state. Under
@@ -252,7 +252,7 @@ set there wins over the value of the install, and "Use the install value again" 
 tab shows the Proxmox connection (node, pool, storages, version, the token's user and its rights)
 and the repair key. It never shows a secret.
 
-![Settings, General tab: the backup schedule with the source of each value, and the read-only Proxmox view with the rights of the install](docs/screenshots/readme-settings-general.png)
+![Settings, General tab: the backup schedule, the repair key, and the read-only Proxmox view with the rights of the install](docs/screenshots/readme-settings-general.png)
 <br>_Settings → General: the backup schedule and the Proxmox connection._
 
 ### Users and roles
@@ -274,7 +274,7 @@ An admin adds people in **Settings → Users**. Each user has one role:
 - An API token has the tier read, plan or apply. A token never approves a Plan that only a person
   may approve.
 
-![Settings, Users tab: admin, dev, ops with role apply and viewer with role read, each with the actions Role, Disable and One-time password, and the form for a new user](docs/screenshots/readme-users.png)
+![Settings, Users tab: admin, dev, ops with role apply and viewer with role read, with the actions Role, Disable and One-time password, and the form for a new user](docs/screenshots/readme-users.png)
 <br>_Settings → Users: each person with their role and state._
 
 ### AI clients (MCP)
