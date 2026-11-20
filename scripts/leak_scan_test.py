@@ -207,6 +207,24 @@ class LeakScan(unittest.TestCase):
         self.assertIn("test host IPv6 prefix: 1", p.stdout)
         self.assertNoValue(p.stdout, p.stderr, hits, values=("3fff:12:34", glob))
 
+    # pl-backend's look at #426: a /64 is often written as its four bare
+    # groups (no "::"); also upper case, leading zeros, and the full form.
+    def test_ipv6_prefix_written_as_bare_groups(self):
+        self.value("testhost-ipv6.prefixes", "3fff:12:34:56::/64\n")
+        self.put("net.txt", "\n".join([
+            "prefix 3fff:12:34:56/64",                 # bare groups, with a length
+            "prefix 3fff:12:34:56 on vmbr0",           # bare groups alone
+            "guest 3FFF:0012:0034:0056:0000:0000:0000:0009",  # expanded, upper case
+            "net 3fff:12:34:56::/64",                  # the usual form
+            "other 3fff:12:34:57 and 3fff:12:34",      # another /64; too few groups
+        ]) + "\n")
+        p, hits, _ = self.scan()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        for line in (1, 2, 3, 4):
+            self.assertIn("file net.txt line %d\ttest host IPv6 prefix" % line, hits)
+        self.assertEqual(hits.count("\n"), 4, hits)
+        self.assertNoValue(p.stdout, p.stderr, hits, values=("3fff:12:34",))
+
     def test_bad_ipv6_prefix_file_prints_no_value(self):
         self.value("testhost-ipv6.prefixes", "3fff:12:34::/48\nnot-a-prefix-Zq7\n")
         self.put("x.txt", "nothing")

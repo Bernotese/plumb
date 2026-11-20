@@ -19,9 +19,11 @@ IPv6 prefixes of the test host's network, one per line in the file
 testhost-ipv6.prefixes (written on the host by the person or agent that
 reads them; never typed into a command).
 
-IPv6 (pl-lead, T-277): every IPv6 literal in the content is parsed. One
-inside a prefix of testhost-ipv6.prefixes is the kind "test host IPv6
-prefix". Any other global-unicast address (2000::/3, without the
+IPv6 (pl-lead, T-277): every IPv6 literal in the content is parsed (any
+case, compressed or expanded). One inside a prefix of
+testhost-ipv6.prefixes is the kind "test host IPv6 prefix"; so is the
+prefix written as its bare groups ("…:…:…:…" for a /64, read as
+"…::"). Any other global-unicast address (2000::/3, without the
 documentation ranges 2001:db8::/32 and 3fff::/20) is the kind "global
 IPv6 address (any)": a place to look at, not always a leak. Both kinds
 need no values file to name the address; only places are written.
@@ -276,9 +278,20 @@ def ipv6_kind(text, nets):
     """The kind of an IPv6 literal, or None: a test host prefix first,
     then any other global-unicast address outside the documentation
     ranges."""
+    text = text.split("%", 1)[0]
     try:
-        ip = ipaddress.IPv6Address(text.split("%", 1)[0])
+        ip = ipaddress.IPv6Address(text)
     except ValueError:
+        # A prefix is often written as its bare groups ("2001:db8:1:2" for a
+        # /64): no address, but text + "::" is one. Only the host prefixes
+        # are checked this way; a bare group run alone is no global address.
+        try:
+            ip = ipaddress.IPv6Address(text.rstrip(":") + "::")
+        except ValueError:
+            return None
+        for net, kind in nets:
+            if ip in net and text.count(":") + 1 >= max(1, net.prefixlen // 16):
+                return kind
         return None
     for net, kind in nets:
         if ip in net:
