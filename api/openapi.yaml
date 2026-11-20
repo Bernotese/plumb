@@ -20,8 +20,8 @@ info:
     - Lists return `{items, next}`. `next` is an opaque cursor; pass it as `cursor` to get the
       next page. `next` is `null` on the last page.
     - Every change goes through a Plan: propose (`POST /plans`), review, approve. Re-enroll,
-      rollback, import and the issue actions `accept`, `revert` and `ignore_rule` also return a
-      Plan. The one exception is the issue action `ignore_once`: it changes neither the state nor
+      rollback, import and the Issue actions `accept`, `revert` and `ignore_rule` also return a
+      Plan. The one exception is the Issue action `ignore_once`: it changes neither the state nor
       a guest (D-091).
     - No operation returns a secret value. Documents refer to a secret as `{secret: <name>}`
       (D-088). A change of a secret value is a sensitive change.
@@ -59,7 +59,7 @@ info:
     Proxmox write and no agent command except `observe` until a person confirms
     `POST /restore/confirm`. Until then these return 409 `restored-mode`: `POST /plans/{id}/approve`,
     `POST /targets/{name}/reenroll`, `POST /images/{name}/build`, `POST /backups`. Creating a Plan
-    (a proposal, an issue action, a rollback, an import, an agent update) still works; it waits
+    (a proposal, an Issue action, a rollback, an import, an agent update) still works; it waits
     for the confirm. A restore disables every API token (`Token.disabled_at`), drops every
     session, gives the user `admin` a new random password (shown once on the installer
     terminal; the old one no longer works) and locks every other user.
@@ -84,7 +84,7 @@ tags:
   - name: plans
     description: Proposals, plans and approval.
   - name: runs
-    description: Execution of approved plans.
+    description: Execution of approved Plans.
   - name: issues
     description: Drift issues and their resolution.
   - name: rules
@@ -870,7 +870,7 @@ paths:
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of targets from the head revision, each with its live status.
+          description: One page of Targets from the head revision, each with its live status.
           content:
             application/json:
               schema:
@@ -1016,10 +1016,10 @@ paths:
       tags: [targets]
       operationId: getTarget
       x-plumb-rate: read
-      summary: Read one target with status
+      summary: Read one Target with status
       responses:
         "200":
-          description: The target.
+          description: The Target.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TargetView" }
@@ -1635,7 +1635,7 @@ paths:
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of plans.
+          description: One page of Plans.
           content:
             application/json:
               schema:
@@ -1680,7 +1680,7 @@ paths:
       x-plumb-rate: proposal
       summary: Propose a change
       description: |
-        Validates and renders the proposal, observes the affected targets and stores a Plan with
+        Validates and renders the proposal, observes the affected Targets and stores a Plan with
         one entry per changed resource. A proposal that cannot be planned gets no Plan: 422 when
         a document is invalid, changes a create-only field (`ip`, `gateway`, `user`,
         `ssh_keys`, the `path` of a data disk) or refers to a missing secret, 409 when the base
@@ -1760,7 +1760,7 @@ paths:
       tags: [plans]
       operationId: getPlan
       x-plumb-rate: read
-      summary: Read one plan
+      summary: Read one Plan
       responses:
         "200":
           description: The Plan.
@@ -1797,9 +1797,9 @@ paths:
     delete:
       tags: [plans]
       operationId: discardPlan
-      summary: Drop a pending plan
+      summary: Drop a pending Plan
       description: |
-        The Plan becomes `stale` and is never applied. An issue that it would resolve is `open`
+        The Plan becomes `stale` and is never applied. An Issue that it would resolve is `open`
         again. Only a `pending` Plan can be dropped; else 409.
       security:
         - session: []
@@ -1817,7 +1817,7 @@ paths:
     post:
       tags: [plans]
       operationId: approvePlan
-      summary: Approve a plan and start its run
+      summary: Approve a Plan and start its Run
       description: |
         Commits the Revision and starts a Run. An `apply` token can approve up to its `max_risk`
         (`reversible` or `disruptive`). Only a human session approves a `destructive` Plan or a
@@ -1884,7 +1884,7 @@ paths:
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of runs.
+          description: One page of Runs.
           content:
             application/json:
               schema:
@@ -1928,7 +1928,7 @@ paths:
       tags: [runs]
       operationId: getRun
       x-plumb-rate: read
-      summary: Read one run with the result per target and resource
+      summary: Read one Run with the result per target and resource
       responses:
         "200":
           description: The Run.
@@ -1981,13 +1981,13 @@ paths:
           schema: { $ref: "#/components/schemas/IssueStatus" }
         - name: target
           in: query
-          description: Only issues of this target.
+          description: Only issues of this Target.
           schema: { $ref: "#/components/schemas/Name" }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of issues.
+          description: One page of Issues.
           content:
             application/json:
               schema:
@@ -2058,7 +2058,7 @@ paths:
       tags: [issues]
       operationId: getIssue
       x-plumb-rate: read
-      summary: Read one issue
+      summary: Read one Issue
       responses:
         "200":
           description: The Issue.
@@ -2101,9 +2101,9 @@ paths:
       tags: [issues]
       operationId: resolveIssue
       x-plumb-rate: proposal
-      summary: Resolve an issue
+      summary: Resolve an Issue
       description: |
-        `accept` and `revert` create a Plan; the issue is `resolving` until its Run succeeds.
+        `accept` and `revert` create a Plan; the Issue is `resolving` until its Run succeeds.
         `accept` is not offered for a sensitive change. Allowed actions are in `Issue.actions`;
         the list does not depend on the caller.
 
@@ -2151,7 +2151,7 @@ paths:
                 resolution: { action: ignore, by: "user:admin", at: "2026-11-10T09:16:00Z" }
                 comments: []
         "201":
-          description: The Plan that resolves the issue, for `accept`, `revert` and `ignore_rule`.
+          description: The Plan that resolves the Issue, for `accept`, `revert` and `ignore_rule`.
           headers:
             Location: { $ref: "#/components/headers/Location" }
           content:
@@ -2193,7 +2193,7 @@ paths:
       tags: [issues]
       operationId: commentIssue
       x-plumb-rate: comment
-      summary: Add a comment to an issue
+      summary: Add a comment to an Issue
       security:
         - session: []
         - token: [plan]
@@ -2229,7 +2229,7 @@ paths:
       description: |
         Rules of the head revision (D-092). A rule makes the controller drop matching drift at
         intake. A rule is a document: create, change and delete it with a proposal
-        (`POST /plans`) or with the issue action `ignore_rule`. Only a human session approves a
+        (`POST /plans`) or with the Issue action `ignore_rule`. Only a human session approves a
         Plan that changes a rule (D-099).
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -2476,7 +2476,7 @@ paths:
       summary: List secrets (names only)
       description: |
         Names and metadata of all secrets, sorted by name. No operation of this API returns a
-        secret value (D-030, D-087). `used_by` lists the targets of the head revision that
+        secret value (D-030, D-087). `used_by` lists the Targets of the head revision that
         refer to the secret.
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -2519,7 +2519,7 @@ paths:
       description: |
         Stores the value encrypted (D-087). Human session only. A new value changes no guest by
         itself, and it makes pending Plans that use the secret stale (D-089). To send it to the
-        guests, plan the targets of `used_by` with `Proposal.targets` (D-090).
+        guests, plan the Targets of `used_by` with `Proposal.targets` (D-090).
       security:
         - session: []
       requestBody:
@@ -3347,7 +3347,7 @@ components:
     Conflict:
       description: |
         The object is in a state that does not allow the action: a stale Plan, a moved head
-        revision, or an issue that is not open. Slice 2 codes: `secret-in-use`,
+        revision, or an Issue that is not open. Slice 2 codes: `secret-in-use`,
         `secret-conflict`, `nothing-to-do`. Image builds: `build-running`. Slice 3:
         `agent-outdated` (D-259): the desired state of a Target needs a resource type or attribute
         that its agent did not report; `detail` starts with "update the agent first", `targets`
@@ -3861,7 +3861,7 @@ components:
           description: |
             `pending`: no guest yet. `provisioning`: the driver creates it. `enrolling`: waiting
             for the agent. `ready`: matches the head revision. `applying`: a Run is active.
-            `drifted`: open issues. `restart_needed`: no open issue, but `waiting` is not empty
+            `drifted`: open Issues. `restart_needed`: no open Issue, but `waiting` is not empty
             (D-195). `stopped`: the desired `guest.power` is `stopped`, the guest is stopped and no
             issue is open (D-299); its agent is offline on purpose. `error`: the last Run failed.
             The order of precedence is `provisioning`, `pending`, `applying`, `enrolling`, `error`,
@@ -3973,7 +3973,7 @@ components:
             `false`.
         applied_revision:
           type: [integer, "null"]
-          description: Newest revision applied to this target.
+          description: Newest revision applied to this Target.
         open_issues: { type: integer, minimum: 0 }
         last_run_id: { $ref: "#/components/schemas/NullableId" }
         ignored_drift:
@@ -4050,7 +4050,7 @@ components:
           type: array
           description: |
             Targets to plan also when their documents do not change. Use it to send a new secret
-            value to the targets of `SecretInfo.used_by` (D-090).
+            value to the Targets of `SecretInfo.used_by` (D-090).
           items: { $ref: "#/components/schemas/Name" }
     RollbackRequest:
       type: object
@@ -4159,7 +4159,7 @@ components:
             change (D-257).
         issue_id:
           $ref: "#/components/schemas/NullableId"
-          description: The issue, for `revert`, `accept` and `ignore_rule`.
+          description: The Issue, for `revert`, `accept` and `ignore_rule`.
         rollback_to:
           type: [integer, "null"]
           format: int64
@@ -4198,7 +4198,7 @@ components:
           type: array
           description: |
             Reasons why only a human session can approve this Plan (D-099). Missing or empty for
-            a normal Plan. `secret-binding`: a target and resource gets a secret that it did not
+            a normal Plan. `secret-binding`: a Target and resource gets a secret that it did not
             get in the base revision. `rule-change`: the Plan puts, changes or deletes a Rule.
             `image-recipe`: the Plan makes or deletes a built Image, or changes its recipe,
             `schedule` or `retention`, also through a changed Block (D-201).
@@ -4353,7 +4353,7 @@ components:
     PlannedSecret:
       type: object
       additionalProperties: false
-      description: A secret that a target gets, with the version that the Plan was made with.
+      description: A secret that a Target gets, with the version that the Plan was made with.
       required: [name, version]
       properties:
         name: { $ref: "#/components/schemas/Name" }
@@ -4367,7 +4367,7 @@ components:
         secrets:
           type: array
           description: |
-            The secrets that the desired state of this target uses (D-089). Missing means none.
+            The secrets that the desired state of this Target uses (D-089). Missing means none.
             The Plan is stale when one of them has another version or is gone.
           items: { $ref: "#/components/schemas/PlannedSecret" }
         resources:
@@ -4392,7 +4392,7 @@ components:
         unverified:
           type: boolean
           description: |
-            A resource of a new target, or a resource of an existing target that gets a new secret
+            A resource of a new Target, or a resource of an existing Target that gets a new secret
             binding (D-156). Nobody observed it, so `changes` is empty, except one
             `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
             verified at the first apply (D-066, D-075).
@@ -4554,7 +4554,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Drift of one resource on one target. Drift on `guest:config` comes from Proxmox, all
+        Drift of one resource on one Target. Drift on `guest:config` comes from Proxmox, all
         other drift from the agent.
 
         `guest:address` (D-215): a Target with a static `ip` whose agent has not reported that
@@ -4773,7 +4773,7 @@ components:
             all_targets:
               type: boolean
               default: false
-              description: "`true`: the rule is for every target (`target: \"*\"`). Default: the target of the issue."
+              description: "`true`: the rule is for every Target (`target: \"*\"`). Default: the Target of the Issue."
             attrs:
               type: array
               minItems: 1
