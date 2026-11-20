@@ -59,8 +59,9 @@ func TestRestoreEndsWithAddressAndLoginHint(t *testing.T) {
 	if got := endBlock(t, out); got != want {
 		t.Errorf("end of restore:\n%s\nwant:\n%s", got, want)
 	}
+	notice := strings.Index(out, "plumb restore: it shows the NEW password of the user admin once.")
 	pw := strings.Index(out, "Restored. User: admin  Password: NEWPW")
-	if pw < 0 || pw < strings.Index(out, "plumb restore: it shows the NEW password of the user admin once.") {
+	if notice < 0 || pw < notice {
 		t.Errorf("the one-time password does not follow its notice:\n%s", out)
 	}
 	all := out + errOut
