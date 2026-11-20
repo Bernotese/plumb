@@ -41,8 +41,10 @@ const (
 	recordSize = 10240 // GNU tar's default record (host A3)
 
 	// FormatVersion is part of the file name. Raise it when the bytes
-	// that Pack writes for the same inputs change.
-	FormatVersion = 1
+	// that Pack writes for the same inputs change. 2: the first-boot
+	// script checks the binary (T-278); a new name makes every install
+	// pack the template again at its next container create or build.
+	FormatVersion = 2
 )
 
 // The limits in force; tests lower them.

@@ -374,7 +374,7 @@ func (e *Engine) waitOnlineFor(ctx context.Context, link string, after int, time
 		case <-tick.C:
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("the agent of the build guest did not come online within %v", timeout)
+				return fmt.Errorf("the agent of the build guest did not come online within %v%s", timeout, notOnlineHint(""))
 			}
 			return ctx.Err()
 		}

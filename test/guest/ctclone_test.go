@@ -109,3 +109,94 @@ func TestGuestCTCloneFirstBoot(t *testing.T) {
 		t.Errorf("the installer did not put the controller's binary in place: %q", b)
 	}
 }
+
+// T-278 (host finding of T-277): a container from a Plumb template boots
+// with plumb-agent-install and plumb-agent.service both enabled and no
+// agent binary. The agent unit is "active" for a moment after its fork;
+// the old first-boot script took that for an installed agent and never
+// installed it. Here the real units run in systemd, ten first boots in a
+// row, the agent unit started first each time (the order of the host
+// finding): every boot must end with the controller's binary and a
+// running agent. TestFirstBootScriptUnitActiveWithoutBinary (ctpack)
+// forces the moment itself; this loop proves the units end to end.
+func TestGuestCTFirstBootRace(t *testing.T) {
+	if _, err := os.Stat("/.dockerenv"); err != nil && os.Getenv("container") != "docker" {
+		t.Fatal("guest test requires a Docker container")
+	}
+	comm, err := os.ReadFile("/proc/1/comm")
+	if err != nil || strings.TrimSpace(string(comm)) != "systemd" {
+		t.Fatalf("PID 1 must be systemd: comm=%q err=%v", comm, err)
+	}
+	run := func(name string, args ...string) string {
+		t.Helper()
+		out, err := exec.Command(name, args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+		}
+		return string(out)
+	}
+	write := func(p, body string, mode os.FileMode) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent/v1/binary" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte("#!/bin/sh\nexec sleep 3600\n"))
+	}))
+	defer srv.Close()
+	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+
+	units := []string{"plumb-agent.service", "plumb-agent-install.service"}
+	t.Cleanup(func() {
+		exec.Command("systemctl", append([]string{"disable", "--now"}, units...)...).Run()
+		for _, p := range []string{"/etc/plumb-agent", "/usr/local/sbin/plumb-agent-install", "/usr/local/bin/plumb-agent",
+			"/etc/systemd/system/plumb-agent.service", "/etc/systemd/system/plumb-agent-install.service", "/var/lib/plumb-agent"} {
+			os.RemoveAll(p)
+		}
+		exec.Command("systemctl", "daemon-reload").Run()
+	})
+	// The template-file state of ctpack (D-230): both units enabled.
+	write("/etc/plumb-agent/ca.pem", string(ca), 0o644)
+	write("/etc/plumb-agent/agent.json", `{"url":"`+srv.URL+`","token_env":"PLUMB_ENROLL_TOKEN"}`, 0o644)
+	write("/usr/local/sbin/plumb-agent-install", ctpack.FirstBootScript(srv.URL), 0o755)
+	write("/etc/systemd/system/plumb-agent.service", ctpack.AgentUnit, 0o644)
+	write("/etc/systemd/system/plumb-agent-install.service", ctpack.InstallUnit, 0o644)
+	run("systemctl", "daemon-reload")
+	run("systemctl", append([]string{"enable"}, units...)...)
+
+	const boots = 10
+	for i := 1; i <= boots; i++ {
+		// A first boot: no binary, nothing running, no failed state.
+		exec.Command("systemctl", append([]string{"stop"}, units...)...).Run()
+		exec.Command("systemctl", append([]string{"reset-failed"}, units...)...).Run()
+		if err := os.Remove("/usr/local/bin/plumb-agent"); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		// The agent unit first (it forks, then its exec fails), the
+		// install unit right after it, as at the host's boot.
+		run("systemctl", "start", "--no-block", "plumb-agent.service")
+		run("timeout", "180", "systemctl", "start", "plumb-agent-install.service")
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			b, _ := os.ReadFile("/usr/local/bin/plumb-agent")
+			out, _ := exec.Command("systemctl", "is-active", "plumb-agent.service").Output()
+			if strings.Contains(string(b), "sleep 3600") && strings.TrimSpace(string(out)) == "active" {
+				break
+			}
+			if time.Now().After(deadline) {
+				log, _ := exec.Command("journalctl", "--no-pager", "-n", "30", "-u", "plumb-agent-install.service").CombinedOutput()
+				t.Fatalf("boot %d of %d: no running agent (binary %q, unit %q):\n%s", i, boots, b, out, log)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	t.Logf("%d first boots, each ended with the controller's binary and a running agent", boots)
+}

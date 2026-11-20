@@ -41,10 +41,9 @@ func literalHits(t *testing.T, name string, src []byte) []string {
 		if err != nil {
 			s = lit.Value
 		}
+		// Every line, also a "#" line: an embedded script or config file
+		// lands in a guest or on the host with its comments.
 		for _, line := range strings.Split(s, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
-				continue // a comment line of an embedded script or config file
-			}
 			if w := teamWord.FindString(line); w != "" {
 				hits = append(hits, fset.Position(lit.Pos()).String()+": "+w)
 			}
@@ -88,20 +87,27 @@ func TestGoTextsNameNoTeamNumber(t *testing.T) {
 // The parser sees literals only: a comment keeps its number, a literal
 // does not.
 func TestLiteralHitsSkipsComments(t *testing.T) {
-	src := "package x\n// D-123 in a comment\nvar a = \"fine\" // T-45\nvar b = `#!/bin/sh\n# a script comment (D-9)\necho ok`\nvar c = \"x (D-777)\"\n"
+	src := "package x\n// D-123 in a comment\nvar a = \"fine\" // T-45\nvar b = `#!/bin/sh\n# a script comment (D-99)\necho ok`\nvar c = \"x (D-777)\"\n"
 	got := literalHits(t, "x.go", []byte(src))
-	if len(got) != 1 || !strings.HasSuffix(got[0], ": D-777") {
-		t.Fatalf("hits %v, want only the literal c", got)
+	// The Go comments go; the comment line inside the script literal b
+	// stays a hit (it lands in a guest).
+	if len(got) != 2 || !strings.HasSuffix(got[0], ": D-99") || !strings.HasSuffix(got[1], ": D-777") {
+		t.Fatalf("hits %v, want the literals b and c", got)
 	}
 }
 
 // shellOutput matches a shell line that prints: say, die, warn, echo or
 // printf, at the start or after ||, &&, ;, { , then or else. The --help text is the here-document of usage().
+// hereDoc finds the start of a here-document and its end word.
+var hereDoc = regexp.MustCompile(`<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?`)
+
 var shellOutput = regexp.MustCompile(`(^\s*|[;&|{]\s*|\bthen\s+|\belse\s+)(say|die|warn|echo|printf)\b`)
 
 // TestInstallerOutputNamesNoTeamNumber reads install/install.sh: the
-// lines that print, and the --help text (the usage here-document). A
-// comment line or a trailing comment keeps its number.
+// lines that print, and every here-document, all of its lines: the --help
+// text, and the files that the script writes on the host or into a guest
+// (the vendor snippet, the copy script and its units), whose comments land
+// there too. A comment line of the script itself keeps its number.
 // It reads the agent's install script too: a person runs it in a guest
 // and reads its plumb-install: lines.
 func TestInstallerOutputNamesNoTeamNumber(t *testing.T) {
@@ -120,22 +126,25 @@ func TestInstallerOutputNamesNoTeamNumber(t *testing.T) {
 
 func installerHits(name string, sc *bufio.Scanner) []string {
 	var hits []string
-	inHelp := false
+	end := "" // the end word of the here-document that is open
 	for n := 1; sc.Scan(); n++ {
 		l := sc.Text()
 		switch {
-		case strings.HasPrefix(l, "usage() {"):
-			inHelp = true // its here-document is the --help text
+		case end != "" && strings.TrimSpace(l) == end:
+			end = ""
 			continue
-		case inHelp && l == "EOF":
-			inHelp = false
-			continue
-		}
-		if !inHelp && !shellOutput.MatchString(l) {
-			continue
-		}
-		if i := strings.Index(l, " # "); i >= 0 && !inHelp {
-			l = l[:i] // a trailing comment
+		case end != "":
+			// a line of a here-document: read it all
+		default:
+			if m := hereDoc.FindStringSubmatch(l); m != nil && !strings.HasPrefix(strings.TrimSpace(l), "#") {
+				end = m[1]
+			}
+			if !shellOutput.MatchString(l) {
+				continue
+			}
+			if i := strings.Index(l, " # "); i >= 0 {
+				l = l[:i] // a trailing comment
+			}
 		}
 		if w := teamWord.FindString(l); w != "" {
 			hits = append(hits, name+":"+strconv.Itoa(n)+": "+w)
@@ -145,9 +154,10 @@ func installerHits(name string, sc *bufio.Scanner) []string {
 }
 
 func TestInstallerHitsSkipsComments(t *testing.T) {
-	src := "# D-1 comment\nsay \"fine\" # T-22\ndie \"bad (D-333)\"\nx=1 # D-4\n[ -n \"$x\" ] || die \"bad (D-444)\"\nusage() {\n\tcat <<'EOF'\n  --x  a flag (D-55)\nEOF\n}\n"
+	src := "# D-1 comment\nsay \"fine\" # T-22\ndie \"bad (D-333)\"\nx=1 # D-4\n[ -n \"$x\" ] || die \"bad (D-444)\"\nusage() {\n\tcat <<'EOF'\n  --x  a flag (D-55)\nEOF\n}\n" +
+		"\tcat >\"$f\" <<COPY_EOF\n# a comment of a written file (D-66)\nCOPY_EOF\ny=2 # D-7\n"
 	got := installerHits("install.sh", bufio.NewScanner(strings.NewReader(src)))
-	if len(got) != 3 || got[0] != "install.sh:3: D-333" || got[1] != "install.sh:5: D-444" || got[2] != "install.sh:8: D-55" {
+	if len(got) != 4 || got[0] != "install.sh:3: D-333" || got[1] != "install.sh:5: D-444" || got[2] != "install.sh:8: D-55" || got[3] != "install.sh:12: D-66" {
 		t.Fatalf("hits %v", got)
 	}
 }
