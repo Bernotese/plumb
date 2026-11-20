@@ -158,11 +158,4 @@ func indexZero(b []byte) int {
 	return len(b)
 }
 
-// watched returns the number of watched directories (for tests).
-func (w *watcher) watched() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return len(w.dirs)
-}
-
 func (w *watcher) close() { _ = w.f.Close() }

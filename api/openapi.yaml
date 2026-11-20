@@ -1231,7 +1231,7 @@ paths:
         its binding and its backup lineage; the Run drops the host key pins, and the next repair
         report pins the keys again. There is
         no restore after the guest is gone: it would need a new right (D-411, a later user question).
-        Data disks (D-423, planned: T-238): the backup holds every data disk the guest had at the
+        Data disks (D-423, T-238): the backup holds every data disk the guest had at the
         backup time. The Plan names every data disk that the guest has now and the backup lacks
         (added later), with a `warnings` line and a change `disk<N>`: a VM keeps it as an unused
         volume (Plumb never frees it; the next Run attaches a new empty disk in that slot), an LXC
@@ -1688,8 +1688,8 @@ paths:
         - a smaller `disk`, or a smaller `size_gb` of a data disk, of a bound Target: Proxmox cannot
           shrink a disk (D-299, D-423; the error points at the field);
         - `nics` or `disks` on an adopted Target (`nics-not-adoptable`, D-404;
-          `disks-not-adoptable`, D-423, planned: T-238);
-        - a slot of `disks` that holds a volume Plumb did not make (D-436, planned: T-238; the
+          `disks-not-adoptable`, D-423);
+        - a slot of `disks` that holds a volume Plumb did not make (D-436; the
           error points at the disk);
         - a bridge or bridge/tag that the install did not name (`network-not-allowed`, D-401).
         `targets` plans targets without a document change, for example after a new secret value
@@ -3375,7 +3375,7 @@ components:
             status: 422
             errors:
               - pointer: /put/0/spec/guest/disk
-                message: disk is create-only in this version. Create a new target instead.
+                message: disk is create-only in this version. Create a new Target instead.
     TooManyRequests:
       description: Too many failed logins, or too many requests of one kind at a time.
       headers:

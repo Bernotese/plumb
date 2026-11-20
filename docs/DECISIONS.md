@@ -1,6 +1,15 @@
-# Decisions (one line each: ID · date · decision · why)
+# Decisions
 
-Later entries win over earlier ones and over `docs/BRIEF.md`. Add new decisions at the end (next: D-443) and D-212 … D-217 (T-067) are accepted and live in `docs/decisions/` until their features are merged). In a PR, write new decisions to `docs/decisions/T-NNN.md`; `pl-lead` appends them here after the merge.
+**Before you rely on a decision, look it up in `docs/DECISIONS-index.md`:** it lists the decisions that a later one changed or replaced, the texts that are out of date, and the state of the decisions that still say "proposed".
+
+Each entry: ID · date · state (who) · decision · why. Most entries are one line; a few long ones span several lines, and D-438, D-440 … D-442 use a bold form. **No decision is deleted.** A decision that changes an older one names it.
+
+- **Which line wins:** the newer decision wins over an older one and over `docs/BRIEF.md`. An "amended" line wins over the line it amends. The file order is mostly, not always, the number order.
+- **New decisions:** in a PR, write them to `docs/decisions/T-NNN.md` (one line each, this format, the numbers that `pl-lead` gives). `pl-lead` appends them at the end of this file after the merge. Next number: **D-443**.
+- **Numbers:** D-057 … D-059, D-114, D-116 … D-119 and D-129 were never used. D-362, D-366, D-376, D-385, D-389 and D-393 have a second, "amended" line.
+- **State "proposed":** 18 decisions of slice 8 and earlier still say "proposed" in their line. Their state is in the index: 16 are accepted, D-432 and D-434 are open.
+
+## The decisions
 
 - D-001 · 2026-11-10 · Scope is a homelab with one Proxmox host; no other hypervisors or clouds · user brief §4.1
 - D-002 · 2026-11-10 · Guest OS is Debian stable and current Ubuntu LTS only · user brief §4.2

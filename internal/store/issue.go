@@ -142,7 +142,7 @@ func (s *Store) IssuesOfPlan(ctx context.Context, planID int64) ([]Issue, error)
 
 // ErrIssueNotOpen is returned when an Issue is not open (another Plan
 // resolves it, or it is resolved).
-var ErrIssueNotOpen = errors.New("store: the issue is not open")
+var ErrIssueNotOpen = errors.New("store: the Issue is not open")
 
 // SetIssueResolving links an open Issue to the Plan that resolves it.
 // Only an open Issue can change; else ErrIssueNotOpen.

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -200,7 +201,31 @@ func TestLoadKeepsAStoredCycle(t *testing.T) {
 	bad := []Doc{doc(KindImage, "img", image),
 		doc(KindBlock, "b", `{"after":["file:/nope"],"resources":[{"file":{"path":"/b","content":"b"}}]}`),
 		target(`"blocks":[{"use":"b"}]`)}
-	if _, err := validate(bad, DefaultLimits, true); err == nil || !strings.Contains(err.Error(), "is not on this target") {
+	if _, err := validate(bad, DefaultLimits, true); err == nil || !strings.Contains(err.Error(), "is not on this Target") {
 		t.Fatalf("an unknown after id in a stored set: %v", err)
 	}
+}
+
+// CommitInfo describes who commits a revision and why.
+type CommitInfo struct {
+	Author string // principal
+	Reason string
+	PlanID int64 // 0: no plan (seed revision)
+}
+
+// Commit (tests only: the API and the Runs store revisions through Rows)
+// stores the documents of a validated Set as a new revision. Each
+// document is stored by the hash of its canonical body (Canonical, Hash),
+// so documents that did not change are shared with older revisions.
+func Commit(ctx context.Context, st *store.Store, set *Set, info CommitInfo) (store.Revision, error) {
+	if set == nil {
+		return store.Revision{}, fmt.Errorf("state: commit needs a validated set")
+	}
+	rows, err := Rows(set)
+	if err != nil {
+		return store.Revision{}, err
+	}
+	return st.CommitRevision(ctx, store.NewRevision{
+		Author: info.Author, Reason: info.Reason, PlanID: info.PlanID, Docs: rows,
+	})
 }
