@@ -53,8 +53,10 @@ removing one disk never renames another.
   - A stopped container gets the disk and stays stopped (the Plan is reversible); the disk is then
     tried only at its next start. If that start fails, remove the disk with a Plan.
 - A disk only grows. A grow is disruptive, as for the main disk.
-- Every disk counts for the disk gate of the disk storage (85 % by default). A user or token with
-  the role apply can approve an add (up to 3 × 4096 GiB per Target), but no remove.
+- Every disk counts for the disk gate of the disk storage (85 % by default). A user with the role
+  apply can approve an add (up to 3 × 4096 GiB per Target), but no remove. An apply token can
+  approve an add within its `max_risk`: an add to a VM is reversible, an add to a running
+  container is disruptive.
 - A disk that grew in Proxmox is drift: "Accept" takes the bigger size into the Target, and there
   is no Revert (a disk cannot shrink).
 - An adopted Target keeps the disks that the guest has; Plumb adds none.

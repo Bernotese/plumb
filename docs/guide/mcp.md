@@ -38,22 +38,30 @@ What the client **can** do (and nothing else):
 - read Targets, Issues (with the difference and the comments), Plans (with their changes and
   documents), Runs, revisions and their difference, Blocks, Images, the starter catalogue, and the
   events since a given point;
-- propose a change of Targets, Blocks or Images (a Plan);
+- propose a change of Targets, Blocks, Images or ignore rules (a Plan);
 - Revert or Accept an Issue (a Plan), re-enroll a Target (a Plan), and drop a Plan;
 - comment on an Issue.
 
-What it can **never** do: approve a Plan, ignore drift (once or by rule), or touch secrets, tokens,
-users, settings, backups, restore, export or import; nor update an agent or build or refresh an
-Image. The Plan shows the client's reason below the changes, marked "written by API token". A Plan
-that takes a value a guest reported, or that removes a firewall, needs a person in any case. A
-token may make 30 Plans and 30 comments per minute; above that Plumb refuses the call and says how
+What it can **never** do: approve a Plan, ignore drift once or use the Issue action "ignore by
+rule", or touch secrets, tokens, users, settings, backups, restore, export or import; nor update
+an agent or build or refresh an Image.
+
+A Plan that it proposes may still add or change an ignore rule, or change the guest backup setting
+of a Target (its schedule or how many to keep). That is safe only because the client cannot approve
+its own Plan, and the risky parts need a person: a rule change always, and a lower keep is
+destructive.
+
+The Plan shows the client's reason below the changes, marked "written by API token". A Plan that
+takes a value a guest reported, or that removes a firewall, needs a person in any case. A token
+may make 30 Plans and 30 comments per minute; above that Plumb refuses the call and says how
 long to wait.
 
 ## Explain an Issue
 
 The prompt **explain_issue** (argument: the Issue id) gives the client one Issue with what it
 needs: the difference, the Target and its Blocks, the source of the resource, the last 5 Runs of
-the Target and the last 20 comments (comments of people and of Plumb first, then those of tokens).
+the Target and the last 20 comments, oldest first (when comments must be cut, those of people and
+of Plumb are kept before those of tokens).
 The client then explains the Issue in a comment and may propose **one** Revert or Accept of this
 Issue. You approve it in the web UI, as every Plan.
 

@@ -25,7 +25,7 @@ The **Backups** page of a Target shows:
     and deletes the oldest;
   - **an older guest of this Target**, for example before the guest was made again: Plumb never
     restores them and never deletes them by itself;
-  - **not known to Plumb:** a person made them, the mark failed, or the record was lost with a
+  - **Backups that Plumb does not know:** a person made them, the mark failed, or the record was lost with a
     restore of Plumb. Plumb never touches them. Delete them in Proxmox. When another backup of the
     guest ran at the same time as Plumb's, Plumb finds its own one by its Proxmox task and lists it
     under this guest; only the other one shows here.
