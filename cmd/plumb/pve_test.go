@@ -420,7 +420,7 @@ func TestStartErrorExitCodes(t *testing.T) {
 		{Kind: proxmox.ProblemBridge, ID: "vmbr0"}}}, cc).Error()
 	for _, want := range []string{"pool plumb does not exist, or the token has no Pool.Audit right on /pool/plumb",
 		"node pve does not exist on this host", "storage plumb-images is missing on node pve, is not active, or the token has no right on it",
-		`storage local has the content "import,iso"; it must have exactly "import" (D-081)`, "the token has no SDN.Use right on bridge vmbr0"} {
+		`storage local has the content "import,iso"; it must have exactly "import"`, "the token has no SDN.Use right on bridge vmbr0"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}

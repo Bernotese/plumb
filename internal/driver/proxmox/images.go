@@ -670,10 +670,10 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 // (review S3). It never removes an import file.
 func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error {
 	if obj.Kind == driver.ImageImportFile {
-		return fmt.Errorf("proxmox: %s is an import file; Plumb never deletes one (D-209): run pvesm free on the host", obj.Name)
+		return fmt.Errorf("proxmox: %s is an import file; Plumb never deletes one: run pvesm free on the host", obj.Name)
 	}
 	if obj.Kind == driver.ImageTemplateFile {
-		return fmt.Errorf("proxmox: %s is a container template file; Plumb never deletes one (D-233): run pvesm free on the host", obj.Name)
+		return fmt.Errorf("proxmox: %s is a container template file; Plumb never deletes one: run pvesm free on the host", obj.Name)
 	}
 	if obj.Kind != driver.ImageVersionTemplate && obj.Kind != driver.ImageBaseTemplate {
 		return fmt.Errorf("proxmox: unknown image object kind %q", obj.Kind)

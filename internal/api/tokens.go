@@ -80,11 +80,11 @@ func (req tokenRequest) validate() []fieldError {
 	switch req.Tier {
 	case TierRead, TierPlan:
 		if req.MaxRisk != "" {
-			errs = append(errs, fieldError{"/max_risk", "Only an apply token has a max_risk (D-046)."})
+			errs = append(errs, fieldError{"/max_risk", "Only an apply token has a max_risk."})
 		}
 	case TierApply:
 		if req.MaxRisk != wire.RiskReversible && req.MaxRisk != wire.RiskDisruptive {
-			errs = append(errs, fieldError{"/max_risk", "An apply token needs max_risk reversible or disruptive (D-046)."})
+			errs = append(errs, fieldError{"/max_risk", "An apply token needs max_risk reversible or disruptive."})
 		}
 	default:
 		errs = append(errs, fieldError{"/tier", "tier must be read, plan or apply."})

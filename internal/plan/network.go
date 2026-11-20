@@ -99,7 +99,7 @@ func (e *Engine) checkNetworks(ctx context.Context, next *state.Set, touched []s
 			// Point 4 of the review of #249 (D-356): display only.
 			if len(n.Extras) > 0 && !n.Main.IsValid() {
 				notes = append(notes, "Target "+n.Target+" gets its main address by DHCP: the server cannot check the "+
-					"network addresses against it (D-356); the agent probes each new address on the link before the change.")
+					"network addresses against it; the agent probes each new address on the link before the change.")
 			}
 		}
 	}

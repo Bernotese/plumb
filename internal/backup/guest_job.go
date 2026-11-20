@@ -244,7 +244,7 @@ func (g *Guests) start(ctx context.Context, target, trigger, actor string) (func
 		return nil, fmt.Errorf("%w: %s", ErrGuestBackupRefused, msg)
 	}
 	if g.cfg.Restored() {
-		return refuse("restored mode: guest backups wait for the restore confirm (D-303)")
+		return refuse("restored mode: guest backups wait for the restore confirm")
 	}
 	state, free, err := g.storageState(ctx)
 	if errors.Is(err, ErrGuestBackupRefused) {
@@ -254,7 +254,7 @@ func (g *Guests) start(ctx context.Context, target, trigger, actor string) (func
 		return refuse("the guest backup storage cannot be read")
 	}
 	if state == StorageClearRefuse {
-		return refuse("the storage keeps backups in clear, and the install did not allow that (--guest-backup-clear, D-406)")
+		return refuse("the storage keeps backups in clear, and the install did not allow that (--guest-backup-clear)")
 	}
 	if free >= 0 && free < minFreePct {
 		return refuse(fmt.Sprintf("the storage has %d %% free, less than %d %%", free, minFreePct))
@@ -262,7 +262,7 @@ func (g *Guests) start(ctx context.Context, target, trigger, actor string) (func
 	// A guest that left the pool: refused at once, as the list shows it
 	// (no backups), not a job that fails in Proxmox (S4 of T-225).
 	if _, err := g.cfg.Driver.ListGuestBackups(ctx, g.cfg.Storage, t.Guest); errors.Is(err, ErrGuestGone) {
-		return refuse("the guest of the Target is gone: it is not in the pool any more, so it has no backups here (D-411)")
+		return refuse("the guest of the Target is gone: it is not in the pool any more, so it has no backups here")
 	}
 	marker, err := Marker{Install: g.cfg.InstallID, Target: t.Name, Lineage: lineage, Manual: trigger == TriggerManual, PreRestore: trigger == TriggerPreRestore}.String()
 	if err != nil {

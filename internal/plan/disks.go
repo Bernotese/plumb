@@ -36,7 +36,7 @@ func docDisks(target string, r *state.Rendered) (disks []driver.Disk, set bool, 
 	}
 	if r.Adopted != nil {
 		return nil, false, &ProposalError{Target: target, Err: ErrDisksNotAdoptable,
-			Msg: "an adopted Target has no data disks of Plumb; remove guest.disks (D-436)"}
+			Msg: "an adopted Target has no data disks of Plumb; remove guest.disks"}
 	}
 	list, _ := raw.([]any)
 	if len(list) > driver.MaxDisks {
@@ -85,7 +85,7 @@ func diskDiffError(target string, r *state.Rendered, err error) error {
 	var pe *driver.DiskPathError
 	switch {
 	case errors.As(err, &se) && se.Slot > 0:
-		return diskError(target, r, se.Slot, "size_gb", fmt.Sprintf("disk %d has %d GiB and the proposal %d GiB; a disk cannot shrink (D-299)", se.Slot, se.Have, se.Want))
+		return diskError(target, r, se.Slot, "size_gb", fmt.Sprintf("disk %d has %d GiB and the proposal %d GiB; a disk cannot shrink", se.Slot, se.Have, se.Want))
 	case errors.As(err, &fe):
 		return diskError(target, r, fe.Slot, "", fe.Error())
 	case errors.As(err, &pe):
@@ -127,7 +127,7 @@ func (e *Engine) diskPlan(ctx context.Context, target string, r *state.Rendered,
 					return nil, nil, diskError(target, r, n, "", "adding a container disk stops and starts the container: set allow_restart")
 				}
 				changes[i].Risk = wire.MaxRisk([]wire.Change{c, {Risk: wire.RiskDisruptive}})
-				notes = append(notes, fmt.Sprintf("Disk %d: the container is stopped, the disk is added, and the container is started again (D-437). If it does not start with the disk, Plumb removes the disk again.", n))
+				notes = append(notes, fmt.Sprintf("Disk %d: the container is stopped, the disk is added, and the container is started again. If it does not start with the disk, Plumb removes the disk again.", n))
 			} else if lxc {
 				notes = append(notes, fmt.Sprintf("Disk %d: the container is stopped, so the disk is written now and proven only at its next start; if that start fails, remove the disk with a Plan.", n))
 			}

@@ -82,7 +82,7 @@ func TestSlice7DryRun(t *testing.T) {
 			t.Errorf("forbidden right %s", bad)
 		}
 	}
-	for _, text := range []string{"line on a bridge does not give its tags (D-401)",
+	for _, text := range []string{"line on a bridge does not give its tags",
 		"the token itself can back up, restore over (overwrite) and delete the backups",
 		"WARNING: storage plumb-backup (type dir) has no client-side encryption, and --guest-backup-clear is set"} {
 		if !strings.Contains(out, text) {
@@ -391,7 +391,7 @@ func TestSlice7Encryption(t *testing.T) {
 	}{
 		{"pbs with key", "pbs", `"encryption-key":"aa:bb:cc"`, false, "Guest backups go to bk: a Proxmox Backup Server with client-side encryption."},
 		{"pbs without key", "pbs", "", false, "NOTE: storage bk (type pbs) has no client-side encryption. Plumb refuses every guest backup"},
-		{"dir", "dir", "", false, "until a repair run with --guest-backup-clear says that backups in clear are wanted (D-406)"},
+		{"dir", "dir", "", false, "until a repair run with --guest-backup-clear says that backups in clear are wanted"},
 		{"dir, clear", "dir", "", true, "guest backups are stored IN CLEAR there"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

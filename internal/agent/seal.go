@@ -248,7 +248,7 @@ func (a *Agent) unitIn(name string) bool {
 // (2) D-192, only with dracut (Ubuntu 26.04; Debian 13 has none).
 func (a *Agent) sealInitramfs(ctx context.Context, body wire.SealBody) (wire.Status, string) {
 	if body.Container {
-		return skippedStep("a container has no initramfs (D-253)")
+		return skippedStep("a container has no initramfs")
 	}
 	if !a.commandIn("dracut") {
 		return skippedStep("no dracut in this guest")

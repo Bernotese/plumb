@@ -519,7 +519,7 @@ func (d *Driver) Create(ctx context.Context, spec driver.GuestSpec, boot driver.
 			return "", fmt.Errorf("fake: guest type %s does not match image %s", spec.Kind, spec.Image)
 		}
 		if spec.Kind == wire.KindLXC && spec.User != "" {
-			return "", errors.New("fake: a container has no bootstrap user (D-226)")
+			return "", errors.New("fake: a container has no bootstrap user")
 		}
 		if spec.Name == "" || spec.ImageName == "" || spec.Cores < 1 || spec.MemoryMB < 1 || spec.DiskGB < 1 || spec.Bridge == "" {
 			return "", errors.New("fake: incomplete guest spec")
@@ -941,10 +941,10 @@ func (d *Driver) ListImages(ctx context.Context, image string) ([]driver.ImageOb
 func (d *Driver) RemoveImage(ctx context.Context, obj driver.ImageObject) error {
 	return d.do(ctx, OpRemoveImage, func() error {
 		if obj.Kind == driver.ImageImportFile {
-			return fmt.Errorf("fake: %s is an import file; Plumb never deletes one (D-209)", obj.Name)
+			return fmt.Errorf("fake: %s is an import file; Plumb never deletes one", obj.Name)
 		}
 		if obj.Kind == driver.ImageTemplateFile {
-			return fmt.Errorf("fake: %s is a container template file; Plumb never deletes one (D-233)", obj.Name)
+			return fmt.Errorf("fake: %s is a container template file; Plumb never deletes one", obj.Name)
 		}
 		t, ok := d.tpls[obj.Ref]
 		if !ok {

@@ -410,7 +410,7 @@ func TestParamDefaults(t *testing.T) {
 
 func TestRenderRules(t *testing.T) {
 	t.Run("two uses of one block need ids", func(t *testing.T) {
-		wantErr(t, fixture(target(`"blocks":[{"use":"motd"},{"use":"motd","params":{"path":"/b"}}]`)), "/spec/blocks/1/id", "D-048")
+		wantErr(t, fixture(target(`"blocks":[{"use":"motd"},{"use":"motd","params":{"path":"/b"}}]`)), "/spec/blocks/1/id", "its own id")
 	})
 	t.Run("use id clash with another block", func(t *testing.T) {
 		wantErr(t, fixture(target(`"blocks":[{"use":"motd"},{"use":"keyed","id":"motd","params":{"key":"k"}}]`)), "/spec/blocks/1/id", "already used")

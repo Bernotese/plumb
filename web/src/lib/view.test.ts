@@ -148,7 +148,7 @@ describe("humanOnlyReasons (D-099)", () => {
   });
   it("names the removal of a firewall (D-368)", () => {
     expect(humanOnlyReasons({ ...base, human_only: ["firewall-off"], targets: [] })).toEqual([
-      "It turns off the firewall of a Target (D-368): every port of that guest is open then.",
+      "It turns off the firewall of a Target: every port of that guest is open then.",
     ]);
   });
   it("shows an unknown reason neutrally, never as a secret binding (T-182)", () => {
