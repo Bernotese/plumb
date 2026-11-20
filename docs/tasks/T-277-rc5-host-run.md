@@ -38,7 +38,7 @@ First, the run plan: `docs/tasks/T-277.log.md` on a branch, in the format of the
 
 | #   | Step | Proof to record |
 | --- | ---- | --------------- |
-| 0   | **Start state:** `storage.cfg` and the ACL view (rows, normalized); the controller version (RC4); the counts from a read-only DB copy (`user_version`, the rows per table; remove the copy after) | the copies under `/root/plumb-install/t277/start/` (0600); the counts in the log |
+| 0   | **Start state:** `storage.cfg`, the ACL view (rows, normalized) and the vendor snippet (for b5); the controller version (RC4); the counts from a read-only DB copy (`user_version`, the rows per table; remove the copy after) | the copies under `/root/plumb-install/t277/start/` (0600); the counts in the log |
 | a1  | **RC5 build:** the RC5 commit and the four hashes. Also the hashes of a `v0.1.0` build of the same commit (**R5-0**): they replace R4-0 as the expected release hashes, because the cleanup changed build inputs (#411, #417, …) | the commit, the 4 + 4 hashes; the worktree removed |
 | a2  | **Bundle check of RC5** (short form of T-263 step 2): the good bundle passes; one damaged byte in `plumb` is refused; a set `PLUMB_INSTALL_*` variable is refused; nothing changed after the refusals | the lines "Bundle check of release v0.1.0-rc.5: SHA256SUMS matches …" and the two refusal lines; the ACL view unchanged |
 | a3  | **Upgrade RC4 → RC5:** a repair run with today's flags (the state file gives them since T-269: the dry run's restore line must have no `<UNKNOWN …>`) | the dry run: `plumb version: v0.1.0-rc.4 -> v0.1.0-rc.5`, **0** `+ pveum` lines, no "older rights … removed" line. After the real run: the ACL view = step 0, the counts = step 0, `user_version` the same or higher, the Targets of step 0 ready |
