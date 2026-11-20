@@ -6,6 +6,7 @@ package usertext
 
 import (
 	"bufio"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -19,8 +20,9 @@ import (
 )
 
 // teamWord is a decision (D-123), a task (T-123), an ARCHITECTURE
-// section (§ 5) or a slice ("slice 3").
-var teamWord = regexp.MustCompile(`\b[DT]-\d{2,4}\b|§ ?\d+|\b[Ss]lice \d+\b`)
+// section (§ 5), a slice ("slice 3"), a PR or issue (#244) or a review
+// finding ("review G1", T-279).
+var teamWord = regexp.MustCompile(`\b[DT]-\d{2,4}\b|§ ?\d+|\b[Ss]lice \d+\b|(?:^|[^\w&])#\d{2,4}\b|\b[Rr]eview (?:of )?[A-Z]\d{1,2}\b`)
 
 // literalHits returns every string literal of the Go source that holds a
 // team word, as "file:line: text".
@@ -159,5 +161,89 @@ func TestInstallerHitsSkipsComments(t *testing.T) {
 	got := installerHits("install.sh", bufio.NewScanner(strings.NewReader(src)))
 	if len(got) != 4 || got[0] != "install.sh:3: D-333" || got[1] != "install.sh:5: D-444" || got[2] != "install.sh:8: D-55" || got[3] != "install.sh:12: D-66" {
 		t.Fatalf("hits %v", got)
+	}
+}
+
+// schemaHits returns the description and title texts of a JSON schema
+// that hold a team word (T-279: the UI shows them as field hints).
+func schemaHits(t *testing.T, name string, src []byte) []string {
+	t.Helper()
+	var doc any
+	if err := json.Unmarshal(src, &doc); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	var hits []string
+	var walk func(path string, v any)
+	walk = func(path string, v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, c := range x {
+				if s, ok := c.(string); ok && (k == "description" || k == "title") {
+					if w := teamWord.FindString(s); w != "" {
+						hits = append(hits, name+":"+path+"/"+k+": "+w)
+					}
+					continue
+				}
+				walk(path+"/"+k, c)
+			}
+		case []any:
+			for i, c := range x {
+				walk(path+"/"+strconv.Itoa(i), c)
+			}
+		}
+	}
+	walk("", doc)
+	return hits
+}
+
+// TestSchemaTextsNameNoTeamNumber reads the JSON schemas of the documents
+// and the resources. The web imports these files (no copy) and shows
+// their texts as field hints.
+func TestSchemaTextsNameNoTeamNumber(t *testing.T) {
+	var hits []string
+	for _, dir := range []string{"../../internal/state/schema", "../../internal/resource/schema"} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("no schema in %s: %v", dir, err)
+		}
+		for _, f := range files {
+			src, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hits = append(hits, schemaHits(t, filepath.Base(f), src)...)
+		}
+	}
+	if len(hits) > 0 {
+		t.Errorf("a schema text names a team number:\n%s", strings.Join(hits, "\n"))
+	}
+}
+
+func TestSchemaHitsReadsOnlyTexts(t *testing.T) {
+	src := `{"title":"T","description":"a hint (D-12)","properties":{"x":{"description":"fine","pattern":"^D-1$","examples":["T-99"]}},"oneOf":[{"title":"see T-277"}]}`
+	got := schemaHits(t, "x.json", []byte(src))
+	if len(got) != 2 {
+		t.Fatalf("hits %v, want the two texts", got)
+	}
+}
+
+// TestTeamWordForms: the PR and review forms are hits (T-279); bash octal
+// and an HTML entity are not.
+func TestTeamWordForms(t *testing.T) {
+	for s, hit := range map[string]bool{
+		"see #244":              true,
+		"(#22)":                 true,
+		"#331 at the start":     true,
+		"review G1 of the PR":   true,
+		"Review of M2":          true,
+		"8#022":                 false,
+		"&#123;":                false,
+		"issue#5":               false,
+		"review the G1 key":     false,
+		"a VM with 4 cores (#)": false,
+	} {
+		if got := teamWord.MatchString(s); got != hit {
+			t.Errorf("%q: hit %v, want %v", s, got, hit)
+		}
 	}
 }

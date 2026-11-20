@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://plumb.invalid/schema/doc/rule.json",
   "title": "Rule",
-  "description": "A rule about drift. The controller drops matching drift at intake (D-092). Only a human approves a Plan that changes a Rule (D-099).",
+  "description": "A rule about drift. The controller drops matching drift at intake. Only a human approves a Plan that changes a Rule.",
   "type": "object",
   "required": ["kind", "name", "spec"],
   "additionalProperties": false,

@@ -10,6 +10,7 @@ import {
   maxRisk,
   mismatchLine,
   reportedAddrs,
+  reportedShort,
   reportedText,
   targetState,
   valueText,
@@ -230,6 +231,16 @@ describe("reported addresses (T-071)", () => {
       st({ reported_ips: ips, reported_at: "2026-11-10T09:00:00Z", reported_ips_more: more }),
     );
     expect(r && reportedText(r)).toBe(out);
+  });
+
+  it.each([
+    [[], false, "no address"],
+    [["192.0.2.1"], false, "192.0.2.1"],
+    [["192.0.2.1"], true, "192.0.2.1 + more"],
+    [["192.0.2.1", "2001:db8:3f28:6d00:be24:11ff:feb5:4644"], false, "192.0.2.1 + 1 more"],
+    [["192.0.2.1", "2001:db8::1", "2001:db8::2"], true, "192.0.2.1 + 2+ more"],
+  ])("short %#: %j more=%s", (ips, more, out) => {
+    expect(reportedShort({ ips, more })).toBe(out);
   });
 
   it("writes the Issue text and the mismatch line", () => {

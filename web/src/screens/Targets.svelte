@@ -11,7 +11,7 @@
     ageText,
     formatTime,
     reportedAddrs,
-    reportedText,
+    reportedShort,
     targetState,
     waitingSince,
   } from "../lib/view";
@@ -67,7 +67,7 @@
     role="region"
     aria-label="Targets and their status, scrolls sideways"
   >
-    <table>
+    <table class="stack">
       <caption class="sr-only">Targets and their status</caption>
       <thead>
         <tr>
@@ -97,43 +97,48 @@
                   aria-label="Backups of {t.document.name}">backups</a
                 >{/if}
             </th>
-            <td
-              ><Badge tone={st.tone} label={st.label} title={st.detail} /><span class="sr-only"
-                >: {st.detail}</span
-              >{#if since}{#if t.status.phase !== "restart_needed"}
-                  <span class="extra"
-                    ><Badge
-                      tone="warn"
-                      label="Restart needed"
-                      title="Values set in Proxmox wait for a stop and start of the VM."
-                    /></span
-                  >{/if}<span class="ignored" title={formatTime(since)}
-                  >waiting for {ageText(since)}</span
-                >{/if}{#if t.status.open_issues > 0}<a
-                  class="ignored"
-                  href={href({ name: "issues", target: t.document.name })}
-                  >{t.status.open_issues} open Issue{t.status.open_issues === 1 ? "" : "s"}</a
-                >{/if}{#if t.status.ignored_drift?.length}<span class="ignored"
-                  >{t.status.ignored_drift.length} ignored by rule</span
-                >{/if}{#if t.status.agent_version || agent?.label}<span class="ignored agent"
-                  >agent <span class="mono">{t.status.agent_version ?? "?"}</span>{#if agent?.label}
-                    <a
-                      href={href({ name: "target-agent", target: t.document.name })}
-                      aria-label="Agent of {t.document.name}: {agent.label}"
-                      ><Badge tone={agent.tone} label={agent.label} /></a
-                    >{/if}</span
-                >{/if}{#if t.status.agent === "offline"}<a
-                  class="ignored"
-                  id="repair-mark-{t.document.name}"
-                  href={href({ name: "target-agent", target: t.document.name })}
-                  >agent offline{t.status.repair?.state === "ready" ? " · repair possible" : ""}</a
-                >{:else if t.status.repair?.key_confirmed === false && t.status.repair.state !== "unknown" && !t.status.repair.reasons.includes("no-line")}<a
-                  class="ignored"
-                  id="repair-mark-{t.document.name}"
-                  href={href({ name: "target-agent", target: t.document.name })}>old repair key</a
-                >{/if}</td
+            <td data-label="Status"
+              ><div>
+                <Badge tone={st.tone} label={st.label} title={st.detail} /><span class="sr-only"
+                  >: {st.detail}</span
+                >{#if since}{#if t.status.phase !== "restart_needed"}
+                    <span class="extra"
+                      ><Badge
+                        tone="warn"
+                        label="Restart needed"
+                        title="Values set in Proxmox wait for a stop and start of the VM."
+                      /></span
+                    >{/if}<span class="ignored" title={formatTime(since)}
+                    >waiting for {ageText(since)}</span
+                  >{/if}{#if t.status.open_issues > 0}<a
+                    class="ignored"
+                    href={href({ name: "issues", target: t.document.name })}
+                    >{t.status.open_issues} open Issue{t.status.open_issues === 1 ? "" : "s"}</a
+                  >{/if}{#if t.status.ignored_drift?.length}<span class="ignored"
+                    >{t.status.ignored_drift.length} ignored by rule</span
+                  >{/if}{#if t.status.agent_version || agent?.label}<span class="ignored agent"
+                    >agent <span class="mono">{t.status.agent_version ?? "?"}</span
+                    >{#if agent?.label}
+                      <a
+                        href={href({ name: "target-agent", target: t.document.name })}
+                        aria-label="Agent of {t.document.name}: {agent.label}"
+                        ><Badge tone={agent.tone} label={agent.label} /></a
+                      >{/if}</span
+                  >{/if}{#if t.status.agent === "offline"}<a
+                    class="ignored"
+                    id="repair-mark-{t.document.name}"
+                    href={href({ name: "target-agent", target: t.document.name })}
+                    >agent offline{t.status.repair?.state === "ready"
+                      ? " · repair possible"
+                      : ""}</a
+                  >{:else if t.status.repair?.key_confirmed === false && t.status.repair.state !== "unknown" && !t.status.repair.reasons.includes("no-line")}<a
+                    class="ignored"
+                    id="repair-mark-{t.document.name}"
+                    href={href({ name: "target-agent", target: t.document.name })}>old repair key</a
+                  >{/if}
+              </div></td
             >
-            <td class="mono"
+            <td data-label="Image" class="mono"
               >{#if t.status.not_adopted}<span
                   class="warn"
                   title="The adopt Run did not bind the guest: adopt it again or delete the Target"
@@ -142,16 +147,22 @@
                   .document.spec.image}{/if}{#if t.status.image_version}
                 v{t.status.image_version}{/if}</td
             >
-            <td class="nowrap">{g.cores} CPU · {g.memory / 1024} GiB · {g.disk} GiB</td>
-            <td
-              ><span class="sr-only">Configured:&nbsp;</span><span class="mono"
-                >{t.status.ips?.join(", ") || ((g.ip ?? "dhcp") === "dhcp" ? "DHCP" : "–")}</span
-              >{#if reported}<span class="reported" title={REPORTED_TITLE}
-                  ><span class="mono">{reportedText(reported)}</span>
-                  <span class="mark">{REPORTED_MARK}</span></span
-                >{/if}</td
+            <td data-label="Size" class="nowrap"
+              >{g.cores} CPU · {g.memory / 1024} GiB · {g.disk} GiB</td
             >
-            <td class="nowrap">{formatTime(t.status.last_seen)}</td>
+            <td data-label="Address"
+              ><div>
+                <span class="sr-only">Configured:&nbsp;</span><span class="mono"
+                  >{t.status.ips?.join(", ") || ((g.ip ?? "dhcp") === "dhcp" ? "DHCP" : "–")}</span
+                >{#if reported}<span
+                    class="reported"
+                    title={`${REPORTED_TITLE}: ${reported.ips.join(", ")}`}
+                    ><span class="mono">{reportedShort(reported)}</span>
+                    <span class="mark">{REPORTED_MARK}</span></span
+                  >{/if}
+              </div></td
+            >
+            <td data-label="Last seen" class="nowrap">{formatTime(t.status.last_seen)}</td>
           </tr>
         {/each}
       </tbody>

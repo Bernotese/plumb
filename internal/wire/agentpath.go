@@ -209,12 +209,35 @@ func AgentConflicts(rs []Resource) []AgentConflict {
 			if !strings.HasPrefix(v, "/") {
 				continue
 			}
-			for _, p := range resolvedForms(path.Clean(v), links) {
+			via := links
+			if r.Type == "symlink" && a == "path" {
+				// Writing a symlink replaces the node at its path; it never
+				// writes through itself. Its own entry would only resolve
+				// the path to the target, which the attribute target checks
+				// (T-279: the refusal names target, not path).
+				via = withoutLink(links, path.Clean(v))
+			}
+			for _, p := range resolvedForms(path.Clean(v), via) {
 				if IsAgentPath(p) {
 					out = append(out, AgentConflict{ID: r.ID, Attr: a, Value: p})
 					break
 				}
 			}
+		}
+	}
+	return out
+}
+
+// withoutLink returns links without the entry of the link at p (a copy
+// only when there is one).
+func withoutLink(links map[string]string, p string) map[string]string {
+	if _, ok := links[p]; !ok {
+		return links
+	}
+	out := make(map[string]string, len(links)-1)
+	for k, v := range links {
+		if k != p {
+			out[k] = v
 		}
 	}
 	return out

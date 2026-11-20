@@ -145,3 +145,36 @@ func TestAgentConflictsSymlinkTarget(t *testing.T) {
 		}
 	}
 }
+
+// T-279 U5: a symlink whose target is an agent path is refused on the
+// attribute target, not on path (writing the link never writes through
+// it). A symlink placed on an agent path itself is still refused on path,
+// and so is one under a parent link that leads into the agent's files.
+func TestAgentConflictsSymlinkAttr(t *testing.T) {
+	link := func(p, target string) Resource {
+		return Resource{ID: "symlink:" + p, Type: "symlink", Attrs: map[string]any{"path": p, "target": target}}
+	}
+	attrs := func(rs []Resource, id string) []string {
+		var out []string
+		for _, c := range AgentConflicts(rs) {
+			if c.ID == id {
+				out = append(out, c.Attr)
+			}
+		}
+		return out
+	}
+	for _, tt := range []struct {
+		rs   []Resource
+		id   string
+		want []string
+	}{
+		{[]Resource{link("/tmp/t", "/etc/plumb-agent/ca.pem")}, "symlink:/tmp/t", []string{"target"}},
+		{[]Resource{link("/var/lib/t", "../lib/plumb-agent/credential")}, "symlink:/var/lib/t", []string{"target"}},
+		{[]Resource{link("/etc/plumb-agent/x", "/tmp/y")}, "symlink:/etc/plumb-agent/x", []string{"path"}},
+		{[]Resource{link("/opt/p", "/var/lib"), link("/opt/p/plumb-agent/z", "/tmp/y")}, "symlink:/opt/p/plumb-agent/z", []string{"path"}},
+	} {
+		if got := attrs(tt.rs, tt.id); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: conflicts on %v, want %v", tt.id, got, tt.want)
+		}
+	}
+}
