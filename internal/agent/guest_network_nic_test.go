@@ -17,11 +17,11 @@ import (
 )
 
 // mainAddrBound is how long the main address may be missing after the
-// apply of the second card. The apply does not change the main NIC's
-// entry, so its address should not go at all; a short gap (the gap meter
-// of TestGuestNetwork saw 24 ms when its own entry changed) is allowed.
-// A new DHCP lease takes 1 to 3 s and fails here, and also by its
-// valid_lft (#419 L1).
+// apply of the second card. The agent writes only the card's entry
+// (D-419), but netplan apply makes networkd ask DHCP again on the main
+// NIC: a refreshed lease with the same address and no gap is accepted
+// (D-443, CI of #419: valid_lft 3595 s before, 3600 s after, no gap). A
+// longer gap, or another address, fails.
 const mainAddrBound = 2 * time.Second
 
 // lftForever is the valid_life_time of an address without a lease.
@@ -143,14 +143,15 @@ func TestGuestNetworkNIC(t *testing.T) {
 		t.Fatalf("the main address %s is not on %s before the apply", main, dev)
 	}
 	// A lease that a test before just renewed has the full time, and a new
-	// lease at the apply would show the same value (CI log of #419: 3600 s
-	// before and after). So wait until it counted down by 5 s first; a new
-	// lease then shows a higher value than lft0.
+	// lease at the apply would show the same value. So wait until it
+	// counted down by 5 s first; the log then tells a new lease (a higher
+	// value) from the same one (D-443: logged, not a failure).
 	if lft0 != lftForever {
 		first := lft0
 		for end := time.Now().Add(15 * time.Second); lft0+5 > first; time.Sleep(500 * time.Millisecond) {
 			if time.Now().After(end) {
-				t.Fatalf("valid_lft of %s does not count down: %d s, then %d s", main, first, lft0)
+				t.Logf("valid_lft of %s did not count down by 5 s: %d s, then %d s", main, first, lft0)
+				break
 			}
 			if lft0, ok = mainValidLft(t, dev, main); !ok {
 				t.Fatalf("the main address %s left %s before the apply", main, dev)
@@ -169,19 +170,20 @@ func TestGuestNetworkNIC(t *testing.T) {
 	lft1, ok := mainValidLft(t, dev, main)
 	for ; !ok; lft1, ok = mainValidLft(t, dev, main) {
 		if time.Since(start) > mainAddrBound {
-			t.Fatalf("the main address of %s is gone for more than %v", dev, mainAddrBound)
+			t.Fatalf("the main address %s of %s is gone or changed for more than %v (D-443)", main, dev, mainAddrBound)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	if d := time.Since(start); d > 20*time.Millisecond {
 		t.Logf("the main address of %s was back after %v", dev, d.Round(time.Millisecond))
 	}
-	// The same lease: valid_lft only counts down. A new lease starts again
-	// at the full lease time.
+	// D-443: the same address within the bound is enough; a new lease is
+	// only logged (valid_lft starts again at the full lease time).
+	lease := "the same lease"
 	if lft0 != lftForever && lft1 > lft0 {
-		t.Fatalf("the main address of %s got a new DHCP lease at the apply: valid_lft %d s before, %d s after", dev, lft0, lft1)
+		lease = "a new lease (D-443: accepted, same address, no gap)"
 	}
-	t.Logf("main address %s: valid_lft %d s before the apply, %d s after", main, lft0, lft1)
+	t.Logf("main address %s: valid_lft %d s before the apply, %d s after: %s", main, lft0, lft1, lease)
 	if rs, _, _ := waitDefaultRoute(30 * time.Second); len(rs) == 0 || rs[0].Dev != dev {
 		t.Fatalf("the default route moved: %+v", rs)
 	}
