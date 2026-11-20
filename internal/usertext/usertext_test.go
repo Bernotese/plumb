@@ -95,9 +95,9 @@ func TestLiteralHitsSkipsComments(t *testing.T) {
 	}
 }
 
-// shellOutput matches an install.sh line that prints: say, die, warn,
-// echo, printf. The --help text is the here-document of usage().
-var shellOutput = regexp.MustCompile(`^\s*(say|die|warn|echo|printf)\b`)
+// shellOutput matches a shell line that prints: say, die, warn, echo or
+// printf, at the start or after ||, &&, ;, { , then or else. The --help text is the here-document of usage().
+var shellOutput = regexp.MustCompile(`(^\s*|[;&|{]\s*|\bthen\s+|\belse\s+)(say|die|warn|echo|printf)\b`)
 
 // TestInstallerOutputNamesNoTeamNumber reads install/install.sh: the
 // lines that print, and the --help text (the usage here-document). A
@@ -145,9 +145,9 @@ func installerHits(name string, sc *bufio.Scanner) []string {
 }
 
 func TestInstallerHitsSkipsComments(t *testing.T) {
-	src := "# D-1 comment\nsay \"fine\" # T-22\ndie \"bad (D-333)\"\nx=1 # D-4\nusage() {\n\tcat <<'EOF'\n  --x  a flag (D-55)\nEOF\n}\n"
+	src := "# D-1 comment\nsay \"fine\" # T-22\ndie \"bad (D-333)\"\nx=1 # D-4\n[ -n \"$x\" ] || die \"bad (D-444)\"\nusage() {\n\tcat <<'EOF'\n  --x  a flag (D-55)\nEOF\n}\n"
 	got := installerHits("install.sh", bufio.NewScanner(strings.NewReader(src)))
-	if len(got) != 2 || got[0] != "install.sh:3: D-333" || got[1] != "install.sh:7: D-55" {
+	if len(got) != 3 || got[0] != "install.sh:3: D-333" || got[1] != "install.sh:5: D-444" || got[2] != "install.sh:8: D-55" {
 		t.Fatalf("hits %v", got)
 	}
 }
