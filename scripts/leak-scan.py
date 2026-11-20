@@ -14,7 +14,17 @@ Values: the address keys of *.env; the whole content of the admin
 password, API token (and its secret part) and recovery key files; each
 line of the guest SSH key and the Plumb CA certificate; the guest public
 key; every string of a t*-secrets.json; and the addresses, MACs, SSH host
-key fingerprints (and install command tokens) of the other files.
+key fingerprints (and install command tokens) of the other files; the
+IPv6 prefixes of the test host's network, one per line in the file
+testhost-ipv6.prefixes (written on the host by the person or agent that
+reads them; never typed into a command).
+
+IPv6 (pl-lead, T-277): every IPv6 literal in the content is parsed. One
+inside a prefix of testhost-ipv6.prefixes is the kind "test host IPv6
+prefix". Any other global-unicast address (2000::/3, without the
+documentation ranges 2001:db8::/32 and 3fff::/20) is the kind "global
+IPv6 address (any)": a place to look at, not always a leak. Both kinds
+need no values file to name the address; only places are written.
 
 Forms searched for each value: the plain bytes; base64 (standard and
 URL-safe, at each of the three alignments inside a longer base64 text);
@@ -23,7 +33,8 @@ object (blobs, commits, tags), every file under --dir, and the members of
 gzip, bzip2, xz, tar and zip content inside them (nested up to 3 levels,
 each member at most 512 MiB).
 
-NOT covered (say so in a report): text in images (PNG screenshots), other
+NOT covered (say so in a report): text in images (PNG screenshots), an
+IPv6 address in base64, hex or URL encoding, other
 encodings (base32, UTF-16, double URL encoding, JSON \\u escapes, quoted
 printable), compression other than gzip/bzip2/xz/zip, encrypted content,
 and a value split over two lines or two git objects.
@@ -65,6 +76,12 @@ PEM_FILES = {
     "testhost-plumb-ca.crt": "test host Plumb CA certificate (line; identifying)",
 }
 PUB_FILES = {"testhost-guest-key.pub": "test guest SSH public key (identifying)"}
+IPV6_PREFIX_FILE = "testhost-ipv6.prefixes"
+IPV6_GLOBAL = ipaddress.ip_network("2000::/3")
+IPV6_DOC = [ipaddress.ip_network(n) for n in ("2001:db8::/32", "3fff::/20")]
+# An IPv6 literal: hex groups with at least two colons, not part of a
+# longer hex/colon run (a MAC has five colons but parses as no address).
+RE_IPV6 = re.compile(rb"(?<![0-9A-Fa-f:])((?:[0-9A-Fa-f]{1,4})?(?::[0-9A-Fa-f]{0,4}){2,7})(?![0-9A-Fa-f:])")
 SECRETS_JSON = re.compile(r"^t\d*-secrets\.json$")
 
 MIN_LEN = 7
@@ -119,6 +136,7 @@ class Needles:
         self.addresses = set()  # values that are addresses (matched with digit bounds)
         self.macs = set()
         self.short = {}  # kind -> count of values too short to search
+        self.v6nets = []  # (network, kind): IPv6 prefixes of the test host
 
     def add(self, value, kind, address=False, mac=False, must=False):
         value = value.strip()
@@ -185,6 +203,18 @@ def load(values_dir):
                 ip = ip_needle(m.group(2).strip().strip("'\""))
                 if ip:
                     n.add(ip, "test host address (%s:%s)" % (name, m.group(1)), address=True)
+        elif name == IPV6_PREFIX_FILE:
+            for i, line in enumerate(text.splitlines(), 1):
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                try:
+                    net = ipaddress.ip_network(line, strict=False)
+                except ValueError:
+                    raise RuntimeError("line %d of %s is not an IPv6 prefix" % (i, name)) from None
+                if net.version != 6 or net.prefixlen < 16:
+                    raise RuntimeError("line %d of %s is not an IPv6 prefix of /16 or longer" % (i, name))
+                n.v6nets.append((net, "test host IPv6 prefix (%s line %d)" % (name, i)))
         elif name in WHOLE_FILES:
             value = text.strip()
             n.add(value, WHOLE_FILES[name] + " (%s)" % name, must=True)
@@ -242,9 +272,26 @@ def b64_forms(v):
     return out
 
 
+def ipv6_kind(text, nets):
+    """The kind of an IPv6 literal, or None: a test host prefix first,
+    then any other global-unicast address outside the documentation
+    ranges."""
+    try:
+        ip = ipaddress.IPv6Address(text.split("%", 1)[0])
+    except ValueError:
+        return None
+    for net, kind in nets:
+        if ip in net:
+            return kind
+    if ip in IPV6_GLOBAL and not any(ip in d for d in IPV6_DOC):
+        return "global IPv6 address (any)"
+    return None
+
+
 class Matcher:
     def __init__(self, needles):
         self.byte = []  # (pattern, kind)
+        self.v6nets = needles.v6nets
         for value, kind in needles.items.items():
             raw = value.encode()
             if value in needles.macs:
@@ -267,6 +314,10 @@ class Matcher:
     def scan(self, data):
         for pat, kind in self.byte:
             for m in pat.finditer(data):
+                yield m.start(), kind
+        for m in RE_IPV6.finditer(data):
+            kind = ipv6_kind(m.group(1).decode("ascii"), self.v6nets)
+            if kind:
                 yield m.start(), kind
 
 
@@ -370,6 +421,9 @@ def run(argv):
     for k in needles.items.values():
         base = k.split(" (")[0]
         kinds[base] = kinds.get(base, 0) + 1
+    for _, k in needles.v6nets:
+        base = k.split(" (")[0]
+        kinds[base] = kinds.get(base, 0) + 1
     STEP[0] = "creating the hit file"
     fd = os.open(a.out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     hits = 0
@@ -387,7 +441,7 @@ def run(argv):
     short = ", ".join("%s: %d" % kv for kv in sorted(needles.short.items())) or "none"
     print("leak-scan%s: %d values (%s); %d too short to search (%s); scanned %s, %d archive members, "
           "%d unreadable; %d places" % (
-              " " + a.label if a.label else "", len(needles.items),
+              " " + a.label if a.label else "", len(needles.items) + len(needles.v6nets),
               ", ".join("%s: %d" % kv for kv in sorted(kinds.items())), sum(needles.short.values()), short,
               ", ".join(counts) or "nothing", s.members, s.unreadable, hits))
     return 0

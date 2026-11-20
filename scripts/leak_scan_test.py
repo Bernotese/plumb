@@ -186,5 +186,34 @@ class LeakScan(unittest.TestCase):
         self.assertNoValue(p.stdout, p.stderr, hits)
 
 
+    # pl-lead (T-277): IPv6 of the test host's network, and any global one.
+    # The global test address is built at run time, so this file holds no
+    # global IPv6 literal of its own (a scan of the repo stays clean).
+    def test_ipv6_prefix_and_any_global(self):
+        glob = "2c0f" + ":f00:1::7"  # a global-unicast address, assembled
+        self.value("testhost-ipv6.prefixes", "# the host's prefix\n3fff:12:34::/48\n")
+        self.put("log.txt", "\n".join([
+            "guest addr 3fff:12:34:5::10/64",        # inside the prefix
+            "other " + glob,                          # global, no prefix
+            "doc 2001:db8::1 and 3fff:999::1",        # documentation ranges
+            "mac aa:bb:cc:dd:ee:ff link fe80::1 lo ::1 ula fd00::1",
+            "time 12:34:56 port [::]:8443",
+        ]) + "\n")
+        p, hits, _ = self.scan()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("file log.txt line 1\ttest host IPv6 prefix (testhost-ipv6.prefixes line 2)", hits)
+        self.assertIn("file log.txt line 2\tglobal IPv6 address (any)", hits)
+        self.assertEqual(hits.count("\n"), 2, hits)  # nothing on lines 3 to 5
+        self.assertIn("test host IPv6 prefix: 1", p.stdout)
+        self.assertNoValue(p.stdout, p.stderr, hits, values=("3fff:12:34", glob))
+
+    def test_bad_ipv6_prefix_file_prints_no_value(self):
+        self.value("testhost-ipv6.prefixes", "3fff:12:34::/48\nnot-a-prefix-Zq7\n")
+        self.put("x.txt", "nothing")
+        p, hits, _ = self.scan()
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("RuntimeError", p.stderr)
+        self.assertNoValue(p.stdout, p.stderr, hits, values=("not-a-prefix-Zq7", "3fff:12:34"))
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
