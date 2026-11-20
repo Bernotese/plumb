@@ -15,6 +15,9 @@ card, or changing its bridge or tag, is disruptive: the Plan says so.
   and changes nothing, when a netplan entry names the card only by a pattern, or when two entries
   name it.
 - A VM card gets a gateway only while the first card has no default route (also none from DHCP).
+- When the agent applies a new card in a VM, the guest also asks the DHCP server again for the
+  address of its main card. With a DHCP server that may hand out another address, give the guest a
+  static address or a DHCP reservation.
 - A running VM gets or loses a card without a restart while network hot-plug is on (the Proxmox
   default); else the change waits for a restart. The agent removes the netplan file of a removed
   card. A card that comes back gets the same MAC address.

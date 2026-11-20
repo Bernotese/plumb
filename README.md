@@ -514,7 +514,9 @@ values are in it only when you give a passphrase. Keep the recovery key in any c
 - The address and the gateway of the first network card cannot change after the guest is made.
   For a new address, make a new Target, or change it by hand.
 - When Plumb applies a network change in a VM (the `network` Block or a network card), `netplan
-  apply` can drop the guest's address for a moment.
+  apply` can drop the guest's address for a moment. Adding a network card also makes the guest ask
+  the DHCP server again for the address of its main card. If your DHCP server may hand out another
+  address then, give the guest a static address or a DHCP reservation.
 - A change of cores or memory of a running VM waits for a restart. Switch on "Plumb may restart
   this VM" on the Target if Plumb may restart it.
 - A **stock Ubuntu 26.04** image used directly by a Target can stay on DHCP until its first
