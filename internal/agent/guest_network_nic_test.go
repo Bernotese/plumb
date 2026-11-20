@@ -142,6 +142,21 @@ func TestGuestNetworkNIC(t *testing.T) {
 	if !ok {
 		t.Fatalf("the main address %s is not on %s before the apply", main, dev)
 	}
+	// A lease that a test before just renewed has the full time, and a new
+	// lease at the apply would show the same value (CI log of #419: 3600 s
+	// before and after). So wait until it counted down by 5 s first; a new
+	// lease then shows a higher value than lft0.
+	if lft0 != lftForever {
+		first := lft0
+		for end := time.Now().Add(15 * time.Second); lft0+5 > first; time.Sleep(500 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("valid_lft of %s does not count down: %d s, then %d s", main, first, lft0)
+			}
+			if lft0, ok = mainValidLft(t, dev, main); !ok {
+				t.Fatalf("the main address %s left %s before the apply", main, dev)
+			}
+		}
+	}
 	apply(r)
 	b, err := os.ReadFile(file)
 	if err != nil || !strings.Contains(string(b), "plumb-ci-nic:") || !strings.Contains(string(b), "macaddress: "+mac) {
