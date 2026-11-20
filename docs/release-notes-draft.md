@@ -5,11 +5,11 @@ A **draft** made from `docs/RELEASE-NOTES-TEMPLATE.md`, `CHANGELOG.md` ("Unrelea
 Open before use:
 
 - Fill `<version>` and `<date>`.
-- **Expected for commit `c8d5c15` with version `0.1.0`** (a local build, T-263 R4-0; a commit that changes a build input changes the hashes):
-  - `plumb` `611a267c8fdacc80895271a92489a8d74349a98e12e8d398aacc7026dc797c27`
-  - `plumb-agent` `6605f9ce51d1636eaf48b7e1a3c3974d0da985f53d72ddd0e0e5feb5862692a8`
-  - `install.sh` `c6bc04c6bf2383dfb9c98d7faca88519d50f2947c82521230d300ff4e4fcd5ae`
-  - `plumb-v0.1.0-linux-amd64.tar.gz` `8a00d0b95064e43088659169ae2e9272fa7635d1175ef7f6495523ddfe4b68fb`
+- **Expected for commit `3eab710` with version `0.1.0`** (a local build, T-279 R6-0; a commit that changes a build input changes the hashes):
+  - `plumb` `0856d9e34394582b72f8260ce1207aaa8bce53d6354a747b98efafe688f83416`
+  - `plumb-agent` `ccc1f0f50add6d380a9d683161dddf69f90796e3a9361bb45d998f113112bf6e`
+  - `install.sh` `facb822289e47983ce03bc46ef10539a228526b9a6ae03dc3e6110203995f3fe`
+  - `plumb-v0.1.0-linux-amd64.tar.gz` `d584f47a7528c0ef82aa6da60031b2891aac5099da7a9aafae991db149c4b25c`
 
   The draft release's `SHA256SUMS` must equal these when it is built from that commit.
 
