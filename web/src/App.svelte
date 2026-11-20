@@ -316,7 +316,7 @@
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p>
       There is no page at <span class="mono">{route.path}</span>.
-      <a href={href({ name: "targets" })}>Go to the targets</a>.
+      <a href={href({ name: "targets" })}>Go to the Targets</a>.
     </p>
   {/if}
 </main>

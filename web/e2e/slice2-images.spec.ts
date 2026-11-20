@@ -23,7 +23,7 @@ test("images: make a built image, build v1 and v2", async ({ page }) => {
   await page.locator("#i-guest-disk").fill("10");
   await page.locator("#i-guest-bridge").fill("vmbr0");
   await page.getByLabel("Reason").fill("e2e: built image");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
 
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText("A person must approve: image recipe")).toBeVisible();

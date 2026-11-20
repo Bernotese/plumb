@@ -16,7 +16,7 @@ test("repair: a dead agent → human-only plan → run → the agent is back", a
   await expect(
     page.getByText("Repair of a dead agent over SSH (no document change)"),
   ).toBeVisible();
-  await expect(page.getByText("Only a person can approve this plan.")).toBeVisible();
+  await expect(page.getByText("Only a person can approve this Plan.")).toBeVisible();
   await page.getByRole("button", { name: "Approve and apply" }).click();
   await expect(page.getByText(/Run status:\s*succeeded/)).toBeVisible({ timeout: 30_000 });
   await page.goto("/?as=admin#/targets/web3/agent");
@@ -32,7 +32,7 @@ test("adopt: a guest of the pool → plan → Target without agent → install c
   await expect(page.locator("#guest-9124-state")).toContainText("it is a privileged container");
   await page.getByRole("button", { name: "Adopt wiki (9123)" }).click();
   await expect(page.locator("#adopt-warnings")).toContainText("Not sealed");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText("Adoption of a guest of the pool as a new Target")).toBeVisible();
   await page.getByRole("button", { name: "Approve and apply" }).click();

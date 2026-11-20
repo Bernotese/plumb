@@ -64,14 +64,14 @@
 <p class="back"><a href={href({ name: "issues" })}>← Issues</a></p>
 <h1 id="page-title" tabindex="-1">Ignore rules</h1>
 <p class="muted">
-  A rule hides matching drift: it opens no issue. The next apply still writes the desired state.
-  Only a person can approve a plan that adds, changes or removes a rule.
+  A rule hides matching drift: it opens no Issue. The next apply still writes the desired state.
+  Only a person can approve a Plan that adds, changes or removes a rule.
 </p>
 <ProblemBox {error} />
 {#if rules === null && !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {:else if rules && rules.length === 0}
-  <p class="muted">No rules. Every drift opens an issue.</p>
+  <p class="muted">No rules. Every drift opens an Issue.</p>
 {:else if rules}
   <div class="table-wrap card flush">
     <table class="stack">
@@ -92,7 +92,7 @@
           <tr>
             <th scope="row" class="mono">{r.document.name}</th>
             <td data-label="Target">
-              {#if spec.target === "*"}All targets{:else}<span class="mono">{spec.target}</span
+              {#if spec.target === "*"}All Targets{:else}<span class="mono">{spec.target}</span
                 >{/if}
             </td>
             <td data-label="Resource" class="mono">{spec.resource}</td>

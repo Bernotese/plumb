@@ -142,21 +142,21 @@ describe("document changes of a Plan", () => {
     });
     show(PlanView, { api, id: 14 });
     await until(() => document.querySelector("#docs-none"));
-    expect(text()).toContain("This plan changed no document.");
+    expect(text()).toContain("This Plan changed no document.");
   });
 
   it("an agent update changes no document", async () => {
     const api = await withPlan({ origin: "agent_update", targets: [], documents: [] });
     show(PlanView, { api, id: 14 });
     await until(() => document.querySelector("#docs-none"));
-    expect(text()).toContain("This plan changes no document.");
+    expect(text()).toContain("This Plan changes no document.");
   });
 
   it("an older server without the field says so", async () => {
     const api = await withPlan({ documents: undefined });
     show(PlanView, { api, id: 14 });
     await until(() => document.querySelector("#docs-missing"));
-    expect(text()).toContain("This server does not list the document changes of a plan.");
+    expect(text()).toContain("This server does not list the document changes of a Plan.");
     // A warning, not a muted note (review n1 of #269).
     expect(document.querySelector("#docs-missing")?.className).toContain("banner warn");
   });

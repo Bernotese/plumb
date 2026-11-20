@@ -46,7 +46,7 @@
         <p class="list">Targets: <span class="mono">{p.targets.join(", ")}</span></p>
       {/if}
       {#if p.plans?.length}
-        <p class="list">Pending plans: {p.plans.map((id) => `Plan ${id}`).join(", ")}</p>
+        <p class="list">Pending Plans: {p.plans.map((id) => `Plan ${id}`).join(", ")}</p>
       {/if}
       {#if p.secrets?.length}
         <p class="list">Secrets: <span class="mono">{p.secrets.join(", ")}</span></p>

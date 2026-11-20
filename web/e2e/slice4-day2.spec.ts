@@ -10,7 +10,7 @@ test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }
   test.setTimeout(150_000);
   await login(page);
   await page.goto("/#/targets/web2/edit");
-  await expect(page.getByRole("heading", { name: "Edit target web2" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Edit Target web2" })).toBeVisible();
   // The seed does not manage power (D-299: missing = not managed).
   await expect(page.locator("#guest-power")).toHaveValue("");
 
@@ -18,7 +18,7 @@ test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }
   await page.locator("#guest-disk").fill("10");
   await page.locator("#guest-power").selectOption("stopped");
   await page.locator("#t-reason").fill("e2e: day 2");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByText("A disk only grows: at least 20 GiB")).toBeVisible();
   await expect(page.getByText(/^A stop needs '.+' below\.$/)).toBeVisible();
   await expect(page).toHaveURL(/#\/targets\/web2\/edit$/);
@@ -28,7 +28,7 @@ test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }
   await page.locator("#guest-power").selectOption("");
   await page.locator("#guest-tags-add").click();
   await page.locator("#guest-tags-0").fill("e2e");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText("A grow cannot be undone").first()).toBeVisible();
   await approveAndRun(page);
@@ -40,7 +40,7 @@ test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }
   await page.locator("#guest-power").selectOption("stopped");
   await page.locator("#t-allow-restart").check();
   await page.locator("#t-reason").fill("e2e: stop web2");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText(/Plumb stops the guest at the end of the Run/).first()).toBeVisible();
   await approveAndRun(page);
@@ -51,7 +51,7 @@ test("day 2: disk grows only, tags, a stop needs allow_restart", async ({ page }
   await page.goto("/#/targets/web2/edit");
   await page.locator("#guest-power").selectOption("running");
   await page.locator("#t-reason").fill("e2e: start web2");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await approveAndRun(page);
   await page.getByRole("link", { name: "Targets", exact: true }).click();
@@ -78,12 +78,12 @@ test("kind filter: a sysctl Block is not offered for a container", async ({ page
       ].join("\n"),
     );
   await page.getByRole("textbox", { name: "Reason" }).fill("e2e: a VM-only Block");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await approveAndRun(page);
 
   await page.goto("/#/targets/new");
-  await expect(page.getByRole("heading", { name: "New target" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "New Target" })).toBeVisible();
   const choice = page.locator("#add-choice option");
   await page.getByLabel("Image").selectOption({ value: "e2e-ct" });
   await expect(page.locator("#t-type")).toHaveText("Container (LXC)");

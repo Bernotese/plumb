@@ -462,7 +462,7 @@
             {/each}
           </ul>
         {:else if unchangedTried && !changed}
-          <p class="error-title">The text has no change. Change it to make a plan.</p>
+          <p class="error-title">The text has no change. Change it to make a Plan.</p>
         {:else if checked && loaded}
           <p class="ok">The text matches the Block schema.</p>
         {/if}
@@ -488,7 +488,7 @@
       />
       <div class="row">
         {#if can("createPlan")}<button class="btn primary" type="submit" disabled={busy}
-            >Show the plan</button
+            >Show the Plan</button
           >{/if}
         <a
           class="btn"
@@ -496,13 +496,13 @@
           >Cancel</a
         >
       </div>
-      <p class="muted">Nothing changes until you approve the plan.</p>
+      <p class="muted">Nothing changes until you approve the Plan.</p>
     </form>
     <aside class="preview" aria-labelledby="b-preview-title">
       <h2 id="b-preview-title">Preview</h2>
       <p class="note" id="b-preview-hint">
         A local approximation while you type. The server renders and checks the Block when you make
-        the plan.
+        the Plan.
       </p>
       {#if !spec}
         <p class="muted" id="b-preview-none">The preview shows when the text is a Block.</p>
