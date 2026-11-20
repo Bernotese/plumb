@@ -374,7 +374,7 @@ func TestLXCBuildThenTarget(t *testing.T) {
 	e.noBuildLeft("ct")
 	// D-251: no keys for a Target of a built lxc Image.
 	withKeys := doc(state.KindTarget, "c1", `{"type":"lxc","image":"ct","guest":{"cores":1,"memory":512,"disk":4,"bridge":"vmbr0","ssh_keys":["ssh-ed25519 AAAAC3Nza k"]}}`)
-	if code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "keys", "put": []state.Doc{withKeys}}); code < 400 || !strings.Contains(string(body), "D-251") {
+	if code, body := adm.do("POST", "/api/v1/plans", map[string]any{"reason": "keys", "put": []state.Doc{withKeys}}); code < 400 || !strings.Contains(string(body), "deploy-user") {
 		t.Fatalf("keys on a built lxc Target: %d %s", code, body)
 	}
 	e.agent("c1")

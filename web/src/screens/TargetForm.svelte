@@ -438,7 +438,7 @@
   const LXC_FIELD_HELP: Record<string, string> = {
     disk: "GiB: the size of the root file system, at least 2. Grow only: a grow cannot be undone.",
     ip: "dhcp or an IPv4 address in CIDR form. Create-only. Proxmox writes it into the container at every start.",
-    ssh_keys: "Public keys for root; a container has no bootstrap user (D-226). Create-only.",
+    ssh_keys: "Public keys for root; a container has no bootstrap user. Create-only.",
   };
 
   // Slice 4 fields (D-291, D-299): short help for people; the schema texts
@@ -529,7 +529,7 @@
     const label = `${image} ${img?.document.spec.title ?? ""}`;
     if (editing || ip === "dhcp" || !/ubuntu/i.test(label) || !/26\.04/.test(label)) return {};
     return {
-      ip: "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an image built by Plumb (D-223).",
+      ip: "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart. Use DHCP or an image built by Plumb.",
     } as Record<string, string>;
   });
 
@@ -1032,7 +1032,7 @@
           <div class="banner info" id="t-lxc-keys">
             <p>
               A container from the built image <span class="mono">{image}</span> gets no SSH keys
-              from Proxmox. Add the keys with the Block <span class="mono">deploy-user</span> (D-251).
+              from Proxmox. Add the keys with the Block <span class="mono">deploy-user</span>.
             </p>
             {#if droppedKeys}
               <p class="warn" id="t-keys-dropped">
@@ -1228,8 +1228,8 @@
           <span class="mono">guest:volume-left</span> names it, and no disk is added until it is
           gone.
           {#if kind === "lxc"}
-            A container disk is added only while the container is stopped (D-437): the Run stops a
-            running container, adds the disk and starts it again; that needs '{forKind(
+            A container disk is added only while the container is stopped: the Run stops a running
+            container, adds the disk and starts it again; that needs '{forKind(
               ALLOW_RESTART_LABEL,
               kind,
             )}' (disruptive). A stopped container gets the disk and stays stopped (reversible); the

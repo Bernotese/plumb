@@ -171,7 +171,7 @@ func (t *tokenRates) wrap(s *Server, pattern string, h handlerFunc) handlerFunc 
 	kind, marked := tokenRateKinds[pattern]
 	if !marked {
 		if strings.HasPrefix(pattern, "GET /api/") && !tokenRateUnmarkedGET[pattern] {
-			panic(fmt.Sprintf("api: %s has no x-plumb-rate kind (D-365)", pattern))
+			panic(fmt.Sprintf("api: %s has no x-plumb-rate kind", pattern))
 		}
 		return h
 	}

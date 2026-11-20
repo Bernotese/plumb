@@ -263,8 +263,7 @@
         aria-describedby="adopt-name-hint"
       />
       <span class="hint" id="adopt-name-hint"
-        >A Target has the name of its guest (D-392). To use another name, rename the guest in
-        Proxmox first.</span
+        >A Target has the name of its guest. To use another name, rename the guest in Proxmox first.</span
       >
     </div>
     <div class="field">

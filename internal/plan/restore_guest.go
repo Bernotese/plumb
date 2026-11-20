@@ -198,7 +198,7 @@ func wayBack(target string, adopted bool) string {
 // goneGuest is the refusal of a restore whose guest left the pool (D-411,
 // S3 of T-225).
 func goneGuest(target string) error {
-	return notRestorable(target, "the guest of the Target is gone; there is no restore after the guest is gone. A person restores the volume in Proxmox into the pool and adopts it (D-411)")
+	return notRestorable(target, "the guest of the Target is gone; there is no restore after the guest is gone. A person restores the volume in Proxmox into the pool and adopts it")
 }
 
 func notRestorable(target, msg string) error {
@@ -224,7 +224,7 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 		return RestoreVolume{}, err
 	}
 	if v.Kind != "plumb" {
-		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is %s: only a backup of this guest's own lineage restores over it (D-417)", id, v.Kind))
+		return RestoreVolume{}, notRestorable(target, fmt.Sprintf("backup %s is %s: only a backup of this guest's own lineage restores over it", id, v.Kind))
 	}
 	lineage, err := e.st.BackupLineage(ctx, target, b.Gen)
 	if err != nil {
@@ -268,7 +268,7 @@ func (e *Engine) restoreVolume(ctx context.Context, target string, b store.Bindi
 func (e *Engine) restoreBinding(ctx context.Context, target string) (store.Binding, error) {
 	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && b.Ref == "") {
-		return store.Binding{}, notRestorable(target, "the Target has no guest; a restore is only over the bound guest. A person restores the volume in Proxmox into the pool and adopts it (D-411)")
+		return store.Binding{}, notRestorable(target, "the Target has no guest; a restore is only over the bound guest. A person restores the volume in Proxmox into the pool and adopts it")
 	}
 	return b, err
 }
@@ -287,7 +287,7 @@ func (e *Engine) checkRestoreStop(ctx context.Context, target string, r *state.R
 		return st, notRestorable(target, fmt.Sprintf("the guest has the name %q, not %q", st.Spec.Name, target))
 	}
 	if st.Power == driver.PowerRunning && !r.AllowRestart {
-		return st, &ProposalError{Target: target, Msg: "the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first (D-194)"}
+		return st, &ProposalError{Target: target, Msg: "the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first"}
 	}
 	return st, nil
 }
@@ -443,7 +443,7 @@ func (e *Engine) checkBroken(ctx context.Context, target string, st driver.Guest
 	} else if open {
 		return nil
 	}
-	return &ProposalError{Target: target, Msg: "the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)"}
+	return &ProposalError{Target: target, Msg: "the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not"}
 }
 
 // restorePlanned reads the Target and the planned change text of a

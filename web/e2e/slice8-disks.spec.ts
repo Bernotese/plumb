@@ -161,7 +161,7 @@ test("container data disks: path rules and the stop-add-start rule (D-437)", asy
   ]);
   await page.goto("/#/targets/e2e8-ct/edit");
   await expect(page.locator("#disks-hint")).toContainText(
-    "added only while the container is stopped (D-437)",
+    "added only while the container is stopped",
   );
   await page.getByLabel("Plumb manages the data disks of this guest").check();
   await expect(page.locator("#disks-unmanaged-lxc")).toBeVisible();
@@ -182,7 +182,7 @@ test("container data disks: path rules and the stop-add-start rule (D-437)", asy
   await expect(change(page, "disk1")).toContainText("disruptive");
   await expect(
     page.getByText(
-      /the container is stopped, the disk is added, and the container is started again \(D-437\)/,
+      /the container is stopped, the disk is added, and the container is started again/,
     ),
   ).toBeVisible();
 });

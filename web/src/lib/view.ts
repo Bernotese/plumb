@@ -280,32 +280,30 @@ export function humanOnlyReasons(plan: Plan): string[] {
     }
     if (reason === "repair") {
       out.push(
-        "It repairs a dead agent over SSH with the Plumb repair key (D-372): it installs the agent and gives it a new enrollment.",
+        "It repairs a dead agent over SSH with the Plumb repair key: it installs the agent and gives it a new enrollment.",
       );
       continue;
     }
     if (reason === "adopted-guest-delete") {
       out.push(
-        "It lets Plumb delete an adopted guest that Plumb did not make (D-388): the guest and its disks go when the Target is deleted.",
+        "It lets Plumb delete an adopted guest that Plumb did not make: the guest and its disks go when the Target is deleted.",
       );
       continue;
     }
     if (reason === "guest-restore") {
       out.push(
-        "It overwrites the guest with a backup (D-410): everything written after that backup is lost, and access that was removed since (SSH keys, passwords) comes back. The agent gets a new enrollment.",
+        "It overwrites the guest with a backup: everything written after that backup is lost, and access that was removed since (SSH keys, passwords) comes back. The agent gets a new enrollment.",
       );
       continue;
     }
     if (reason === "restore-failed") {
       out.push(
-        "It deletes a Target whose last restore failed (T-234): its guest may still come back with a restore of the safety backup.",
+        "It deletes a Target whose last restore failed: its guest may still come back with a restore of the safety backup.",
       );
       continue;
     }
     if (reason === "firewall-off") {
-      out.push(
-        "It turns off the firewall of a Target (D-368): every port of that guest is open then.",
-      );
+      out.push("It turns off the firewall of a Target: every port of that guest is open then.");
       continue;
     }
     if (reason !== "secret-binding") {
@@ -347,7 +345,7 @@ export const REPORTED_TITLE =
 
 /** The hint on a guest:address Issue (D-192, D-220, D-223). */
 export const ADDRESS_HINT =
-  "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an Image built by Plumb (D-223). Else check the network setup in the guest.";
+  "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart. Use DHCP or an Image built by Plumb. Else check the network setup in the guest.";
 
 type Status = TargetView["status"];
 

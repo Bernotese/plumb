@@ -134,7 +134,7 @@ func (e *Engine) checkAdoptable(ctx context.Context, req AdoptRequest) (driver.U
 	case u.Digest == "" || u.Digest != req.Digest:
 		return driver.Unmanaged{}, fmt.Errorf("%w: the Proxmox config of VMID %d changed (digest)", ErrGuestChanged, req.VMID)
 	case u.Name != req.Target:
-		return driver.Unmanaged{}, fmt.Errorf("%w: the guest is named %q; the Target must have the same name (D-392)", ErrGuestChanged, u.Name)
+		return driver.Unmanaged{}, fmt.Errorf("%w: the guest is named %q; the Target must have the same name", ErrGuestChanged, u.Name)
 	case !u.Adoptable():
 		return driver.Unmanaged{}, fmt.Errorf("%w: %v", ErrNotAdoptable, u.Reasons)
 	}
@@ -236,7 +236,7 @@ func adoptClaims(base, next *state.Set) error {
 			if !slices.Contains(old[k], n) {
 				others := slices.DeleteFunc(slices.Clone(names), func(x string) bool { return x == n })
 				return &ProposalError{Target: n, Err: ErrAdoptClaimed,
-					Msg: fmt.Sprintf("guest %s on %s is claimed by Target %s already; one guest has one Target (D-395)", k[1], k[0], strings.Join(others, ", "))}
+					Msg: fmt.Sprintf("guest %s on %s is claimed by Target %s already; one guest has one Target", k[1], k[0], strings.Join(others, ", "))}
 			}
 		}
 	}
@@ -455,24 +455,24 @@ func adoptPlans(reqs []AdoptRequest, plans []TargetPlan, inBase map[string]bool)
 				// Only a new adopt Plan binds it; this Plan does nothing
 				// for it, and says so.
 				tp.Guest, tp.Resources, tp.NotAdopted = "", []ResourceChange{}, true
-				notes = append(notes, fmt.Sprintf("Target %s is not adopted: its adopt Run did not bind the guest (it changed). This Plan does nothing for it; adopt the guest again or delete the Target (D-395).", tp.Target))
+				notes = append(notes, fmt.Sprintf("Target %s is not adopted: its adopt Run did not bind the guest (it changed). This Plan does nothing for it; adopt the guest again or delete the Target.", tp.Target))
 				continue
 			}
 			if tp.Adopt == nil {
 				return nil, &ProposalError{Target: tp.Target, Err: ErrNotAdoptable,
-					Msg: "a Target with adopted and no guest is made only by POST /targets/{name}/adopt, which checks the guest (D-386)"}
+					Msg: "a Target with adopted and no guest is made only by POST /targets/{name}/adopt, which checks the guest"}
 			}
 		case "unbind":
-			notes = append(notes, fmt.Sprintf("Target %s: the Proxmox guest %d stays; Plumb removes its agent and repair key lines and no longer manages it (D-388).", tp.Target, tp.Adopted.VMID))
+			notes = append(notes, fmt.Sprintf("Target %s: the Proxmox guest %d stays; Plumb removes its agent and repair key lines and no longer manages it.", tp.Target, tp.Adopted.VMID))
 		case "delete":
 			if tp.Adopted != nil && tp.Adopted.DeleteGuest {
-				notes = append(notes, fmt.Sprintf("Deleting this Target deletes the Proxmox guest %d and its disks (Target %s, D-388).", tp.Adopted.VMID, tp.Target))
+				notes = append(notes, fmt.Sprintf("Deleting this Target deletes the Proxmox guest %d and its disks (Target %s).", tp.Adopted.VMID, tp.Target))
 			}
 		}
 		for _, rc := range tp.Resources {
 			for _, c := range rc.Changes {
 				if c.Attr == "delete_guest" && c.To == true {
-					notes = append(notes, fmt.Sprintf("Target %s: deleting this Target will delete the Proxmox guest %d and its disks (delete_guest, D-388).", tp.Target, tp.Adopted.VMID))
+					notes = append(notes, fmt.Sprintf("Target %s: deleting this Target will delete the Proxmox guest %d and its disks (delete_guest).", tp.Target, tp.Adopted.VMID))
 				}
 			}
 		}

@@ -711,7 +711,7 @@
         {#if build && kind === "lxc"}
           <p class="banner info" id="i-lxc-keys">
             A container from a built image gets no SSH keys from Proxmox. Add the keys with the
-            Block <span class="mono">deploy-user</span> on the Target or in this build (D-251).
+            Block <span class="mono">deploy-user</span> on the Target or in this build.
           </p>
           {#if keyedTargets.length}
             <p class="banner warn" id="i-lxc-keyed-targets">

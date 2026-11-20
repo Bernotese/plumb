@@ -129,7 +129,7 @@ func TestRemoveKeepGuestsOldStateSaysUnknown(t *testing.T) {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}
 	line := restoreLine(t, out)
-	want := b.dirs() + " --backup-storage backups <UNKNOWN: " + b.stateF + " does not hold these flags of the install (older than T-269, or not a plain value), add them by hand: --bridge --disk-storage --image-storage --extra-bridge --extra-vlan --guest-backup-storage --guest-backup-clear>"
+	want := b.dirs() + " --backup-storage backups <UNKNOWN: " + b.stateF + " does not hold these flags of the install (an older installer wrote it, or not a plain value), add them by hand: --bridge --disk-storage --image-storage --extra-bridge --extra-vlan --guest-backup-storage --guest-backup-clear>"
 	if !strings.HasSuffix(line, want) {
 		t.Fatalf("line %q\nwant suffix %q", line, want)
 	}
@@ -142,7 +142,7 @@ func TestRemoveKeepGuestsOldStateSaysUnknown(t *testing.T) {
 	}
 	// The restore then warns that the flags are not known.
 	code, out, errOut = b.run(asRoot, "--dry-run", "--yes", "--plumb-binary", b.plumb, "--restore", filepath.Join(b.store, "plumb-backups", "plumb-20261113T030000Z.pbk"), "--lxc-ip", "192.0.2.50/24", "--lxc-gw", "192.0.2.1")
-	if !strings.Contains(out, "is older than T-269 and does not hold these flags of the old install: --bridge --disk-storage --image-storage --extra-bridge/--extra-vlan --guest-backup-storage --guest-backup-clear.") {
+	if !strings.Contains(out, "was written by an older installer and does not hold these flags of the old install: --bridge --disk-storage --image-storage --extra-bridge/--extra-vlan --guest-backup-storage --guest-backup-clear.") {
 		t.Errorf("no warning on an old state: %d\n%s\n%s", code, out, errOut)
 	}
 }
