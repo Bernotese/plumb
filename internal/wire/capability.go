@@ -90,15 +90,6 @@ func BaselineCapabilities() Capabilities {
 	}
 }
 
-// CapabilitiesOf returns the capabilities of a Hello: its list, or the
-// baseline for an agent that sends none or a list that is not Valid.
-func CapabilitiesOf(h Hello) Capabilities {
-	if h.Capabilities == nil || !h.Capabilities.Valid() {
-		return BaselineCapabilities()
-	}
-	return *h.Capabilities
-}
-
 // CanUpdate reports whether the agent runs the update command. An agent
 // that cannot needs the one-time manual install (D-258).
 func (c Capabilities) CanUpdate() bool {

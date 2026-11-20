@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://plumb.invalid/schema/resource/firewall.json",
   "title": "firewall",
-  "description": "The input filter of the guest (D-295, D-300): the agent owns exactly one nftables table, inet plumb, with one input chain, and replaces it atomically (nft -f). Other tables are never read or changed; drift is a change to this table only. One per Target: the key name is always main. The table always accepts, before every rule: loopback, established and related packets (the agent link is outbound), ICMPv6 neighbor discovery and router advertisements, and DHCPv6 replies (udp 546 from fe80::/10). The SSH port stays open (from ssh_sources, empty = from everywhere) unless allow_no_ssh is true; the Plan shows the effective SSH rule. No output or forward chain. Known limits: ports that Docker publishes go through forward and are not filtered; with policy drop, traffic from a Docker bridge (docker0, br-*) to a service of the guest itself is dropped unless its port is listed. Needs the package nftables (nft). Safe apply (D-293): the agent keeps the confirmed rules and puts them back when it gets no fresh controller round trip within 90 s. Risk: create and change disruptive; absent removes the table (disruptive).",
+  "description": "The input filter of the guest: the agent owns exactly one nftables table, inet plumb, with one input chain, and replaces it atomically (nft -f). Other tables are never read or changed; drift is a change to this table only. One per Target: the key name is always main. The table always accepts, before every rule: loopback, established and related packets (the agent link is outbound), ICMPv6 neighbor discovery and router advertisements, and DHCPv6 replies (udp 546 from fe80::/10). The SSH port stays open (from ssh_sources, empty = from everywhere) unless allow_no_ssh is true; the Plan shows the effective SSH rule. No output or forward chain. Known limits: ports that Docker publishes go through forward and are not filtered; with policy drop, traffic from a Docker bridge (docker0, br-*) to a service of the guest itself is dropped unless its port is listed. Needs the package nftables (nft). Safe apply: the agent keeps the confirmed rules and puts them back when it gets no fresh controller round trip within 90 s. Risk: create and change disruptive; absent removes the table (disruptive).",
   "type": "object",
   "required": [
     "name"
@@ -54,7 +54,7 @@
       "maximum": 65535,
       "pattern": "^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
       "default": 22,
-      "description": "The SSH port. The table always accepts TCP to it (from ssh_sources), whatever the policy, so a firewall change cannot lock out SSH by accident (D-295, D-300). Default 22: when a Block moves sshd to another port, set the same port here, or SSH is closed."
+      "description": "The SSH port. The table always accepts TCP to it (from ssh_sources), whatever the policy, so a firewall change cannot lock out SSH by accident. Default 22: when a Block moves sshd to another port, set the same port here, or SSH is closed."
     },
     "ssh_sources": {
       "type": "string",

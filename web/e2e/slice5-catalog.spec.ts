@@ -11,7 +11,7 @@ const catalogRow = (page: Page, name: string) =>
     .getByRole("region", { name: "Starter catalogue, scrolls sideways" })
     .getByRole("row", { name: new RegExp(`^${name}\\b`) });
 
-test("catalogue: add a starter Block by a plan, update offers the difference", async ({ page }) => {
+test("catalogue: add a starter Block by a Plan, update offers the difference", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "Blocks", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Starter catalogue" })).toBeVisible();
@@ -41,9 +41,9 @@ test("catalogue: add a starter Block by a plan, update offers the difference", a
   await motd.getByRole("button", { name: "Update from the catalogue: motd" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await expect(page.getByText("Update the Block motd from the catalogue.")).toBeVisible();
-  await page.getByRole("button", { name: "Drop plan" }).click();
+  await page.getByRole("button", { name: "Drop Plan" }).click();
   await page.locator("#drop-confirm").click();
-  await expect(page.getByText("This plan is stale.")).toBeVisible();
+  await expect(page.getByText("This Plan is stale.")).toBeVisible();
 });
 
 test("plan screen: the catalogue update of a Block without Targets shows its diff", async ({
@@ -82,7 +82,7 @@ test("plan screen: the catalogue update of a Block without Targets shows its dif
   await expect(diff).toContainText("Changed by the T-168 e2e.");
   await expect(diff.locator("tr.del")).toContainText("Changed by the T-168 e2e.");
   await expect(page.getByRole("button", { name: "Approve and apply" })).toBeVisible();
-  await page.getByRole("button", { name: "Drop plan" }).click();
+  await page.getByRole("button", { name: "Drop Plan" }).click();
   await page.locator("#drop-confirm").click();
-  await expect(page.getByText("This plan is stale.")).toBeVisible();
+  await expect(page.getByText("This Plan is stale.")).toBeVisible();
 });

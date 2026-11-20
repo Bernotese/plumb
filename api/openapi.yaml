@@ -4,31 +4,30 @@ info:
   version: 0.1.0
   summary: Public API of the Plumb controller.
   description: |
-    The web UI, scripts and AI clients use only this API (ARCHITECTURE §4, D-023).
+    The web UI, scripts and AI clients use only this API.
 
     Conventions:
     - JSON fields are `snake_case`. Times are UTC RFC 3339.
-    - The API uses the same words and ids as the database and `internal/wire` (D-045).
+    - The API uses the same words and ids as the database and `internal/wire`.
       Revision, Plan, Run, Issue and comment ids are integers.
     - Document shapes (`Image`, `Block`, `Target`) are the JSON Schemas in
-      `internal/state/schema`. This file refers to them and does not copy them (D-043).
+      `internal/state/schema`. This file refers to them and does not copy them.
     - A change is `{attr, from, to, risk}`: `from` is the guest now, `to` is the desired state.
       A missing value means "not there". A sensitive change is `{attr, sensitive, risk}`
-      without values (D-047).
+      without values.
     - A principal is the string `user:<name>`, `token:<id>`, `agent:<target>` or `system`.
     - Errors are `application/problem+json` (RFC 9457) with a `urn:plumb:problem:<code>` type.
     - Lists return `{items, next}`. `next` is an opaque cursor; pass it as `cursor` to get the
       next page. `next` is `null` on the last page.
     - Every change goes through a Plan: propose (`POST /plans`), review, approve. Re-enroll,
-      rollback, import and the issue actions `accept`, `revert` and `ignore_rule` also return a
-      Plan. The one exception is the issue action `ignore_once`: it changes neither the state nor
-      a guest (D-091).
-    - No operation returns a secret value. Documents refer to a secret as `{secret: <name>}`
-      (D-088). A change of a secret value is a sensitive change.
-    - A Plan with a non-empty `human_only` can be approved by a human session only (D-099).
+      rollback, import and the Issue actions `accept`, `revert` and `ignore_rule` also return a
+      Plan. The one exception is the Issue action `ignore_once`: it changes neither the state nor
+      a guest.
+    - No operation returns a secret value. Documents refer to a secret as `{secret: <name>}`. A change of a secret value is a sensitive change.
+    - A Plan with a non-empty `human_only` can be approved by a human session only.
     - An operation with `x-plumb-planned: <card>` is part of the contract, but this server does
       not serve it yet. The card adds the handler and removes the mark.
-    - Rate limit per API token (D-365): an operation with `x-plumb-rate: proposal` (every
+    - Rate limit per API token: an operation with `x-plumb-rate: proposal` (every
       operation that a token may call and that makes a Plan) or `x-plumb-rate: comment` counts
       against one bucket per token and kind: 30 per minute, burst 30. `x-plumb-rate: read` (every
       `GET` that a token may call, except the event stream) counts against a third bucket: 600 per
@@ -40,9 +39,9 @@ info:
     - `session`: cookie of a human user (`POST /session`). Every call that changes data must send
       an `Origin` header that matches the server. This includes `POST /session` (login CSRF).
     - `token`: API token as bearer. The roles listed for `token` on an operation are the
-      **minimum tier**. Token tiers are ordered `read` < `plan` < `apply` (D-046).
+      **minimum tier**. Token tiers are ordered `read` < `plan` < `apply`.
     - An operation that lists only `session` is for humans only.
-    - Roles of human users (D-329, D-330): every user has a role `read` < `plan` < `apply` <
+    - Roles of human users: every user has a role `read` < `plan` < `apply` <
       `admin`, on the scale of the token tiers. A session may call an operation when its role is at
       least the tier listed for `token`; an operation that lists only `session` needs `admin`. An
       operation may name another minimum with `x-plumb-role` (the `/session` operations: `read`,
@@ -55,11 +54,11 @@ info:
     - A session with `must_change_password` can only call the `/session` operations. Other calls
       return 403 `password-change-required`.
 
-    Restored mode (D-290, D-303): after `plumb restore` the controller observes, but sends no
+    Restored mode: after `plumb restore` the controller observes, but sends no
     Proxmox write and no agent command except `observe` until a person confirms
     `POST /restore/confirm`. Until then these return 409 `restored-mode`: `POST /plans/{id}/approve`,
     `POST /targets/{name}/reenroll`, `POST /images/{name}/build`, `POST /backups`. Creating a Plan
-    (a proposal, an issue action, a rollback, an import, an agent update) still works; it waits
+    (a proposal, an Issue action, a rollback, an import, an agent update) still works; it waits
     for the confirm. A restore disables every API token (`Token.disabled_at`), drops every
     session, gives the user `admin` a new random password (shown once on the installer
     terminal; the old one no longer works) and locks every other user.
@@ -84,7 +83,7 @@ tags:
   - name: plans
     description: Proposals, plans and approval.
   - name: runs
-    description: Execution of approved plans.
+    description: Execution of approved Plans.
   - name: issues
     description: Drift issues and their resolution.
   - name: rules
@@ -100,9 +99,9 @@ tags:
   - name: events
     description: Server-sent event stream.
   - name: backup
-    description: Backups of the controller and the restore state (D-288 … D-290, D-302 … D-304).
+    description: Backups of the controller and the restore state.
   - name: settings
-    description: Controller settings and the read-only view of the Proxmox connection (D-361).
+    description: Controller settings and the read-only view of the Proxmox connection.
 
 paths:
   /session:
@@ -206,7 +205,7 @@ paths:
       operationId: listUsers
       summary: List the human users
       description: |
-        Admin session only (D-330). Disabled users stay in the list; their names are never given
+        Admin session only. Disabled users stay in the list; their names are never given
         again. Sorted by name.
       security:
         - session: []
@@ -251,8 +250,8 @@ paths:
       operationId: createUser
       summary: Make a new user with a one-time password
       description: |
-        Admin session only, never a token (D-330). The server makes a random one-time password,
-        shows it once in the response and stores only its hash (rules of D-321); the user must
+        Admin session only, never a token. The server makes a random one-time password,
+        shows it once in the response and stores only its hash; the user must
         change it at the first login. A name that exists, also a disabled one, is 409
         `user-exists`. Works also in restored mode. Emits `user.created` (no password).
       security:
@@ -293,7 +292,7 @@ paths:
       operationId: changeUser
       summary: Change the role of a user, or disable or enable it
       description: |
-        Admin session only, never a token (D-330). There is no delete: a disabled user cannot log
+        Admin session only, never a token. There is no delete: a disabled user cannot log
         in and keeps its name for ever. A change of `role` or `disabled` ends every session of
         that user. When the user loses `admin` or is disabled, every API token it created that
         is not revoked gets `disabled_at` (401 until `POST /tokens/{id}/enable`). The own user is
@@ -341,9 +340,9 @@ paths:
       operationId: resetUserPassword
       summary: Give another user a new one-time password
       description: |
-        Human session only, never a token (D-321). The server makes a new random password, shows it
+        Human session only, never a token. The server makes a new random password, shows it
         once in the response and stores only its hash. The user must change it at the first login
-        (`must_change_password`). A lock of a restore ends (D-311), and every session of the user
+        (`must_change_password`). A lock of a restore ends, and every session of the user
         ends. The own password changes with `PUT /session/password` (409 `own-user`). Works also in
         restored mode. Emits `user.password_reset`; the event holds no password.
       security:
@@ -372,7 +371,7 @@ paths:
       x-plumb-rate: read
       summary: List the starter Blocks that ship with Plumb
       description: |
-        The Blocks embedded in this binary (D-328), sorted by name, compared with the head
+        The Blocks embedded in this binary, sorted by name, compared with the head
         revision: `stored` is `none` (no Block of this name), `same` (the stored Block equals the
         catalogue Block) or `differs`. Plumb never puts a catalogue Block by itself: a client adds
         or updates one with a normal proposal (`POST /plans`, `put` of the `yaml`), and the Plan
@@ -574,7 +573,7 @@ paths:
       x-plumb-rate: proposal
       summary: Propose the newest checksum of the base image from its source
       description: |
-        For an Image with `verify` (D-335): the server fetches the checksum list of the source,
+        For an Image with `verify`: the server fetches the checksum list of the source,
         checks the signature with a key pinned in the binary (not for `debian-https`, which has
         no signature), and finds the one entry for the file name of `url`. If the pin differs, it
         makes a Plan of origin `pin_refresh` that changes only the pin (`sha256` or `sha512`);
@@ -586,8 +585,8 @@ paths:
         accepted from the same source (a replay or downgrade; the aplinfo index comes over plain
         http), when no signature time is stored yet for this Image and source (its first
         refresh), or when this Image used the new pin before; else a human with role `apply`, an
-        `apply` token or `system` approves it, also for a built Image or an lxc Image (D-335 is the one
-        exception to `image-recipe` of D-201, D-235). An Image without `verify` is 422. A fetch
+        `apply` token or `system` approves it, also for a built Image or an lxc Image (the one
+        exception to the rule that a recipe change needs a person). An Image without `verify` is 422. A fetch
         or signature failure is 502 `pin-source-failed`; the `detail` says which step failed and
         never holds the fetched data.
       security:
@@ -672,10 +671,10 @@ paths:
       summary: Propose a build of an image
       description: |
         Creates a Plan of origin `build` (trigger `manual`) that builds a new version of a built
-        Image from the recipe of the head revision (D-199). The Plan changes no document, and its
+        Image from the recipe of the head revision. The Plan changes no document, and its
         approval commits no revision (`Plan.revision` stays `null`). It is stale when the recipe at
         the head differs at approval; a head change that leaves the recipe alone does not make it
-        stale. A human session or an `apply` token approves it (D-201). A second build of the same
+        stale. A human session or an `apply` token approves it. A second build of the same
         Image is refused at approval with 409 `build-running`. An Image without `build` (a stock
         Image) returns 422.
       security:
@@ -870,7 +869,7 @@ paths:
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of targets from the head revision, each with its live status.
+          description: One page of Targets from the head revision, each with its live status.
           content:
             application/json:
               schema:
@@ -1016,10 +1015,10 @@ paths:
       tags: [targets]
       operationId: getTarget
       x-plumb-rate: read
-      summary: Read one target with status
+      summary: Read one Target with status
       responses:
         "200":
-          description: The target.
+          description: The Target.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TargetView" }
@@ -1062,10 +1061,10 @@ paths:
       x-plumb-rate: proposal
       summary: Propose a re-enrollment
       description: |
-        Creates a Plan that restarts the guest with a new enrollment token (risk `disruptive`,
-        D-038). The token is never a change: the driver passes it as `Bootstrap` (D-047).
+        Creates a Plan that restarts the guest with a new enrollment token (risk `disruptive`).
+        The token is never a change: the driver passes it as `Bootstrap`.
         Nothing happens until the Plan is approved. A re-enrollment needs a cold start: for a
-        running VM whose Target has `allow_restart: false` it is refused with 422 (D-194). Stop
+        running VM whose Target has `allow_restart: false` it is refused with 422. Stop
         the VM in Proxmox and re-enroll again (the Run starts it), or set `allow_restart` first in
         its own Plan. The Run checks the power state again before it makes the token.
       security:
@@ -1124,7 +1123,7 @@ paths:
       x-plumb-rate: read
       summary: List the guest backups of a Target
       description: |
-        Slice 7 (D-405 … D-409). The volumes of the Target's guest on the install's guest backup
+        The volumes of the Target's guest on the install's guest backup
         storage, with their `kind`, the storage state, the next scheduled job and the last result.
       security:
         - session: []
@@ -1152,13 +1151,13 @@ paths:
       x-plumb-rate: proposal
       summary: Back up a Target's guest now
       description: |
-        Slice 7 (D-408). Starts one guest backup job now: risk `reversible` (no Plan; the guest is not
+        Starts one guest backup job now: risk `reversible` (no Plan; the guest is not
         changed). A manual backup is marked as such (`trigger: manual`). Retention keeps at most 2
         manual backups beside the `keep` scheduled ones and never deletes a scheduled backup because
         of a manual one (review M1 of #325), so repeated calls cannot push out the good backups. 409 `backup-running` (a job of this Target runs), 409 `backup-refused` (no storage, a
         clear storage without `--guest-backup-clear`, less than 10 % free, restored mode, or the guest is
         gone from the pool; the detail says which). Events `guest_backup.started`, then `done`, `failed` or `warning` in `done` (the
-        marker could not be read back: the volume is `unmarked`, D-407).
+        marker could not be read back: the volume is `unmarked`).
       security:
         - session: []
         - token: [apply]
@@ -1187,7 +1186,7 @@ paths:
       operationId: deleteGuestBackup
       summary: Delete one guest backup
       description: |
-        Human admin session only (D-409). Deletes one volume of `kind: plumb` or `older-guest`; an
+        Human admin session only. Deletes one volume of `kind: plumb` or `older-guest`; an
         `unmarked` volume is refused (409 `not-plumb`). Not reversible. Event `guest_backup.deleted`.
       security:
         - session: []
@@ -1207,17 +1206,17 @@ paths:
       x-plumb-rate: proposal
       summary: Propose a restore of the guest from a backup
       description: |
-        Slice 7 (D-410, D-411). Makes a Plan of origin `restore`, risk `destructive`, human-only
+        Makes a Plan of origin `restore`, risk `destructive`, human-only
         `guest-restore`, that restores a `kind: plumb` backup **over the same bound guest**. The Plan
         names the volume and its time. The Run:
         - checks the marker, the lineage, the binding and the guest name again;
-        - stops the guest (`allow_restart`, D-194);
+        - stops the guest (`allow_restart`);
         - revokes the agent credential before the guest starts;
         - restores;
         - then makes a re-enroll Plan (a Plumb-made Target) or shows the install command (an adopted
           Target).
 
-        **Safety backup first (D-420):** Proxmox removes the guest's disks before it writes the backup,
+        **Safety backup first:** Proxmox removes the guest's disks before it writes the backup,
         so a failed restore leaves the guest empty. The Run first takes a backup of the guest as it is
         (`trigger: pre-restore`; retention never counts or deletes it; a restore that works deletes the
         older ones). If that backup fails, nothing is changed. If the restore then fails, the Run says
@@ -1230,15 +1229,15 @@ paths:
         (`authorized_keys` lines, passwords); the Plan says so (review L1 of #325). The Target keeps
         its binding and its backup lineage; the Run drops the host key pins, and the next repair
         report pins the keys again. There is
-        no restore after the guest is gone: it would need a new right (D-411, a later user question).
-        Data disks (D-423, planned: T-238): the backup holds every data disk the guest had at the
+        no restore after the guest is gone: it would need a new right (a later user question).
+        Data disks: the backup holds every data disk the guest had at the
         backup time. The Plan names every data disk that the guest has now and the backup lacks
         (added later), with a `warnings` line and a change `disk<N>`: a VM keeps it as an unused
         volume (Plumb never frees it; the next Run attaches a new empty disk in that slot), an LXC
         loses its data. The safety backup holds it.
         A person restores such a volume in Proxmox into pool `plumb` and adopts it. 409
-        `restored-mode` in restored mode. The token itself can restore at the Proxmox API with the
-        D-380 rights; this rule holds inside Plumb.
+        `restored-mode` in restored mode. The token itself can restore at the Proxmox API with its
+        rights; this rule holds inside Plumb.
       security:
         - session: []
         - token: [plan]
@@ -1296,7 +1295,7 @@ paths:
       x-plumb-rate: proposal
       summary: Propose a repair of a dead agent over SSH
       description: |
-        SSH repair fallback (D-372, D-377, D-382 … D-385, ARCHITECTURE §19). Makes a Plan of origin
+        SSH repair fallback. Makes a Plan of origin
         `repair`, risk `disruptive`, human-only reason `repair`: only a human session with role
         `apply` or higher approves it. The Run connects from the controller to the guest over SSH
         with the Plumb repair key, checks the host key against the pins of this Target, and sends
@@ -1318,7 +1317,7 @@ paths:
         `accept_host_key` gets 409 `repair-not-ready`. The Plan shows the key type and the
         fingerprint, the pinned keys before and the accepted one after; the Run offers only the
         host key algorithms of the pinned and the accepted keys, and pins the accepted key only
-        after a person approved the Plan (T-207).
+        after a person approved the Plan.
       security:
         - session: []
         - token: [plan]
@@ -1371,7 +1370,7 @@ paths:
       operationId: createInstallCommand
       summary: A one-time command that installs the agent by hand
       description: |
-        Human admin session only (D-387). For a Target whose guest exists and whose agent is
+        Human admin session only. For a Target whose guest exists and whose agent is
         offline or was never installed (an adopted guest, an LXC without `sshd`, a guest without
         the repair line). The answer holds, once and `no-store`, a shell command for a person to
         run as root in the guest: it writes the controller CA, fetches the install script from
@@ -1381,7 +1380,7 @@ paths:
         #290). The old credential ends only when the guest enrolls with the new token. The
         command holds no other secret; the UI says that it is a secret for 15 minutes. Event
         `target.install_command` (no token). 409 `agent-left`: the name has the agent of a deleted
-        Target that still waits for unbind (D-396); it is forgotten first.
+        Target that still waits for unbind; it is forgotten first.
       security:
         - session: []
       responses:
@@ -1409,7 +1408,7 @@ paths:
       x-plumb-rate: proposal
       summary: Propose to adopt a guest of the pool as a new Target
       description: |
-        Adoption (D-373, D-378, D-386, ARCHITECTURE §19). `{name}` is the new Target. The guest
+        Adoption. `{name}` is the new Target. The guest
         must be in `GET /guests/unmanaged` with `adoptable: true`. Makes a Plan of origin `adopt`,
         human-only `accept-guest-data`, that puts a Target with `spec.adopted: {node, vmid,
         delete_guest: false}` and the guest fields read from Proxmox (never `cipassword`,
@@ -1417,11 +1416,11 @@ paths:
         again before it binds the guest, and writes nothing to Proxmox. 409 `guest-changed`: the
         digest or the name differs from the request; 409 `not-adoptable`; 409 `guest-bound`: a
         Target or Image already holds the guest; 409 `document-exists`: a Target of that name
-        exists that is not a not-adopted Target of this guest (such a one is replaced, D-395); 409
+        exists that is not a not-adopted Target of this guest (such a one is replaced); 409
         `adopt-claimed`: the Plan would make two Targets claim one guest. A not-adopted Target of
         the same guest under another name is removed by the same Plan. 409 `agent-left`: the guest,
-        or the Target name, still has the agent of a deleted Target that waits for unbind (D-396,
-        `agent_left`); it is unbound or forgotten first.
+        or the Target name, still has the agent of a deleted Target that waits for unbind
+        (`agent_left`); it is unbound or forgotten first.
       security:
         - session: []
         - token: [plan]
@@ -1474,9 +1473,9 @@ paths:
       summary: Guests of the pool that no Target or Image holds
       description: |
         Guests that a person put into the pool `plumb` and that are no Target, no Image binding,
-        no build guest and no template (D-373, D-378). Plumb never moves a guest into the pool.
+        no build guest and no template. Plumb never moves a guest into the pool.
         Secrets of the Proxmox config are never read into the answer: `cipassword`, `sshkeys`, the
-        description and an LXC `env` show only as `present` (D-340). `adoptable: false` comes with `reasons`.
+        description and an LXC `env` show only as `present`. `adoptable: false` comes with `reasons`.
       responses:
         "200":
           description: The guests.
@@ -1532,7 +1531,7 @@ paths:
       operationId: forgetAgent
       summary: Forget the agent left in a guest
       description: |
-        Human admin session only (D-396). Ends the park of the agent of a deleted adopted Target
+        Human admin session only. Ends the park of the agent of a deleted adopted Target
         whose unbind was not confirmed: its credential is revoked, and Plumb no longer sends it
         unbind. What is in the guest (the agent, the `plumb-repair-` line of the repair keys valid
         at the park) stays for a person to remove; the UI shows the commands before the forget.
@@ -1559,9 +1558,9 @@ paths:
       summary: Propose an agent update
       description: |
         Creates a Plan of origin `agent_update` with one step `agent:binary` (risk `disruptive`, a
-        service restart, D-257). The Plan changes no document; its approval commits no revision.
+        service restart). The Plan changes no document; its approval commits no revision.
         A human session or an `apply` token approves it. The Run sends the `update` command with
-        the SHA-256 of the agent binary that this controller serves (D-258). The step is `applied`
+        the SHA-256 of the agent binary that this controller serves. The step is `applied`
         when the agent says hello with that binary within 2 minutes, else `failed`; when the agent
         restored its old binary, the step output and `status.agent_reverted` say so.
 
@@ -1570,7 +1569,7 @@ paths:
         one pending `agent_update` Plan per Target.
 
         409 `nothing-to-do` when `status.agent_update` is `none`. 422 when it is `manual` (the
-        agent is older than slice 3 and needs the one-time install by hand, D-258) or `unknown`
+        agent comes from a Plumb version from before agents could update themselves and needs the one-time install by hand) or `unknown`
         (the agent never said hello).
       security:
         - session: []
@@ -1635,7 +1634,7 @@ paths:
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of plans.
+          description: One page of Plans.
           content:
             application/json:
               schema:
@@ -1680,20 +1679,19 @@ paths:
       x-plumb-rate: proposal
       summary: Propose a change
       description: |
-        Validates and renders the proposal, observes the affected targets and stores a Plan with
+        Validates and renders the proposal, observes the affected Targets and stores a Plan with
         one entry per changed resource. A proposal that cannot be planned gets no Plan: 422 when
         a document is invalid, changes a create-only field (`ip`, `gateway`, `user`,
         `ssh_keys`, the `path` of a data disk) or refers to a missing secret, 409 when the base
         revision moved. Also 422:
         - a smaller `disk`, or a smaller `size_gb` of a data disk, of a bound Target: Proxmox cannot
-          shrink a disk (D-299, D-423; the error points at the field);
-        - `nics` or `disks` on an adopted Target (`nics-not-adoptable`, D-404;
-          `disks-not-adoptable`, D-423, planned: T-238);
-        - a slot of `disks` that holds a volume Plumb did not make (D-436, planned: T-238; the
+          shrink a disk (the error points at the field);
+        - `nics` or `disks` on an adopted Target (`nics-not-adoptable`,
+          `disks-not-adoptable`);
+        - a slot of `disks` that holds a volume Plumb did not make (the
           error points at the disk);
-        - a bridge or bridge/tag that the install did not name (`network-not-allowed`, D-401).
-        `targets` plans targets without a document change, for example after a new secret value
-        (D-090).
+        - a bridge or bridge/tag that the install did not name (`network-not-allowed`).
+        `targets` plans targets without a document change, for example after a new secret value.
       security:
         - session: []
         - token: [plan]
@@ -1760,7 +1758,7 @@ paths:
       tags: [plans]
       operationId: getPlan
       x-plumb-rate: read
-      summary: Read one plan
+      summary: Read one Plan
       responses:
         "200":
           description: The Plan.
@@ -1797,9 +1795,9 @@ paths:
     delete:
       tags: [plans]
       operationId: discardPlan
-      summary: Drop a pending plan
+      summary: Drop a pending Plan
       description: |
-        The Plan becomes `stale` and is never applied. An issue that it would resolve is `open`
+        The Plan becomes `stale` and is never applied. An Issue that it would resolve is `open`
         again. Only a `pending` Plan can be dropped; else 409.
       security:
         - session: []
@@ -1817,17 +1815,17 @@ paths:
     post:
       tags: [plans]
       operationId: approvePlan
-      summary: Approve a plan and start its run
+      summary: Approve a Plan and start its Run
       description: |
         Commits the Revision and starts a Run. An `apply` token can approve up to its `max_risk`
         (`reversible` or `disruptive`). Only a human session approves a `destructive` Plan or a
-        Plan with a non-empty `human_only` (403 `human-required`, D-099). A human with role
+        Plan with a non-empty `human_only` (403 `human-required`). A human with role
         `apply` approves up to `disruptive` (also `human_only` Plans up to that risk); a
-        `destructive` Plan needs role `admin` (403 `risk-too-high`, D-329). A stale Plan returns
-        409; a Plan is also stale when a secret that it uses has another version (D-089).
+        `destructive` Plan needs role `admin` (403 `risk-too-high`). A stale Plan returns
+        409; a Plan is also stale when a secret that it uses has another version.
         A Plan of origin `build` commits no revision; it is stale when the recipe of its Image at
         the head differs from `images[].build.recipe_sha256`, and it returns 409 `build-running`
-        while a build of the same Image runs (D-199).
+        while a build of the same Image runs.
       security:
         - session: []
         - token: [apply]
@@ -1884,7 +1882,7 @@ paths:
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of runs.
+          description: One page of Runs.
           content:
             application/json:
               schema:
@@ -1928,7 +1926,7 @@ paths:
       tags: [runs]
       operationId: getRun
       x-plumb-rate: read
-      summary: Read one run with the result per target and resource
+      summary: Read one Run with the result per target and resource
       responses:
         "200":
           description: The Run.
@@ -1981,13 +1979,13 @@ paths:
           schema: { $ref: "#/components/schemas/IssueStatus" }
         - name: target
           in: query
-          description: Only issues of this target.
+          description: Only issues of this Target.
           schema: { $ref: "#/components/schemas/Name" }
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: One page of issues.
+          description: One page of Issues.
           content:
             application/json:
               schema:
@@ -2058,7 +2056,7 @@ paths:
       tags: [issues]
       operationId: getIssue
       x-plumb-rate: read
-      summary: Read one issue
+      summary: Read one Issue
       responses:
         "200":
           description: The Issue.
@@ -2101,17 +2099,17 @@ paths:
       tags: [issues]
       operationId: resolveIssue
       x-plumb-rate: proposal
-      summary: Resolve an issue
+      summary: Resolve an Issue
       description: |
-        `accept` and `revert` create a Plan; the issue is `resolving` until its Run succeeds.
+        `accept` and `revert` create a Plan; the Issue is `resolving` until its Run succeeds.
         `accept` is not offered for a sensitive change. Allowed actions are in `Issue.actions`;
         the list does not depend on the caller.
 
-        `ignore_rule` creates a Plan that puts one `Rule` (origin `ignore_rule`, D-092). `rule`
-        in the request sets its scope. Only a human session approves this Plan (D-099). The
+        `ignore_rule` creates a Plan that puts one `Rule` (origin `ignore_rule`). `rule`
+        in the request sets its scope. Only a human session approves this Plan. The
         issue resolves as `ignore` when the revision commits.
 
-        `ignore_once` answers 200 with the resolved Issue and makes no Plan (D-091). A later
+        `ignore_once` answers 200 with the resolved Issue and makes no Plan. A later
         report with equal changes opens no Issue, until the resource reports no drift or a Run
         applies it. Who may call it: a human session; an `apply` token when every change of the
         Issue has a risk up to its `max_risk` and none is sensitive. Every other token gets 403
@@ -2151,7 +2149,7 @@ paths:
                 resolution: { action: ignore, by: "user:admin", at: "2026-11-10T09:16:00Z" }
                 comments: []
         "201":
-          description: The Plan that resolves the issue, for `accept`, `revert` and `ignore_rule`.
+          description: The Plan that resolves the Issue, for `accept`, `revert` and `ignore_rule`.
           headers:
             Location: { $ref: "#/components/headers/Location" }
           content:
@@ -2193,7 +2191,7 @@ paths:
       tags: [issues]
       operationId: commentIssue
       x-plumb-rate: comment
-      summary: Add a comment to an issue
+      summary: Add a comment to an Issue
       security:
         - session: []
         - token: [plan]
@@ -2227,10 +2225,10 @@ paths:
       x-plumb-rate: read
       summary: List rules
       description: |
-        Rules of the head revision (D-092). A rule makes the controller drop matching drift at
+        Rules of the head revision. A rule makes the controller drop matching drift at
         intake. A rule is a document: create, change and delete it with a proposal
-        (`POST /plans`) or with the issue action `ignore_rule`. Only a human session approves a
-        Plan that changes a rule (D-099).
+        (`POST /plans`) or with the Issue action `ignore_rule`. Only a human session approves a
+        Plan that changes a rule.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -2336,7 +2334,7 @@ paths:
       summary: Compare a revision with another one
       description: |
         Lists the documents that differ between revision `from` and revision `n`, with both
-        versions (D-093). Without `from` the base is `n-1`; for revision 1 it is the empty state.
+        versions. Without `from` the base is `n-1`; for revision 1 it is the empty state.
         Documents hold secret references, never secret values, so the diff shows no value.
       parameters:
         - name: from
@@ -2407,9 +2405,9 @@ paths:
         Builds a proposal that puts and deletes documents until the document set equals revision
         `n`, and returns its Plan (origin `rollback`). Nothing changes before the approval. The
         Plan follows every rule of `POST /plans`. Secret values have no history and do not roll
-        back (D-093). A rollback that brings back a secret binding or changes a rule can be
-        approved by a human session only (`Plan.human_only`, D-099). The Plan records `n` as
-        `rollback_to` (D-131).
+        back. A rollback that brings back a secret binding or changes a rule can be
+        approved by a human session only (`Plan.human_only`). The Plan records `n` as
+        `rollback_to`.
       security:
         - session: []
         - token: [plan]
@@ -2476,7 +2474,7 @@ paths:
       summary: List secrets (names only)
       description: |
         Names and metadata of all secrets, sorted by name. No operation of this API returns a
-        secret value (D-030, D-087). `used_by` lists the targets of the head revision that
+        secret value. `used_by` lists the Targets of the head revision that
         refer to the secret.
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -2517,9 +2515,9 @@ paths:
       operationId: putSecret
       summary: Create a secret or replace its value
       description: |
-        Stores the value encrypted (D-087). Human session only. A new value changes no guest by
-        itself, and it makes pending Plans that use the secret stale (D-089). To send it to the
-        guests, plan the targets of `used_by` with `Proposal.targets` (D-090).
+        Stores the value encrypted. Human session only. A new value changes no guest by
+        itself, and it makes pending Plans that use the secret stale. To send it to the
+        guests, plan the Targets of `used_by` with `Proposal.targets`.
       security:
         - session: []
       requestBody:
@@ -2622,7 +2620,7 @@ paths:
       summary: Create an API token
       description: |
         Human session only. The answer holds the bearer value once; Plumb stores only a hash.
-        Only an `apply` token has a `max_risk` (D-046). An `apply` token is root-equivalent on
+        Only an `apply` token has a `max_risk`. An `apply` token is root-equivalent on
         the guests.
       security:
         - session: []
@@ -2663,8 +2661,7 @@ paths:
       operationId: revokeToken
       summary: Revoke an API token
       description: |
-        Human session only. The token fails at its next call and its open event streams end
-        (D-070). The row stays in the list with `revoked_at`. Revoking a revoked token is 204.
+        Human session only. The token fails at its next call and its open event streams end. The row stays in the list with `revoked_at`. Revoking a revoked token is 204.
       security:
         - session: []
       responses:
@@ -2681,7 +2678,7 @@ paths:
       x-plumb-rate: read
       summary: Export the desired state without secret values
       description: |
-        One YAML stream of the head revision (D-094): a header document `kind: Export`, then
+        One YAML stream of the head revision: a header document `kind: Export`, then
         every document sorted by kind and name. The header lists the names of all secrets; the
         file holds no secret value.
       responses:
@@ -2730,7 +2727,7 @@ paths:
       description: |
         Human session only. The same file as `GET /export` plus a last document
         `kind: SecretBundle`: all secret values, encrypted with a key from the passphrase
-        (argon2id with the fixed parameters of format 1, AES-256-GCM; D-094). 429 when the
+        (argon2id with the fixed parameters of format 1, AES-256-GCM). 429 when the
         argon2 slots are busy.
       security:
         - session: []
@@ -2783,7 +2780,7 @@ paths:
       summary: Plan an import of an export file
       description: |
         Human session only. Reads an export file and returns a Plan (origin `import`). Nothing
-        in the desired state changes before the approval (D-095). Mode `replace` deletes the
+        in the desired state changes before the approval. Mode `replace` deletes the
         documents that are not in the file; `merge` only puts.
 
         Secrets: with a `passphrase`, the secrets of the bundle that do not exist yet are
@@ -2865,9 +2862,9 @@ paths:
       x-plumb-rate: read
       summary: List the backups of this controller and the state of the off-host copy
       description: |
-        Backups in the data directory of the controller, newest first (D-288, D-302), the
+        Backups in the data directory of the controller, newest first, the
         schedule, the last run, and the state of the off-host copy that a timer on the Proxmox host
-        makes (D-289). There is no download route: a backup holds the CA key and the agent
+        makes. There is no download route: a backup holds the CA key and the agent
         identities (encrypted), and it leaves the container only by the host timer.
       responses:
         "200":
@@ -2907,8 +2904,7 @@ paths:
       description: |
         Starts one backup outside the schedule. It counts for the retention like a scheduled one.
         The answer comes at once; `backup.finished` tells the end. A human session or an `apply`
-        token. 409 `backup-running` while one runs; 409 `restored-mode` before the confirm
-        (D-303).
+        token. 409 `backup-running` while one runs; 409 `restored-mode` before the confirm.
       security:
         - session: []
         - token: [apply]
@@ -2937,8 +2933,7 @@ paths:
       description: |
         `restored: false` on a controller that was never restored. After `plumb restore`: the
         backup it came from, whether restored mode still holds, the guests in the pool that the
-        restored state does not know, and how many tokens wait to be enabled again (D-290,
-        D-303).
+        restored state does not know, and how many tokens wait to be enabled again.
       responses:
         "200":
           description: The restore state.
@@ -2965,13 +2960,13 @@ paths:
       operationId: confirmRestore
       summary: End restored mode
       description: |
-        A person confirms that the old controller is off (D-290). Human session only: a token
+        A person confirms that the old controller is off. Human session only: a token
         gets 403 `human-required`. After it the engine, the schedules and the agent commands run
-        again, and `agent:silent` starts to count (D-303). 409 `nothing-to-do` when the controller
+        again, and `agent:silent` starts to count. 409 `nothing-to-do` when the controller
         is not in restored mode. The confirm sends the current watch list to every online agent:
         until then they keep the watch list of the old controller.
         Before restored mode ends, the server observes the guest of every Target once: a gone
-        guest or a guest of another name opens `guest:missing` (D-322). When Proxmox does not
+        guest or a guest of another name opens `guest:missing`. When Proxmox does not
         answer for a guest, the confirm is 409 `restore-check-failed` and restored mode stays.
       security:
         - session: []
@@ -3010,7 +3005,7 @@ paths:
       operationId: enableToken
       summary: Enable a token that a restore disabled
       description: |
-        Human session only (D-303). Works also in restored mode, so a person can give one client
+        Human session only. Works also in restored mode, so a person can give one client
         access back on purpose. A revoked token stays revoked (409 `token-revoked`). Enabling an
         enabled token is 200.
       security:
@@ -3043,7 +3038,7 @@ paths:
       summary: Controller settings and the Proxmox connection
       description: |
         The backup schedule with the source of each value, and a read-only view of the Proxmox
-        connection (D-361). No secret is in the answer: `token_user` is the user part of the
+        connection. No secret is in the answer: `token_user` is the user part of the
         Proxmox token id (`<user>@<realm>`), never the token name or its secret. `proxmox` is
         given only to a human session (any role); for an API token it is `null`, so scripts and
         MCP clients get the backup part only (pl-lead, review n2 of #276).
@@ -3080,12 +3075,12 @@ paths:
       operationId: changeSettings
       summary: Change controller settings
       description: |
-        Human admin session only (D-329). Changes the backup schedule; the scheduler takes it
+        Human admin session only. Changes the backup schedule; the scheduler takes it
         without a restart. A stored value wins over the flag and env value (`PLUMB_BACKUP_TIME`,
         `PLUMB_BACKUP_KEEP`), which stay the defaults, so a repair run of the installer keeps it.
         `null` for a field removes the stored value (back to env or default). Settings are in the
-        backup, not in the export. Event `settings.changed` with the old and new values. 422 by
-        the rule of D-325: the error names the field, never the value.
+        backup, not in the export. Event `settings.changed` with the old and new values. 422:
+        the error names the field, never the value.
       security:
         - session: []
       requestBody:
@@ -3124,7 +3119,7 @@ paths:
       operationId: rotateRepairKey
       summary: Make a new repair SSH key
       description: |
-        Human admin session only (D-382). Without `revoke_old`: makes a new ed25519 repair key;
+        Human admin session only. Without `revoke_old`: makes a new ed25519 repair key;
         agents get it with their next watch list and write its line next to the old one. The old
         key stays valid until a person revokes it: never by time alone (review R2 of #290).
         `previous.targets` lists the Targets whose line does not hold the new key yet. With
@@ -3214,18 +3209,18 @@ components:
       in: cookie
       name: __Host-plumb_session
       description: |
-        Human session (`POST /session`); its tier is the role of the user (D-329). `HttpOnly`, `Secure`,
+        Human session (`POST /session`); its tier is the role of the user. `HttpOnly`, `Secure`,
         `SameSite=Strict`. In `plumb serve --dev` (plain HTTP) the cookie is `plumb_session`
         without `Secure`. Every call that changes data, login included, must send a matching
         `Origin` header. Only a session approves `destructive` Plans and Plans with
-        `human_only` (D-099), and manages tokens, secrets, export with secrets and import.
+        `human_only`, and manages tokens, secrets, export with secrets and import.
     token:
       type: http
       scheme: bearer
       description: |
         API token. Tiers: `read` < `plan` (propose, comment, resolve with a Plan) < `apply`
         (approve, and `ignore_once`, up to the token's `max_risk`: `reversible` or `disruptive`).
-        No token has `admin` (D-046). The roles listed on an operation are the minimum tier. An
+        No token has `admin`. The roles listed on an operation are the minimum tier. An
         `apply` token is root-equivalent on guests.
 
   headers:
@@ -3347,15 +3342,15 @@ components:
     Conflict:
       description: |
         The object is in a state that does not allow the action: a stale Plan, a moved head
-        revision, or an issue that is not open. Slice 2 codes: `secret-in-use`,
-        `secret-conflict`, `nothing-to-do`. Image builds: `build-running`. Slice 3:
-        `agent-outdated` (D-259): the desired state of a Target needs a resource type or attribute
+        revision, or an Issue that is not open. Codes: `secret-in-use`,
+        `secret-conflict`, `nothing-to-do`; image builds: `build-running`;
+        `agent-outdated`: the desired state of a Target needs a resource type or attribute
         that its agent did not report; `detail` starts with "update the agent first", `targets`
         names the Targets and `missing` what they lack. Plans of every origin that send resources
         to an agent are checked at creation and at approval; the Run checks again at start.
-        Slice 4 (D-303): `restored-mode` (the controller waits for `POST /restore/confirm`),
-        `backup-running`, `token-revoked`, `own-user` (D-321), `restore-check-failed` (D-322).
-        Slice 5: `user-exists`, `last-admin` (D-330).
+        Also `restored-mode` (the controller waits for `POST /restore/confirm`),
+        `backup-running`, `token-revoked`, `own-user`, `restore-check-failed`,
+        `user-exists`, `last-admin`.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -3375,7 +3370,7 @@ components:
             status: 422
             errors:
               - pointer: /put/0/spec/guest/disk
-                message: disk is create-only in this version. Create a new target instead.
+                message: disk is create-only in this version. Create a new Target instead.
     TooManyRequests:
       description: Too many failed logins, or too many requests of one kind at a time.
       headers:
@@ -3393,7 +3388,7 @@ components:
             detail: Try again in 30 seconds.
     BadGateway:
       description: |
-        A source outside Plumb failed: `pin-source-failed` (D-335) when the checksum list or its
+        A source outside Plumb failed: `pin-source-failed` when the checksum list or its
         signature could not be fetched or checked. `detail` names the step, never the data.
       content:
         application/problem+json:
@@ -3477,7 +3472,7 @@ components:
           type: array
           description: |
             For `agent-outdated`: what the agents lack, `<type>` for a resource type,
-            `<type>.<attr>` for an attribute, or `command:<name>` for a command (D-299: a disk
+            `<type>.<attr>` for an attribute, or `command:<name>` for a command (a disk
             grow of a VM needs `command:grow`), sorted, over all Targets in `targets`.
           items: { type: string, examples: ["unit", "file.acl", "command:grow"] }
         plans:
@@ -3509,7 +3504,7 @@ components:
           type: string
           enum: [read, plan, apply, admin]
           description: |
-            Effective tier. For a session: the role of the user (D-329), one of all four. A token
+            Effective tier. For a session: the role of the user, one of all four. A token
             has `read`, `plan` or `apply`.
         max_risk:
           type: string
@@ -3542,11 +3537,11 @@ components:
     Role:
       type: string
       enum: [read, plan, apply, admin]
-      description: Role of a human user, on the scale of the token tiers (D-329).
+      description: Role of a human user, on the scale of the token tiers.
     UserName:
       type: string
       pattern: "^[a-z_][a-z0-9_-]{0,31}$"
-      description: User name. Lower case; never given twice, also after a disable (D-330).
+      description: User name. Lower case; never given twice, also after a disable.
     User:
       type: object
       additionalProperties: false
@@ -3557,10 +3552,10 @@ components:
         role: { $ref: "#/components/schemas/Role" }
         disabled:
           type: boolean
-          description: A person disabled the user (D-330). No login; the name stays taken.
+          description: A person disabled the user. No login; the name stays taken.
         locked:
           type: boolean
-          description: Locked by a restore until it gets a one-time password (D-303, D-321).
+          description: Locked by a restore until it gets a one-time password.
         must_change_password: { type: boolean }
         created_at: { $ref: "#/components/schemas/Time" }
         created_by:
@@ -3679,8 +3674,8 @@ components:
         status:
           $ref: "#/components/schemas/ImageStatus"
           description: |
-            Builds and versions of a built Image (D-198). Present for every `lxc` Image, also
-            without `build`, for its `unused_imports` (D-233); without `build`, `versions` is empty.
+            Builds and versions of a built Image. Present for every `lxc` Image, also
+            without `build`, for its `unused_imports`; without `build`, `versions` is empty.
             Missing for a stock `vm` Image.
     ImageStatus:
       type: object
@@ -3702,16 +3697,16 @@ components:
           description: The newest finished build (`ready` or `failed`), else `null`.
         next_build_at:
           $ref: "#/components/schemas/NullableTime"
-          description: The next slot of `schedule` (UTC), `null` without a schedule (D-210).
+          description: The next slot of `schedule` (UTC), `null` without a schedule.
         unused_imports:
           type: array
           description: |
             Downloaded base images in the image storage that no checksum needs: not the checksum of
             the document and not the base of a running build. Safe to remove: no version needs it,
             because a version template is a full copy; a rollback to that checksum downloads it
-            again (D-209). For an `lxc` Image: the repacked template files (`vztmpl`) whose name
+            again. For an `lxc` Image: the repacked template files (`vztmpl`) whose name
             is not the current file of any `lxc` Image (pin, CA and agent URL), and that no container
-            of the pool names in its description (D-233, D-250). Plumb never deletes them; a person
+            of the pool names in its description. Plumb never deletes them; a person
             runs `command` on the host. Empty when the driver cannot list the files or a current
             file is not known. A file can show as unused for a moment while a Run creates a
             container from an older revision; freeing it then fails that create, and a new Plan
@@ -3737,7 +3732,7 @@ components:
     ImageVersion:
       type: object
       additionalProperties: false
-      description: One build of an Image (table `image_version`, D-198).
+      description: One build of an Image (table `image_version`).
       required:
         - version
         - status
@@ -3765,21 +3760,21 @@ components:
         base_sha256:
           type: string
           pattern: "^([0-9a-f]{64}|[0-9a-f]{128})$"
-          description: "SHA-256 of a vm base, SHA-512 pin of an lxc base (D-224, D-254)."
+          description: "SHA-256 of a vm base, SHA-512 pin of an lxc base."
         disk_gb: { type: integer, minimum: 1 }
         started_at: { $ref: "#/components/schemas/Time" }
         finished_at: { $ref: "#/components/schemas/NullableTime" }
         removed_at: { $ref: "#/components/schemas/NullableTime" }
         targets:
           type: array
-          description: Targets that were created from this version (D-200).
+          description: Targets that were created from this version.
           items: { $ref: "#/components/schemas/Name" }
     BuildTrigger:
       type: string
       enum: [change, manual, schedule]
       description: |
         `change`: a Plan made or changed the recipe. `manual`: `POST /images/{name}/build`.
-        `schedule`: the clock of `schedule`, planned and approved by `system` (D-199, D-201).
+        `schedule`: the clock of `schedule`, planned and approved by `system`.
     UnusedImport:
       type: object
       additionalProperties: false
@@ -3799,7 +3794,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Real use of the disk storage of guests (D-203). A build does not start when
+        Real use of the disk storage of guests. A build does not start when
         `used_bytes + reserved_bytes + build disk` is more than `limit_percent` of `total_bytes`.
       required: [storage, total_bytes, used_bytes, reserved_bytes, limit_percent]
       properties:
@@ -3846,7 +3841,7 @@ components:
         raw:
           type: array
           description: |
-            The overrides of the Target as raw resources (D-301), sorted by `resource`. Empty when
+            The overrides of the Target as raw resources, sorted by `resource`. Empty when
             the Target has none. Missing on an older controller.
           items: { $ref: "#/components/schemas/RawResource" }
     TargetStatus:
@@ -3861,9 +3856,8 @@ components:
           description: |
             `pending`: no guest yet. `provisioning`: the driver creates it. `enrolling`: waiting
             for the agent. `ready`: matches the head revision. `applying`: a Run is active.
-            `drifted`: open issues. `restart_needed`: no open issue, but `waiting` is not empty
-            (D-195). `stopped`: the desired `guest.power` is `stopped`, the guest is stopped and no
-            issue is open (D-299); its agent is offline on purpose. `error`: the last Run failed.
+            `drifted`: open Issues. `restart_needed`: no open Issue, but `waiting` is not empty. `stopped`: the desired `guest.power` is `stopped`, the guest is stopped and no
+            issue is open; its agent is offline on purpose. `error`: the last Run failed.
             The order of precedence is `provisioning`, `pending`, `applying`, `enrolling`, `error`,
             `drifted`, `stopped`, `restart_needed`, `ready`. A client that does not know `stopped`
             shows the word as it is.
@@ -3878,26 +3872,26 @@ components:
           type: [object, "null"]
           additionalProperties: false
           description: |
-            Live drift of hand changes outside files (D-367), from the agent's last hello: `true`
+            Live drift of hand changes outside files, from the agent's last hello: `true`
             when the agent sees `ip` (`network`) or `nft` (`firewall`) changes within seconds;
             `false` when it holds such a resource but its netlink subscribe failed (then the full
             check every 15 minutes finds them). A type the Target does not use is missing. `null`
-            before a hello of an agent that reports it. Missing on a controller before T-181.
+            before a hello of an agent that reports it. Missing on an older controller.
           properties:
             network: { type: boolean }
             firewall: { type: boolean }
         repair: { $ref: "#/components/schemas/RepairState" }
         adopted:
           type: boolean
-          description: The Target holds an adopted guest (D-386); its delete keeps the guest unless `spec.adopted.delete_guest` is true. Missing before T-193.
+          description: The Target holds an adopted guest; its delete keeps the guest unless `spec.adopted.delete_guest` is true. Missing on an older controller.
         not_adopted:
           type: boolean
           description: |
-            D-395: the Target is adopted, but no guest is bound: its adopt Run was refused (the
+            the Target is adopted, but no guest is bound: its adopt Run was refused (the
             guest changed between the Plan and the approval). Plans that touch it do nothing for it
             (a note says so). Adopt the guest again (`POST /targets/{name}/adopt` under the guest's
             Proxmox name replaces this Target; under a new name it removes this one in the same Plan),
-            or delete the Target (no Proxmox call). Missing on a controller before T-204.
+            or delete the Target (no Proxmox call). Missing on an older controller.
         power: { type: string, enum: [running, stopped, unknown] }
         last_seen: { $ref: "#/components/schemas/NullableTime" }
         agent_version:
@@ -3912,19 +3906,19 @@ components:
           type: string
           enum: [none, available, required, manual, unknown]
           description: |
-            Compares the agent's binary with the one this controller serves (D-257 … D-259).
+            Compares the agent's binary with the one this controller serves.
             `none`: the same binary. `available`: another binary, and the agent can apply the
             desired state; `POST /targets/{name}/agent-update` proposes the update. `required`: the
             desired state needs something the agent lacks (`agent_missing`); every Plan for this
             Target is refused with `agent-outdated` until the update ran. `manual`: the agent is
-            older than slice 3 and cannot update itself: run the one-time install in the guest by
-            hand (ARCHITECTURE §14). `unknown`: no hello yet. Missing on an older controller.
+            from a Plumb version from before agents could update themselves: run the one-time install in the guest by
+            hand. `unknown`: no hello yet. Missing on an older controller.
         agent_missing:
           type: array
           description: |
             What the desired state needs and the agent lacks: `<type>` or `<type>.<attr>`, sorted.
             Empty when nothing is missing. Missing on an older controller. `command:grow` is not
-            listed here (D-310): a disk grow of a VM checks it only at the Plan (409
+            listed here: a disk grow of a VM checks it only at the Plan (409
             `agent-outdated`) and in the Run.
           items: { type: string }
         agent_reverted:
@@ -3941,23 +3935,22 @@ components:
           type: [integer, "null"]
           minimum: 1
           description: |
-            The version of a built Image that the guest was cloned from (D-200), read from the guest
+            The version of a built Image that the guest was cloned from, read from the guest
             description. `null` for a stock Image or when unknown. Information only: a new version
             changes no Target. Missing for a stock Image.
         ips:
           type: array
           description: |
-            The address of the Proxmox config (D-079). It never holds a value that the guest chose
-            (D-214), so a client may connect to it. Empty for a `dhcp` Target.
+            The address of the Proxmox config. It never holds a value that the guest chose, so a client may connect to it. Empty for a `dhcp` Target.
           items: { type: string }
         reported_ips:
           type: array
           description: |
-            The addresses that the agent in the guest reports (D-212, D-214), "reported by the
+            The addresses that the agent in the guest reports, "reported by the
             guest". For display only: root in the guest can send any list, so never use it to
-            authorize or as a connect target (D-216). IPv4 first, then IPv6, sorted; at most 16; no
+            authorize or as a connect target. IPv4 first, then IPv6, sorted; at most 16; no
             loopback, link-local or multicast address. Empty when the agent is offline, when it
-            reports no list (an old agent, D-217), or when the guest has no address. Missing on an
+            reports no list (an old agent), or when the guest has no address. Missing on an
             older controller.
           maxItems: 16
           items: { type: string, examples: ["192.0.2.41", "2001:db8::41"] }
@@ -3973,20 +3966,20 @@ components:
             `false`.
         applied_revision:
           type: [integer, "null"]
-          description: Newest revision applied to this target.
+          description: Newest revision applied to this Target.
         open_issues: { type: integer, minimum: 0 }
         last_run_id: { $ref: "#/components/schemas/NullableId" }
         ignored_drift:
           type: array
           description: |
-            Drift that a rule dropped at intake and that is still there (D-092). Missing means
+            Drift that a rule dropped at intake and that is still there. Missing means
             none. It makes an ignore visible.
           items: { $ref: "#/components/schemas/IgnoredDrift" }
         waiting:
           type: array
           description: |
             Values of `cores` and `memory` that are set in Proxmox and wait for the next stop and
-            start of the VM (D-195): the VM still runs with `from`. Always present; empty when
+            start of the VM: the VM still runs with `from`. Always present; empty when
             nothing waits. A reboot inside the guest does not end it. It ends when the VM is
             stopped and started (outside Plumb, or by a Run when `allow_restart` is on), or when
             the desired value goes back to `from`. Always empty for an LXC Target yet.
@@ -3995,8 +3988,8 @@ components:
       type: object
       additionalProperties: false
       description: |
-        An agent update that the guest rolled back (D-258). Reported by the guest and checked by
-        the controller before it is stored (ARCHITECTURE §14); display only.
+        An agent update that the guest rolled back. Reported by the guest and checked by
+        the controller before it is stored; display only.
       required: [from, to, reason, at]
       properties:
         from: { type: string, maxLength: 64, description: "Version that runs again." }
@@ -4050,7 +4043,7 @@ components:
           type: array
           description: |
             Targets to plan also when their documents do not change. Use it to send a new secret
-            value to the targets of `SecretInfo.used_by` (D-090).
+            value to the Targets of `SecretInfo.used_by`.
           items: { $ref: "#/components/schemas/Name" }
     RollbackRequest:
       type: object
@@ -4071,9 +4064,9 @@ components:
 
     Change:
       description: |
-        One attribute change, the same as `wire.Change` (D-047). `from` is the guest now, `to`
+        One attribute change, the same as `wire.Change`. `from` is the guest now, `to`
         is the desired state; a missing value means "not there". A sensitive change has no
-        values (D-037).
+        values.
       oneOf:
         - type: object
           required: [attr, risk]
@@ -4086,17 +4079,17 @@ components:
             pending:
               type: boolean
               description: |
-                Only on `guest:config` (D-190): `from` is set in Proxmox but not active. The VM
+                Only on `guest:config`: `from` is set in Proxmox but not active. The VM
                 uses `to`; `from` becomes active at the next stop and start of the VM. Missing
                 means `false`. For display only.
             also_pending:
               description: |
-                Only on `guest:config` (D-190): `from` is the running value, and this other value
+                Only on `guest:config`: `from` is the running value, and this other value
                 is set in Proxmox and waits for the next stop and start. For display only.
             waits_for_restart:
               type: boolean
               description: |
-                Only on `guest:config` (D-194, D-195): `to` is or will be set in Proxmox and
+                Only on `guest:config`: `to` is or will be set in Proxmox and
                 becomes active at the next stop and start of the VM. A Run step with this change
                 is `applied`, but the value is not active yet. Missing means `false`. For display
                 only.
@@ -4115,7 +4108,7 @@ components:
     IgnoredFlag:
       type: boolean
       description: |
-        Only in a Plan: a Rule ignores this drift (D-092). The Plan still shows the change, and
+        Only in a Plan: a Rule ignores this drift. The Plan still shows the change, and
         an apply still overwrites it. Missing means `false`.
     Action:
       type: string
@@ -4154,18 +4147,18 @@ components:
           enum: [proposal, revert, accept, reenroll, rollback, import, ignore_rule, build, agent_update, pin_refresh, repair, adopt, restore]
           description: |
             What made the Plan. `pin_refresh`: `POST /images/{name}/refresh` or the build schedule
-            changes only the pin of an Image (D-335). `build`: a manual or scheduled image build with no document
-            change (D-199). `agent_update`: replaces the agent binary of one Target, no document
-            change (D-257).
+            changes only the pin of an Image. `build`: a manual or scheduled image build with no document
+            change. `agent_update`: replaces the agent binary of one Target, no document
+            change.
         issue_id:
           $ref: "#/components/schemas/NullableId"
-          description: The issue, for `revert`, `accept` and `ignore_rule`.
+          description: The Issue, for `revert`, `accept` and `ignore_rule`.
         rollback_to:
           type: [integer, "null"]
           format: int64
           minimum: 1
           description: |
-            The revision `n` of `POST /revisions/{n}/rollback` (D-131). Set when `origin` is
+            The revision `n` of `POST /revisions/{n}/rollback`. Set when `origin` is
             `rollback`; missing or `null` for every other origin. The server sets it; no request
             can send it. The Plan was built against `base_revision`, so the revision that an
             approval commits has the same documents as revision `rollback_to`.
@@ -4197,34 +4190,33 @@ components:
         human_only:
           type: array
           description: |
-            Reasons why only a human session can approve this Plan (D-099). Missing or empty for
-            a normal Plan. `secret-binding`: a target and resource gets a secret that it did not
+            Reasons why only a human session can approve this Plan. Missing or empty for
+            a normal Plan. `secret-binding`: a Target and resource gets a secret that it did not
             get in the base revision. `rule-change`: the Plan puts, changes or deletes a Rule.
             `image-recipe`: the Plan makes or deletes a built Image, or changes its recipe,
-            `schedule` or `retention`, also through a changed Block (D-201).
+            `schedule` or `retention`, also through a changed Block.
             `accept-guest-data`: the Plan was made by an Accept of an Issue (origin `accept`) and
-            adopts values that a guest reported (D-323), or a change of the Plan sets a value (or
+            adopts values that a guest reported, or a change of the Plan sets a value (or
             adds a list element) that any guest reported as drift in the last 30 days, on any
-            Target, whether its Issue is open, closed or ignored, whatever the origin (D-331;
-            `guest_data_issues` names the Issues), or a Target is flagged because its reported
+            Target, whether its Issue is open, closed or ignored, whatever the origin
+            (`guest_data_issues` names the Issues), or a Target is flagged because its reported
             values passed a limit (an Issue `agent:values` is open): then every Plan that touches
             that Target, and every Plan that adds or changes a value on any Target, has the reason,
-            and `guest_data_issues` names the `agent:values` Issues (D-353; no match is listed).
+            and `guest_data_issues` names the `agent:values` Issues (no match is listed).
             A planned value with more than 4096 elements has the reason too.
             Checked when the Plan is made and again at
             approval: a report that arrives in between adds the reason, and the approval returns
             403 `human-required` for a token. `unverified-pin`: a
             `pin_refresh` Plan from a source without a signature, with a signature that is not
-            strictly newer than the last accepted one, or to a pin that this Image used before
-            (D-335). `firewall-off`: the Plan removes a `firewall` resource from a Target
+            strictly newer than the last accepted one, or to a pin that this Image used before. `firewall-off`: the Plan removes a `firewall` resource from a Target
             (`state: absent`, or the resource leaves the render, also by a Block, Target or
-            override change), always, whatever the origin (D-368). `repair`: a Plan of origin
-            `repair` (D-372). `adopted-guest-delete`: the Plan sets `spec.adopted.delete_guest` of
-            an adopted Target to `true`, or deletes an adopted Target that has it (D-388).
-            `guest-restore`: a Plan of origin `restore` (D-410): it overwrites the guest with a
+            override change), always, whatever the origin. `repair`: a Plan of origin
+            `repair`. `adopted-guest-delete`: the Plan sets `spec.adopted.delete_guest` of
+            an adopted Target to `true`, or deletes an adopted Target that has it.
+            `guest-restore`: a Plan of origin `restore`: it overwrites the guest with a
             backup.
             `restore-failed`: the Plan deletes a Target whose last restore failed (an open
-            `guest:restore-failed`, T-234); every other Plan for such a Target is refused with 409
+            `guest:restore-failed`); every other Plan for such a Target is refused with 409
             `restore-failed`, at the proposal and again at the approval.
             The server computes it from the content of the proposal, for every origin, and from
             the origin for `accept-guest-data` and `unverified-pin`; no client field sets or
@@ -4235,7 +4227,7 @@ components:
         guest_data_issues:
           type: array
           description: |
-            The Issues (open or closed) whose guest-reported values this Plan copies (D-331).
+            The Issues (open or closed) whose guest-reported values this Plan copies.
             Missing means none. Always set together with `accept-guest-data`, except for origin
             `accept`. `guest_data_matches` says what matched.
           items: { $ref: "#/components/schemas/Id" }
@@ -4243,7 +4235,7 @@ components:
           type: array
           description: |
             One entry per change value or list element of this Plan that matched a value a guest
-            reported (D-331). `element` is the Plan's own value (never from the guest), missing
+            reported. `element` is the Plan's own value (never from the guest), missing
             for a sensitive change. Missing means none.
           items:
             type: object
@@ -4252,22 +4244,21 @@ components:
             properties:
               issue_id:
                 $ref: "#/components/schemas/Id"
-                description: Missing when the reported drift had no Issue (a Rule covered it; D-352).
+                description: Missing when the reported drift had no Issue (a Rule covered it).
               target: { $ref: "#/components/schemas/Name" }
               resource: { type: string, examples: ["user:alice"] }
               attr: { type: string, examples: [ssh_keys] }
               element: { type: string }
         pins:
           type: array
-          description: The pin changes of a `pin_refresh` Plan (D-335). Missing for other origins.
+          description: The pin changes of a `pin_refresh` Plan. Missing for other origins.
           items: { $ref: "#/components/schemas/PinRefresh" }
         documents:
           type: array
           description: |
-            The document changes that approving this Plan commits (T-170, host finding F1 of
-            T-158), as `RevisionDiff.changes`: the base revision of the Plan against the base with
+            The document changes that approving this Plan commits (a host finding), as `RevisionDiff.changes`: the base revision of the Plan against the base with
             the proposal applied, computed by the same code that the approval commits, sorted by
-            kind and name. Documents hold secret references only (`{secret: <name>}`, D-088), never
+            kind and name. Documents hold secret references only (`{secret: <name>}`), never
             a value. `[]` for origin `build` and `agent_update` (no document change). A stale Plan
             shows what it would have committed on its own base (it cannot be approved). A
             `rollback` Plan shows the base against revision `rollback_to`; an `import` Plan every
@@ -4291,11 +4282,11 @@ components:
           type: boolean
           description: |
             The server could not compute `documents` for this pending or stale Plan; the UI shows
-            "document changes not available". Missing or false otherwise (T-170, review D1 of #267).
+            "document changes not available". Missing or false otherwise (review D1 of #267).
         images:
           type: array
           description: |
-            Image builds and template removals of this Plan (D-199, D-209). Missing means none.
+            Image builds and template removals of this Plan. Missing means none.
           items: { $ref: "#/components/schemas/ImagePlan" }
     ImagePlan:
       type: object
@@ -4316,7 +4307,7 @@ components:
         removes:
           type: array
           description: |
-            Templates that the retention step removes when the Run succeeds (D-209). A removal
+            Templates that the retention step removes when the Run succeeds. A removal
             runs only after the new version is `ready`.
           items: { $ref: "#/components/schemas/ImageRemoval" }
         disk: { $ref: "#/components/schemas/DiskUse" }
@@ -4353,7 +4344,7 @@ components:
     PlannedSecret:
       type: object
       additionalProperties: false
-      description: A secret that a target gets, with the version that the Plan was made with.
+      description: A secret that a Target gets, with the version that the Plan was made with.
       required: [name, version]
       properties:
         name: { $ref: "#/components/schemas/Name" }
@@ -4367,7 +4358,7 @@ components:
         secrets:
           type: array
           description: |
-            The secrets that the desired state of this target uses (D-089). Missing means none.
+            The secrets that the desired state of this Target uses. Missing means none.
             The Plan is stale when one of them has another version or is gone.
           items: { $ref: "#/components/schemas/PlannedSecret" }
         resources:
@@ -4382,7 +4373,7 @@ components:
           type: string
           description: |
             Resource id `type:key`. `guest:config` is the Proxmox settings. `agent:binary` is the
-            agent update step (D-257): one change `{attr: version, from, to}`, risk `disruptive`.
+            agent update step: one change `{attr: version, from, to}`, risk `disruptive`.
           examples: ["file:/etc/motd", "guest:config", "agent:binary"]
         action: { $ref: "#/components/schemas/Action" }
         risk: { $ref: "#/components/schemas/Risk" }
@@ -4392,14 +4383,14 @@ components:
         unverified:
           type: boolean
           description: |
-            A resource of a new target, or a resource of an existing target that gets a new secret
-            binding (D-156). Nobody observed it, so `changes` is empty, except one
-            `{attr, sensitive, risk}` per attribute that gets a secret (D-089, D-133); it is
-            verified at the first apply (D-066, D-075).
+            A resource of a new Target, or a resource of an existing Target that gets a new secret
+            binding. Nobody observed it, so `changes` is empty, except one
+            `{attr, sensitive, risk}` per attribute that gets a secret; it is
+            verified at the first apply.
         after:
           type: array
           description: |
-            Apply order (D-167, D-171): the resource ids that this resource comes after. Missing
+            Apply order: the resource ids that this resource comes after. Missing
             means none. The Block of the resource names them in `spec.after`. The resource and the
             rest of its Block use start only when each named resource ended `unchanged` or
             `applied`; else they are `skipped`. A named resource can be absent from this Plan: then
@@ -4410,9 +4401,9 @@ components:
         restart_by:
           type: array
           description: |
-            Only for a service with a planned `restart` change (D-171): the resource ids from its
+            Only for a service with a planned `restart` change: the resource ids from its
             `restart_on` list that cause the restart, in list order. They change in this Plan, or
-            nobody observed them (D-156). Missing means the Plan does not name a cause. It is for
+            nobody observed them. Missing means the Plan does not name a cause. It is for
             display only; the apply does not use it.
           uniqueItems: true
           items: { type: string }
@@ -4421,14 +4412,14 @@ components:
           type: integer
           const: 90
           description: |
-            Safe apply (D-293, D-300), only for a `firewall` resource with a change: after the
+            Safe apply, only for a `firewall` resource with a change: after the
             change the agent needs a fresh round trip to the controller within this many seconds;
             else it puts the confirmed state back and the step is `failed` with `rolled_back`.
             Missing for every other resource.
         summary:
           type: array
           description: |
-            Lines for the person who approves, derived from the desired attributes (D-300). For
+            Lines for the person who approves, derived from the desired attributes. For
             `firewall`: the effective SSH rule, for example "SSH tcp/22 open from everywhere",
             "SSH tcp/2222 open from 192.0.2.0/24" or "no SSH rule (allow_no_ssh)", then the policy.
             Missing when there is nothing to say. Display only.
@@ -4447,11 +4438,11 @@ components:
         risk; nothing of the resource was applied. `skipped`: not applied, because an earlier
         resource of the same Block use, or a resource that it comes after (`ResourcePlan.after`),
         did not end `unchanged` or `applied`, or because the apply ended first. `output` names the
-        cause (D-170). `warning`: the step was done, but it left something for a person;
-        `output` says what and how to fix it (D-396). The Run still succeeds, and its `warnings`
+        cause. `warning`: the step was done, but it left something for a person;
+        `output` says what and how to fix it. The Run still succeeds, and its `warnings`
         counts the step. Only the controller sets it; an agent never reports it.
         `failed` with an `output` that starts with "update the agent first": the Run start found
-        that the Target's agent lacks a resource type or attribute (D-259); no command went to
+        that the Target's agent lacks a resource type or attribute; no command went to
         that Target. An agent can change between approval and start (a guest restored from an old
         backup).
     Run:
@@ -4470,14 +4461,13 @@ components:
           type: integer
           minimum: 0
           description: |
-            The number of changes that the steps of this Run recorded with `waits_for_restart`
-            (D-195): written, but not active until the next stop and start of the VM. A Run can
+            The number of changes that the steps of this Run recorded with `waits_for_restart`: written, but not active until the next stop and start of the VM. A Run can
             be `succeeded` with a number above 0. Set when the Run ends; 0 while it runs.
         warnings:
           type: integer
           minimum: 0
           description: |
-            The steps of this Run that ended `warning` (D-396): the Run succeeded, but it left
+            The steps of this Run that ended `warning`: the Run succeeded, but it left
             something for a person (for example an agent that is still in a guest that Plumb let
             go). A client shows "succeeded, with warnings" when the number is above 0, never a plain
             success. Set when the Run ends; 0 while it runs.
@@ -4486,14 +4476,14 @@ components:
           items: { $ref: "#/components/schemas/TargetRun" }
         images:
           type: array
-          description: Image builds of this Run (D-199). Missing means none.
+          description: Image builds of this Run. Missing means none.
           items: { $ref: "#/components/schemas/ImageRun" }
     ImageRun:
       type: object
       additionalProperties: false
       description: |
         One build lane. Steps in this order: `image:base`, `guest:config`, the resources of the
-        recipe, `image:seal`, `image:template`, `image:retention` (D-199).
+        recipe, `image:seal`, `image:template`, `image:retention`.
       required: [image, version, trigger, status, steps]
       properties:
         image: { $ref: "#/components/schemas/Name" }
@@ -4534,7 +4524,7 @@ components:
         rolled_back:
           type: boolean
           description: |
-            Only with `failed`: a safe apply (D-300) changed the resource, got no round trip to the
+            Only with `failed`: a safe apply changed the resource, got no round trip to the
             controller within `confirm_seconds`, and put the confirmed state back. The guest has the
             state from before the Run. Missing means `false`.
         started_at: { $ref: "#/components/schemas/NullableTime" }
@@ -4547,30 +4537,30 @@ components:
       type: string
       enum: [accept, revert, ignore_once, ignore_rule]
       description: |
-        `accept` and `revert` (D-068), `ignore_once` (D-091), `ignore_rule` (D-092). See
+        `accept` and `revert`, `ignore_once`, `ignore_rule`. See
         `POST /issues/{id}/resolve` for who may use them. An Issue on `guest:address` offers
-        only `ignore_once` and `ignore_rule` (D-215).
+        only `ignore_once` and `ignore_rule`.
     Issue:
       type: object
       additionalProperties: false
       description: |
-        Drift of one resource on one target. Drift on `guest:config` comes from Proxmox, all
+        Drift of one resource on one Target. Drift on `guest:config` comes from Proxmox, all
         other drift from the agent.
 
-        `guest:address` (D-215): a Target with a static `ip` whose agent has not reported that
+        `guest:address`: a Target with a static `ip` whose agent has not reported that
         address for 2 minutes. The Proxmox config is right; the guest does not use it. It has one
         change `{attr: ip, from: [the reported list], to: "<configured address>", risk: read}`.
-        `actions` are `ignore_once` and `ignore_rule` only: `ip` is create-only (D-185), so
+        `actions` are `ignore_once` and `ignore_rule` only: `ip` is create-only, so
         `accept` and `revert` get 409. It is resolved as `gone` by `system` when the address has
         been in the reported list for 2 minutes. A new mismatch within 1 hour after that opens
         the same Issue again.
 
-        `guest:config` with slice 4 settings (D-299): `power` (someone started or stopped the
+        `guest:config` with the settings `power` (someone started or stopped the
         guest in Proxmox), `tags` (someone changed the tags) and `disk` (someone grew the disk in
         Proxmox). For a disk that is bigger than desired, `revert` is not in `actions` (Proxmox
         cannot shrink): `accept` takes the bigger size into the Target, or ignore it.
 
-        After a restore (D-290, D-303), `system` opens two kinds. `guest:missing`: the Target is
+        After a restore, `system` opens two kinds. `guest:missing`: the Target is
         bound to a guest that Proxmox no longer has (it was deleted after the backup). One change
         `{attr: guest_id, from: null, to: "<the bound VMID>", risk: destructive}`. Plumb never
         makes the guest again by itself: delete the Target, or delete and add it again by a
@@ -4580,9 +4570,9 @@ components:
         `POST /targets/{name}/reenroll`. Both offer only `ignore_once` and `ignore_rule`, and
         `system` resolves them as `gone` when the guest or the hello comes back, or when an
         applied Plan deletes the Target (then with the system comment "Resolved: the Target was
-        deleted."; a foreign guest stays and is never deleted, D-322).
+        deleted."; a foreign guest stays and is never deleted).
 
-        Slice 5 (D-331, D-353): `system` opens `agent:values` when the stored values that the
+        `system` opens `agent:values` when the stored values that the
         guest of a Target reported as drift reach the cap (10 000), or when one reported value has
         more than 4096 elements. Nothing is evicted; for 30 days every Plan that touches the
         Target, and every Plan that adds or changes a value on any Target, is human-only
@@ -4624,12 +4614,12 @@ components:
           type: array
           description: |
             Actions allowed now. `accept` is missing for a sensitive change. Empty while
-            `actions_blocked_by` is set (T-234).
+            `actions_blocked_by` is set.
           items: { $ref: "#/components/schemas/IssueAction" }
         actions_blocked_by:
           $ref: "#/components/schemas/NullableId"
           description: |
-            T-234: the open Issue `guest:restore-failed` of the Target, while the last restore
+            the open Issue `guest:restore-failed` of the Target, while the last restore
             failed and the guest may have no disk. Then this Issue has no action, and every
             resolve or ignore answers 409 `restore-failed`; the actions come back after a restore
             that works. Null otherwise, and always for `guest:restore-failed` itself.
@@ -4637,14 +4627,14 @@ components:
           type: string
           maxLength: 1024
           description: |
-            Plumb's text on the actions (T-234): why `actions` is empty, or, on an open
+            Plumb's text on the actions: why `actions` is empty, or, on an open
             `guest:restore-failed`, the rule of its "ignore once" for the confirm (M1 of #352: a
             human admin session only; 409 `restore-not-ended` while the guest has no disk; no
             "ignore by rule"; a revert of an empty guest would make every backup of it
             unrestorable). "" otherwise.
         restore_way_back:
           description: |
-            Only for `guest:restore-failed` (L1 of #350, T-234): the safety backup that the Issue names
+            Only for `guest:restore-failed` (L1 of #350): the safety backup that the Issue names
             as the way back, as data (`backup_id` is the id for `POST /targets/{name}/restore`).
             Null when there is none (no safety backup was taken, or the Issue is older) and for
             every other Issue. Its carrier change (`way_back`) is not in `changes`.
@@ -4669,21 +4659,21 @@ components:
         raw:
           type: boolean
           description: |
-            Raw mode offer (D-296, D-301). `true` when a Block renders the resource (`source` is
+            Raw mode offer. `true` when a Block renders the resource (`source` is
             set) and `accept` is in `actions`: Accept then fixes the observed values as an override
             of this Target ("Accept as raw for this Target"); the Block and its parameters do not
             change, and the resource no longer follows them for these attributes until "Back to the
             Block" (`TargetView.raw`). `false` for `guest:*` (Accept writes the Proxmox settings of
-            the Target). Missing on an older controller. Equals `accept_mode == raw` (D-362).
+            the Target). Missing on an older controller. Equals `accept_mode == raw`.
         accept_mode:
           type: string
           enum: [param, raw, guest, none]
           description: |
-            What `accept` writes (D-362). `param`: the observed values map back to Block
+            What `accept` writes. `param`: the observed values map back to Block
             parameters (`accept_params`); Accept sets `blocks[i].params.<param>` of this Target,
-            the Block does not change. `raw`: an override of this Target, as before (D-296);
+            the Block does not change. `raw`: an override of this Target, as before;
             `accept_reason` says why no parameter fits. `guest`: a `guest:*` Issue; Accept writes
-            the guest settings of the Target (D-068). `none`: `accept` is not in `actions`.
+            the guest settings of the Target. `none`: `accept` is not in `actions`.
             A change maps when its attribute's template in the Block is exactly
             `<literal>{{ .p }}<literal>` (one plain field of a top-level parameter, no pipeline,
             function or trim marker, `p` nowhere else in that attribute), the observed value has
@@ -4691,21 +4681,21 @@ components:
             only without prefix and suffix), and a new render of the Target with it gives the
             observed values and changes no other resource or attribute. All changes of the Issue
             must map, else the whole Issue is `raw`. The server computes it again when the Accept
-            is made. Missing on a controller before T-175.
+            is made. Missing on an older controller.
         accept_reason:
           type: string
           maxLength: 256
           description: |
             Why `accept_mode` is `raw`, in plain words without guest values (for example "the
-            template of `content` uses a function"). Empty otherwise. Missing on a controller
-            before T-175.
+            template of `content` uses a function"). Empty otherwise. Missing on an older
+            controller.
         accept_params:
           type: array
           description: |
             The parameters that `accept` sets when `accept_mode` is `param`: the Block use
             (`blocks[i].use` of the Target, index `i`) and the parameter name. The new values are
             the observed values in `changes` without the literal prefix and suffix. Empty
-            otherwise. Missing on a controller before T-175.
+            otherwise. Missing on an older controller.
           items:
             type: object
             additionalProperties: false
@@ -4720,7 +4710,7 @@ components:
       type: [object, "null"]
       additionalProperties: false
       description: |
-        The Block use that renders the resource (D-301): `block` is the Block document, `use` the
+        The Block use that renders the resource: `block` is the Block document, `use` the
         id of the use in `spec.blocks` (default the Block name). `null` for `guest:*` and
         `agent:*`. Missing on an older controller.
       required: [block, use]
@@ -4731,8 +4721,8 @@ components:
       type: object
       additionalProperties: false
       description: |
-        One entry of `spec.overrides` of the Target, shown as a resource in raw mode (D-296,
-        D-301). The editor changes `spec.overrides[resource]` by a normal proposal (`POST /plans`
+        One entry of `spec.overrides` of the Target, shown as a resource in raw mode.
+        The editor changes `spec.overrides[resource]` by a normal proposal (`POST /plans`
         with the Target in `put`); "Back to the Block" is a proposal without this key. Both go
         through a Plan that shows the change. An override never holds a secret reference, and the
         key attribute of the resource cannot be overridden (render refuses both).
@@ -4773,7 +4763,7 @@ components:
             all_targets:
               type: boolean
               default: false
-              description: "`true`: the rule is for every target (`target: \"*\"`). Default: the target of the issue."
+              description: "`true`: the rule is for every Target (`target: \"*\"`). Default: the Target of the Issue."
             attrs:
               type: array
               minItems: 1
@@ -4800,14 +4790,14 @@ components:
     RevisionInfo:
       type: object
       additionalProperties: false
-      description: One committed revision (provenance, D-008).
+      description: One committed revision (provenance).
       required: [id, author, reason, plan_id, created_at, documents]
       properties:
         id: { $ref: "#/components/schemas/Revision" }
         author:
           $ref: "#/components/schemas/Principal"
           description: |
-            The author of the Plan that made this revision (D-128). The approver is
+            The author of the Plan that made this revision. The approver is
             `approved_by` of that Plan.
         reason: { type: string }
         plan_id:
@@ -4864,7 +4854,7 @@ components:
           minimum: 1
           description: |
             Changes with every write. It comes from one counter for all secrets, so it is not a
-            count of the writes of this secret (D-087).
+            count of the writes of this secret.
         updated_by: { $ref: "#/components/schemas/Principal" }
         updated_at: { $ref: "#/components/schemas/Time" }
         used_by:
@@ -4887,7 +4877,7 @@ components:
     Tier:
       type: string
       enum: [read, plan, apply]
-      description: Token tier (D-046).
+      description: Token tier.
     Token:
       type: object
       description: An API token without its bearer value.
@@ -4911,7 +4901,7 @@ components:
         disabled_at:
           $ref: "#/components/schemas/NullableTime"
           description: |
-            A restore disabled the token (D-303): it gets 401 until a person enables it
+            A restore disabled the token: it gets 401 until a person enables it
             (`POST /tokens/{id}/enable`). `null` when enabled. Missing on an older controller.
     TokenRequest:
       type: object
@@ -4971,7 +4961,7 @@ components:
           type: array
           description: |
             Names of existing secrets that the import may replace with the value of the bundle.
-            Default: none (D-095).
+            Default: none.
           items: { $ref: "#/components/schemas/Name" }
         reason: { type: string, minLength: 1, maxLength: 2000 }
 
@@ -4986,7 +4976,7 @@ components:
           required: [time, keep]
           description: |
             The effective schedule: a value stored by `PATCH /settings` wins over the installer's
-            `--backup-time`/`--backup-keep` (D-361). `GET /settings` says where each value comes from.
+            `--backup-time`/`--backup-keep`. `GET /settings` says where each value comes from.
           properties:
             time: { type: string, pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$", description: "Daily, UTC." }
             keep: { type: integer, minimum: 1, maximum: 100, description: "Backups kept, scheduled and manual together." }
@@ -5011,7 +5001,7 @@ components:
           description: |
             `unreadable`: the controller cannot read the file (for example a backup that root made
             in the container instead of the user `plumb`). It is listed so that it is not hidden;
-            `sha256` is then `null`, and the person fixes the owner by hand (T-208).
+            `sha256` is then `null`, and the person fixes the owner by hand.
         created_at:
           $ref: "#/components/schemas/Time"
           description: |
@@ -5035,7 +5025,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        State of the off-host copy by the host timer (D-289), read from the status file that the
+        State of the off-host copy by the host timer, read from the status file that the
         timer puts into the container. `none`: no timer (the install has no `--backup-storage`) or
         no run yet. `ok`: the last run copied `name`. `failed`: the last run failed, `message`
         says why (for example the storage is not mounted). `stale`: the last successful copy is
@@ -5055,7 +5045,7 @@ components:
         restored: { type: boolean, description: This controller came from `plumb restore`. }
         restored_mode:
           type: boolean
-          description: "`true` until `POST /restore/confirm` (D-303)."
+          description: "`true` until `POST /restore/confirm`."
         backup_created_at:
           $ref: "#/components/schemas/Time"
           description: When the backup was written. Changes after it are lost; secrets have their old values.
@@ -5070,14 +5060,14 @@ components:
           type: array
           description: |
             Names of the users that the restore locked and nobody gave a new password yet, sorted.
-            `POST /users/{name}/password` gives one a one-time password (D-321).
+            `POST /users/{name}/password` gives one a one-time password.
           items: { type: string }
           example: [alice, bob]
         unknown_guests:
           type: array
           description: |
             Guests in the Plumb pool that no Target or Image of the restored state is bound to
-            (made after the backup). Plumb never changes or deletes them (D-290). Read every 60 s.
+            (made after the backup). Plumb never changes or deletes them. Read every 60 s.
           items: { $ref: "#/components/schemas/UnknownGuest" }
     UnknownGuest:
       type: object
@@ -5149,12 +5139,12 @@ components:
             LXC), `host-device` (`devN`, `usbN`, `hostpciN`), `template`, `name` (not a valid
             document name; rename it in Proxmox), `agent-left` (the agent of a deleted adopted
             Target is parked in this guest, `agent_left`; the adopt gives 409 `agent-left` until
-            its unbind is confirmed or an admin forgets it, D-396).
+            its unbind is confirmed or an admin forgets it).
           items: { type: string }
         warnings:
           type: array
           description: |
-            Shown in red (D-340): `not-sealed` (always: old SSH host keys, machine-id and root users
+            Shown in red: `not-sealed` (always: old SSH host keys, machine-id and root users
             stay), `nesting`, `keyctl`, `no-cloud-init` (create-only fields stay as Proxmox has
             them).
           items: { type: string }
@@ -5164,7 +5154,7 @@ components:
         agent_left:
           type: boolean
           description: |
-            D-396: the Plumb agent of a deleted adopted Target is still in this guest, with the repair
+            the Plumb agent of a deleted adopted Target is still in this guest, with the repair
             key line; its unbind was not confirmed. Plumb sends unbind when the agent comes back (it
             can do nothing else), or an admin forgets it
             (`POST /guests/unmanaged/{vmid}/forget-agent`) after removing it by hand.
@@ -5172,7 +5162,7 @@ components:
           type: object
           additionalProperties: false
           required: [cipassword, sshkeys, description, env]
-          description: Only whether these config keys exist; their values are never read into Plumb (D-340; `env` of an LXC, review R3 of #290).
+          description: Only whether these config keys exist; their values are never read into Plumb (`env` of an LXC, review R3 of #290).
           properties:
             cipassword: { type: boolean }
             sshkeys: { type: boolean }
@@ -5182,8 +5172,8 @@ components:
       type: object
       additionalProperties: false
       description: |
-        The guest backups of one Target (D-405 … D-409). Only volumes that the token can see: on the
-        install's guest backup storage, of a VMID that is in the pool now (T-214 FACT 1).
+        The guest backups of one Target. Only volumes that the token can see: on the
+        install's guest backup storage, of a VMID that is in the pool now.
       required: [storage, items, next_at, last]
       properties:
         storage:
@@ -5218,7 +5208,7 @@ components:
         One backup volume. A volume is Plumb's only when a finished job of this controller recorded
         it and its marker agrees with that record: notes alone prove nothing (anyone who can write the
         storage can copy a marker; M1 of #331). `kind`:
-        - `plumb`: recorded for the Target's current lineage (D-407, D-417). Retention, restore and
+        - `plumb`: recorded for the Target's current lineage. Retention, restore and
           delete act on it.
         - `older-guest`: recorded for an older lineage of this Target, for example an older guest on
           this VMID. Only a person may delete it; never restored.
@@ -5245,7 +5235,7 @@ components:
         mode:
           type: string
           enum: [snapshot, stop, suspend, unknown]
-          description: The vzdump mode. A VM snapshot without the guest agent is crash-consistent (like a power cut, T-214 FACT 3).
+          description: The vzdump mode. A VM snapshot without the guest agent is crash-consistent (like a power cut).
     GuestRestoreRequest:
       type: object
       additionalProperties: false
@@ -5257,7 +5247,7 @@ components:
           type: boolean
           default: false
           description: |
-            D-420: no safety backup of the guest before the restore. Allowed only for a broken guest
+            no safety backup of the guest before the restore. Allowed only for a broken guest
             (no disk, or an open Issue `guest:restore-failed`); else 422.
     RepairKeyView:
       type: object
@@ -5269,9 +5259,9 @@ components:
         left_behind:
           type: array
           description: |
-            The guests of deleted adopted Targets whose agent is parked (D-396), as "<target> (VMID <n>)", and those
+            The guests of deleted adopted Targets whose agent is parked, as "<target> (VMID <n>)", and those
             whose agent an admin forgot, as "<target> (VMID <n>, agent forgotten)": their repair line may still hold a
-            valid key. Shown also without a previous key (T-217, ROADMAP row 32). `previous.left_behind` is the
+            valid key. Shown also without a previous key (ROADMAP row 32). `previous.left_behind` is the
             same list, kept for one release.
           items: { type: string }
         previous:
@@ -5283,25 +5273,25 @@ components:
             created_at: { $ref: "#/components/schemas/Time" }
             targets:
               type: array
-              description: Targets (with a guest) whose line does not hold the current key yet (their agents did not confirm it). A deleted Target is never listed here (review F7 of T-192).
+              description: Targets (with a guest) whose line does not hold the current key yet (their agents did not confirm it). A deleted Target is never listed here
               items: { $ref: "#/components/schemas/Name" }
             left_behind:
               type: array
-              description: Guests of deleted adopted Targets whose agent was not unbound (D-396), as "<target> (VMID <n>)", and those whose agent an admin forgot, as "<target> (VMID <n>, agent forgotten)". Their repair line may still hold a valid key; a forgotten guest leaves the list when none of the keys valid at its park is valid any more.
+              description: Guests of deleted adopted Targets whose agent was not unbound, as "<target> (VMID <n>)", and those whose agent an admin forgot, as "<target> (VMID <n>, agent forgotten)". Their repair line may still hold a valid key; a forgotten guest leaves the list when none of the keys valid at its park is valid any more.
               items: { type: string }
     RepairState:
       type: [object, "null"]
       additionalProperties: false
       description: |
-        SSH repair readiness (D-384, D-385), from the agent's last hello. `null` before an agent
+        SSH repair readiness, from the agent's last hello. `null` before an agent
         that reports it. `state`: `ready` (line written, `sshd` allows root with a forced command,
         host keys pinned), `off` (`reasons` says why: `no-line`, `no-sshd`, `root-refused`,
         `no-pin`, `firewall` (the `firewall` resource does not let the controller reach the SSH
         port), `host-key-changed` (no host key that the guest reports is pinned: a repair needs
-        `accept_host_key` of one of `host_keys_seen`, T-207)), `unknown` (no report yet). A
+        `accept_host_key` of one of `host_keys_seen`)), `unknown` (no report yet). A
         `ready` state can carry the warning `host-key-new` (the guest has unpinned keys next to a
-        pinned one; the repair checks the pinned one) or `old-key`. Missing on a controller
-        before T-191.
+        pinned one; the repair checks the pinned one) or `old-key`. Missing on an older
+        controller.
       required: [state, reasons]
       properties:
         state: { type: string, enum: [ready, off, unknown] }
@@ -5340,12 +5330,12 @@ components:
                 time: { $ref: "#/components/schemas/SettingSource" }
                 keep: { $ref: "#/components/schemas/SettingSource" }
         proxmox:
-          description: The Proxmox view for a human session; `null` for an API token (D-361).
+          description: The Proxmox view for a human session; `null` for an API token.
           oneOf:
             - $ref: "#/components/schemas/ProxmoxView"
             - type: "null"
         repair_key:
-          description: The repair SSH key (D-382); public data only. Missing before T-191.
+          description: The repair SSH key; public data only. Missing on an older controller.
           $ref: "#/components/schemas/RepairKeyView"
     ProxmoxView:
       type: object
@@ -5366,7 +5356,7 @@ components:
               type: [string, "null"]
               description: |
                 The storage of the host copy, from the status file of the copy timer (the copy
-                runs on the host, D-289). `null` before its first run (T-208).
+                runs on the host). `null` before its first run.
         api:
           type: object
           additionalProperties: false
@@ -5394,9 +5384,9 @@ components:
         extra_nets:
           type: array
           description: |
-            Slice 7 (D-401, T-218): the extra bridges and bridge/tag paths that the install named
+            The extra bridges and bridge/tag paths that the install named
             (`--extra-bridge`, `--extra-vlan`). A Target NIC may use only these (422
-            `network-not-allowed`). Missing on a controller before T-218.
+            `network-not-allowed`). Missing on an older controller.
           items:
             type: object
             additionalProperties: false
@@ -5408,10 +5398,10 @@ components:
           type: [object, "null"]
           additionalProperties: false
           description: |
-            Slice 7 (D-405, D-406, T-218): the guest backup storage of the install. `null`: none named, so
+            The guest backup storage of the install. `null`: none named, so
             guest backups are off. The token itself can back up, restore over and delete the backups of
-            every pool guest directly at the Proxmox API with these rights (D-380, accepted by the user);
-            Plumb's human-only rules hold only inside Plumb. Missing on a controller before T-218.
+            every pool guest directly at the Proxmox API with these rights (accepted by the user);
+            Plumb's human-only rules hold only inside Plumb. Missing on an older controller.
           required: [storage, state, other_backup_storages]
           properties:
             storage: { type: string }
@@ -5475,7 +5465,7 @@ components:
       additionalProperties: false
       description: |
         One entry of the append-only event log. `target.addrs`: the address list that the agent
-        of a Target reports changed (D-214); `data` holds no address, read the Target.
+        of a Target reports changed; `data` holds no address, read the Target.
       required: [seq, type, time, subject, actor, data]
       properties:
         seq: { type: integer, format: int64, minimum: 1 }
@@ -5526,12 +5516,12 @@ components:
             `<kind>:<id or name>`, for example `plan:12` or `target:web1`. `image.version` (subject
             `image:<name>`): a version of the Image changed its status. `backup.finished` (subject
             `backup:<file name>`, data `{result: ok|failed}`) and `restore.confirmed` (subject
-            `restore:1`) are D-302, D-303. `user.password_reset` (subject `user:<name>`) is D-321. `user.created` (data
-            `{role}`) and `user.changed` (data `{role, disabled}`) are D-330; no event holds a
+            `restore:1`) come with the backup and the restore. `user.password_reset` (subject `user:<name>`), `user.created` (data
+            `{role}`) and `user.changed` (data `{role, disabled}`) come with the users; no event holds a
             password. `settings.changed` (subject `settings:backup`, data `{old, new}` with the
-            changed fields) is D-361. `token.rate_limited` (subject `token:<id>`, data `{kind:
+            changed fields) comes with a settings change. `token.rate_limited` (subject `token:<id>`, data `{kind:
             proposal|comment|read}`) and `agent.rate_limited` (subject `target:<name>`, data `{}`) come
-            at most once per 10 minutes per token or agent (D-365, D-366).
+            at most once per 10 minutes per token or agent.
           examples: ["plan:12", "target:web1"]
         actor: { $ref: "#/components/schemas/Principal" }
         data:

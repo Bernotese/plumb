@@ -12,7 +12,7 @@ test("NICs: add a second VLAN card in the Target form â†’ plan", async ({ page }
   await page.locator("#nic-2-tag").selectOption("30");
   await page.locator("#nic-2-addr").selectOption("dhcp");
   await page.locator("#t-reason").fill("A second VLAN.");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
 });
 
@@ -48,5 +48,5 @@ test("backups: storage state, back up now, delete with confirm, restore wizard â
   await page.locator("#restore-reason").fill("The update broke the database.");
   await page.getByRole("button", { name: "Propose restore" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
-  await expect(page.getByText("Only a person can approve this plan.")).toBeVisible();
+  await expect(page.getByText("Only a person can approve this Plan.")).toBeVisible();
 });

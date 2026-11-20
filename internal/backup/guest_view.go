@@ -282,7 +282,7 @@ func (g *Guests) StorageNote(ctx context.Context) (string, error) {
 	case state == StorageStatedClear:
 		return "the guest backup storage keeps backups in clear (stated at install): a backup holds the whole guest disk, also the agent credential and secret values.", nil
 	case state == StorageClearRefuse:
-		return "the guest backup storage keeps backups in clear and the install did not allow that, so every backup is refused (install.sh --guest-backup-clear, D-406).", nil
+		return "the guest backup storage keeps backups in clear and the install did not allow that, so every backup is refused (install.sh --guest-backup-clear).", nil
 	}
 	return "", nil
 }

@@ -115,7 +115,7 @@
 <h1 id="page-title" tabindex="-1">Adopt a guest</h1>
 <p class="muted">
   Guests that a person put into the Proxmox pool <span class="mono">plumb</span> and that no Target holds.
-  Plumb never moves a guest into the pool. Adopting makes a new Target for the guest by a plan; Plumb
+  Plumb never moves a guest into the pool. Adopting makes a new Target for the guest by a Plan; Plumb
   changes nothing in Proxmox for it.
 </p>
 <ProblemBox error={loadError} />
@@ -263,8 +263,7 @@
         aria-describedby="adopt-name-hint"
       />
       <span class="hint" id="adopt-name-hint"
-        >A Target has the name of its guest (D-392). To use another name, rename the guest in
-        Proxmox first.</span
+        >A Target has the name of its guest. To use another name, rename the guest in Proxmox first.</span
       >
     </div>
     <div class="field">
@@ -273,11 +272,11 @@
     </div>
     <ProblemBox error={submitError} />
     <div class="row">
-      <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
+      <button class="btn primary" type="submit" disabled={busy}>Show the Plan</button>
       <button class="btn" type="button" onclick={() => (chosen = null)}>Cancel</button>
     </div>
     <p class="muted">
-      Only a person can approve the plan. After it, install the agent with the install command on
+      Only a person can approve the Plan. After it, install the agent with the install command on
       the Target's agent page.
     </p>
   </form>

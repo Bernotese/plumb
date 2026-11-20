@@ -169,7 +169,7 @@
         {#if errs["/value"]}<span class="error" id="{id}-new-value-error">{errs["/value"]}</span
           >{/if}
         <span class="hint" id="{id}-new-value-hint"
-          >Plumb stores it encrypted and never shows it again. The target refers to it by name.</span
+          >Plumb stores it encrypted and never shows it again. The Target refers to it by name.</span
         >
       </div>
       <ProblemBox error={createError} fields={["/name", "/value"]} />

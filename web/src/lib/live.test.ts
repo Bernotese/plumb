@@ -28,7 +28,7 @@ function stream() {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 describe("liveSnapshot", () => {
-  it("reloads when the stream opens, so a run that finished in the gap is seen", async () => {
+  it("reloads when the stream opens, so a Run that finished in the gap is seen", async () => {
     // The run finishes after the first snapshot and before the stream is open:
     // run.finished is never delivered. The reload on open sees it.
     const states = ["running", "succeeded"];

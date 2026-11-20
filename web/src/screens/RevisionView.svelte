@@ -141,8 +141,8 @@
   {#if can("rollbackRevision")}<form class="card" onsubmit={rollback} novalidate>
       <h2>Roll back to this revision</h2>
       <p>
-        Plumb makes a plan that puts the documents back to revision {id}. Nothing changes until you
-        approve the plan. Secret values do not roll back.
+        Plumb makes a Plan that puts the documents back to revision {id}. Nothing changes until you
+        approve the Plan. Secret values do not roll back.
       </p>
       <div class="field">
         <label for="rollback-reason">Reason (required)</label>
@@ -158,7 +158,7 @@
           <p id="rollback-error" class="error">Give a reason for the rollback.</p>
         {/if}
         <p id="rollback-hint" class="muted hint">
-          Why do you roll back? The reason goes into the plan.
+          Why do you roll back? The reason goes into the Plan.
         </p>
       </div>
       {#if nothing}

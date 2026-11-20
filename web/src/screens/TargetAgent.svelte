@@ -216,7 +216,7 @@
           <ProblemBox error={repairError} />
           <button class="btn primary" type="submit" disabled={repairBusy}>Propose repair</button>
           <p class="muted">
-            This makes a plan. Only a person can approve it; the agent must still be offline then. A
+            This makes a Plan. Only a person can approve it; the agent must still be offline then. A
             failed repair leaves the guest as it was.
           </p>
         </form>

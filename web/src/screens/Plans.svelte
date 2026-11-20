@@ -111,7 +111,7 @@
   </div>
 </div>
 <p class="muted">
-  A plan is a proposed change. Nothing happens until a person or a token approves it. Drop a pending
+  A Plan is a proposed change. Nothing happens until a person or a token approves it. Drop a pending
   plan that you do not want: it can never be applied after that.
 </p>
 <p class="sr-only" aria-live="polite">{announce}</p>
@@ -121,7 +121,7 @@
   <p class="muted" aria-live="polite">Loading…</p>
 {:else if first && items.length === 0}
   <p class="muted">
-    {filter === "pending" ? "No plan waits for approval." : "No plans to show."}
+    {filter === "pending" ? "No Plan waits for approval." : "No Plans to show."}
   </p>
 {:else if first}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -173,8 +173,8 @@
               {#if p.status !== "pending" || !can("discardPlan")}
                 <span class="muted">–</span>
               {:else if dropping === p.id}
-                <div class="confirm" role="group" aria-label="Drop plan {p.id}?">
-                  <span>Drop plan {p.id}?</span>
+                <div class="confirm" role="group" aria-label="Drop Plan {p.id}?">
+                  <span>Drop Plan {p.id}?</span>
                   <div class="row">
                     <button
                       id="drop-confirm-{p.id}"
@@ -192,7 +192,7 @@
                 <button
                   class="btn"
                   type="button"
-                  aria-label="Drop plan {p.id}"
+                  aria-label="Drop Plan {p.id}"
                   onclick={() => askDrop(p.id)}>Drop</button
                 >
               {/if}

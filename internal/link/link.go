@@ -260,7 +260,7 @@ func hashSecret(s string) string {
 // token is a live secret: give it only to the driver as Bootstrap.
 func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string, expires time.Time, err error) {
 	if target == "" {
-		return "", time.Time{}, errors.New("link: token needs a target")
+		return "", time.Time{}, errors.New("link: token needs a Target")
 	}
 	if err := l.checkTokenParked(ctx, target); err != nil {
 		return "", time.Time{}, err
@@ -290,7 +290,7 @@ func (l *Link) NewEnrollToken(ctx context.Context, target string) (token string,
 // ends with 401.
 func (l *Link) Revoke(ctx context.Context, target string) error {
 	if target == "" {
-		return errors.New("link: revoke needs a target")
+		return errors.New("link: revoke needs a Target")
 	}
 	if err := l.cfg.Store.RevokeAgent(ctx, target); err != nil {
 		return err

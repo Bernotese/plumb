@@ -39,7 +39,7 @@ type AgentHello struct {
 // (re-enrollment, D-038).
 func (s *Store) PutEnrollToken(ctx context.Context, target, hash string, expires time.Time) error {
 	if target == "" || hash == "" {
-		return errors.New("store: enroll token needs a target and a hash")
+		return errors.New("store: enroll token needs a Target and a hash")
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM agent WHERE target = ?`, target); err != nil {
@@ -59,7 +59,7 @@ func (s *Store) PutEnrollToken(ctx context.Context, target, hash string, expires
 // stop working (Target delete, D-211). A target with neither is no error.
 func (s *Store) RevokeAgent(ctx context.Context, target string) error {
 	if target == "" {
-		return errors.New("store: revoke needs a target")
+		return errors.New("store: revoke needs a Target")
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM agent WHERE target = ?`, target); err != nil {

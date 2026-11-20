@@ -241,7 +241,10 @@
         <p id="key-left-behind">
           Left behind ({repairKey.left_behind.length}): {repairKey.left_behind.join(", ")}. These
           guests are no longer Plumb's, but may still hold a repair line of a valid key. Remove the
-          <code>plumb-repair-</code> line in each guest, or make a new key and revoke the old one.
+          <code>plumb-repair-</code> line in each guest that still exists. A guest stays in this list
+          until its agent comes back, or until you make a new repair key and then revoke the previous
+          one: then no line of it lets anybody in. For a guest that is gone, that is the way to end it
+          here.
         </p>
       {/if}
       {#if repairKey.previous}

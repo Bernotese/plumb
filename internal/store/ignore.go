@@ -16,7 +16,7 @@ const ResolutionIgnore = "ignore"
 
 // ErrIssueChanged is returned by IgnoreIssue when the changes of the Issue
 // are not the ones the caller checked: a report came in between.
-var ErrIssueChanged = errors.New("store: the issue changed since it was read")
+var ErrIssueChanged = errors.New("store: the Issue changed since it was read")
 
 // IgnoreIssue resolves an open Issue as "ignore" by a principal and
 // remembers its changes for its target and resource (D-091), in one

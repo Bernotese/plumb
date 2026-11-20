@@ -10,7 +10,7 @@ import { button, el, planOpened, reset, show, text, type, until } from "./testki
 afterEach(reset);
 
 describe("Refresh base", () => {
-  it("proposes a pin-only plan; the plan shows source, key, old and new", async () => {
+  it("proposes a pin-only Plan; the Plan shows source, key, old and new", async () => {
     const api = createMockApi({ signedIn: true });
     show(ImageView, { api, name: "ubuntu-26.04" });
     await until(() => text().includes("Ubuntu cloud images, signed SHA256SUMS"));
@@ -34,7 +34,7 @@ describe("Refresh base", () => {
   it("says unchanged when the pin is current", async () => {
     const api = createMockApi({ signedIn: true, stepDelayMs: 0 });
     const first = await api.refreshImagePin("ubuntu-26.04");
-    if (!("plan" in first)) throw new Error("expected a plan");
+    if (!("plan" in first)) throw new Error("expected a Plan");
     await api.approvePlan(first.plan.id);
     await api.idle();
     show(ImageView, { api, name: "ubuntu-26.04" });
@@ -68,7 +68,7 @@ describe("Image form: verify and the checksum type", () => {
     type("#i-verify", "debian-https");
     expect(text()).toContain("every new pin needs a person");
     type("#i-reason", "Pin from SHA512SUMS.");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     await planOpened();
     const spec = (create.mock.calls[0]?.[0].put?.[0] as { spec: Record<string, unknown> }).spec;
     expect(spec["sha512"]).toBe("a".repeat(128));
@@ -83,11 +83,11 @@ describe("Image form: verify and the checksum type", () => {
     await until(() => document.querySelector("#i-verify"));
     type("#i-verify", "ubuntu-cloud");
     type("#i-reason", "Wrong source.");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     const err = await until(() => document.querySelector("#i-verify-error"));
     expect(err.textContent).toContain("cloud-images.ubuntu.com");
     type("#i-verify", "debian-https");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     await until(() => el("#i-verify-error").textContent?.includes("SHA-512"));
     expect(create).not.toHaveBeenCalled();
   });

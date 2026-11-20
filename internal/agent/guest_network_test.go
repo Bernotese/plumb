@@ -598,8 +598,9 @@ func macOnlyBase(t *testing.T, dev string, gw netip.Addr) string {
 // main address exist (VM job of #249: a DHCP NIC loses them for a moment
 // after netplan apply). It reports the total and the longest gap.
 type gapMeter struct {
-	stop chan struct{}
-	done chan string
+	stop     chan struct{}
+	done     chan string
+	addrLong time.Duration // the longest main-address gap; set before done
 }
 
 func meterNetwork(dev string, gw, main netip.Addr) *gapMeter {
@@ -610,6 +611,7 @@ func meterNetwork(dev string, gw, main netip.Addr) *gapMeter {
 		for {
 			select {
 			case <-m.stop:
+				m.addrLong = addrLong
 				m.done <- fmt.Sprintf("route to the gateway missing %v (longest %v), main address missing %v (longest %v)",
 					routeTotal.Round(time.Millisecond), routeLong.Round(time.Millisecond),
 					addrTotal.Round(time.Millisecond), addrLong.Round(time.Millisecond))

@@ -74,7 +74,7 @@
             "disk": {
               "type": "integer",
               "minimum": 1,
-              "description": "GiB. Grow only (D-291, D-299): a proposal that lowers the value of an existing Target is refused, and a Plan never shrinks a disk (Proxmox cannot). A grow is disruptive (it cannot be undone), passes the disk gate (D-219), and needs a running guest; a VM also needs an agent that runs the grow command. vm: the boot disk scsi0; lxc: the root file system rootfs, at least 2."
+              "description": "GiB. Grow only: a proposal that lowers the value of an existing Target is refused, and a Plan never shrinks a disk (Proxmox cannot). A grow is disruptive (it cannot be undone), passes the disk gate, and needs a running guest; a VM also needs an agent that runs the grow command. vm: the boot disk scsi0; lxc: the root file system rootfs, at least 2."
             },
             "bridge": {
               "type": "string",
@@ -86,7 +86,7 @@
                 "running",
                 "stopped"
               ],
-              "description": "Desired power state (D-291, D-299). Missing: Plumb does not manage it (as before slice 4: a create starts the guest, a stop outside Plumb is no drift). running: a stopped guest is drift; a start is reversible. stopped: a stop is disruptive and needs allow_restart; agent resources of a stopped Target are skipped, its offline agent is no Issue, and a disk grow is refused. A new Target is created, enrolled and applied first, then stopped."
+              "description": "Desired power state. Missing: Plumb does not manage it (a create starts the guest, and a stop outside Plumb is no drift). running: a stopped guest is drift; a start is reversible. stopped: a stop is disruptive and needs allow_restart; agent resources of a stopped Target are skipped, its offline agent is no Issue, and a disk grow is refused. A new Target is created, enrolled and applied first, then stopped."
             },
             "tags": {
               "type": "array",
@@ -96,13 +96,13 @@
                 "type": "string",
                 "pattern": "^[a-z0-9_][a-z0-9_+.-]{0,63}$"
               },
-              "description": "Proxmox tags, the exact set (D-291, D-299). Missing: Plumb does not manage tags; []: no tags. Order does not matter. A change is reversible. Lower case only, so the set compares exactly; a tag that a person adds in Proxmox is drift."
+              "description": "Proxmox tags, the exact set. Missing: Plumb does not manage tags; []: no tags. Order does not matter. A change is reversible. Lower case only, so the set compares exactly; a tag that a person adds in Proxmox is drift."
             },
             "ip": {
               "type": "string",
               "default": "dhcp",
               "pattern": "^(dhcp|(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([0-9]|[12][0-9]|3[0-2]))$",
-              "description": "dhcp or an IPv4 address in CIDR form. Create-only. Known limit (D-192, D-220, D-223), not a validation rule: a stock Ubuntu 26.04 image used directly by a Target can sometimes stay on DHCP until its first restart; use dhcp or an Image built by Plumb."
+              "description": "dhcp or an IPv4 address in CIDR form. Create-only. Known limit, not a validation rule: a stock Ubuntu 26.04 image used directly by a Target can sometimes stay on DHCP until its first restart; use dhcp or an Image built by Plumb."
             },
             "gateway": {
               "type": "string",
@@ -113,7 +113,7 @@
               "type": "string",
               "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
               "default": "plumb",
-              "description": "Bootstrap user that cloud-init creates. Create-only. vm only: an LXC Target has no bootstrap user (refused; use a Block such as deploy-user, D-226)."
+              "description": "Bootstrap user that cloud-init creates. Create-only. vm only: an LXC Target has no bootstrap user (refused; use a Block such as deploy-user)."
             },
             "ssh_keys": {
               "type": "array",
@@ -122,12 +122,12 @@
                 "type": "string",
                 "pattern": "^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\\.com) [A-Za-z0-9+/=]+( [^\\r\\n]*)?$"
               },
-              "description": "Public keys of the bootstrap user, without options. Create-only. lxc: the keys go to root (D-226)."
+              "description": "Public keys of the bootstrap user, without options. Create-only. lxc: the keys go to root."
             },
             "disks": {
               "type": "array",
               "maxItems": 3,
-              "description": "Data disks after the main disk, at most 3 (D-423). Missing: Plumb does not manage data disks (as before). [] or a list: Plumb manages slots 1 to 3 against what the guest has, so a disk in a slot that the list does not name is removed by that Plan (destructive). A slot that holds a volume Plumb did not make is never taken over or freed. Removing the field deletes nothing. Each is a new volume on the disk storage that was named at install; there is no storage field and no bind mount. slot N is the disk's fixed name: vm scsiN with the serial plumb-N (a raw block device; find it with lsblk -o NAME,SERIAL, then format and mount it with a Block or by hand), lxc mpN, a file system that Proxmox mounts at path and that guest backups hold. Grow only, like disk. Adding a disk is reversible on a VM and on a stopped container; a running container is stopped, given the disk and started again (disruptive, needs allow_restart). Removing a disk deletes its data: destructive, a person approves it, and a running guest needs allow_restart. Every disk counts for the disk gate. Not for an adopted Target.",
+              "description": "Data disks after the main disk, at most 3. Missing: Plumb does not manage data disks (as before). [] or a list: Plumb manages slots 1 to 3 against what the guest has, so a disk in a slot that the list does not name is removed by that Plan (destructive). A slot that holds a volume Plumb did not make is never taken over or freed. Removing the field deletes nothing. Each is a new volume on the disk storage that was named at install; there is no storage field and no bind mount. slot N is the disk's fixed name: vm scsiN with the serial plumb-N (a raw block device; find it with lsblk -o NAME,SERIAL, then format and mount it with a Block or by hand), lxc mpN, a file system that Proxmox mounts at path and that guest backups hold. Grow only, like disk. Adding a disk is reversible on a VM and on a stopped container; a running container is stopped, given the disk and started again (disruptive, needs allow_restart). Removing a disk deletes its data: destructive, a person approves it, and a running guest needs allow_restart. Every disk counts for the disk gate. Not for an adopted Target.",
               "items": {
                 "type": "object",
                 "required": [
@@ -226,7 +226,7 @@
         "allow_restart": {
           "type": "boolean",
           "default": false,
-          "description": "Plumb may restart or stop this guest (D-194, D-291). false: no Run stops or restarts the guest while it runs; a change of cores or memory of a VM waits until you stop and start it, a re-enrollment of a running VM is refused, and power: stopped is refused. true: a Run may restart a VM (clean shutdown, hard power-off after 2 minutes, then start) and may stop a VM or an LXC for power: stopped; the Plan shows it before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. cores and memory change live on a container."
+          "description": "Plumb may restart or stop this guest. false: no Run stops or restarts the guest while it runs; a change of cores or memory of a VM waits until you stop and start it, a re-enrollment of a running VM is refused, and power: stopped is refused. true: a Run may restart a VM (clean shutdown, hard power-off after 2 minutes, then start) and may stop a VM or an LXC for power: stopped; the Plan shows it before the approval. It is a rule of Plumb, not a Proxmox setting: never drift, no override. cores and memory change live on a container."
         },
         "backup": {
           "type": "object",
@@ -320,7 +320,7 @@
           "type": "object",
           "required": ["node", "vmid"],
           "additionalProperties": false,
-          "description": "The Target holds a guest that a person made and put into the pool (D-373, D-386). It has no image. node and vmid are create-only: they name the bound guest; another guest needs a new adoption. Its create-only settings and container features are not compared (D-391). Delete of the Target only unbinds the guest unless delete_guest is true (D-388).",
+          "description": "The Target holds a guest that a person made and put into the pool. It has no image. node and vmid are create-only: they name the bound guest; another guest needs a new adoption. Its create-only settings and container features are not compared. Delete of the Target only unbinds the guest unless delete_guest is true.",
           "properties": {
             "node": {
               "type": "string",
@@ -334,7 +334,7 @@
             "delete_guest": {
               "type": "boolean",
               "default": false,
-              "description": "true: deleting this Target deletes the Proxmox guest and its disks. Setting it is human-only and destructive (adopted-guest-delete, D-388)."
+              "description": "true: deleting this Target deletes the Proxmox guest and its disks. Setting it is human-only and destructive (adopted-guest-delete)."
             }
           }
         },

@@ -6,10 +6,10 @@ import { approveAndRun, login } from "./login";
 async function setMotd(page: Page, text: string, reason: string): Promise<void> {
   await page.getByRole("link", { name: "Targets", exact: true }).click();
   await page.getByRole("link", { name: "web1", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Edit target web1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Edit Target web1" })).toBeVisible();
   await page.getByRole("textbox", { name: "Text", exact: true }).fill(text);
   await page.getByRole("textbox", { name: "Reason", exact: true }).fill(reason);
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await approveAndRun(page);
 }
@@ -21,7 +21,7 @@ async function revisionOf(page: Page, reason: string): Promise<number> {
   return Number(/\d+/.exec((await link.textContent()) ?? "")?.[0]);
 }
 
-test("history: diff of two changes, rollback through a plan", async ({ page }) => {
+test("history: diff of two changes, rollback through a Plan", async ({ page }) => {
   await login(page);
   await setMotd(page, "e2e history one", "e2e: motd one");
   await setMotd(page, "e2e history two", "e2e: motd two");
