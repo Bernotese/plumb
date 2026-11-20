@@ -15,8 +15,8 @@ The user asked for one cleanup and check before the release (order file `~/works
 | 2 docs: keep or archive      | T-272 | pl-reviewer          | done (#414): 301 task files moved to `docs/archive/tasks/`, 36 unused pictures deleted                                                                                                                                                                  |
 | 3 context files short        | T-273 | pl-lead, pl-reviewer | done (#416; the tables of changed and replaced decisions are in `docs/DECISIONS-index.md`)                                                                                                                                                              |
 | 4 dependencies and dead code | T-271 | pl-backend           | done (#411 dead Go code, #415 the installer end-lines test; modules, packages, scripts: nothing to remove)                                                                                                                                              |
-| 5 English and one vocabulary | T-274 | pl-backend           | in work (#413 web texts, #417 Go texts approved; scripts, tests and docs follow)                                                                                                                                                                        |
-| 6 README final               | T-275 | pl-backend           | after 5                                                                                                                                                                                                                                                 |
+| 5 English and one vocabulary | T-274 | pl-backend           | done (#413 web texts, #417 Go texts, #420 openapi and ARCHITECTURE terms)                                                                                                                                                                               |
+| 6 README final               | T-275 | pl-backend           | in work (819 → about 550 lines + `docs/guide/`; new pictures)                                                                                                                                                                                           |
 
 Then: release candidate **RC5** and a host run on `pve-dev` (the upgrade RC4 → RC5, the checks the changes touch, and a compact pass of what was never run on the host: `docs/plans/finished-check.md` section 2). Then one short message to the user with the release questions.
 
@@ -36,7 +36,7 @@ The last tested candidate is **RC4 = `c8d5c15`** (host logs `docs/tasks/T-263.lo
 ## Open technical points
 
 - **`TestGuestFirewall` (O1):** failed twice (2026-11-14, 2026-11-16); the cause is not found. A probe loop runs in every guest CI job (4000 of 4000 rounds clean on 2026-11-19). Read the dump at the next failure; never just rerun.
-- **`TestGuestNetworkNIC`:** failed once (PR #411, 2026-11-19): one read of the main address right after `netplan apply`. Card T-276 (with the two guest tests that hang on a slow outside mirror: PR #416 and #417 each had one red job for it).
+- **Guest tests and the outside network:** fixed by T-276 (#419): no test waits for a package mirror; the NIC test measures the main address from before the apply (24 ms gap, a refreshed DHCP lease with the same address: D-443).
 - **Proven by tests only, never on the host:** the list is `docs/plans/finished-check.md` section 2 (the web UI as a whole, rollback, import, the one-time-password unlock of other users after a restore, PBS, …). The RC5 host run takes what it can.
 - **Test host `pve-dev`:** only LXC 100 (the controller on RC4), all stores empty, 11 ACL lines, the isolated bridge `vmbr9` still there (its undo waits for U12).
 
