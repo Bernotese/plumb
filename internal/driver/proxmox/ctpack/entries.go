@@ -23,11 +23,11 @@ const firstBootScript = `#!/bin/sh
 # Install the Plumb agent from the controller. Idempotent: it does
 # nothing when the agent is installed and runs. Only the pinned Plumb CA
 # is trusted: --capath/--ca-directory replace the system CA store with a
-# directory that holds no hashed CA names (review S1 of T-076).
+# directory that holds no hashed CA names.
 set -eu
 # The binary decides, not the unit alone: at boot plumb-agent.service is
-# "active" for a moment after its fork also when its binary is missing
-# (T-278), and a skip then left the guest without an agent.
+# "active" for a moment after its fork also when its binary is missing,
+# and a skip then left the guest without an agent.
 if [ -x /usr/local/bin/plumb-agent ] && systemctl is-active --quiet plumb-agent.service; then exit 0; fi
 url='@URL@/agent/v1/binary'
 ca=/etc/plumb-agent/ca.pem
@@ -52,7 +52,7 @@ until fetch; do
   sleep 10
 done
 # A temp name and a rename: a crash or a full disk never leaves a half
-# binary under the real name (review S4 of T-038).
+# binary under the real name.
 install -m 0755 "$tmp" "$new"
 mv -f "$new" /usr/local/bin/plumb-agent
 systemctl daemon-reload

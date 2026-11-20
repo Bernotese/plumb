@@ -627,11 +627,11 @@ $(sed 's/^/      /' "$ca")
       # Install the Plumb agent from the controller. Idempotent: it does
       # nothing when the agent is installed and runs. Only the pinned Plumb CA
       # is trusted: --capath/--ca-directory replace the system CA store with a
-      # directory that holds no hashed CA names (review S1 of T-076).
+      # directory that holds no hashed CA names.
       set -eu
       # The binary decides, not the unit alone: at boot plumb-agent.service is
-      # "active" for a moment after its fork also when its binary is missing
-      # (T-278), and a skip then left the guest without an agent.
+      # "active" for a moment after its fork also when its binary is missing,
+      # and a skip then left the guest without an agent.
       if [ -x /usr/local/bin/plumb-agent ] && systemctl is-active --quiet plumb-agent.service; then exit 0; fi
       url='$url/agent/v1/binary'
       ca=/etc/plumb-agent/ca.pem
@@ -656,7 +656,7 @@ $(sed 's/^/      /' "$ca")
         sleep 10
       done
       # A temp name and a rename: a crash or a full disk never leaves a half
-      # binary under the real name (review S4 of T-038).
+      # binary under the real name.
       install -m 0755 "\$tmp" "\$new"
       mv -f "\$new" /usr/local/bin/plumb-agent
       systemctl daemon-reload
@@ -2346,7 +2346,7 @@ restore_in_lxc() {
 copy_script() {
 	cat <<'COPY_EOF'
 #!/usr/bin/env bash
-# plumb-backup-copy – made by Plumb's install.sh (D-289, D-304, D-312). Do not edit.
+# plumb-backup-copy – made by Plumb's install.sh. Do not edit.
 # Copies the newest encrypted Plumb backup out of the Plumb LXC to a
 # storage of this host. It runs as root on the host. Everything that comes
 # from the LXC is data that a compromised user "plumb" may control: the
@@ -2395,7 +2395,7 @@ tmpfiles=()
 trap 'rm -f -- "${tmpfiles[@]}"' EXIT
 
 # status RESULT MESSAGE pushes status.json into the LXC (0644 root, in a
-# root-owned directory: user plumb cannot plant a link there, D-289 N2).
+# root-owned directory: user plumb cannot plant a link there).
 status() {
 	local result=$1 msg=$2 f
 	msg=${msg//[^A-Za-z0-9 .,:;()\/_+=-]/ }
@@ -2425,7 +2425,7 @@ read_lxc() {
 }
 
 # 1. Where the copy goes. A storage must be active, and a share mounted:
-# else the copy would fill the root disk of the host (D-289 N3).
+# else the copy would fill the root disk of the host.
 if [[ -z $to ]]; then
 	pvesm status --storage "$storage" 2>/dev/null | awk -v s="$storage" '$1 == s && $3 == "active" { ok = 1 } END { exit !ok }' ||
 		fail "storage $storage is not active"
@@ -2464,7 +2464,7 @@ if ! [[ $name =~ $re ]]; then
 	name=""
 	fail "the backup pointer names no valid backup file"
 fi
-# The host builds the name from the checked parts (D-289 N1).
+# The host builds the name from the checked parts.
 ts=${BASH_REMATCH[1]}
 final="plumb-${ts}${BASH_REMATCH[2]}.pbk"
 # A time far ahead would name a copy that no later backup replaces
@@ -2487,7 +2487,7 @@ else
 	[[ $(stat -c %s "$tmp") == "$size" ]] || fail "$name has another size than the pointer says"
 	printf 'PLUMBBK\0' | cmp -s -n 8 - "$tmp" || fail "$name is not a Plumb backup file"
 	# This proves only the transfer: pointer and file come from the same
-	# LXC. The GCM tags prove the content at the restore (D-288).
+	# LXC. The GCM tags prove the content at the restore.
 	[[ $(sha256sum <"$tmp") == "$sha  -" ]] || fail "$name has another sha256 than the pointer says"
 	chmod 0600 "$tmp"
 	touch -- "$tmp" # the retention orders by this time of the host
