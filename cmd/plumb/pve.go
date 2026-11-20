@@ -37,11 +37,6 @@ const secretVar = "PLUMB_PVE_SECRET"
 // tests; zero is the driver default (60 s, 5 s).
 var pveStartWait, pveStartPoll time.Duration
 
-// pveVars are the settings that install.sh writes (push_env), in that order.
-var pveVars = []string{"PLUMB_PVE_URL", "PLUMB_PVE_TOKEN_ID", secretVar, "PLUMB_PVE_NODE", "PLUMB_PVE_POOL",
-	"PLUMB_PVE_DISK", "PLUMB_PVE_IMAGES", "PLUMB_PVE_SNIPPETS", "PLUMB_PVE_SNIPPET", "PLUMB_PVE_BRIDGE",
-	"PLUMB_PVE_VMID_RANGE", "PLUMB_PVE_NAMESERVER", "PLUMB_PVE_SEARCHDOMAIN"}
-
 var (
 	reName    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	reBridge  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,14}$`)

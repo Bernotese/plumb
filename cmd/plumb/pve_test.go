@@ -545,3 +545,8 @@ func TestServeNoAnswer(t *testing.T) {
 	t.Cleanup(func() { pveStartWait, pveStartPoll = 0, 0 })
 	runFailing(t, 1, "cannot reach Proxmox at "+url)
 }
+
+// pveVars are the settings that install.sh writes (push_env), in that order.
+var pveVars = []string{"PLUMB_PVE_URL", "PLUMB_PVE_TOKEN_ID", secretVar, "PLUMB_PVE_NODE", "PLUMB_PVE_POOL",
+	"PLUMB_PVE_DISK", "PLUMB_PVE_IMAGES", "PLUMB_PVE_SNIPPETS", "PLUMB_PVE_SNIPPET", "PLUMB_PVE_BRIDGE",
+	"PLUMB_PVE_VMID_RANGE", "PLUMB_PVE_NAMESERVER", "PLUMB_PVE_SEARCHDOMAIN"}

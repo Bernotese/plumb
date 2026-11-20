@@ -182,13 +182,6 @@ func (s stateDir) credential() (string, error) {
 	return id.Credential, err
 }
 
-// saveCredential stores the credential of a normal enrollment: the build
-// mark is cleared, the watch mark stays.
-func (s stateDir) saveCredential(c string) error {
-	_, err := s.enrolled(c, false)
-	return err
-}
-
 // enrolled stores the credential of an enrollment and returns the stored
 // identity. build is taken only from an empty state: no credential file
 // (never enrolled, never a watch) and no desired list (review S1 of T-058).
