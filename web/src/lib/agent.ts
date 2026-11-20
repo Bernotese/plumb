@@ -33,7 +33,7 @@ const STATES: Record<AgentUpdate, AgentState> = {
   required: {
     label: "Update required",
     tone: "danger",
-    text: "The desired state needs things this agent does not know. Plumb refuses every plan for this Target until the agent is updated.",
+    text: "The desired state needs things this agent does not know. Plumb refuses every Plan for this Target until the agent is updated.",
     canUpdate: true,
   },
   manual: {

@@ -22,7 +22,7 @@ function must<T>(v: T | null | undefined): T {
 }
 
 describe("delete by a proposal", () => {
-  it("deletes an unused Block through a plan, never directly", async () => {
+  it("deletes an unused Block through a Plan, never directly", async () => {
     const api = createMockApi({ signedIn: true });
     const create = vi.spyOn(api, "createPlan");
     show(BlockView, { api, name: "nginx-site" });
@@ -53,7 +53,7 @@ describe("delete by a proposal", () => {
     expect(button("Delete block…")).toBeUndefined();
   });
 
-  it("deletes a Target: the plan deletes the guest with destructive risk", async () => {
+  it("deletes a Target: the Plan deletes the guest with destructive risk", async () => {
     const api = createMockApi({ signedIn: true });
     show(TargetForm, { api, name: "cache1" });
     (await until(() => button("Delete target…"))).click();
@@ -104,14 +104,14 @@ describe("delete by a proposal", () => {
 });
 
 describe("plan list", () => {
-  it("lists pending plans and drops one after a confirm", async () => {
+  it("lists pending Plans and drops one after a confirm", async () => {
     const api = createMockApi({ signedIn: true });
     const discard = vi.spyOn(api, "discardPlan");
     show(Plans, { api });
     await until(() => rows().length);
     expect(rows().every((r) => r.includes("pending"))).toBe(true);
     expect(rows().some((r) => r.startsWith("Plan 14"))).toBe(true);
-    must(button("Drop plan 14")).click();
+    must(button("Drop Plan 14")).click();
     const confirm = await until(() =>
       document.querySelector<HTMLButtonElement>("#drop-confirm-14"),
     );
@@ -137,10 +137,10 @@ describe("plan list", () => {
     await until(() => rows().some((r) => r.startsWith("Plan 11")));
     type("#plan-filter", "stale");
     await until(() => rows().length === 1 && rows()[0]?.startsWith("Plan 11"));
-    expect(button("Drop plan 11")).toBeUndefined();
+    expect(button("Drop Plan 11")).toBeUndefined();
   });
 
-  it("drop of a plan for an issue opens the issue again (mock)", async () => {
+  it("drop of a Plan for an Issue opens the Issue again (mock)", async () => {
     const api = createMockApi({ signedIn: true });
     await api.discardPlan(15);
     expect((await api.getIssue(7)).status).toBe("open");
@@ -149,16 +149,16 @@ describe("plan list", () => {
 });
 
 describe("plan page drop", () => {
-  it("drops the plan after a confirm and shows it stale", async () => {
+  it("drops the Plan after a confirm and shows it stale", async () => {
     const api = createMockApi({ signedIn: true });
     const discard = vi.spyOn(api, "discardPlan");
     show(PlanView, { api, id: 14 });
-    (await until(() => button("Drop plan"))).click();
+    (await until(() => button("Drop Plan"))).click();
     const confirm = await until(() => document.querySelector<HTMLButtonElement>("#drop-confirm"));
     await until(() => document.activeElement === confirm);
     expect(discard).not.toHaveBeenCalled();
     confirm.click();
-    await until(() => text().includes("This plan is stale."));
+    await until(() => text().includes("This Plan is stale."));
     expect(discard).toHaveBeenCalledWith(14);
     expect(button("Approve and apply")).toBeUndefined();
     expect(el<HTMLAnchorElement>(".banner.warn a").getAttribute("href")).toBe("#/plans");
@@ -166,7 +166,7 @@ describe("plan page drop", () => {
 });
 
 describe("run list", () => {
-  it("lists runs newest first with plan and status", async () => {
+  it("lists runs newest first with Plan and status", async () => {
     const api = createMockApi({ signedIn: true });
     show(Runs, { api });
     await until(() => rows().length);
@@ -196,7 +196,7 @@ describe("issue comments", () => {
 });
 
 describe("issue filter by target", () => {
-  it("lists only the issues of one target and links from the target list", async () => {
+  it("lists only the Issues of one Target and links from the Target list", async () => {
     const api = createMockApi({ signedIn: true });
     const list = vi.spyOn(api, "listIssues");
     show(Issues, { api, target: "db1" });
@@ -211,7 +211,7 @@ describe("issue filter by target", () => {
     reset();
     show(Targets, { api });
     const link = await until(() =>
-      [...document.querySelectorAll("a")].find((a) => /open issue/.test(a.textContent ?? "")),
+      [...document.querySelectorAll("a")].find((a) => /open Issue/.test(a.textContent ?? "")),
     );
     expect(link.getAttribute("href")).toMatch(/^#\/issues\?target=/);
   });

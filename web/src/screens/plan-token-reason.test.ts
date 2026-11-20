@@ -28,7 +28,7 @@ describe("the reason of a token-made Plan (#272 F4)", () => {
       "Reason, written by API token tok_claude",
     );
     expect(section.querySelector("blockquote")?.textContent).toBe(reason);
-    expect(text(section)).toContain("It does not change what the plan does");
+    expect(text(section)).toContain("It does not change what the Plan does");
     // The top card does not show the text, only where it is.
     const facts = el(".facts");
     expect(text(facts)).not.toContain(reason);

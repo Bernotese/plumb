@@ -17,7 +17,7 @@ async function openIssue(page: Page, resource: string): Promise<void> {
   await expect(page.getByText("Status: open")).toBeVisible();
 }
 
-test("ignore once: confirm, resolved without a plan", async ({ page }) => {
+test("ignore once: confirm, resolved without a Plan", async ({ page }) => {
   await login(page);
   await openIssue(page, "package:nginx");
   await page.getByLabel("Reason (optional)").fill("e2e: removed on purpose");
@@ -31,7 +31,7 @@ test("ignore once: confirm, resolved without a plan", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Ignore once" })).toHaveCount(0);
 });
 
-test("ignore by rule: human plan, rules list, ignored drift in the next plan", async ({ page }) => {
+test("ignore by rule: human plan, rules list, ignored drift in the next Plan", async ({ page }) => {
   const site = "file:/etc/nginx/sites-enabled/default";
   await login(page);
   await openIssue(page, site);
@@ -40,7 +40,7 @@ test("ignore by rule: human plan, rules list, ignored drift in the next plan", a
   await page.getByRole("button", { name: "Make ignore-rule plan" }).click();
 
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
-  await expect(page.getByText("Ignore rule for an issue")).toBeVisible();
+  await expect(page.getByText("Ignore rule for an Issue")).toBeVisible();
   await expect(page.getByText("It adds, changes or removes an ignore rule.")).toBeVisible();
   await approveAndRun(page);
 
@@ -59,10 +59,10 @@ test("ignore by rule: human plan, rules list, ignored drift in the next plan", a
   // The next Plan of web1 marks the ignored drift; it overwrites it.
   await page.getByRole("link", { name: "Targets", exact: true }).click();
   await page.getByRole("link", { name: "web1", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Edit target web1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Edit Target web1" })).toBeVisible();
   await page.getByRole("textbox", { name: "Text", exact: true }).fill("e2e: web1 after the rule");
-  await page.getByRole("textbox", { name: "Reason", exact: true }).fill("e2e: next plan");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("textbox", { name: "Reason", exact: true }).fill("e2e: next Plan");
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   const siteCard = page.getByRole("region", { name: new RegExp(site.replace(/[/.]/g, "\\$&")) });
   await expect(siteCard).toContainText("A rule ignores this drift; this apply overwrites it.");

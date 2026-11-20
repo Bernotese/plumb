@@ -210,7 +210,7 @@
       >
     </p>
     <dl class="facts">
-      <dt>Last run</dt>
+      <dt>Last Run</dt>
       <dd id="backup-last">
         {#if list.last_run}
           <Badge tone={RESULT[list.last_run.result] ?? "muted"} label={list.last_run.result} />

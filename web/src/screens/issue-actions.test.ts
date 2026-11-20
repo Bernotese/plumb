@@ -159,7 +159,7 @@ describe("Issue actions from the server", () => {
     const ignore = vi.spyOn(api, "ignoreOnce");
     button("Ignore once")?.click();
     await until(() => document.querySelector("#ignore-q"));
-    expect(text(el("#ignore-q"))).toContain("End the issue of the failed restore?");
+    expect(text(el("#ignore-q"))).toContain("End the Issue of the failed restore?");
     expect(text(el("#ignore-q"))).toContain(NOTE);
     expect(ignore).not.toHaveBeenCalled();
     reset();

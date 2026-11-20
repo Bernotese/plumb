@@ -140,7 +140,7 @@
   let yamlParsed = $state.raw<Parsed | null>(null);
   let modeError = $state("");
   const YAML_HINT =
-    "The whole Image document. Saving makes the same plan as the form; the server checks the document.";
+    "The whole Image document. Saving makes the same Plan as the form; the server checks the document.";
 
   /** A Block with a secret parameter cannot go into an Image (D-202). */
   const hasSecret = (b: BlockView) =>
@@ -680,7 +680,7 @@
           <span class="hint" id="i-verify-hint"
             >{pickedSource
               ? `${pickedSource.hint} "Refresh base" on the image page proposes the new pin; a scheduled build does it first.`
-              : "With a source, Plumb can fetch the newest checksum for this address and propose it as a plan. The keys are built into Plumb."}</span
+              : "With a source, Plumb can fetch the newest checksum for this address and propose it as a Plan. The keys are built into Plumb."}</span
           >
           {#if fieldError("verify", "/verify")}<span class="error" id="i-verify-error"
               >{fieldError("verify", "/verify")}</span
@@ -724,7 +724,7 @@
         {/if}
         {#if wasBuilt && !build}
           <p class="banner warn" id="i-unbuild">
-            Without a build, the plan removes every built version of this image. Guests made from
+            Without a build, the Plan removes every built version of this image. Guests made from
             them keep running.
           </p>
         {/if}
@@ -933,7 +933,7 @@
     <ProblemBox error={submitError} />
     <div class="row">
       {#if can("createPlan")}<button class="btn primary" type="submit" disabled={busy}
-          >Show the plan</button
+          >Show the Plan</button
         >{/if}
       <a
         class="btn"
@@ -943,8 +943,8 @@
     </div>
     <p class="muted">
       {kind === "vm"
-        ? "Nothing changes until you approve the plan. A new or changed recipe builds a new version in the Run of that plan."
-        : "Nothing changes until you approve the plan."}
+        ? "Nothing changes until you approve the Plan. A new or changed recipe builds a new version in the Run of that Plan."
+        : "Nothing changes until you approve the Plan."}
     </p>
   </form>
 {:else if !loadError}
