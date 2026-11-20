@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // A text that a person sees names no decision, task or ARCHITECTURE number
-// (D-123, T-123, § 5): those are for the team, not for the user. Code
+// (D-123, T-123, § 5) and no slice ("slice 3"): those are for the team, not for the user. Code
 // comments and test names keep them. The check reads every .svelte and .ts
 // file of the UI (also the mock, whose texts the demo shows), drops the
 // comments and fails on a number that is left in a template or a string.
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
-const NUMBER = /\b[DT]-\d{2,4}\b|§ ?\d+/g;
+const NUMBER = /\b[DT]-\d{2,4}\b|§ ?\d+|\b[Ss]lice \d+\b/g;
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {

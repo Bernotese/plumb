@@ -30,7 +30,7 @@ const (
 	dracutConf   = "/etc/dracut.conf.d/90-plumb-no-network.conf"
 	// D-192: no network setup in the initramfs, so a static address of a
 	// clone works at the first boot.
-	dracutConfText = "# Plumb (D-192): no network setup in the initramfs.\nomit_dracutmodules+=\" network systemd-networkd \"\n"
+	dracutConfText = "# Plumb: no network setup in the initramfs.\nomit_dracutmodules+=\" network systemd-networkd \"\n"
 	cloudInitLog   = "/var/log/cloud-init-output.log"
 )
 

@@ -2915,7 +2915,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "Validation failed",
           422,
           u === "manual"
-            ? `The agent of ${name} is older than slice 3: run the one-time install in the guest.`
+            ? `The agent of ${name} comes from a Plumb version from before agents could update themselves: run the one-time install in the guest.`
             : `The agent of ${name} has not said hello yet.`,
         );
       }

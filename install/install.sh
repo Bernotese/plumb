@@ -2007,10 +2007,10 @@ copy_conf() {
 # copy_units prints the service or the timer of the copy.
 copy_unit() {
 	if [[ $1 == service ]]; then
-		printf '%s\n' "# Made by Plumb's install.sh (D-289). Do not edit." "[Unit]" "Description=Copy the newest Plumb backup off the Plumb LXC" \
+		printf '%s\n' "# Made by Plumb's install.sh. Do not edit." "[Unit]" "Description=Copy the newest Plumb backup off the Plumb LXC" \
 			"After=pve-cluster.service" "" "[Service]" "Type=oneshot" "ExecStart=$SBIN_DIR/$COPY_NAME --conf $COPY_CONF"
 	else
-		printf '%s\n' "# Made by Plumb's install.sh (D-289). Do not edit." "[Unit]" "Description=Daily copy of the newest Plumb backup" "" \
+		printf '%s\n' "# Made by Plumb's install.sh. Do not edit." "[Unit]" "Description=Daily copy of the newest Plumb backup" "" \
 			"[Timer]" "OnCalendar=*-*-* $BACKUP_COPY_TIME:00 UTC" "Persistent=true" "" "[Install]" "WantedBy=timers.target"
 	fi
 }

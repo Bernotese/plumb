@@ -459,7 +459,7 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 			Msg: "the agent of this Target never said hello; start the guest and wait for its agent"}
 	case AgentUpdateManual:
 		return store.Plan{}, &ProposalError{Target: target, Err: ErrAgentCannotUpdate,
-			Msg: "this agent is older than slice 3 and cannot update itself; run the one-time install in the guest"}
+			Msg: "this agent comes from a Plumb version from before agents could update themselves; run the one-time install in the guest"}
 	case AgentUpdateNone:
 		return store.Plan{}, fmt.Errorf("plan: the agent of %s runs the binary of this controller: %w", target, ErrAgentNoUpdate)
 	}
