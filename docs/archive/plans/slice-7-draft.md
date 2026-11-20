@@ -1,7 +1,7 @@
 # Slice 7 draft – "More of Proxmox" (prep, D-326 (3))
 
 Status: **draft for the slice 7 plan card**. Not a decision, and no code. Written by pl-architect on 2026-11-14 from `main` after #303.
-Inputs: ROADMAP rows 14, 15 · D-292, D-379 (U3), D-380 (U4), D-081 · host facts T-139 §1, §3 (`origin/pl-backend/T-139-prep-host-facts:docs/plans/host-facts.md`) · risks T-140 §6 (`origin/pl-reviewer/T-140-risk-draft:docs/plans/risks.md`) · `install/install.sh:360-386` (roles and ACL paths).
+Inputs: ROADMAP rows 14, 15 · D-292, D-379 (U3), D-380 (U4), D-081 · host facts T-139 §1, §3 (`origin/pl-backend/T-139-prep-host-facts:docs/archive/plans/host-facts.md`) · risks T-140 §6 (`origin/pl-reviewer/T-140-risk-draft:docs/archive/plans/risks.md`) · `install/install.sh:360-386` (roles and ACL paths).
 Marks: **USER** = the user must answer or act (D-326 (4)). **FACT** = check on `pve-dev` (read-only call) or in the PVE source before the contract.
 
 ## 0. What the user already decided
