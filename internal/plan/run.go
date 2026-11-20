@@ -727,7 +727,7 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 
 	case "adopt":
 		if tp.Adopt == nil {
-			return res, errors.New("adopt without its checked request (D-386)")
+			return res, errors.New("adopt without its checked request")
 		}
 		if err := e.adoptBind(ctx, *tp.Adopt); err != nil {
 			return res, err

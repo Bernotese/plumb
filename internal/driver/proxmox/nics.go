@@ -58,7 +58,7 @@ func (e *NetworkNotAllowedError) Error() string {
 			flag = "--extra-bridge " + e.Bridge + " " + flag
 		}
 	}
-	return fmt.Sprintf("proxmox: net%d: %s is not named by the install; the token has no SDN.Use there. Run install.sh again as a repair run with every --extra-bridge and --extra-vlan that the install has now, plus %s (D-401)", e.NIC, what, flag)
+	return fmt.Sprintf("proxmox: net%d: %s is not named by the install; the token has no SDN.Use there. Run install.sh again as a repair run with every --extra-bridge and --extra-vlan that the install has now, plus %s", e.NIC, what, flag)
 }
 
 var reNICMAC = regexp.MustCompile(`^02(:[0-9a-f]{2}){5}$`)
@@ -80,17 +80,17 @@ func (d *Driver) checkNICNet(idx int, n driver.NIC) error {
 // checkNIC checks NIC idx (1 … MaxNICs) before it is written.
 func (d *Driver) checkNIC(idx int, n driver.NIC, ct bool) error {
 	if idx < 1 || idx > driver.MaxNICs {
-		return fmt.Errorf("proxmox: NIC %d: at most %d more NICs (D-399)", idx, driver.MaxNICs)
+		return fmt.Errorf("proxmox: NIC %d: at most %d more NICs", idx, driver.MaxNICs)
 	}
 	if err := d.checkNICNet(idx, n); err != nil {
 		return err
 	}
 	if !reNICMAC.MatchString(n.MAC) {
-		return fmt.Errorf("proxmox: net%d: MAC %q is not Plumb's (02:…, D-400)", idx, n.MAC)
+		return fmt.Errorf("proxmox: net%d: MAC %q is not Plumb's (02:…)", idx, n.MAC)
 	}
 	if !ct {
 		if n.IP != "" || n.Gateway != "" {
-			return fmt.Errorf("proxmox: net%d: a VM gets the address of a more NIC through the agent, not through Proxmox (D-403)", idx)
+			return fmt.Errorf("proxmox: net%d: a VM gets the address of a more NIC through the agent, not through Proxmox", idx)
 		}
 		return nil
 	}
@@ -110,7 +110,7 @@ func (d *Driver) checkNIC(idx int, n driver.NIC, ct bool) error {
 // checkNICs checks the NICs of a new guest: no gap, at most MaxNICs.
 func (d *Driver) checkNICs(nics []driver.NIC, ct bool) error {
 	if len(nics) > driver.MaxNICs {
-		return fmt.Errorf("proxmox: %d more NICs; at most %d (D-399)", len(nics), driver.MaxNICs)
+		return fmt.Errorf("proxmox: %d more NICs; at most %d", len(nics), driver.MaxNICs)
 	}
 	for i, n := range nics {
 		if err := d.checkNIC(i+1, n, ct); err != nil {
@@ -260,7 +260,7 @@ func checkUpdateNICs(params url.Values) error {
 			continue
 		}
 		if len(v) != 1 || !reNICMAC.MatchString(strings.ToLower(net0MAC(v[0]))) {
-			return fmt.Errorf("proxmox: %s must have Plumb's MAC (D-400)", k)
+			return fmt.Errorf("proxmox: %s must have Plumb's MAC", k)
 		}
 	}
 	return nil

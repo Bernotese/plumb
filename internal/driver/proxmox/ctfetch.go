@@ -176,11 +176,11 @@ func (d *Driver) templateFiles(ctx context.Context, image string) ([]driver.Imag
 // reuse of an existing file (the retry of review S10).
 func (d *Driver) fetchCT(ctx context.Context, spec driver.ImageSpec, force bool) (driver.ImageRef, error) {
 	if !sha512Hex.MatchString(spec.SHA512) || spec.SHA256 != "" {
-		return "", errors.New("proxmox: an lxc image needs a SHA-512 and no SHA-256 (D-224)")
+		return "", errors.New("proxmox: an lxc image needs a SHA-512 and no SHA-256")
 	}
 	u, err := url.Parse(spec.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
-		return "", errors.New("proxmox: the template URL must be http:// or https:// without user info (D-237)")
+		return "", errors.New("proxmox: the template URL must be http:// or https:// without user info")
 	}
 	if err := d.TemplateContentError(); err != nil {
 		return "", err
@@ -300,7 +300,7 @@ func (d *Driver) buildAndUpload(ctx context.Context, src CTSource, rawURL string
 		case w.err != nil:
 			return w.err
 		case errors.Is(err, ctpack.ErrPin):
-			return fmt.Errorf("proxmox: %w; check the sha512 of the Image against the signed Proxmox index (D-224)", err)
+			return fmt.Errorf("proxmox: %w; check the sha512 of the Image against the signed Proxmox index", err)
 		case errors.As(err, &pe):
 			return fmt.Errorf("proxmox: the template is refused: %w", err)
 		}
@@ -402,7 +402,7 @@ func (d *Driver) downloadClient() *http.Client {
 			}
 			ip := net.ParseIP(host)
 			if ip == nil || !ok(ip) {
-				return fmt.Errorf("the address %s is not allowed for a template download (loopback, link-local, multicast; D-237)", host)
+				return fmt.Errorf("the address %s is not allowed for a template download (loopback, link-local, multicast)", host)
 			}
 			return nil
 		},
@@ -417,7 +417,7 @@ func (d *Driver) downloadClient() *http.Client {
 			DisableCompression:    true, // the bytes on disk are the bytes of the pin
 		},
 		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
-			return fmt.Errorf("the template URL redirects to %s; put the final URL into the Image (D-237)", req.URL.Host)
+			return fmt.Errorf("the template URL redirects to %s; put the final URL into the Image", req.URL.Host)
 		},
 	}
 }

@@ -61,8 +61,8 @@ func parseServe(args []string, stderr io.Writer) (serveFlags, error) {
 	var f serveFlags
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.BoolVar(&f.dev, "dev", false, "development mode: fake driver, simulated agents, seeded data, plain HTTP (D-039)")
-	fs.BoolVar(&f.devDemo, "dev-demo", false, "with --dev: demo data and a one-time dev login link for screenshots (D-080)")
+	fs.BoolVar(&f.dev, "dev", false, "development mode: fake driver, simulated agents, seeded data, plain HTTP")
+	fs.BoolVar(&f.devDemo, "dev-demo", false, "with --dev: demo data and a one-time dev login link for screenshots")
 	fs.BoolVar(&f.plainHTTP, "plain-http", false, "serve the API without TLS (only with --dev)")
 	fs.StringVar(&f.driver, "driver", "", "hypervisor driver: proxmox, or fake (only with --dev); default proxmox, with --dev fake")
 	fs.StringVar(&f.data, "data", "", "data directory (default /var/lib/plumb; with --dev a new temp directory)")

@@ -134,12 +134,12 @@ Options:
   --plumb-binary FILE    the plumb binary (make build → bin/plumb)
   --disk-storage ID      storage for guest disks and the LXC (default local-lvm)
   --image-storage ID     storage for downloaded images; default: the new dir storage plumb-images.
-                         Another storage must have exactly the content "import" or "import,vztmpl"
-                         (D-081, D-229); install.sh does not change it
+                         Another storage must have exactly the content "import" or "import,vztmpl";
+                         install.sh does not change it
   --template-storage ID  storage for the LXC template (default local)
   --bridge NAME          bridge for guests and the LXC (default vmbr0)
   --extra-bridge NAME    one more bridge for untagged guest NICs (repeat it for more); one SDN.Use
-                         line on /sdn/zones/localnetwork/NAME (D-401)
+                         line on /sdn/zones/localnetwork/NAME
   --extra-vlan NAME:TAG[,TAG…]
                          VLAN tags on a VLAN-aware bridge for guest NICs (repeat it for more); one
                          SDN.Use line per tag on /sdn/zones/localnetwork/NAME/TAG, never the whole bridge.
@@ -147,15 +147,15 @@ Options:
                          --extra-bridge and --extra-vlan of the install again, or its line is removed
   --guest-backup-storage ID
                          storage for guest backups (vzdump, content "backup"): VM.Backup on the pool and
-                         Datastore.AllocateSpace + Audit on ID (D-405). With these rights the token itself can
+                         Datastore.AllocateSpace + Audit on ID. With these rights the token itself can
                          back up, restore over and delete the backups of every pool guest at the Proxmox API
   --guest-backup-clear   allow guest backups on a storage without encryption (not a PBS with a client key):
-                         a backup holds the whole guest disk with its secrets, in clear (D-406)
+                         a backup holds the whole guest disk with its secrets, in clear
   --lxc-id N             VMID of the Plumb LXC (default: next free id)
   --lxc-ip CIDR|dhcp     address of the LXC (default dhcp; a static address is recommended:
-                         the vendor snippet holds it, D-179)
+                         the vendor snippet holds it)
   --lxc-gw IP            gateway for a static LXC address
-  --nameserver IP[,IP…]  DNS servers of new VMs, 1 to 3 (default: nameserver lines of /etc/resolv.conf, D-187)
+  --nameserver IP[,IP…]  DNS servers of new VMs, 1 to 3 (default: nameserver lines of /etc/resolv.conf)
   --searchdomain NAME    DNS search domain of new VMs (default: search of /etc/resolv.conf, else the host domain)
   --vmid-range MIN-MAX   VMIDs for Plumb guests (default 9000-9099)
   --pool NAME            pool of Plumb guests (default plumb)
@@ -165,14 +165,14 @@ Options:
   --backup-keep N        backups that serve keeps, 1 … 100 (default 7)
   --backup-storage ID|none
                          copy the newest encrypted backup daily to this storage (dir, nfs, cifs,
-                         cephfs); "none" removes the copy timer, the copies stay (D-289). The path of a
+                         cephfs); "none" removes the copy timer, the copies stay. The path of a
                          dir storage is read at install time: after a change of it, run a repair run
   --backup-copy-time HH:MM   time of the copy, UTC (default: backup time + 30 min)
   --backup-copy-keep N   copies kept on the storage, 1 … 999 (default 14)
   --backup-max-size SIZE the largest backup that is copied, e.g. 512M or 2G (default 1G)
   --keep-guests          with --remove: take a fresh backup, copy it off, check it with the
                          recovery key, then remove only the controller; the pool, its guests
-                         and the Proxmox objects stay for --restore (D-290)
+                         and the Proxmox objects stay for --restore
   --backup-to DIR        with --keep-guests: copy the backup to DIR on THIS host (not off-host)
   --restore FILE         install a new controller from a backup file into the kept pool
                          (--remove --keep-guests prints the whole restore line: every flag of the
@@ -456,7 +456,7 @@ check_host() {
 	major=${BASH_REMATCH[1]}
 	minor=${BASH_REMATCH[2]}
 	if ((major < VERSION_MIN_MAJOR || (major == VERSION_MIN_MAJOR && minor < VERSION_MIN_MINOR))); then
-		die "Plumb needs Proxmox VE ${VERSION_MIN_MAJOR}.${VERSION_MIN_MINOR} or newer; this host has ${major}.${minor} (D-032). Nothing was changed."
+		die "Plumb needs Proxmox VE ${VERSION_MIN_MAJOR}.${VERSION_MIN_MINOR} or newer; this host has ${major}.${minor}. Nothing was changed."
 	fi
 	local pkg min have
 	for pkg in qemu-server:$MIN_QEMU_SERVER libpve-storage-perl:$MIN_STORAGE_PERL; do
@@ -465,7 +465,7 @@ check_host() {
 		# shellcheck disable=SC2016 # ${Version} is a dpkg-query field, not a shell variable
 		have=$(query dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null) || die "$pkg is not installed. Nothing was changed."
 		query dpkg --compare-versions "$have" ge "$min" ||
-			die "Plumb needs $pkg $min or newer (cicustom must check the snippet storage, D-081); this host has $have. Update Proxmox VE. Nothing was changed."
+			die "Plumb needs $pkg $min or newer (cicustom must check the snippet storage); this host has $have. Update Proxmox VE. Nothing was changed."
 	done
 }
 
@@ -545,7 +545,7 @@ print_rights() {
 		printf '  %-38s %-18s %s\n' "$path" "$role" "${ROLE_PRIVS[$role]}"
 	done <<<"$(acl_plan)"
 	say "Sys.Audit on / is not inherited (propagate 0). It reads the thin-pool metadata use for the disk gate. It also lets"
-	say "Plumb read, never write, cluster-wide (D-240):"
+	say "Plumb read, never write, cluster-wide:"
 	say "  - the task list of all users, root included (no task logs);"
 	say "  - the use metrics (CPU, memory, disk, network, uptime, with history) of every guest, node and storage;"
 	say "  - the IDs, names and volumes of the guests in backup jobs, and the backup jobs and their config;"
@@ -559,14 +559,14 @@ print_rights() {
 	say "The Plumb LXC is not in pool $POOL, so Plumb cannot change itself or foreign guests."
 	if ((${#EXTRA_NETS[@]} > 0)); then
 		say "Each PlumbBridge line is one bridge (untagged NICs) or one bridge/VLAN tag; none is inherited, so a"
-		say "line on a bridge does not give its tags (D-401). Guest NICs may use only these."
+		say "line on a bridge does not give its tags. Guest NICs may use only these."
 	fi
 	if [[ -n $GUEST_BACKUP_STORAGE ]]; then
 		say "VM.Backup on /pool/$POOL (inherited by the pool guests) and the storage line on $GUEST_BACKUP_STORAGE are for guest"
-		say "backups (D-405). With them the token itself can back up, restore over (overwrite) and delete the backups"
+		say "backups. With them the token itself can back up, restore over (overwrite) and delete the backups"
 		say "of every guest in pool $POOL directly at the Proxmox API; Plumb's human-only rules hold only inside Plumb."
 		say "A guest backup holds the whole guest disk: the agent credential, the secret values of its desired state,"
-		say "the SSH host keys and the app data (D-406)."
+		say "the SSH host keys and the app data."
 	fi
 }
 
@@ -587,10 +587,10 @@ snippet_yaml() {
 	pem_json=$(awk 'BEGIN{ORS="\\n"} {sub(/\r$/, ""); print}' "$ca")
 	cat <<EOF
 #cloud-config
-# Plumb vendor data, written once by install.sh (D-025). No secret: each VM
+# Plumb vendor data, written by install.sh. No secret: each VM
 # gets its one-time enrollment token as its SMBIOS serial.
 # A new cloud-init instance (a cloud-init field changed outside Plumb, or
-# the host DNS) keeps the SSH host keys (D-185).
+# the host DNS) keeps the SSH host keys.
 ssh_deletekeys: false
 write_files:
   - path: /etc/plumb-agent/ca.pem
@@ -732,11 +732,11 @@ check_storages() {
 	local c
 	c=$(storage_content "$DISK_STORAGE") || die "storage $DISK_STORAGE does not exist"
 	[[ ,$c, != *,snippets,* ]] ||
-		die "disk storage $DISK_STORAGE has the content \"snippets\": the token could point cicustom at any snippet there (D-081). Use a disk storage without snippets. Nothing was changed."
+		die "disk storage $DISK_STORAGE has the content \"snippets\": the token could point cicustom at any snippet there. Use a disk storage without snippets. Nothing was changed."
 	if [[ $IMAGE_STORAGE != plumb-images ]]; then
 		c=$(storage_content "$IMAGE_STORAGE") || die "storage $IMAGE_STORAGE does not exist"
 		image_content_ok "$c" ||
-			die "image storage $IMAGE_STORAGE has the content \"$c\"; it must have exactly \"import\" or \"import,vztmpl\" (D-081, D-229). Leave --image-storage out to get plumb-images. Nothing was changed."
+			die "image storage $IMAGE_STORAGE has the content \"$c\"; it must have exactly \"import\" or \"import,vztmpl\". Leave --image-storage out to get plumb-images. Nothing was changed."
 		vztmpl_note "$IMAGE_STORAGE" "$c"
 	elif c=$(storage_content plumb-images); then
 		image_content_ok "$c" || die "storage plumb-images exists with the content \"$c\", not \"import\" or \"import,vztmpl\". Nothing was changed."
@@ -793,7 +793,7 @@ check_images() {
 	elif [[ $(content_set "$c") == import ]]; then
 		# An install from before D-229 (upgrade, D-084: shown, then asked).
 		IMAGES_SET_CONTENT=1
-		say "Change: storage plumb-images content import → import,vztmpl (LXC templates, D-229)."
+		say "Change: storage plumb-images content import → import,vztmpl (LXC templates)."
 		say "  Order: the new plumb binary first, then the content, then the restart of plumb.service;"
 		say "  an older plumb refuses the new content at its start (exit 78)."
 		say "  pvesm set rewrites /etc/pve/storage.cfg and reorders the content lists of other storages"
@@ -824,7 +824,7 @@ rollback_image_content() {
 	local ok=1
 	run pvesm set plumb-images --content import || ok=0
 	{
-		echo "install.sh: the run stopped before the new plumb was checked; the content of plumb-images is set back to \"import\" (D-229)."
+		echo "install.sh: the run stopped before the new plumb was checked; the content of plumb-images is set back to \"import\"."
 		if [[ $ok == 1 ]]; then
 			echo "install.sh: plumb-images has the content \"import\" again. VM Images work; LXC Images need a repair run (the same install.sh command again)."
 			echo "install.sh: if plumb.service runs, restart it so that it reads the content again: pct exec $LXC_ID -- systemctl restart plumb.service"
@@ -906,7 +906,7 @@ check_user_groups() {
 	groups=$(query pveum user list --output-format json |
 		json_rows 'for my $e (@$d) { next unless $e->{userid} eq $ARGV[0]; my $g = $e->{groups} // ""; $g = join ",", @$g if ref $g; print $g }' "$PVE_USER") ||
 		die "cannot read the users; nothing was changed"
-	[[ -z $groups ]] || die "user $PVE_USER is in the groups \"$groups\"; their ACLs would add rights to Plumb (D-081). Remove the user from them. Nothing was changed."
+	[[ -z $groups ]] || die "user $PVE_USER is in the groups \"$groups\"; their ACLs would add rights to Plumb. Remove the user from them. Nothing was changed."
 }
 
 
@@ -1250,7 +1250,7 @@ rerun_flags() {
 				;;
 			esac
 		done
-		out+=" <UNKNOWN: $STATE_FILE does not hold these flags of the install (older than T-269, or not a plain value), add them by hand: ${flags[*]}>"
+		out+=" <UNKNOWN: $STATE_FILE does not hold these flags of the install (an older installer wrote it, or not a plain value), add them by hand: ${flags[*]}>"
 	fi
 	printf '%s' "$out"
 }
@@ -1292,7 +1292,7 @@ check_dns() {
 	done
 	[[ $SEARCHDOMAIN =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] ||
 		die "bad search domain $SEARCHDOMAIN. Nothing was changed."
-	say "New VMs get the DNS servers $NAMESERVER and the search domain $SEARCHDOMAIN (fixed at create, D-187)."
+	say "New VMs get the DNS servers $NAMESERVER and the search domain $SEARCHDOMAIN (fixed at create)."
 }
 
 # valid_ip reports whether $1 is one IPv4 address (octets up to 255) or one
@@ -1893,17 +1893,17 @@ check_guest_backup() {
 	# AllocateSpace on a storage with snippets would let cicustom point at
 	# any snippet there (D-081), like on the disk storage.
 	[[ ,$c, != *,snippets,* ]] ||
-		die "storage $s has the content \"snippets\": the token could point cicustom at any snippet there (D-081). Use a storage without snippets. Nothing was changed."
+		die "storage $s has the content \"snippets\": the token could point cicustom at any snippet there. Use a storage without snippets. Nothing was changed."
 	type=$(storage_field "$s" type) || type=""
 	key=$(storage_field "$s" encryption-key) || key=""
 	if [[ $type == pbs && -n $key ]]; then
 		say "Guest backups go to $s: a Proxmox Backup Server with client-side encryption."
 	elif [[ $GUEST_BACKUP_CLEAR == 1 ]]; then
 		say "WARNING: storage $s (type ${type:-unknown}) has no client-side encryption, and --guest-backup-clear is set:"
-		say "guest backups are stored IN CLEAR there, with every secret of the guest (D-406)."
+		say "guest backups are stored IN CLEAR there, with every secret of the guest."
 	else
 		say "NOTE: storage $s (type ${type:-unknown}) has no client-side encryption. Plumb refuses every guest backup"
-		say "there until a repair run with --guest-backup-clear says that backups in clear are wanted (D-406)."
+		say "there until a repair run with --guest-backup-clear says that backups in clear are wanted."
 	fi
 	warn_foreign_backups
 }
@@ -1926,7 +1926,7 @@ check_second_backup_storage() {
 	done <<<"$(acl_plan)"
 	((${#bad[@]} == 0)) && return 0
 	say "These storages of Plumb have the content \"backup\". With VM.Backup the token could write guest backups there"
-	say "too, not only to $GUEST_BACKUP_STORAGE (D-405). Remove \"backup\" from their content:"
+	say "too, not only to $GUEST_BACKUP_STORAGE. Remove \"backup\" from their content:"
 	printf '  %s\n' "${bad[@]}"
 	die "another storage of Plumb has the content \"backup\". Nothing was changed."
 }
@@ -1988,7 +1988,7 @@ check_backup_storage() {
 	case $COPY_TYPE in
 	dir) COPY_PATH=$(storage_field "$BACKUP_STORAGE" path) ;;
 	nfs | cifs | cephfs) COPY_PATH=$PVE_MNT/$BACKUP_STORAGE ;;
-	*) die "storage $BACKUP_STORAGE has the type $COPY_TYPE; --backup-storage needs a storage with a path: dir, nfs, cifs or cephfs (a Proxmox Backup Server is not supported, D-289). Nothing was changed." ;;
+	*) die "storage $BACKUP_STORAGE has the type $COPY_TYPE; --backup-storage needs a storage with a path: dir, nfs, cifs or cephfs (a Proxmox Backup Server is not supported). Nothing was changed." ;;
 	esac
 	[[ $COPY_PATH == /* && $COPY_PATH != *..* ]] || die "storage $BACKUP_STORAGE has no usable path. Nothing was changed."
 	query pvesm status --storage "$BACKUP_STORAGE" 2>/dev/null | awk -v s="$BACKUP_STORAGE" '$1 == s && $3 == "active" { ok = 1 } END { exit !ok }' ||
@@ -2007,10 +2007,10 @@ copy_conf() {
 # copy_units prints the service or the timer of the copy.
 copy_unit() {
 	if [[ $1 == service ]]; then
-		printf '%s\n' "# Made by Plumb's install.sh (D-289). Do not edit." "[Unit]" "Description=Copy the newest Plumb backup off the Plumb LXC" \
+		printf '%s\n' "# Made by Plumb's install.sh. Do not edit." "[Unit]" "Description=Copy the newest Plumb backup off the Plumb LXC" \
 			"After=pve-cluster.service" "" "[Service]" "Type=oneshot" "ExecStart=$SBIN_DIR/$COPY_NAME --conf $COPY_CONF"
 	else
-		printf '%s\n' "# Made by Plumb's install.sh (D-289). Do not edit." "[Unit]" "Description=Daily copy of the newest Plumb backup" "" \
+		printf '%s\n' "# Made by Plumb's install.sh. Do not edit." "[Unit]" "Description=Daily copy of the newest Plumb backup" "" \
 			"[Timer]" "OnCalendar=*-*-* $BACKUP_COPY_TIME:00 UTC" "Persistent=true" "" "[Install]" "WantedBy=timers.target"
 	fi
 }
@@ -2230,14 +2230,14 @@ check_restore_flags() {
 		fi
 	done <<<"$(rerun_state)"
 	if ((${#missing[@]} > 0)); then
-		say "WARNING: $STATE_FILE is older than T-269 and does not hold these flags of the old install: ${missing[*]}."
+		say "WARNING: $STATE_FILE was written by an older installer and does not hold these flags of the old install: ${missing[*]}."
 		say "Give them again if the old install had them: a run without them gives no rights for those networks, turns"
-		say "guest backups off (D-401, D-405), and takes the defaults for DNS, VMID range and schedules."
+		say "guest backups off, and takes the defaults for DNS, VMID range and schedules."
 	fi
 	((diff == 0)) && return 0
 	say "WARNING: this run's flags differ from those of the old install. The old install had:"
 	say "  install.sh --plumb-binary FILE$(rerun_flags) (plus --restore, --lxc-ip, --lxc-gw and --backup-storage)"
-	say "A network or guest backup storage that this run does not name loses its rights (D-401, D-405); DNS,"
+	say "A network or guest backup storage that this run does not name loses its rights; DNS,"
 	say "VMID range and schedules take this run's values."
 }
 
@@ -2245,7 +2245,7 @@ check_restore_flags() {
 check_restore() {
 	[[ -f $RESTORE_FILE ]] || die "--restore $RESTORE_FILE: no such file"
 	[[ $LXC_IP != dhcp && -n $LXC_GW ]] ||
-		die "--restore needs --lxc-ip CIDR and --lxc-gw IP: the agents pin the address of the old controller (D-179). Nothing was changed."
+		die "--restore needs --lxc-ip CIDR and --lxc-gw IP: the agents pin the address of the old controller. Nothing was changed."
 	read_header "$RESTORE_FILE"
 	local ip=${LXC_IP%/*} want=${H_AGENT_URL#https://}
 	want=${want%:8444}
@@ -2519,7 +2519,7 @@ do_install() {
 	say "The LXC gets a key volume ($DISK_STORAGE, ${KEY_VOLUME_GB} GB, $KEY_DIR, backup=0) for the master key."
 	if [[ $LXC_IP == dhcp ]]; then
 		say "WARNING: the LXC gets its address by DHCP. The vendor snippet holds this address: when the lease"
-		say "changes, no agent reaches Plumb any more. Use a static address: --lxc-ip CIDR --lxc-gw IP (D-179)."
+		say "changes, no agent reaches Plumb any more. Use a static address: --lxc-ip CIDR --lxc-gw IP."
 	fi
 	check_dns
 	check_extra_bridges
@@ -2584,7 +2584,7 @@ do_install() {
 	say "Plumb runs: https://$ip:8443 (certificate from the Plumb CA)."
 	if [[ -n $RESTORE_FILE ]]; then
 		say "Restored from $RESTORE_FILE. Log in as admin with the password that plumb restore showed. Plumb is in"
-		say "restored mode: it observes, and changes nothing until you confirm that the old controller is off (D-290)."
+		say "restored mode: it observes, and changes nothing until you confirm that the old controller is off."
 		if [[ -z $BACKUP_STORAGE_SET ]]; then
 			say "No off-host backup copy is configured. Add one with a repair run: install.sh --plumb-binary FILE$(rerun_flags --backup-storage ID)"
 		fi

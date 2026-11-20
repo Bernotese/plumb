@@ -103,7 +103,7 @@ describe("target page", () => {
     expect(document.querySelector("#guest-ip-note")).toBeNull();
     type("#guest-ip", "192.0.2.50/24");
     expect(text(el("#guest-ip-note"))).toBe(
-      "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an image built by Plumb (D-223).",
+      "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart. Use DHCP or an image built by Plumb.",
     );
     expect(el("#guest-ip").getAttribute("aria-describedby")).toContain("guest-ip-note");
     type("#t-image", "debian-13");

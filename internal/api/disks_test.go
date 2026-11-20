@@ -223,7 +223,7 @@ func TestCTDisksThroughTheAPI(t *testing.T) {
 	add = ctDiskTarget("c1", `[{"slot":1,"size_gb":2,"path":"/srv/data"}]`, true)
 	code, body = adm.do("POST", "/api/v1/plans", map[string]any{"reason": "add", "put": []state.Doc{add}})
 	json.Unmarshal(body, &p)
-	if _, _, risk, ok := p.change("disk1"); code != 201 || !ok || risk != "disruptive" || !strings.Contains(strings.Join(p.Warnings, " "), "D-437") {
+	if _, _, risk, ok := p.change("disk1"); code != 201 || !ok || risk != "disruptive" || !strings.Contains(strings.Join(p.Warnings, " "), "the container is started again") {
 		t.Fatalf("add: %d %s", code, body)
 	}
 	e.drv.FailDiskStart()

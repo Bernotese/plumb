@@ -223,7 +223,7 @@ func problemText(p proxmox.HostProblem, node string) string {
 	case proxmox.ProblemStorageMissing:
 		return fmt.Sprintf("storage %s is missing on node %s, is not active, or the token has no right on it", p.ID, node)
 	case proxmox.ProblemStorageContent:
-		return fmt.Sprintf("storage %s has the content %q; it must have %s (D-081)", p.ID, p.Content, p.Rule)
+		return fmt.Sprintf("storage %s has the content %q; it must have %s", p.ID, p.Content, p.Rule)
 	case proxmox.ProblemBridge:
 		return fmt.Sprintf("the token has no SDN.Use right on bridge %s", p.ID)
 	}

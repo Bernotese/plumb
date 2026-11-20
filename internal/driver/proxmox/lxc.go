@@ -179,7 +179,7 @@ func checkCTSpecName(s driver.GuestSpec, dotted bool) error {
 		return err
 	}
 	if s.User != "" {
-		return errors.New("proxmox: a container has no bootstrap user (D-226)")
+		return errors.New("proxmox: a container has no bootstrap user")
 	}
 	if !dnsNameRE.MatchString(s.Name) || (!dotted && strings.Contains(s.Name, ".")) || len(s.Name) > 63 {
 		return fmt.Errorf("proxmox: %q is no host name for a container", s.Name)
@@ -233,7 +233,7 @@ func (d *Driver) createFromFile(ctx context.Context, spec driver.GuestSpec, boot
 		return "", err
 	}
 	if len(desc) > maxDescription {
-		return "", fmt.Errorf("proxmox: the description with the SSH keys has %d bytes; Proxmox allows %d (D-249)", len(desc), maxDescription)
+		return "", fmt.Errorf("proxmox: the description with the SSH keys has %d bytes; Proxmox allows %d", len(desc), maxDescription)
 	}
 	id, err := d.nextID(ctx)
 	if err != nil {
@@ -365,7 +365,7 @@ func (d *Driver) observeCT(ctx context.Context, id int) (driver.GuestState, erro
 		return driver.GuestState{}, err
 	}
 	if cfg["unprivileged"] != "1" {
-		return driver.GuestState{}, fmt.Errorf("proxmox: CT %d is privileged; Plumb manages only unprivileged containers (D-227)", id)
+		return driver.GuestState{}, fmt.Errorf("proxmox: CT %d is privileged; Plumb manages only unprivileged containers", id)
 	}
 	var status struct {
 		Status string `json:"status"`
