@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strings"
@@ -16,8 +17,38 @@ import (
 )
 
 // mainAddrBound is how long the main address may be missing after the
-// apply: the DHCP renew of a VM NIC, not a lost address.
-const mainAddrBound = 10 * time.Second
+// apply of the second card. The apply does not change the main NIC's
+// entry, so its address should not go at all; a short gap (the gap meter
+// of TestGuestNetwork saw 24 ms when its own entry changed) is allowed.
+// A new DHCP lease takes 1 to 3 s and fails here, and also by its
+// valid_lft (#419 L1).
+const mainAddrBound = 2 * time.Second
+
+// lftForever is the valid_life_time of an address without a lease.
+const lftForever = 4294967295
+
+// mainValidLft returns the valid_life_time (seconds) of the address a on
+// dev, and whether dev has it.
+func mainValidLft(t *testing.T, dev string, a netip.Addr) (uint64, bool) {
+	t.Helper()
+	var links []struct {
+		AddrInfo []struct {
+			Local         string `json:"local"`
+			ValidLifeTime uint64 `json:"valid_life_time"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal(mustOut(t, "ip", "-j", "addr", "show", "dev", dev), &links); err != nil {
+		t.Fatalf("ip -j addr show dev %s: %v", dev, err)
+	}
+	for _, l := range links {
+		for _, ai := range l.AddrInfo {
+			if ai.Local == a.String() {
+				return ai.ValidLifeTime, true
+			}
+		}
+	}
+	return 0, false
+}
 
 // TestGuestNetworkNIC proves the network resource of a more NIC (T-220,
 // D-403) with real netplan apply: lxd.sh hot-plugs a second virtio card
@@ -107,17 +138,21 @@ func TestGuestNetworkNIC(t *testing.T) {
 	// 1. Apply: the own entry matches the MAC; the address is live on the
 	// card; the main NIC keeps its address and default route.
 	r := res(mac, "10.99.20.5/24")
+	lft0, ok := mainValidLft(t, dev, main)
+	if !ok {
+		t.Fatalf("the main address %s is not on %s before the apply", main, dev)
+	}
 	apply(r)
 	b, err := os.ReadFile(file)
 	if err != nil || !strings.Contains(string(b), "plumb-ci-nic:") || !strings.Contains(string(b), "macaddress: "+mac) {
 		t.Fatalf("file: %s %v", b, err)
 	}
 	waitLive("10.99.20.5/24", true)
-	// netplan apply may drop the main address of a DHCP NIC for a moment
-	// (the gap meter of TestGuestNetwork saw 24 ms): wait for it, and log
-	// how long it was missing. A loss longer than the bound still fails.
+	// The main address may be gone for a moment (mainAddrBound): wait for
+	// it, and log how long it was missing.
 	start := time.Now()
-	for !strings.Contains(string(mustOut(t, "ip", "-o", "addr", "show", "dev", dev)), " "+main.String()+"/") {
+	lft1, ok := mainValidLft(t, dev, main)
+	for ; !ok; lft1, ok = mainValidLft(t, dev, main) {
 		if time.Since(start) > mainAddrBound {
 			t.Fatalf("the main address of %s is gone for more than %v", dev, mainAddrBound)
 		}
@@ -126,6 +161,12 @@ func TestGuestNetworkNIC(t *testing.T) {
 	if d := time.Since(start); d > 20*time.Millisecond {
 		t.Logf("the main address of %s was back after %v", dev, d.Round(time.Millisecond))
 	}
+	// The same lease: valid_lft only counts down. A new lease starts again
+	// at the full lease time.
+	if lft0 != lftForever && lft1 > lft0 {
+		t.Fatalf("the main address of %s got a new DHCP lease at the apply: valid_lft %d s before, %d s after", dev, lft0, lft1)
+	}
+	t.Logf("main address %s: valid_lft %d s before the apply, %d s after", main, lft0, lft1)
 	if rs, _, _ := waitDefaultRoute(30 * time.Second); len(rs) == 0 || rs[0].Dev != dev {
 		t.Fatalf("the default route moved: %+v", rs)
 	}
