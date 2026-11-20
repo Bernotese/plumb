@@ -355,7 +355,7 @@ func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.L
 		}
 	}
 	if _, err := st.OpenIssue(ctx, demoAddrTarget, wire.GuestAddressID); err != nil {
-		return fmt.Errorf("dev demo: no address issue on %s: %w", demoAddrTarget, err)
+		return fmt.Errorf("dev demo: no address Issue on %s: %w", demoAddrTarget, err)
 	}
 	// Two more drift Issues for the ignore actions (T-036 e2e): someone
 	// edits the nginx site of web1 and removes its nginx package. They are
@@ -390,7 +390,7 @@ func seedDemo(ctx context.Context, st *store.Store, eng *plan.Engine, lk *link.L
 	var put []state.Doc
 	for _, d := range docs {
 		if d.Kind == state.KindTarget && d.Name == "web1" {
-			d.Spec = json.RawMessage(strings.Replace(string(d.Spec), "Hello from web1", "Hello from web1, now with a plan", 1))
+			d.Spec = json.RawMessage(strings.Replace(string(d.Spec), "Hello from web1", "Hello from web1, now with a Plan", 1))
 			put = append(put, d)
 		}
 	}

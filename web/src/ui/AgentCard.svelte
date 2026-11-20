@@ -98,7 +98,7 @@
       {/if}
       <button class="btn primary" type="submit" disabled={busy}>Propose agent update</button>
       <p class="muted">
-        This opens a plan. The agent restarts with the new binary only after you approve it; if the
+        This opens a Plan. The agent restarts with the new binary only after you approve it; if the
         new binary fails, the guest goes back to the old one.
       </p>
     </form>

@@ -89,7 +89,7 @@ test("role read: no write button, and the server refuses a write", async ({ page
   const issueId = ((await issues.json()) as { items: { id: number }[] }).items[0]?.id;
 
   const viewer = await as(browser, "e2e-viewer", otp);
-  await expect(viewer.getByRole("link", { name: "New target" })).toHaveCount(0);
+  await expect(viewer.getByRole("link", { name: "New Target" })).toHaveCount(0);
   await viewer.goto("/#/blocks");
   await expect(viewer.getByRole("heading", { name: "Starter catalogue" })).toBeVisible();
   await expect(viewer.getByRole("link", { name: "New block" })).toHaveCount(0);
@@ -97,13 +97,13 @@ test("role read: no write button, and the server refuses a write", async ({ page
   await expect(viewer.locator("#catalog-role")).toContainText("Your role is read.");
   await viewer.goto("/#/targets/web1/edit");
   await expect(viewer.locator("#t-role")).toBeVisible();
-  await expect(viewer.getByRole("button", { name: "Show the plan" })).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: "Show the Plan" })).toHaveCount(0);
   await expect(viewer.getByRole("button", { name: "Delete target…" })).toHaveCount(0);
   if (planId) {
     await viewer.goto(`/#/plans/${planId}`);
     await expect(viewer.locator("#approve-role")).toBeVisible();
     await expect(viewer.getByRole("button", { name: "Approve and apply" })).toHaveCount(0);
-    await expect(viewer.getByRole("button", { name: "Drop plan" })).toHaveCount(0);
+    await expect(viewer.getByRole("button", { name: "Drop Plan" })).toHaveCount(0);
   }
   if (issueId) {
     await viewer.goto(`/#/issues/${issueId}`);
@@ -120,7 +120,7 @@ test("role read: no write button, and the server refuses a write", async ({ page
   await viewer.context().close();
 });
 
-test("role apply: a destructive plan needs admin (UI and server)", async ({ page, browser }) => {
+test("role apply: a destructive Plan needs admin (UI and server)", async ({ page, browser }) => {
   await login(page);
   const otp = await createUser(page, "e2e-operator", "apply");
   const origin = new URL(page.url()).origin;
@@ -135,7 +135,7 @@ test("role apply: a destructive plan needs admin (UI and server)", async ({ page
   const op = await as(browser, "e2e-operator", otp);
   await op.goto(`/#/plans/${plan.id}`);
   await expect(op.locator("#approve-role")).toContainText(
-    "A destructive plan needs the role admin.",
+    "A destructive Plan needs the role admin.",
   );
   await expect(op.getByRole("button", { name: "Approve and apply" })).toHaveCount(0);
   const refused = await op.request.post(`/api/v1/plans/${plan.id}/approve`, {
@@ -143,8 +143,8 @@ test("role apply: a destructive plan needs admin (UI and server)", async ({ page
     data: {},
   });
   expect(refused.status()).toBe(403);
-  await op.getByRole("button", { name: "Drop plan" }).click();
+  await op.getByRole("button", { name: "Drop Plan" }).click();
   await op.locator("#drop-confirm").click();
-  await expect(op.getByText("This plan is stale.")).toBeVisible();
+  await expect(op.getByText("This Plan is stale.")).toBeVisible();
   await op.context().close();
 });

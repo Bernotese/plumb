@@ -140,7 +140,7 @@
   <section class="banner warn" aria-labelledby="replaced-title">
     <p id="replaced-title">
       <strong>Secret <span class="mono">{replaced.name}</span> has a new value.</strong>
-      The guests get it only through a plan. Used by:
+      The guests get it only through a Plan. Used by:
       <span class="mono">{replaced.used_by.join(", ")}</span>.
     </p>
     <ProblemBox error={planError} />

@@ -199,7 +199,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 			svc, ok := byID[id]
 			if !ok {
 				return nil, errf(ptr(u.blocksPath, i),
-					"Block %q (use %q) restarts %s, but %s is not on this target; add the Block that provides it",
+					"Block %q (use %q) restarts %s, but %s is not on this Target; add the Block that provides it",
 					use.Use, use.id(), id, id)
 			}
 			list, isList := svc.Attrs["restart_on"].([]any)
@@ -234,7 +234,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 		path := ptr("/spec/overrides", id)
 		r, ok := byID[id]
 		if !ok {
-			return nil, errf(path, "resource %s is not on the target", id)
+			return nil, errf(path, "resource %s is not on the Target", id)
 		}
 		keyAttr := ""
 		if rt, ok := resource.Lookup(r.Type); ok {
@@ -242,7 +242,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 		}
 		for attr, v := range t.overrides[id] {
 			if _, isRef := refName(v); isRef {
-				return nil, errf(ptr(path, attr), "an override cannot hold a secret reference (D-088)")
+				return nil, errf(ptr(path, attr), "an override cannot hold a secret reference")
 			}
 			if attr == keyAttr && !reflect.DeepEqual(v, r.Attrs[attr]) {
 				return nil, errf(ptr(path, attr), "an override cannot change the key attribute; it would change the resource id")
@@ -290,7 +290,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 	for _, r := range out.Resources {
 		for k, id := range wire.RestartOn(r) {
 			if _, ok := byID[id]; !ok || id == wire.GuestConfigID || id == r.ID {
-				return nil, errf(u.blocksPath, "resource %s from %s: restart_on/%d: %q is not another resource on this target",
+				return nil, errf(u.blocksPath, "resource %s from %s: restart_on/%d: %q is not another resource on this Target",
 					r.ID, where[r.ID], k, id)
 			}
 		}
@@ -312,7 +312,7 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 			switch _, ok := byID[id]; {
 			case !ok || id == wire.GuestConfigID:
 				return nil, errf(ptr(u.blocksPath, i),
-					"Block %q (use %q) comes after %s, but %s is not on this target; add the Block that provides it",
+					"Block %q (use %q) comes after %s, but %s is not on this Target; add the Block that provides it",
 					use.Use, use.id(), id, id)
 			case own[id]:
 				return nil, errf(ptr(u.blocksPath, i),
@@ -329,10 +329,10 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 	if !s.stored {
 		if c := wire.AgentConflicts(out.Resources); len(c) > 0 {
 			if c[0].Attr == "name" {
-				return nil, errf(u.blocksPath, "resource %s from %s: the service %q is the Plumb agent; a Block cannot stop, mask or change it (D-207)",
+				return nil, errf(u.blocksPath, "resource %s from %s: the service %q is the Plumb agent; a Block cannot stop, mask or change it",
 					c[0].ID, where[c[0].ID], c[0].Value)
 			}
-			return nil, errf(u.blocksPath, "resource %s from %s: %s resolves to %q, a path of the Plumb agent; a Block cannot change the agent's files (D-207)",
+			return nil, errf(u.blocksPath, "resource %s from %s: %s resolves to %q, a path of the Plumb agent; a Block cannot change the agent's files",
 				c[0].ID, where[c[0].ID], c[0].Attr, c[0].Value)
 		}
 	}
@@ -350,12 +350,12 @@ func (s *Set) renderUnit(u *unit, total *budget) (*Rendered, error) {
 	if u.kind == KindImage {
 		for _, r := range out.Resources {
 			if len(r.Sensitive) > 0 {
-				return nil, errf(u.blocksPath, "resource %s from %s: an Image cannot hold a secret (D-202)", r.ID, where[r.ID])
+				return nil, errf(u.blocksPath, "resource %s from %s: an Image cannot hold a secret", r.ID, where[r.ID])
 			}
 			// A build starts without a person (D-101, D-199), so it must
 			// not run a command, which only a person approves (D-260).
 			if rt, ok := resource.Lookup(r.Type); ok && rt.NotInImage {
-				return nil, errf(u.blocksPath, "resource %s from %s: an Image build cannot hold a %s resource; only a person approves it, and a build starts without one (D-260)",
+				return nil, errf(u.blocksPath, "resource %s from %s: an Image build cannot hold a %s resource; only a person approves it, and a build starts without one",
 					r.ID, where[r.ID], r.Type)
 			}
 		}

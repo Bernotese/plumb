@@ -749,7 +749,7 @@ var (
 // checkBridge refuses a bridge other than the one of the install (D-184).
 func (d *Driver) checkBridge(b string) error {
 	if b != d.cfg.Bridge {
-		return fmt.Errorf("proxmox: bridge %q is not the bridge of this install (%s); the token may use only %s (D-184)", b, d.cfg.Bridge, d.cfg.Bridge)
+		return fmt.Errorf("proxmox: bridge %q is not the bridge of this install (%s); the token may use only %s", b, d.cfg.Bridge, d.cfg.Bridge)
 	}
 	return nil
 }
@@ -1214,7 +1214,7 @@ func tagRefusal(err error, params url.Values) error {
 		return err
 	}
 	return fmt.Errorf("proxmox: the tags were refused: the datacenter option user-tag-access (other than free) or a registered tag can refuse a tag write, "+
-		"and Plumb gets no new right for it (D-081). Allow the tags in Datacenter → Options → Tag Style or User Tag Access, or remove them from the Target: %w", err)
+		"and Plumb gets no new right for it. Allow the tags in Datacenter → Options → Tag Style or User Tag Access, or remove them from the Target: %w", err)
 }
 
 // growTo checks a new disk size against the size of the guest: grow only.
@@ -1303,7 +1303,7 @@ var updateKeys = map[string]bool{"digest": true, "cores": true, "memory": true, 
 func checkUpdateParams(cfg map[string]string, params url.Values) error {
 	for k := range params {
 		if !updateKeys[k] {
-			return fmt.Errorf("proxmox: Update must not write %q (cloud-init inputs are create-only, D-185)", k)
+			return fmt.Errorf("proxmox: Update must not write %q (cloud-init inputs are create-only)", k)
 		}
 	}
 	if err := checkUpdateNICs(params); err != nil { // the tags and more NICs only (T-219)
@@ -1312,7 +1312,7 @@ func checkUpdateParams(cfg map[string]string, params url.Values) error {
 	if net0, ok := params["net0"]; ok {
 		mac := macOf(cfg["net0"])
 		if mac == "" || len(net0) != 1 || macOf(net0[0]) != mac || !sameExcept(cfg["net0"], net0[0], "bridge") {
-			return errors.New("proxmox: a net0 change must keep the MAC address and every property but the bridge (a new MAC is a new cloud-init instance, D-185)")
+			return errors.New("proxmox: a net0 change must keep the MAC address and every property but the bridge (a new MAC is a new cloud-init instance)")
 		}
 	}
 	if sm, ok := params["smbios1"]; ok {

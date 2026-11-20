@@ -334,7 +334,7 @@ describe("Secrets", () => {
     expect(input.getAttribute("aria-invalid")).toBe("true");
   });
 
-  it("after a replace of a used secret offers to plan its targets", async () => {
+  it("after a replace of a used secret offers to plan its Targets", async () => {
     const api = adminApi();
     const createPlan = vi.spyOn(api, "createPlan");
     show(Secrets, { api });
@@ -345,7 +345,7 @@ describe("Secrets", () => {
     type("#secret-value", "new db password");
     button("Replace value")?.click();
     const plan = await until(() => button("Plan the change for 1 target"));
-    expect(text()).toContain("The guests get it only through a plan.");
+    expect(text()).toContain("The guests get it only through a Plan.");
     plan.click();
     const id = await until(() => /^#\/plans\/(\d+)$/.exec(location.hash)?.[1]);
     expect(createPlan).toHaveBeenCalledWith({
@@ -411,7 +411,7 @@ describe("Export and import", () => {
     expect(el<HTMLInputElement>("#export-pass").value).toBe("");
   });
 
-  it("imports a file in merge mode and opens the plan", async () => {
+  it("imports a file in merge mode and opens the Plan", async () => {
     const api = adminApi();
     const imp = vi.spyOn(api, "importState");
     const file = await api.exportState();

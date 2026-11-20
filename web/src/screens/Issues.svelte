@@ -59,7 +59,7 @@
     <a href={href({ name: "rules" })}>Ignore rules</a>
     <label for="issue-target">Target</label>
     <select id="issue-target" value={target ?? ""} onchange={pickTarget}>
-      <option value="">All targets</option>
+      <option value="">All Targets</option>
       {#each targetNames as t (t)}<option value={t}>{t}</option>{/each}
     </select>
     <label for="issue-filter">Show</label>
@@ -87,10 +87,10 @@
     class="table-wrap card flush"
     tabindex="0"
     role="region"
-    aria-label="Drift issues, scrolls sideways"
+    aria-label="Drift Issues, scrolls sideways"
   >
     <table>
-      <caption class="sr-only">Drift issues</caption>
+      <caption class="sr-only">Drift Issues</caption>
       <thead>
         <tr>
           <th scope="col">Issue</th>

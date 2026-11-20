@@ -21,7 +21,7 @@ import (
 var notPatterns = map[string]string{
 	`(^|/)\.\.(/|$)|\x00`: "must not contain a .. component or a NUL character",
 	`\x00`:                "must not contain a NUL character",
-	`^plumb-agent`:        "must not start with plumb-agent: the units of the agent belong to Plumb (D-274)",
+	`^plumb-agent`:        "must not start with plumb-agent: the units of the agent belong to Plumb",
 	`PRIVATE KEY BLOCK|-----END PGP PUBLIC KEY BLOCK-----[\s\S]*-----BEGIN`: "must hold exactly one public key block and no private key",
 }
 
@@ -34,8 +34,8 @@ var ruleMessages = map[string]string{
 	"resource/apt_repository.json#/properties/uris/items pattern":                                                        "must be an http or https URL without spaces",
 	"resource/apt_repository.json#/properties/key pattern":                                                               "must be exactly one ASCII-armored public key block",
 	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway required":                                "gateway needs a static ip: set ip too",
-	"doc/target.json#/properties/spec/oneOf/0 not":                                                                       "an adopted Target has no image: remove image or adopted (D-386)",
-	"doc/target.json#/properties/spec/oneOf/1 not":                                                                       "an adopted Target has no image: remove image or adopted (D-386)",
+	"doc/target.json#/properties/spec/oneOf/0 not":                                                                       "an adopted Target has no image: remove image or adopted",
+	"doc/target.json#/properties/spec/oneOf/1 not":                                                                       "an adopted Target has no image: remove image or adopted",
 	"doc/target.json#/properties/spec/properties/guest/dependentSchemas/gateway/properties/ip not":                       "gateway needs a static ip, not dhcp",
 	"doc/target.json#/properties/spec/properties/guest/properties/nics/items/dependentSchemas/gateway/properties/ip not": "gateway needs a static ip, not dhcp",
 	"doc/target.json#/properties/spec/properties/backup/else not":                                                        "weekday only with schedule weekly",

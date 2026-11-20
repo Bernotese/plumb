@@ -420,7 +420,7 @@ func TestStartErrorExitCodes(t *testing.T) {
 		{Kind: proxmox.ProblemBridge, ID: "vmbr0"}}}, cc).Error()
 	for _, want := range []string{"pool plumb does not exist, or the token has no Pool.Audit right on /pool/plumb",
 		"node pve does not exist on this host", "storage plumb-images is missing on node pve, is not active, or the token has no right on it",
-		`storage local has the content "import,iso"; it must have exactly "import" (D-081)`, "the token has no SDN.Use right on bridge vmbr0"} {
+		`storage local has the content "import,iso"; it must have exactly "import"`, "the token has no SDN.Use right on bridge vmbr0"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}
@@ -545,3 +545,8 @@ func TestServeNoAnswer(t *testing.T) {
 	t.Cleanup(func() { pveStartWait, pveStartPoll = 0, 0 })
 	runFailing(t, 1, "cannot reach Proxmox at "+url)
 }
+
+// pveVars are the settings that install.sh writes (push_env), in that order.
+var pveVars = []string{"PLUMB_PVE_URL", "PLUMB_PVE_TOKEN_ID", secretVar, "PLUMB_PVE_NODE", "PLUMB_PVE_POOL",
+	"PLUMB_PVE_DISK", "PLUMB_PVE_IMAGES", "PLUMB_PVE_SNIPPETS", "PLUMB_PVE_SNIPPET", "PLUMB_PVE_BRIDGE",
+	"PLUMB_PVE_VMID_RANGE", "PLUMB_PVE_NAMESERVER", "PLUMB_PVE_SEARCHDOMAIN"}

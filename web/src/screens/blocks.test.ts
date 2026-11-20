@@ -75,12 +75,12 @@ describe("block editor", () => {
     show(BlockForm, { api });
     await until(() => textOf().startsWith("kind: Block"));
     type("#b-text", editor().value.replace("name: my-block", "name: banner"));
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     await until(() => document.querySelector("#b-reason-error"));
     expect(el("#b-reason").getAttribute("aria-invalid")).toBe("true");
     expect(text()).toContain("The text matches the Block schema.");
     type("#b-reason", "Add a banner block.");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     const id = await planOpened();
     const plan = await api.getPlan(id);
     // No Target uses the new Block: the Plan touches none.
@@ -115,7 +115,7 @@ describe("block editor", () => {
       errorItems().some((e) => /^Line \d+:/.test(e ?? "") && !e?.includes("titel")),
     );
     type("#b-reason", "Try.");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     await until(() => document.activeElement?.id === "b-errors");
     expect(calls).toBe(0);
   });
@@ -136,7 +136,7 @@ describe("block editor", () => {
     await until(() => textOf().includes("name: motd"));
     expect(text()).toContain(`Saving plans ${users.targets.length} Target`);
     // Submit stays enabled; a save without a change says so.
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     await until(() => text().includes("The text has no change."));
 
     type("#b-text", editor().value.replace("name: motd", "name: motd2"));
@@ -151,7 +151,7 @@ describe("block editor", () => {
     type("#b-text", toYaml({ ...doc, spec: { ...doc.spec, resources } }));
     await until(() => errorItems().length === 0);
     type("#b-reason", "Tighter motd mode.");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     const plan = await api.getPlan(await planOpened());
     expect(plan.targets.map((t) => t.target).sort()).toEqual(users.targets);
     for (const t of plan.targets) {
@@ -181,7 +181,7 @@ describe("block editor", () => {
     await until(() => textOf().includes("name: motd"));
     type("#b-text", editor().value.replace("Message of the day.", "MOTD."));
     type("#b-reason", "Try.");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     await until(() => errorItems().length === 1);
     const line =
       editor()

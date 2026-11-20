@@ -548,3 +548,17 @@ func TestDriftDropsOnlyTheRefusedItem(t *testing.T) {
 		t.Errorf("%d items stay unsent; the refused one must be dropped", n)
 	}
 }
+
+// watched returns the number of watched directories (for tests).
+func (w *watcher) watched() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.dirs)
+}
+
+// saveCredential stores the credential of a normal enrollment: the build
+// mark is cleared, the watch mark stays.
+func (s stateDir) saveCredential(c string) error {
+	_, err := s.enrolled(c, false)
+	return err
+}

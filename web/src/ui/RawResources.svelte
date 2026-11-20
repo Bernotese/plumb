@@ -108,7 +108,7 @@
             class="btn primary"
             type="button"
             disabled={busy}
-            onclick={() => propose(r.id, draft)}>Show the plan</button
+            onclick={() => propose(r.id, draft)}>Show the Plan</button
           >
           <button class="btn" type="button" onclick={() => cancel(r.id)}>Cancel</button>
         {:else}
@@ -141,7 +141,7 @@
       {#if reasonError}<span class="error" id="raw-reason-error">{reasonError}</span>{/if}
     </div>
     <ProblemBox {error} />
-    <p class="muted">Each button makes a plan. Nothing changes until you approve it.</p>
+    <p class="muted">Each button makes a Plan. Nothing changes until you approve it.</p>
   {/if}
 </section>
 

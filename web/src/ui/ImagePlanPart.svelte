@@ -94,7 +94,7 @@
     <p class="muted">
       {part.build
         ? "Only after the new version is ready. A failed build removes nothing."
-        : "When the Run of this plan succeeds."} Guests made from these versions keep running: each is
+        : "When the Run of this Plan succeeds."} Guests made from these versions keep running: each is
       a full clone.
     </p>
   {/if}

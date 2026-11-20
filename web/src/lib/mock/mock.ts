@@ -262,7 +262,7 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
           "validation",
           "Validation failed",
           422,
-          `Block "${u.block.name}" (use "${u.useId}") restarts ${svc}, but ${svc} is not on this target; add the Block that provides it`,
+          `Block "${u.block.name}" (use "${u.useId}") restarts ${svc}, but ${svc} is not on this Target; add the Block that provides it`,
         );
       const on = [...((s.attrs["restart_on"] as string[] | undefined) ?? [])];
       for (const id of u.ids) if (id !== svc && !on.includes(id)) on.push(id);
@@ -287,7 +287,7 @@ export function render(spec: TargetDoc["spec"], blocks: Map<string, BlockDoc>): 
           "validation",
           "Validation failed",
           422,
-          `${who}, but ${id} is not on this target; add the Block that provides it`,
+          `${who}, but ${id} is not on this Target; add the Block that provides it`,
         );
     }
   }
@@ -355,7 +355,7 @@ export function planTarget(
           errors: [
             {
               pointer: `/put/0/spec/guest/${attr}`,
-              message: `${attr} is create-only in this version. Create a new target instead.`,
+              message: `${attr} is create-only in this version. Create a new Target instead.`,
             },
           ],
         });
@@ -383,7 +383,7 @@ export function planTarget(
         errors: [
           {
             pointer: `/put/0/spec/guest/power`,
-            message: "power: stopped needs allow_restart (D-291).",
+            message: "power: stopped needs allow_restart.",
           },
         ],
       });
@@ -1710,7 +1710,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
       view.document.spec.build &&
       t.spec.guest.ssh_keys?.length
     ) {
-      const message = `a container from the built Image "${t.spec.image}" gets no SSH keys from Proxmox; add them with a Block such as deploy-user (D-251)`;
+      const message = `a container from the built Image "${t.spec.image}" gets no SSH keys from Proxmox; add them with a Block such as deploy-user`;
       throw problem("validation", "Validation failed", 422, message, {
         errors: [{ pointer: `/put/${at}/spec/guest/ssh_keys`, message }],
       });
@@ -2316,7 +2316,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
             }));
           resources = [...resources.filter((r) => !ids.has(r.resource)), ...unverified];
           warnings.push(
-            `${t.name}: ${ids.size} resources are not observed before the approval: they get a new secret, or a value that the import writes (D-156, D-158).`,
+            `${t.name}: ${ids.size} resources are not observed before the approval: they get a new secret, or a value that the import writes.`,
           );
         }
         planTargets.push({ target: t.name, ...(used.length ? { secrets: used } : {}), resources });
@@ -2915,7 +2915,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "Validation failed",
           422,
           u === "manual"
-            ? `The agent of ${name} is older than slice 3: run the one-time install in the guest.`
+            ? `The agent of ${name} comes from a Plumb version from before agents could update themselves: run the one-time install in the guest.`
             : `The agent of ${name} has not said hello yet.`,
         );
       }
@@ -3345,7 +3345,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "validation",
           "Validation failed",
           422,
-          `${name}: the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first (D-194)`,
+          `${name}: the guest runs, and a restore stops it; set allow_restart: true on the Target, or stop the guest first`,
         );
       const adopted = t.document.spec.adopted !== undefined;
       // D-420: after a failed restore no new safety backup ("kept"); a skip only for a
@@ -3360,7 +3360,7 @@ export function createMockApi(opts: MockOptions = {}): MockApi {
           "validation",
           "Validation failed",
           422,
-          `${name}: the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not (D-420)`,
+          `${name}: the safety backup may be skipped only for a broken guest (no disk, or its last restore failed); this guest is not`,
         );
       const safety = failedBefore
         ? "kept: the last restore failed; the safety backup from before it stays"

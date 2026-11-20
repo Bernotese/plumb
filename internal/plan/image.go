@@ -483,7 +483,7 @@ func (e *Engine) markStale(ctx context.Context, planID int64) {
 func (e *Engine) staleBuildPlans(ctx context.Context, set *state.Set) {
 	plans, err := e.st.PendingPlans(ctx, OriginBuild)
 	if err != nil {
-		e.log.Error("pending build plans", "err", err)
+		e.log.Error("pending build Plans", "err", err)
 		return
 	}
 	for _, p := range plans {

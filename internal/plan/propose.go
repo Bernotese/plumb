@@ -43,7 +43,7 @@ var ErrOffline = errors.New("target is offline")
 // ErrTargetBusy is wrapped when a Run works on a target that a proposal
 // or an approval touches. Only one Run works on a target at a time, and
 // nobody plans against a half-applied guest.
-var ErrTargetBusy = errors.New("a Run is working on the target")
+var ErrTargetBusy = errors.New("a Run is working on the Target")
 
 // ErrCreateOnly is wrapped when a proposal changes a create-only setting.
 var ErrCreateOnly = errors.New("create-only setting")
@@ -103,7 +103,7 @@ func outsideText(id string, observed driver.GuestState) string {
 	if len(raw) > 0 {
 		do = append(do, fmt.Sprintf("remove the line %s from /etc/pve/lxc/%s.conf", strings.Join(raw, " and the line "), id))
 	}
-	return fmt.Sprintf("the container has additions that were made outside Plumb: %s. The Plumb token cannot remove them; only root on the Proxmox host can (D-250). "+
+	return fmt.Sprintf("the container has additions that were made outside Plumb: %s. The Plumb token cannot remove them; only root on the Proxmox host can. "+
 		"On the host: %s. Then plan again, or ignore the Issue", strings.Join(parts, ", "), strings.Join(do, "; "))
 }
 
@@ -263,7 +263,7 @@ func (e *Engine) Propose(ctx context.Context, in Input) (store.Plan, error) {
 	touched := map[string]bool{}
 	for _, t := range append(append([]string{}, in.Proposal.Targets...), in.Proposal.Reenroll...) {
 		if !contains(next.Targets(), t) {
-			return store.Plan{}, &ProposalError{Target: t, Msg: "no such target"}
+			return store.Plan{}, &ProposalError{Target: t, Msg: "no such Target"}
 		}
 		touched[t] = true
 	}
@@ -667,7 +667,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 		tp.Adopted = &a
 	}
 	if reenroll && r.Adopted != nil {
-		return tp, &ProposalError{Target: target, Err: ErrAdoptedTarget, Msg: "an adopted Target is not re-enrolled: it would write the Proxmox config of a guest that a person made; use the install command (D-392)"}
+		return tp, &ProposalError{Target: target, Err: ErrAdoptedTarget, Msg: "an adopted Target is not re-enrolled: it would write the Proxmox config of a guest that a person made; use the install command"}
 	}
 	desired, err := e.guestSpec(target, r)
 	if err != nil {
@@ -695,7 +695,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 			return tp, &ProposalError{Target: target, Err: ErrCreateOnly, Msg: fmt.Sprintf(textPendingCreateOnly, co.Attr, c.From, c.To, bind.Ref)}
 		}
 		return tp, &ProposalError{Target: target, Err: ErrCreateOnly, Msg: fmt.Sprintf(
-			"%q can only be set when the guest is created (the guest has %v, the proposal wants %v); create a new target instead",
+			"%q can only be set when the guest is created (the guest has %v, the proposal wants %v); create a new Target instead",
 			co.Attr, createOnlyField(observed.Spec, co.Attr), createOnlyField(desired, co.Attr))}
 	}
 	if err != nil {
@@ -784,7 +784,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	// Then the agent level.
 	if !e.cfg.Agents.Online(target) {
 		return tp, &ProposalError{Target: target, Err: ErrOffline,
-			Msg: "the agent is offline (no poll in the last 90 s); the proposal changes this target, so it cannot be planned"}
+			Msg: "the agent is offline (no poll in the last 90 s); the proposal changes this Target, so it cannot be planned"}
 	}
 	// The observe body is the one place in planning with clear values;
 	// the versions it used are the versions of the Plan (D-089).
@@ -800,7 +800,7 @@ func (e *Engine) planRendered(ctx context.Context, before, r *state.Rendered, ta
 	}
 	body, used, err := e.withSecrets(ctx, watched, nil)
 	if err != nil {
-		return tp, &ProposalError{Target: target, Msg: "the secrets of the target cannot be read: " + err.Error(), Err: err}
+		return tp, &ProposalError{Target: target, Msg: "the secrets of the Target cannot be read: " + err.Error(), Err: err}
 	}
 	tp.Secrets = used
 	if len(left) > 0 {

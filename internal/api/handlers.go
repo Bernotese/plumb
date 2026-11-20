@@ -59,7 +59,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrPlanNotPending):
 		problem(w, http.StatusConflict, "plan-not-pending", "Plan is not pending", "The Plan is approved or stale already.")
 	case errors.Is(err, store.ErrIssueChanged):
-		problem(w, http.StatusConflict, "issue-changed", "Issue changed", "A new report changed the issue. Read it again and decide again.")
+		problem(w, http.StatusConflict, "issue-changed", "Issue changed", "A new report changed the Issue. Read it again and decide again.")
 	case errors.Is(err, store.ErrIssueNotOpen):
 		problem(w, http.StatusConflict, "issue-not-open", "Issue is not open", "Another Plan resolves it, or it is resolved.")
 	case errors.Is(err, issue.ErrAcceptSensitive), errors.Is(err, issue.ErrAcceptImage), errors.Is(err, issue.ErrAddressFix),

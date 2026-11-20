@@ -50,7 +50,7 @@ describe("target page", () => {
       "Off: a change of cores or memory waits until you stop and start the VM. On: the Plan shows the restart, and the Run does it.",
     );
     type("#t-reason", "edit");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     await planOpened();
     expect(createPlan.mock.calls[0]?.[0].put?.[0]?.spec).not.toHaveProperty("allow_restart");
 
@@ -59,7 +59,7 @@ describe("target page", () => {
     const box2 = await until(() => document.querySelector<HTMLInputElement>("#t-allow-restart"));
     box2.click();
     type("#t-reason", "allow");
-    button("Show the plan")?.click();
+    button("Show the Plan")?.click();
     const id = await planOpened();
     expect(createPlan.mock.calls[1]?.[0].put?.[0]?.spec).toMatchObject({ allow_restart: true });
     const plan = await api.getPlan(id);
@@ -103,7 +103,7 @@ describe("target page", () => {
     expect(document.querySelector("#guest-ip-note")).toBeNull();
     type("#guest-ip", "192.0.2.50/24");
     expect(text(el("#guest-ip-note"))).toBe(
-      "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an image built by Plumb (D-223).",
+      "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart. Use DHCP or an image built by Plumb.",
     );
     expect(el("#guest-ip").getAttribute("aria-describedby")).toContain("guest-ip-note");
     type("#t-image", "debian-13");

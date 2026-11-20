@@ -153,7 +153,7 @@ func TestRetentionKeepsTemplateFiles(t *testing.T) {
 		t.Fatalf("template files after retention: %+v %v", objs, err)
 	}
 	// The driver refuses one too.
-	if err := f.drv.RemoveImage(f.ctx, objs[0]); err == nil || !strings.Contains(err.Error(), "D-233") {
+	if err := f.drv.RemoveImage(f.ctx, objs[0]); err == nil || !strings.Contains(err.Error(), "Plumb never deletes one") {
 		t.Fatalf("RemoveImage of a template file: %v", err)
 	}
 }
