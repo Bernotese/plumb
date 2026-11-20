@@ -1,6 +1,9 @@
 package wire
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestIsAgentPath(t *testing.T) {
 	yes := []string{
@@ -67,6 +70,14 @@ func TestAgentConflicts(t *testing.T) {
 		{"agent unit file", []Resource{unit("plumb-agent.service")}, "unit:plumb-agent.service"},
 		{"guard service", []Resource{service("plumb-agent-guard")}, "service:plumb-agent-guard"},
 		{"harmless unit", []Resource{unit("backup.timer")}, ""},
+		// The cases of the removed AgentPathOf (#411 L1): one resource,
+		// a symlink target into the agent dir, absolute and relative.
+		{"agent file", []Resource{file("/var/lib/plumb-agent/credential")}, "file:/var/lib/plumb-agent/credential"},
+		{"link target absolute", []Resource{link("/tmp/x", "/etc/plumb-agent/ca.pem")}, "symlink:/tmp/x"},
+		{"link target relative", []Resource{link("/var/lib/x", "../lib/plumb-agent/credential")}, "symlink:/var/lib/x"},
+		{"user home", []Resource{{ID: "user:a", Type: "user", Attrs: map[string]any{"name": "a", "home": "/var/lib/plumb-agent"}}}, "user:a"},
+		{"relative name only", []Resource{link("/tmp/x", "plumb-agent")}, ""},
+		{"package name", []Resource{{ID: "package:/var/lib/plumb-agent", Type: "package", Attrs: map[string]any{"name": "/var/lib/plumb-agent"}}}, ""},
 	}
 	for _, tt := range tests {
 		got := AgentConflicts(tt.rs)
@@ -114,6 +125,23 @@ func TestIsAgentPathInstallUnit(t *testing.T) {
 	for _, n := range []string{"nginx", "nginx.service", "my-plumb-agent.service", "plumb.service", "xplumb-agent.timer"} {
 		if IsAgentUnit(n) {
 			t.Errorf("IsAgentUnit(%q) = true", n)
+		}
+	}
+}
+
+// #411 L1: a symlink target into the agent dir is a conflict on the
+// attribute target itself, with the resolved path, also when the target
+// is relative to the link (the removed AgentPathOf checked the attribute).
+func TestAgentConflictsSymlinkTarget(t *testing.T) {
+	for _, tt := range []struct{ link, target, want string }{
+		{"/tmp/x", "/etc/plumb-agent/ca.pem", "/etc/plumb-agent/ca.pem"},
+		{"/var/lib/x", "../lib/plumb-agent/credential", "/var/lib/plumb-agent/credential"},
+		{"/opt/a/b", "../../var/lib/plumb-agent", "/var/lib/plumb-agent"},
+	} {
+		r := Resource{ID: "symlink:" + tt.link, Type: "symlink", Attrs: map[string]any{"path": tt.link, "target": tt.target}}
+		got := AgentConflicts([]Resource{r})
+		if !slices.Contains(got, AgentConflict{ID: r.ID, Attr: "target", Value: tt.want}) {
+			t.Errorf("%s -> %s: conflicts %+v, want one on target with %s", tt.link, tt.target, got, tt.want)
 		}
 	}
 }
