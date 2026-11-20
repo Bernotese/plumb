@@ -230,7 +230,7 @@
         Plumb fetches the newest checksum list of the source{spec.verify.source === "debian-https"
           ? ""
           : " and checks its signature with the key built into Plumb"}. When the checksum of this
-        address changed, Plumb proposes a plan that changes only the pin. Nothing changes until it
+        address changed, Plumb proposes a Plan that changes only the pin. Nothing changes until it
         is approved.
       </p>
       {#if spec.verify.source === "debian-https"}
@@ -276,7 +276,7 @@
         <p id="building">
           <Badge tone="info" label="Building v{st.building}" />
           {#each st.versions.filter((v) => v.version === st.building) as v (v.version)}
-            <a href={href({ name: "run", id: v.run_id })}>Watch run {v.run_id}</a>
+            <a href={href({ name: "run", id: v.run_id })}>Watch Run {v.run_id}</a>
           {/each}
         </p>
         <p class="muted">One build per image at a time. "Build now" is open again when it ends.</p>
@@ -299,7 +299,7 @@
           >
           {#if restored.mode}<p class="muted" id="build-restored">{RESTORED_WAIT}</p>{/if}
           <p class="muted">
-            This makes a plan for a new version from the recipe below. Nothing happens until it is
+            This makes a Plan for a new version from the recipe below. Nothing happens until it is
             approved.
           </p>
         </form>{/if}
@@ -468,8 +468,8 @@
       : undefined}
   >
     <p>
-      The plan removes the Image from the desired state.{image.document.spec.build
-        ? " The plan lists the templates in Proxmox that go with it."
+      The Plan removes the Image from the desired state.{image.document.spec.build
+        ? " The Plan lists the templates in Proxmox that go with it."
         : ""} No Target changes: none uses it.
     </p>
   </DeleteDocument>

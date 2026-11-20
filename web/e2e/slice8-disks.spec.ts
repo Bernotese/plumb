@@ -40,7 +40,7 @@ const change = (page: Page, attr: string) =>
 
 async function showPlan(page: Page, reason: string): Promise<void> {
   await page.locator("#t-reason").fill(reason);
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
 }
 
@@ -74,7 +74,7 @@ test("VM data disks: add, grow only, remove by a person, unmanage", async ({ pag
   // (2) Grow only: smaller is a field error; bigger is a disruptive grow.
   await page.locator("#disk-1-size").fill("10");
   await page.locator("#t-reason").fill("e2e: shrink");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.locator("#disk-1-size-error")).toContainText(
     "A disk only grows: at least 20 GiB",
   );
@@ -93,7 +93,7 @@ test("VM data disks: add, grow only, remove by a person, unmanage", async ({ pag
   );
   // The disk checks run at the submit: a running guest needs allow_restart.
   await page.locator("#t-reason").fill("e2e: remove the data disk");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.locator("#disks-remove-error")).toContainText(
     "Removing a disk of a running guest needs",
   );
@@ -168,11 +168,11 @@ test("container data disks: path rules and the stop-add-start rule (D-437)", asy
   await page.locator("#add-disk").click();
   await page.locator("#disk-1-path").fill("/etc/x");
   await page.locator("#t-reason").fill("e2e: container disk");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.locator("#disk-1-path-error")).toBeVisible();
   // A running container without allow_restart: the add stops it, so no.
   await page.locator("#disk-1-path").fill("/srv/data");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.locator("#disks-add-error")).toContainText(
     "Adding a container disk stops and starts the container",
   );

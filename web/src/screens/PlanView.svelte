@@ -126,10 +126,10 @@
   const originText: Partial<Record<Plan["origin"], string>> = {
     rollback: "Rollback to an earlier revision",
     import: "Import of an export file",
-    ignore_rule: "Ignore rule for an issue",
-    accept: "Accept the guest value of an issue",
-    revert: "Revert drift of an issue",
-    reenroll: "Re-enroll a target",
+    ignore_rule: "Ignore rule for an Issue",
+    accept: "Accept the guest value of an Issue",
+    revert: "Revert drift of an Issue",
+    reenroll: "Re-enroll a Target",
     build: "Image build (no document change)",
     agent_update: "Agent update (no document change)",
     pin_refresh: "New base checksum of an image (only the pin changes)",
@@ -169,14 +169,14 @@
 {#if plan}
   {#if plan.status === "stale"}
     <div class="banner warn" role="alert">
-      <strong>This plan is stale.</strong> It was dropped, or the desired state changed after it was
-      made, so it cannot be approved. Make the change again to get a new plan.
-      <a href={href({ name: "plans" })}>Pending plans</a>
+      <strong>This Plan is stale.</strong> It was dropped, or the desired state changed after it was
+      made, so it cannot be approved. Make the change again to get a new Plan.
+      <a href={href({ name: "plans" })}>Pending Plans</a>
     </div>
   {:else if plan.status === "approved"}
     <div class="banner ok">
       Approved by <span class="mono">{plan.approved_by}</span> at {formatTime(plan.approved_at)}.
-      {#if plan.run_id}<a href={href({ name: "run", id: plan.run_id })}>Watch run {plan.run_id}</a
+      {#if plan.run_id}<a href={href({ name: "run", id: plan.run_id })}>Watch Run {plan.run_id}</a
         >{/if}
     </div>
   {/if}
@@ -195,7 +195,7 @@
       <dd class="mono">{plan.author}</dd>
       <dt>Created</dt>
       <dd>{formatTime(plan.created_at)}</dd>
-      <dt>Risk of the plan</dt>
+      <dt>Risk of the Plan</dt>
       <dd><RiskBadge risk={plan.risk} /></dd>
       <dt>Summary</dt>
       <dd>
@@ -230,7 +230,7 @@
   {@const why = humanOnlyReasons(plan)}
   {#if why.length && plan.status === "pending"}
     <div class="banner info" role="note">
-      <strong>Only a person can approve this plan.</strong> An API token cannot.
+      <strong>Only a person can approve this Plan.</strong> An API token cannot.
       <ul class="why">
         {#each why as w, i (i)}<li>{w}</li>{/each}
       </ul>
@@ -245,11 +245,11 @@
     <h2 id="docs-title">Document changes</h2>
     {#if plan.documents_unavailable}
       <p class="banner warn" id="docs-unavailable" role="note">
-        <strong>Document changes not available.</strong> Plumb cannot compute them for this plan, for
+        <strong>Document changes not available.</strong> Plumb cannot compute them for this Plan, for
         example because its proposal is no longer valid. Make the change again to see them.
       </p>
     {:else if plan.status === "approved" && !plan.documents && plan.revision === null}
-      <p class="muted" id="docs-none">This plan changed no document.</p>
+      <p class="muted" id="docs-none">This Plan changed no document.</p>
     {:else if plan.status === "approved" && !plan.documents}
       <p class="muted" id="docs-revision">
         The approval committed <a href={href({ name: "revision", id: plan.revision ?? 0 })}
@@ -259,7 +259,7 @@
       <ProblemBox error={committedError} />
     {:else if docs === undefined}
       <p class="banner warn" id="docs-missing" role="note">
-        <strong>This server does not list the document changes of a plan.</strong> Update Plumb to see
+        <strong>This server does not list the document changes of a Plan.</strong> Update Plumb to see
         them before you approve.
       </p>
     {/if}
@@ -267,7 +267,7 @@
       <!-- nothing more to list -->
     {:else if docs.length === 0}
       <p class="muted" id="docs-none">
-        {plan.status === "approved" ? "This plan changed" : "This plan changes"} no document.
+        {plan.status === "approved" ? "This Plan changed" : "This Plan changes"} no document.
       </p>
     {:else}
       <p id="docs-count">
@@ -280,7 +280,7 @@
       </p>
       {#if plan.documents_truncated}
         <p class="banner warn" id="docs-truncated" role="note">
-          This plan changes too much text to show here. Some documents are listed by name only.
+          This Plan changes too much text to show here. Some documents are listed by name only.
         </p>
       {/if}
       {#each shownDocs as c, i (`${c.kind}/${c.name}`)}
@@ -363,7 +363,7 @@
       </p>
     {/if}
     {#if t.resources.length === 0}
-      <p class="muted">No resource changes on this target.</p>
+      <p class="muted">No resource changes on this Target.</p>
     {/if}
     {#each t.resources as r, i (i)}
       <section
@@ -443,7 +443,7 @@
       </h2>
       <p class="muted">
         An API token wrote this text, for example an AI client or a script. It does not change what
-        the plan does: check the changes above.
+        the Plan does: check the changes above.
       </p>
       <blockquote class="wrap">{plan.reason}</blockquote>
     </section>
@@ -460,7 +460,7 @@
       {:else}
         <p class="muted" id="approve-role">
           Your role is {roleOf(me.session)}. {plan.risk === "destructive"
-            ? "A destructive plan needs the role admin."
+            ? "A destructive Plan needs the role admin."
             : "Approving needs the role apply or admin."} Ask a person with that role.
         </p>
       {/if}
@@ -488,14 +488,14 @@
         <a class="btn" href={href({ name: "plans" })}>Not now</a>
         {#if !confirmDrop && can("discardPlan")}
           <button class="btn danger" type="button" disabled={busy} onclick={askDrop}
-            >Drop plan</button
+            >Drop Plan</button
           >
         {/if}
       </div>
       {#if confirmDrop}
         <div class="drop" role="group" aria-labelledby="drop-question">
           <p id="drop-question">
-            Drop plan {id}? It can never be applied after that. An issue that it would resolve is
+            Drop Plan {id}? It can never be applied after that. An Issue that it would resolve is
             open again.
           </p>
           <div class="row">

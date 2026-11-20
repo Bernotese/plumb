@@ -43,7 +43,7 @@ describe("router", () => {
     expect(parse("#/settings")).toEqual({ name: "settings", tab: "tokens" });
     expect(parse("#/settings/nope").name).toBe("not-found");
   });
-  it("defaults to the targets", () => {
+  it("defaults to the Targets", () => {
     expect(parse("")).toEqual({ name: "targets" });
     expect(parse("#/")).toEqual({ name: "targets" });
   });

@@ -141,7 +141,7 @@ describe("review nits of #165", () => {
     expect(text()).toContain("A new or changed recipe builds a new version");
     el<HTMLInputElement>('input[name="i-type"][value="lxc"]').click();
     flushSync();
-    expect(text()).toContain("Nothing changes until you approve the plan.");
+    expect(text()).toContain("Nothing changes until you approve the Plan.");
     expect(text()).not.toContain("recipe builds");
     type("#i-known", "Debian 13");
     expect(el<HTMLSelectElement>("#i-known").value).toBe("Debian 13");

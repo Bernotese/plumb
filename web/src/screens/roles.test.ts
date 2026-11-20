@@ -54,22 +54,22 @@ describe("role read: no write button", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(writeButtons()).toEqual(
       screen === TargetForm
-        ? expect.not.arrayContaining(["Show the plan", "Plan the re-enrollment", "Delete target…"])
+        ? expect.not.arrayContaining(["Show the Plan", "Plan the re-enrollment", "Delete target…"])
         : [],
     );
     expect(document.querySelector('a.btn.primary[href$="/new"], a.btn[href$="/edit"]')).toBeNull();
   });
 
-  it("the plan page has no approve and no drop", async () => {
+  it("the Plan page has no approve and no drop", async () => {
     const api = await as("read");
     show(PlanView, { api, id: 14 });
     await until(() => document.querySelector("#approve-role"));
     expect(text()).toContain("Your role is read. Approving needs the role apply or admin.");
     expect(button("Approve and apply")).toBeUndefined();
-    expect(button("Drop plan")).toBeUndefined();
+    expect(button("Drop Plan")).toBeUndefined();
   });
 
-  it("the issue page has no resolve and no comment form", async () => {
+  it("the Issue page has no resolve and no comment form", async () => {
     const api = await as("read");
     show(IssueView, { api, id: 9 });
     await until(() => document.querySelector("#resolve-role"));
@@ -78,7 +78,7 @@ describe("role read: no write button", () => {
     expect(button("Ignore once")).toBeUndefined();
   });
 
-  it("the target list still links to each target", async () => {
+  it("the Target list still links to each Target", async () => {
     const api = await as("read");
     show(Targets, { api });
     await until(() => rows().length);
@@ -90,7 +90,7 @@ describe("role plan", () => {
   it("proposes and drops, but does not approve", async () => {
     const api = await as("plan");
     show(PlanView, { api, id: 14 });
-    await until(() => button("Drop plan"));
+    await until(() => button("Drop Plan"));
     expect(button("Approve and apply")).toBeUndefined();
     reset();
     me.session = await api.session();
@@ -102,7 +102,7 @@ describe("role plan", () => {
 });
 
 describe("role apply (D-329)", () => {
-  it("approves a reversible plan, not a destructive one", async () => {
+  it("approves a reversible Plan, not a destructive one", async () => {
     const api = await as("apply");
     show(PlanView, { api, id: 14 });
     await until(() => button("Approve and apply"));
@@ -115,7 +115,7 @@ describe("role apply (D-329)", () => {
     expect(p.risk).toBe("destructive");
     show(PlanView, { api, id: p.id });
     await until(() => document.querySelector("#approve-role"));
-    expect(text()).toContain("A destructive plan needs the role admin.");
+    expect(text()).toContain("A destructive Plan needs the role admin.");
     expect(button("Approve and apply")).toBeUndefined();
     await expect(api.approvePlan(p.id)).rejects.toMatchObject({ problem: { status: 403 } });
   });

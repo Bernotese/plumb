@@ -66,7 +66,7 @@
       <p class="muted" id="delete-{word}-blocked">{blocked}</p>
     {:else if !open}
       {@render children?.()}
-      <p class="muted">Plumb makes a plan first. Nothing is deleted until you approve it.</p>
+      <p class="muted">Plumb makes a Plan first. Nothing is deleted until you approve it.</p>
       <div class="row">
         <button class="btn danger" type="button" onclick={ask}>Delete {word}…</button>
       </div>

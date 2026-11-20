@@ -66,12 +66,12 @@
 </script>
 
 <h1 id="page-title" tabindex="-1">Runs</h1>
-<p class="muted">A run applies an approved plan. Open one to see the result per resource.</p>
+<p class="muted">A Run applies an approved Plan. Open one to see the result per resource.</p>
 <ProblemBox {error} />
 {#if first === null && !error}
   <p class="muted" aria-live="polite">Loading…</p>
 {:else if first && items.length === 0}
-  <p class="muted">No runs yet. A run starts when a plan is approved.</p>
+  <p class="muted">No Runs yet. A Run starts when a Plan is approved.</p>
 {:else if first}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
