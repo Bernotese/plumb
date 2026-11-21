@@ -66,18 +66,18 @@ Everything; the README describes each feature.
 
 Before this release, its release candidates went through full runs on a real Proxmox VE host:
 
-- each release candidate was built from the release tarball, as a user gets it, and the last one is the code of this release;
+- each release candidate was installed from its release tarball, as a user gets it, and the last one is the code of this release;
 - every run of the installer had its dry run first, and the real run did exactly what the dry run listed.
 
 - **Install from the tarball:** the installer refuses a changed file in the bundle and an unsafe `TMPDIR`, and changes nothing when it refuses.
-- **Three upgrades, each from one release candidate to the next:**
+- **Five upgrades, each from one release candidate to the next:**
   - no Proxmox right changed: the ACL lines were equal before and after, and the run had no `pveum` line;
   - no database table lost a row;
   - the storage config stayed byte-equal;
   - where guests ran, every guest stayed ready and online, and each agent then took its update Plan.
 - **The features:**
   - a VM and a container from an Image, with Blocks; containers from stock and from built Images, each with one enrollment at its first boot and none at a reboot;
-  - the web UI on the real controller with the roles read and admin, at desktop and phone width and in dark mode, without a console error;
+  - the web UI on the real controller with the roles read and admin, at desktop and phone width and in dark mode, with no console error (the login page shows only the expected 401 of its session check);
   - drift and its revert; ignore by rule (the same drift opens no Issue while the rule exists, and one again after it goes); accept as raw;
   - the rollback to an old revision, and the import of a changed Block (a Plan that names only that Block);
   - a timer unit, and a `command` resource that runs once;
@@ -110,10 +110,10 @@ Before this release, its release candidates went through full runs on a real Pro
 
 ## Known limits
 
-- **A test that failed without a known cause:** the firewall test of the CI (`TestGuestFirewall`) failed twice in an early step, before Plumb's firewall code ran. The cause was not found.
+- **A test that failed without a known cause:** the firewall test of the CI (`TestGuestFirewall`) failed twice: once before Plumb's firewall code ran, and once when a port that Plumb's table accepts was not reachable. The cause was not found.
   - Since then, a loop runs in the guest CI jobs (first after the boot in the firewall job). It builds the same network for each round and probes it once: in 96 CI runs from 2026-11-19 to 2026-11-21, **56800 of 56800 rounds connected, 0 failed**.
   - The cause stays unexplained. A new failure stops the loop with a dump of the network state.
-- **A new network card makes the guest ask DHCP again on its main card:** when Plumb adds or changes a network card, the guest asks its DHCP server again for its main card. It keeps the same address; the gap was about 24 ms. If that matters, give the main card a static address or a DHCP reservation.
+- **A new network card makes the guest ask DHCP again on its main card:** when Plumb adds or changes a network card, the guest asks its DHCP server again for the address of its main card. In the tests it kept the same address, with no gap (under 20 ms). If your DHCP server may hand out another address, give the main card a static address or a DHCP reservation.
 - **A stock Ubuntu 26.04 image** used directly by a Target can stay on DHCP until its first restart. Use DHCP, or let Plumb build the Image: a built Image does not have this limit.
 - **Proxmox Backup Server:** Plumb reads from the storage config whether a backup storage encrypts. This was not tested on a real Proxmox Backup Server.
 - **A gone guest:** Plumb restores a guest backup only over the same guest, not after the guest is gone. Restore it in Proxmox into the pool `plumb`, then adopt the guest.
