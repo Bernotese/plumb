@@ -37,7 +37,7 @@ The tested candidate is **RC6 = `3eab710`** (built locally, no tag; host logs `d
 - **`TestGuestFirewall` (O1):** failed twice (2026-11-14, 2026-11-16); the cause is not found. A probe loop runs in every guest CI job (4000 of 4000 rounds clean on 2026-11-19). Read the dump at the next failure; never just rerun.
 - **Guest tests and the outside network:** fixed by T-276 (#419): no test waits for a package mirror; the NIC test measures the main address from before the apply (24 ms gap, a refreshed DHCP lease with the same address: D-443).
 - **Proven by tests only, never on the host:** the list is `docs/plans/finished-check.md` section 2 (the web UI as a whole, rollback, import, the one-time-password unlock of other users after a restore, PBS, …). The RC5 host run takes what it can.
-- **Test host `pve-dev`:** only LXC 100 (the controller on RC6), all stores empty, 11 ACL lines, the isolated bridge `vmbr9` goes with T-280.
+- **Test host `pve-dev`:** only LXC 100 (the controller on RC6), all stores empty, 9 ACL lines; the test bridge `vmbr9` is removed (T-280, 2026-11-21: the network file is byte for byte the state before T-224).
 
 ## Where things are
 
