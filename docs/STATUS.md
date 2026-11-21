@@ -24,7 +24,7 @@ The tested candidate is **RC6 = `3eab710`** (built locally, no tag; host logs `d
 
 ## Open for the user
 
-- **Still open (the answers follow, D-444):** U6 (version v0.1.0, the build provenance attestation, pl-lead runs the workflow and the user publishes the draft; a protected environment yes/no), U9 (PBS never tested on a real server; the README says so today), U10 (no restore of a guest that is gone: it needs a new right; the README shows the way by hand).
+- **The user said yes to the release (D-445, 2026-11-21):** v0.1.0, the attestation, pl-lead runs the workflow to a draft, **the user publishes**; U9 (b) and U10 (no new right) as the README says today. pl-lead works through `docs/plans/release-day.md` up to the draft.
 - **Answered 2026-11-21 (D-444):** U11 nothing open under secret scanning. U12: the user has no installation of his own, so the upgrade test from his version, U7 and U8 are dropped; his first install will be made fresh from the release. `vmbr9` may be removed (T-280). `testhost-api.token` is deleted.
 
 ## Drafts that wait
