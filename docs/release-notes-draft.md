@@ -1,35 +1,28 @@
-# Release notes: draft for the first release
+# Release notes: v0.1.0
 
-A **draft** made from `docs/RELEASE-NOTES-TEMPLATE.md`, `CHANGELOG.md` ("Unreleased") and the host re-run T-263. It is not a release: no tag and no GitHub release exist. **The version and the date stay placeholders until the user decides them (U6).** pl-lead copies the text below the line into the draft release that the release workflow makes, checks each line against `CHANGELOG.md` and `docs/STATUS.md`, and the user publishes it.
+The text below the line is the final text for the draft release `v0.1.0` (release workflow run 44962338394). pl-lead copies it into the draft release; the user publishes it. Sources: `CHANGELOG.md`, the host runs T-263, T-277, T-279 and T-280, the scans of T-266, `docs/plans/finished-check.md` and the CI runs of the probe loop.
 
 Open before use:
 
-- Fill `<version>` and `<date>`.
-- **Expected for commit `3eab710` with version `0.1.0`** (a local build, T-279 R6-0; a commit that changes a build input changes the hashes):
+- **Expected for commit `a9d1e021eabf` with version `v0.1.0`** (RC6's code `3eab710` plus no build input; the local build T-279 R6-0; the draft release's `SHA256SUMS` equals it):
   - `plumb` `0856d9e34394582b72f8260ce1207aaa8bce53d6354a747b98efafe688f83416`
   - `plumb-agent` `ccc1f0f50add6d380a9d683161dddf69f90796e3a9361bb45d998f113112bf6e`
   - `install.sh` `facb822289e47983ce03bc46ef10539a228526b9a6ae03dc3e6110203995f3fe`
   - `plumb-v0.1.0-linux-amd64.tar.gz` `d584f47a7528c0ef82aa6da60031b2891aac5099da7a9aafae991db149c4b25c`
 
-  The draft release's `SHA256SUMS` must equal these when it is built from that commit.
-
-- Keep step 1 of "Install or upgrade" only if the release has a build attestation (the release workflow of PR #392).
-- Update the O1 line with the newest count of the CI loop.
-- Add the C5b scan result of T-263 to "Proven on a real Proxmox host" when pl-reviewer has reported.
-
 ---
 
-# Plumb <version>
+# Plumb v0.1.0
 
-The first release of Plumb. <date>
+The first release of Plumb.
 
 Plumb is below 1.0: its API and its file formats may still change between releases.
 
 ## Install or upgrade
 
-Download `plumb-<version>-linux-amd64.tar.gz` and `SHA256SUMS` from this page. Check them **before** you unpack:
+Download `plumb-v0.1.0-linux-amd64.tar.gz` and `SHA256SUMS` from this page. Check them **before** you unpack:
 
-1. **Who built it:** `gh attestation verify plumb-<version>-linux-amd64.tar.gz --repo Bernotese/plumb --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main`. This shows that the release workflow of this repository built the file from the commit that it names.
+1. **Who built it:** `gh attestation verify plumb-v0.1.0-linux-amd64.tar.gz --repo Bernotese/plumb --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main`. This shows that the release workflow of this repository built the file from the commit that it names.
    - It needs `gh` 2.102.0 or newer (`gh --version`). An older `gh` checks the two last options too loosely, and the `gh` of most distributions has no `gh attestation` at all.
    - Get a current one from https://cli.github.com or https://github.com/cli/cli/releases.
 2. **The file is whole:** `sha256sum -c SHA256SUMS`.
@@ -42,6 +35,7 @@ Then unpack it as root into a folder that only root can write, and run its `inst
 - **Name every option again:** every extra bridge, VLAN tag and guest backup storage. A repair run removes the rights of the ones it is not given.
 - **Agents:** they do not update by themselves. After the upgrade the agent page of each Target shows its state: "Update available" or "Update required" (Plumb refuses the Plans of that Target until the update) → propose and approve one agent update Plan per Target; "Manual update" → the one root command below.
 - **Old guests:** a guest made before the agent could update itself needs one root command, once (README, "Guests made before the agent self-update").
+- **Container Images built before this release:** use **Build now** once on each such Image before you make new containers from it. A container from an older built version could miss its agent at its first boot: its create Run ends with "the agent of … did not come online", and its agent page says "no agent yet". The README, "Updates and repair", shows how to fix such a container. A stock container Image needs nothing: Plumb packs its template again at its next use.
 
 ## What is new
 
@@ -70,21 +64,26 @@ Everything; the README describes each feature.
 
 ## Proven on a real Proxmox host
 
-Before this release, its release candidates went through a full run on a real Proxmox VE host:
+Before this release, its release candidates went through full runs on a real Proxmox VE host:
 
-- each release candidate was built from the release tarball, as a user gets it;
+- each release candidate was built from the release tarball, as a user gets it, and the last one is the code of this release;
 - every run of the installer had its dry run first, and the real run did exactly what the dry run listed.
 
 - **Install from the tarball:** the installer refuses a changed file in the bundle and an unsafe `TMPDIR`, and changes nothing when it refuses.
-- **Upgrade from one release candidate to the next:**
+- **Three upgrades, each from one release candidate to the next:**
   - no Proxmox right changed: the ACL lines were equal before and after, and the run had no `pveum` line;
   - no database table lost a row;
   - the storage config stayed byte-equal;
-  - every guest stayed ready and online;
-  - each agent then took its update Plan.
-- **The features, one Target of each kind:**
-  - a VM and a container from an Image, with Blocks;
-  - drift and its revert;
+  - where guests ran, every guest stayed ready and online, and each agent then took its update Plan.
+- **The features:**
+  - a VM and a container from an Image, with Blocks; containers from stock and from built Images, each with one enrollment at its first boot and none at a reboot;
+  - the web UI on the real controller with the roles read and admin, at desktop and phone width and in dark mode, without a console error;
+  - drift and its revert; ignore by rule (the same drift opens no Issue while the rule exists, and one again after it goes); accept as raw;
+  - the rollback to an old revision, and the import of a changed Block (a Plan that names only that Block);
+  - a timer unit, and a `command` resource that runs once;
+  - the Blocks `shell` and `common-tools` in a VM and a container;
+  - a new Image version leaves the Targets of the old version alone;
+  - the guard of the agent's own files, also through a relative symbolic link;
   - a network card on an extra bridge with a VLAN tag, and the firewall;
   - data disks, added and grown, with their data kept;
   - a guest backup and its restore;
@@ -94,17 +93,27 @@ Before this release, its release candidates went through a full run on a real Pr
 - **The restore of Plumb itself** (remove the controller and keep the guests, then a clean install with the restore of a backup):
   1. every Target reconciles, and no drift Issue opened in 15 minutes;
   2. every agent is online without a re-enrollment, and the SSH host keys stay pinned;
-  3. the admin logs in with the password that the restore showed and must set a new one first (after it only the new one works), the tokens work within their tier once a person enables them again, and a revoked token stays revoked. The other users are locked by the restore; their unlock by a one-time password was not run on the host (it is covered by the automated tests only);
+  3. the admin logs in with the password that the restore showed and must set a new one first (after it only the new one works), the tokens work within their tier once a person enables them again, and a revoked token stays revoked. The other users are locked by the restore. A person unlocks each one with a one-time password: the user must set a new password before anything else, and the used one-time password is refused;
   4. the guest backups are still listed, and a guest with a data disk restores from one;
   5. the guests, their data disks and their network cards are unchanged;
   6. the Proxmox rights and the storage config are equal;
-  7. <the result of the secret scan of the new controller's data and logs>.
+  7. no secret leaked: a scan of the release tarballs and of what each controller wrote (its database, its logs, its events and the installer output) found no token, password or key.
+
+**Proven by the automated tests only, not on a host:**
+
+- the encryption of guest backups on a Proxmox Backup Server (no such server was at hand; see "Known limits");
+- that a hand change counts as drift only for a resource that a Block manages, next to managed files in the same guest (the host showed only a guest without managed resources);
+- the rate limit of drift reports;
+- the network match by the permanent MAC address (in CI only);
+- a newer signed pin of an Image, end to end;
+- the refusal that keeps the last admin (a host cannot reach it in the order of the API calls).
 
 ## Known limits
 
 - **A test that failed without a known cause:** the firewall test of the CI (`TestGuestFirewall`) failed twice in an early step, before Plumb's firewall code ran. The cause was not found.
-  - Since then, a loop runs in the guest CI jobs (first after the boot in the firewall job). It builds the same network for each round and probes it once: in 7 CI runs, **4000 of 4000 rounds connected, 0 failed** (status of 2026-11-19).
+  - Since then, a loop runs in the guest CI jobs (first after the boot in the firewall job). It builds the same network for each round and probes it once: in 96 CI runs from 2026-11-19 to 2026-11-21, **56800 of 56800 rounds connected, 0 failed**.
   - The cause stays unexplained. A new failure stops the loop with a dump of the network state.
+- **A new network card makes the guest ask DHCP again on its main card:** when Plumb adds or changes a network card, the guest asks its DHCP server again for its main card. It keeps the same address; the gap was about 24 ms. If that matters, give the main card a static address or a DHCP reservation.
 - **A stock Ubuntu 26.04 image** used directly by a Target can stay on DHCP until its first restart. Use DHCP, or let Plumb build the Image: a built Image does not have this limit.
 - **Proxmox Backup Server:** Plumb reads from the storage config whether a backup storage encrypts. This was not tested on a real Proxmox Backup Server.
 - **A gone guest:** Plumb restores a guest backup only over the same guest, not after the guest is gone. Restore it in Proxmox into the pool `plumb`, then adopt the guest.
