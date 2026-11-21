@@ -32,42 +32,75 @@ Plumb and propose Plans ([MCP](docs/guide/mcp.md)). Guests run Debian 13 or Ubun
 
 ## Install
 
-### 1. Get the files
+### 1. Get the release and check it
 
-Until there is a release, build the binary yourself on a Linux machine with Go and Node.js 24 or
-newer (versions: `go.mod`, `Makefile`):
+Decide these before you start (step 3 explains each option): more bridges or VLAN tags for guests,
+the storage for guest backups (and whether you accept unencrypted ones), a storage on another
+device for the copy of Plumb's own backups, and a free static IPv4 address for Plumb.
+
+Download the newest release from [Releases](https://github.com/Bernotese/plumb/releases): the
+tarball and its `SHA256SUMS`. Check both **before** you unpack, on any machine with
+[`gh`](https://cli.github.com) **2.102.0 or newer** (`gh --version`; an older one checks the two
+last options too loosely, and the `gh` of most distributions has no `gh attestation`):
 
 ```sh
-git clone https://github.com/Bernotese/plumb.git
-cd plumb && make build          # makes bin/plumb
+V=v0.1.0
+curl -fLO https://github.com/Bernotese/plumb/releases/download/$V/plumb-$V-linux-amd64.tar.gz
+curl -fLO https://github.com/Bernotese/plumb/releases/download/$V/SHA256SUMS
+sha256sum -c SHA256SUMS
+gh attestation verify plumb-$V-linux-amd64.tar.gz --repo Bernotese/plumb \
+  --signer-workflow Bernotese/plumb/.github/workflows/release.yml --source-ref refs/heads/main
 ```
 
-Copy `bin/plumb` and `install/install.sh` to the Proxmox host.
+`sha256sum -c` shows that the file is whole. Only `gh attestation verify` shows who built it: the
+release workflow of this repository on `main`. Only these two steps prove the whole tarball,
+`install.sh` included ([Verify a download](docs/RELEASE.md#verify-a-download)).
 
-**From a release tarball** (when there is one): check it **before** you unpack it, with
-`gh attestation verify` (who built it) and the outer `SHA256SUMS` (see
-[Verify a download](docs/RELEASE.md#verify-a-download)). Only
-these two steps prove the whole tarball, `install.sh` included. Then unpack it as root into a
-folder that only root can write, and run its `install.sh` with `--plumb-binary ./plumb` from there.
+Copy the tarball to the Proxmox host and unpack it as root into a folder that only root can
+write:
+
+```sh
+V=v0.1.0
+install -d -m 0700 /root/plumb-$V
+tar -xzf plumb-$V-linux-amd64.tar.gz -C /root/plumb-$V
+cd /root/plumb-$V
+```
 
 - The installer checks the tarball's own `SHA256SUMS` before it uses any file: every file must be
   there and match. Else it stops, names the file and changes nothing. This proves only that the
   files are whole, not who made them.
-- The installer of a release says "Bundle check of release …". If the installer of a tarball says
-  "source build" instead, stop: it is not the installer of a release.
+- The installer of a release says "Bundle check of release …". If it says "source build" instead,
+  stop: it is not the installer of a release.
 - Run it from a clean root shell (for example `sudo -i`), not through `sudo -E` or a wrapper that
   passes your environment: `BASH_ENV` and `PATH` act before the first line of the script. A
   release installer uses `/tmp` for its temp files and refuses any other `TMPDIR`.
 
+**From source:** to run Plumb from a commit instead of a release, build it on a Linux machine with
+Go and Node.js 24 or newer (`git clone https://github.com/Bernotese/plumb.git && cd plumb && make
+build` makes `bin/plumb`; versions: `go.mod`, `Makefile`). Copy `bin/plumb` and
+`install/install.sh` to the host. Such an installer says "source build" and checks no sums.
+
 ### 2. Dry run
 
-The dry run prints every command that would change the host. It changes nothing.
+The dry run prints every command that would change the host. It changes nothing. Give it every
+option that you chose above (step 3 lists them):
 
 ```sh
-bash install.sh --plumb-binary ./plumb --lxc-ip <address>/<prefix> --lxc-gw <gateway> --dry-run
+bash install.sh --plumb-binary ./plumb --lxc-ip <address>/<prefix> --lxc-gw <gateway> \
+  <your options> --dry-run
 ```
 
-Read the list. Use `bash install.sh --help` for all options (storages, bridge, VMID range, DNS).
+Use `bash install.sh --help` for all options (storages, bridge, VMID range, DNS). Each line that
+starts with `+` is one command. Read the rights in the `+ pveum` lines:
+
+- `+ pveum role add Plumb… --privs …`: one role per line of
+  [the rights table](#what-the-plumb-token-may-do). The privileges must equal the table.
+- `+ pveum acl modify <path> --users plumb@pve --roles …` and the same line with
+  `--tokens plumb@pve!plumb`: each table line twice, for the user and for its token.
+- Without options there are 7 table lines, so 14 `acl modify` lines. Each extra bridge and each
+  VLAN tag adds one table line, guest backups add two.
+- A path or a role that is not in the table: stop, and do not run the install. A first install
+  shows no "These older rights of Plumb … are removed" block.
 
 ### 3. Real run
 
@@ -80,7 +113,7 @@ Run the same command without `--dry-run`. The installer asks before it changes a
 
 At the end it prints the address of the web UI and the first password of the user `admin`.
 
-Two kinds of options are off unless you name them. The dry run lists each right that they add.
+These options are off unless you name them. The dry run lists each right that the first two add.
 
 - **More networks for guests:** `--extra-bridge <bridge>` lets a guest network card use one more
   bridge, untagged. `--extra-vlan <bridge>:<tag>[,<tag>…]` allows these VLAN tags on a VLAN-aware
@@ -91,6 +124,11 @@ Two kinds of options are off unless you name them. The dry run lists each right 
   the backups encrypted. On any other storage, Plumb makes guest backups only when you add
   `--guest-backup-clear`: the backups are then **not encrypted**, and each one holds the whole
   guest disk with every secret in it.
+
+- **A copy of Plumb's own backups off the host:** `--backup-storage <storage>` names a storage on
+  another device (`dir`, `nfs`, `cifs` or `cephfs`). The host copies the newest backup there every
+  day (see [Copy the backups off the host](#copy-the-backups-off-the-host)). Name it at the first
+  install already: until then the backups live only in the Plumb LXC.
 
 A later installer run (an update or a repair run) sets these rights from its options alone: give
 every extra bridge, VLAN and the guest backup storage again, or its right is removed. Give
@@ -159,6 +197,7 @@ the guests in the pool get the right too. Nothing else is given.
 2. Log in as `admin` with the password that the installer printed. If you lost it:
    `pct exec <plumb-vmid> -- journalctl -u plumb.service | grep Password`.
 3. Set a new password. Plumb asks for it at the first login.
+   Then open **Settings → General**: every line of "The rights of the install" must say "there".
 4. **Images:** add an Image (a Debian or Ubuntu cloud image, or a container template). You can
    switch on a build with Blocks and a schedule.
 
