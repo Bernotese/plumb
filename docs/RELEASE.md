@@ -1,6 +1,6 @@
 # Releases
 
-There is no release of Plumb yet. This file says how one is made and how you check a download. The plan of the first release is `docs/plans/release-slice.md`.
+The releases of Plumb are on the [Releases](https://github.com/Bernotese/plumb/releases) page; the first one is `v0.1.0`. This file says how a release is made and how you check a download.
 
 ## Verify a download
 

@@ -11,7 +11,11 @@ How to check a download: `docs/RELEASE.md`.
 
 ## Unreleased
 
-The first release. Its version and date are not decided yet (the proposal is 0.1.0). Plumb is below 1.0: its API and its file formats may still change between releases. The README describes each feature.
+Nothing yet.
+
+## 0.1.0 – <YYYY-MM-DD>
+
+The first release. Plumb is below 1.0: its API and its file formats may still change between releases. The README describes each feature.
 
 ### Added
 
@@ -32,7 +36,7 @@ The Proxmox user `plumb@pve` and its token `plumb@pve!plumb` get the roles of th
 
 ### Upgrade
 
-- There is no release before this one. To move an install that was built from source to this release, run the release's `install.sh` with the same options as before (a repair run), `--dry-run` first. Name every extra bridge, VLAN tag and guest backup storage again: a repair run removes the rights of the ones it is not given.
+- There is no release before this one. A new install follows the README, "Install". To move an install that was built from source to this release, run the release's `install.sh` with the same options as before (a repair run), `--dry-run` first. Name every extra bridge, VLAN tag and guest backup storage again: a repair run removes the rights of the ones it is not given.
 - Guests made before the agent could update itself need one root command each (README, "Guests made before the agent self-update").
 - Container templates: the first-boot install of the agent checks the agent's binary now. Before, a container could miss its agent at its first boot when the two units started in one order. Plumb packs each stock container template again the next time it is used; an old file that no container uses any more then shows as unused on the Image page, with the command that removes it. A built container Image keeps the old files in its versions: use "Build now" once before you make new containers from it (README, "Updates and repair").
 
