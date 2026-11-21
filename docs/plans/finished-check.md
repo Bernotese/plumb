@@ -20,7 +20,7 @@ Stale texts found (no code gap): D-422 is still "proposed" in `docs/DECISIONS.md
 
 ## 2. Proven only by tests, never on the host
 
-**Update (T-277, RC5 on `pve-dev`, log `docs/tasks/T-277.log.md`, read by pl-reviewer at 82056eb).** These points are now proven on the host:
+**Update (T-277, RC5, log `docs/tasks/T-277.log.md`, read at 82056eb; T-279, RC6, log `docs/tasks/T-279.log.md`, read at 3537246; both on `pve-dev`, read by pl-reviewer).** These points are now proven on the host:
 
 | Point                                                              | Step of T-277         | What the host showed                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,15 +35,15 @@ Stale texts found (no code gap): D-422 is still "proposed" in `docs/DECISIONS.md
 | Adopt a file as raw (5.8)                                          | c8                    | `accept_mode` raw; after the Plan, the resource is an override with the guest's content                                                                                                                                                                                                                                                                                                     |
 | The agent-path guard, also through a relative symlink (5.6, T-271) | b2                    | five refusals (422), no Plan                                                                                                                                                                                                                                                                                                                                                                |
 | A container's first boot from a template packed by RC5 (T-278)     | b6                    | 5 + 1 containers, each with a real download and one enrollment; a reboot skips the install; an old stock Image is packed again at its next use, and its old file is listed as unused                                                                                                                                                                                                        |
+| The built-container path (T-278) | T-279 f1 | an `lxc` Image built with a Block → a Target: the built file is in the guest, the install downloads once, exactly one enrollment, and still one after a reboot |
+| The UI's kind filter (5.6) | T-279 f3 (a) | the LXC Target's form on the real controller: "Not offered for a container: network" |
 
 **Still proven only by tests, never on the host:**
 
 - **5.3:** PBS encryption (no PBS; U9, D-434).
-- **5.6:** the UI's kind filter (Blocks that do not fit an LXC are hidden). The server refusal of `sysctl` on an LXC was seen in T-100.
 - **5.8:**
-  - "only managed resources count as drift" (no unmanaged change was made on the host);
+  - "only managed resources count as drift": only in part on the host. T-279 f3 (b) changed an unmanaged file in a guest that manages no resource, and no Issue came within a full check. A guest with managed files and an unmanaged change next to them was not tried;
   - strictness exists only for `package` (other types: D-425, D-433).
-- **T-278:** a container from a **built** container Image version made after the fix ("Build now"). Only containers from stock templates packed by RC5 ran on the host (b6); the built path follows from the code (the build guest starts from the newly packed template).
 - **ROADMAP rows:**
   - 21 (drift rate limit), 24 (`permaddr`, the netplan tests run in CI only), 25 (a newer signed pin end to end), 27, 28, 30, 31 (test infrastructure and fixes by nature);
   - #354 L1 of row 39;
