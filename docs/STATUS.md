@@ -24,12 +24,12 @@ The tested candidate is **RC6 = `3eab710`** (built locally, no tag; host logs `d
 
 ## Open for the user
 
-- **The user said yes to the release (D-445, 2026-11-21):** v0.1.0, the attestation, pl-lead runs the workflow to a draft, **the user publishes**; U9 (b) and U10 (no new right) as the README says today. pl-lead works through `docs/plans/release-day.md` up to the draft.
+- **The draft release v0.1.0 is ready for the user to publish (2026-11-21, D-445).** Release commit `a9d1e021eabf` (= the tested candidate RC6 plus no build input); workflow run 44962338394 green; the draft's `SHA256SUMS` equals the local build of that commit and the hashes of RC6 (tarball `d584f47a…b25c`); `gh attestation verify` with signer workflow, source ref and source digest passes; no secret in the tarball or the notes; no tag exists yet. **Only the user publishes** (the publish makes the tag). After it: steps 11 and 12 of `docs/plans/release-day.md` (the tag and public sums check; merge #434: the README install path and CHANGELOG 0.1.0).
 - **Answered 2026-11-21 (D-444):** U11 nothing open under secret scanning. U12: the user has no installation of his own, so the upgrade test from his version, U7 and U8 are dropped; his first install will be made fresh from the release. `vmbr9` may be removed (T-280). `testhost-api.token` is deleted.
 
 ## Drafts that wait
 
-- For the release: #392 (attestation in `release.yml`, approved; merges after the yes to U6), #398 (release notes), #407 (release-day checklist), #405 (becomes the notes for the user's first install from the release: no repair run is needed).
+- For after the publish: #434 (README install from the release, CHANGELOG 0.1.0), #398 (the notes text as set into the draft: merge or close after the publish).
 - For after the release: #408, #409 (two small cards of `docs/plans/after-release-slice.md`).
 
 ## Open technical points
