@@ -45,8 +45,9 @@ cd plumb && make build          # makes bin/plumb
 Copy `bin/plumb` and `install/install.sh` to the Proxmox host.
 
 **From a release tarball** (when there is one): check it **before** you unpack it, with
-`gh attestation verify` (who built it) and the outer `SHA256SUMS` (see
-[Verify a download](docs/RELEASE.md#verify-a-download)). Only
+`gh attestation verify` with the options of
+[Verify a download](docs/RELEASE.md#verify-a-download) (who built it, and that it was the release
+workflow on `main`) and the outer `SHA256SUMS` (see the same section). Only
 these two steps prove the whole tarball, `install.sh` included. Then unpack it as root into a
 folder that only root can write, and run its `install.sh` with `--plumb-binary ./plumb` from there.
 
