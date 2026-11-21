@@ -46,7 +46,7 @@ var ErrNotOpen = store.ErrIssueNotOpen
 
 // ErrAcceptImage is returned for accept of an image or kind drift: a guest
 // cannot take another image or kind, so there is nothing to write.
-var ErrAcceptImage = errors.New("issue: accept is not possible for the image or the kind of a guest; revert it or create a new target")
+var ErrAcceptImage = errors.New("issue: accept is not possible for the image or the kind of a guest; revert it or create a new Target")
 
 // containerAttrs are the container settings of guest:config that a Target
 // cannot hold (driver.AttrFeatures and driver.Outside).
@@ -154,7 +154,7 @@ var ErrAcceptNIC = errors.New("issue: accept is not possible for a NIC (nic1 …
 // ErrAcceptOutside is returned for accept of the features, mount points,
 // devices or raw lxc lines of a container: a Target cannot hold them
 // (D-227, T-038 §3).
-var ErrAcceptOutside = errors.New("issue: accept is not possible for container features, mount points, devices or raw lxc lines; Plumb runs only unprivileged containers with nesting (D-227): revert the features, remove the rest on the Proxmox host, or ignore the Issue")
+var ErrAcceptOutside = errors.New("issue: accept is not possible for container features, mount points, devices or raw lxc lines; Plumb runs only unprivileged containers with nesting: revert the features, remove the rest on the Proxmox host, or ignore the Issue")
 
 // ErrAddressFix is returned for revert and accept of a guest:address
 // Issue: ip is create-only, and the Proxmox config is right; the guest
@@ -330,7 +330,7 @@ func (s *Service) dropIssue(ctx context.Context, target, resource string) error 
 		return err
 	}
 	// D-428: the system resolution says why.
-	if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: a Rule covers all of its drift now (D-092)."}); err != nil {
+	if _, err := s.st.AddComment(ctx, store.Comment{IssueID: iss.ID, Author: "system", Body: "Resolved: a Rule covers all of its drift now."}); err != nil {
 		return err
 	}
 	s.emit(ctx, "issue.resolved", iss.ID, "system", map[string]any{"resolution": store.ResolutionIgnore})
@@ -373,11 +373,11 @@ func (s *Service) ResolveWithRule(ctx context.Context, id int64, action, princip
 	switch action {
 	case ActionRevert:
 		in.Origin = plan.OriginRevert
-		in.Reason = fmt.Sprintf("revert drift of %s on %s (issue %d)", iss.Resource, iss.Target, id)
+		in.Reason = fmt.Sprintf("revert drift of %s on %s (Issue %d)", iss.Resource, iss.Target, id)
 		in.Proposal.Targets = []string{iss.Target}
 	case ActionAccept:
 		in.Origin = plan.OriginAccept
-		in.Reason = fmt.Sprintf("accept drift of %s on %s (issue %d)", iss.Resource, iss.Target, id)
+		in.Reason = fmt.Sprintf("accept drift of %s on %s (Issue %d)", iss.Resource, iss.Target, id)
 		doc, err := s.acceptDoc(ctx, iss, changes)
 		if err != nil {
 			return store.Plan{}, err

@@ -112,7 +112,7 @@ describe("PlanView", () => {
     show(PlanView, { api, id: plan.id });
     await until(() => text().includes("Uses secrets"));
     expect(text()).toContain("Uses secrets: app-db (version 4). Values are never shown.");
-    expect(text()).toContain("Only a person can approve this plan.");
+    expect(text()).toContain("Only a person can approve this Plan.");
     expect(text()).toContain(
       "It gives a secret to web1 that web1 did not get before. web1 uses: app-db.",
     );
@@ -126,7 +126,7 @@ describe("PlanView", () => {
     expect(document.body.innerHTML).not.toContain("");
   });
 
-  it("names the revision of a rollback plan (D-131)", async () => {
+  it("names the revision of a rollback Plan (D-131)", async () => {
     const api = adminApi();
     const plan = await api.rollbackRevision(6, "Back to 6.");
     show(PlanView, { api, id: plan.id });
@@ -176,7 +176,7 @@ describe("SecretPicker", () => {
 });
 
 describe("mock rules (QA T-036 F2)", () => {
-  it("a token cannot approve a human-only plan", async () => {
+  it("a token cannot approve a human-only Plan", async () => {
     const api = createMockApi({ token: true, stepDelayMs: 0 });
     const p = await api.resolveIssue(8, "ignore_rule");
     expect(p.human_only).toEqual(["rule-change"]);
@@ -187,7 +187,7 @@ describe("mock rules (QA T-036 F2)", () => {
 });
 
 describe("IssueView", () => {
-  it("ignores once with a reason and shows the issue as ignored", async () => {
+  it("ignores once with a reason and shows the Issue as ignored", async () => {
     const api = adminApi();
     const ignore = vi.spyOn(api, "ignoreOnce");
     show(IssueView, { api, id: 8 });
@@ -217,7 +217,7 @@ describe("IssueView", () => {
     expect(alert.textContent).toContain("cannot revert this drift, so it cannot ignore it");
   });
 
-  it("makes an ignore-rule plan with the chosen scope", async () => {
+  it("makes an ignore-rule Plan with the chosen scope", async () => {
     const api = adminApi();
     const resolve = vi.spyOn(api, "resolveIssue");
     show(IssueView, { api, id: 9 });
@@ -244,7 +244,7 @@ describe("IssueView", () => {
     expect((await api.listRules()).map((r) => r.document.spec.target)).toContain("*");
   });
 
-  it("offers only the actions of the issue", async () => {
+  it("offers only the actions of the Issue", async () => {
     const api = adminApi();
     const issue = await api.getIssue(9);
     expect(issue.actions).toEqual(["revert", "ignore_once", "ignore_rule"]);
@@ -288,13 +288,13 @@ describe("IssueView", () => {
         type: "human-required",
         title: "Human session required",
         status: 403,
-        detail: "An API token cannot approve a plan that changes a rule.",
+        detail: "An API token cannot approve a Plan that changes a rule.",
       }),
     );
     el<HTMLFormElement>("form").requestSubmit();
     await until(() => document.querySelector('[role="alert"]'));
     expect(approve).toHaveBeenCalledWith(id, undefined);
-    expect(text()).toContain("An API token cannot approve a plan that changes a rule.");
+    expect(text()).toContain("An API token cannot approve a Plan that changes a rule.");
     expect(text()).toContain("It adds, changes or removes an ignore rule.");
     expect(location.hash).toBe("");
   });
@@ -357,13 +357,13 @@ describe("Issues and rules", () => {
     expect(el<HTMLAnchorElement>('a[href="#/issues/rules"]').textContent).toBe("Ignore rules");
   });
 
-  it("lists rules and removes one through a plan", async () => {
+  it("lists rules and removes one through a Plan", async () => {
     const api = adminApi();
     const createPlan = vi.spyOn(api, "createPlan");
     show(Rules, { api });
     await until(() => rows().length === 2);
     const all = rows().find((r) => r.includes("ignore-all-apt-periodic")) ?? "";
-    expect(all).toContain("All targets");
+    expect(all).toContain("All Targets");
     expect(all).toContain("file:/etc/apt/apt.conf.d/20auto-upgrades");
     expect(all).toContain("All");
     expect(rows().find((r) => r.includes("ignore-web1-motd"))).toContain("content");
@@ -392,7 +392,7 @@ describe("Issues and rules", () => {
     ]);
   });
 
-  it("the target view shows drift that a rule ignores", async () => {
+  it("the Target view shows drift that a rule ignores", async () => {
     const api = adminApi();
     const plan = await api.resolveIssue(9, "ignore_rule");
     await api.approvePlan(plan.id);

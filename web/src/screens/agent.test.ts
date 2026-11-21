@@ -26,7 +26,7 @@ describe("targets list", () => {
 });
 
 describe("agent on the Target page", () => {
-  it("proposes an update as a plan; nothing runs before the approval", async () => {
+  it("proposes an update as a Plan; nothing runs before the approval", async () => {
     const api = adminApi();
     const update = vi.spyOn(api, "updateTargetAgent");
     show(TargetForm, { api, name: "web1" });
@@ -94,7 +94,7 @@ describe("agent on the Target page", () => {
 });
 
 describe("agent page", () => {
-  it("is the target of the gate link and proposes the update", async () => {
+  it("is the Target of the gate link and proposes the update", async () => {
     const api = adminApi();
     show(TargetAgent, { api, name: "cache1" });
     await until(() => document.querySelector("#page-title") && text().includes("Update required"));

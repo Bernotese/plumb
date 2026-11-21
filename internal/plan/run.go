@@ -653,6 +653,28 @@ func (e *Engine) hellos(target string) int {
 	return e.hello[target]
 }
 
+// notOnlineHint says where to look when an agent does not come online
+// (T-278). A container has the install unit: its journal, read from the
+// host. A VM installs the agent through cloud-init: its output log.
+func notOnlineHint(vmid string) string {
+	if !digitsOnly(vmid) {
+		vmid = "<VMID>"
+	}
+	return "; a container: as root on the Proxmox host, pct exec " + vmid + " -- journalctl -u plumb-agent-install -u plumb-agent; a VM: /var/log/cloud-init-output.log in the guest"
+}
+
+func digitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // waitOnline waits until the agent is online and, when after >= 0, has
 // sent a hello after the count after: a hello of a new boot.
 func (e *Engine) waitOnline(ctx context.Context, target string, after int) error {
@@ -664,7 +686,11 @@ func (e *Engine) waitOnline(ctx context.Context, target string, after int) error
 		select {
 		case <-tick.C:
 		case <-deadline.C:
-			return fmt.Errorf("the agent of %s did not come online within %v", target, e.cfg.EnrollTimeout)
+			vmid := ""
+			if b, err := e.st.GetBinding(ctx, state.KindTarget, target); err == nil {
+				vmid = b.Ref
+			}
+			return fmt.Errorf("the agent of %s did not come online within %v%s", target, e.cfg.EnrollTimeout, notOnlineHint(vmid))
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -727,7 +753,7 @@ func (e *Engine) guestStep(ctx context.Context, run store.Run, set *state.Set, t
 
 	case "adopt":
 		if tp.Adopt == nil {
-			return res, errors.New("adopt without its checked request (D-386)")
+			return res, errors.New("adopt without its checked request")
 		}
 		if err := e.adoptBind(ctx, *tp.Adopt); err != nil {
 			return res, err
@@ -1022,7 +1048,7 @@ func (e *Engine) clearStep(ctx context.Context, s *stepper, target string) {
 	s.set(ctx, StepGuestBootstrap, wire.StatusRunning, nil, "")
 	fail := func(err error) {
 		s.set(ctx, StepGuestBootstrap, wire.StatusFailed, nil,
-			"the used enrollment token is still in the container config: "+err.Error()+"; it is dead, and the next Run of the target removes it")
+			"the used enrollment token is still in the container config: "+err.Error()+"; it is dead, and the next Run of the Target removes it")
 	}
 	b, err := e.st.GetBinding(ctx, state.KindTarget, target)
 	if err != nil {
@@ -1171,7 +1197,7 @@ func (e *Engine) finishDeletes(ctx context.Context, run store.Run) error {
 		}
 		if _, err := e.cfg.Driver.Observe(ctx, driver.GuestID(b.Ref)); !errors.Is(err, driver.ErrNotFound) {
 			if err != nil {
-				e.log.Warn("recover: guest of a deleted target not checked; agent kept", "target", tp.Target, "err", err)
+				e.log.Warn("recover: guest of a deleted Target not checked; agent kept", "target", tp.Target, "err", err)
 			}
 			continue
 		}
@@ -1192,7 +1218,7 @@ func (e *Engine) checkIdle(targets []string) error {
 	defer e.mu.Unlock()
 	for _, t := range targets {
 		if e.busy[t] > 0 {
-			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; wait for it to finish, then plan again"}
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this Target; wait for it to finish, then plan again"}
 		}
 	}
 	return nil
@@ -1204,7 +1230,7 @@ func (e *Engine) reserve(targets []string) error {
 	defer e.mu.Unlock()
 	for _, t := range targets {
 		if e.busy[t] > 0 {
-			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this target; approve after it finished"}
+			return &ProposalError{Target: t, Err: ErrTargetBusy, Msg: "a Run is working on this Target; approve after it finished"}
 		}
 	}
 	for _, t := range targets {

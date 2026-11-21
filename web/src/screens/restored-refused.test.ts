@@ -79,7 +79,7 @@ describe("restored, re-enroll refused (D-439)", () => {
         {
           attr: "restore",
           from: "restored; the agent is not enrolled yet: approve the re-enroll Plan 31",
-          to: "approve the re-enroll Plan 31; when it can no longer run, plan the re-enroll again: POST /targets/web1/reenroll",
+          to: "approve the re-enroll Plan 31; when it can no longer Run, plan the re-enroll again: POST /targets/web1/reenroll",
           risk: "disruptive",
         },
         { attr: "restore_run", to: 12, risk: "read" },
@@ -87,11 +87,11 @@ describe("restored, re-enroll refused (D-439)", () => {
       ],
       actions: ["ignore_once"],
       actions_note:
-        'restored; the agent is not enrolled yet: the re-enroll Plan 31 can no longer run (it is stale (another Plan changed the revision, or it was dropped)): plan the re-enroll again ("Propose the re-enroll", or POST /targets/web1/reenroll).',
+        'restored; the agent is not enrolled yet: the re-enroll Plan 31 can no longer Run (it is stale (another Plan changed the revision, or it was dropped)): plan the re-enroll again ("Propose the re-enroll", or POST /targets/web1/reenroll).',
     } as Issue);
     show(IssueView, { api, id: 7 });
     await until(() => text().includes("guest:restore-failed"));
-    expect(text(el("#restored-refused"))).toContain("can no longer run");
+    expect(text(el("#restored-refused"))).toContain("can no longer Run");
     expect(el("#restored-plan")?.getAttribute("href")).toContain("plans/31");
     expect(button("Propose the re-enroll of web1")).toBeDefined();
   });

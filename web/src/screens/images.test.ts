@@ -142,7 +142,7 @@ describe("image page", () => {
     show(ImageScreen, { api: adminApi(), name: "debian-tools" });
     await until(() => document.querySelector("#building"));
     expect(button("Build now")?.disabled).toBe(true);
-    expect(text(el("#building"))).toContain("Watch run 18");
+    expect(text(el("#building"))).toContain("Watch Run 18");
   });
 
   it("shows a failed last build with its reason", async () => {

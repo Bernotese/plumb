@@ -88,7 +88,7 @@
 </div>
 <p class="muted">
   A Block is a reusable set of resources with parameters. Targets and Images use Blocks. A change to
-  a Block is a normal plan: it shows every Target that the change touches.
+  a Block is a normal Plan: it shows every Target that the change touches.
 </p>
 <ProblemBox {error} />
 {#if data === null && !error}
@@ -162,7 +162,7 @@
   <h2 id="catalog-title">Starter catalogue</h2>
   <p class="muted">
     Blocks that ship with this Plumb. Plumb never adds or changes one by itself: "Add" and "Update"
-    make a normal plan that you approve.
+    make a normal Plan that you approve.
   </p>
   {#if !mayPropose}<p class="muted" id="catalog-role">{roleNote("plan")}</p>{/if}
   <ProblemBox error={catalogError} />

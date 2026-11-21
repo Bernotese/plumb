@@ -218,7 +218,7 @@
         {#if wayBack}The way back: restore the safety backup of {formatTime(wayBack.time)} (backup
           <span class="mono">{wayBack.backup_id}</span>), or another backup.{:else}The way back:
           restore another backup.{/if}
-        A restore that works ends this issue. Re-enroll the agent only after a restore that worked.
+        A restore that works ends this Issue. Re-enroll the agent only after a restore that worked.
       </p>
       {#if issue.status === "open"}
         <p id="restore-way-back">
@@ -271,10 +271,10 @@
     {#if ignored}
       <p class="banner ok" role="status">
         {#if restoreFailed}
-          Ended. Plumb compares the guest again, and the actions of the other issues of this Target
+          Ended. Plumb compares the guest again, and the actions of the other Issues of this Target
           come back.
         {:else}
-          Ignored once. The same drift opens no new issue until the resource matches again or a run
+          Ignored once. The same drift opens no new Issue until the resource matches again or a Run
           applies it.
         {/if}
       </p>
@@ -347,7 +347,7 @@
       <a href={href({ name: "issue", id: blockedBy })}>Open Issue {blockedBy}</a>
     </p>
   {:else if issue.status === "open" && !can("resolveIssue")}
-    <p class="muted" id="resolve-role">{roleNote("plan")} You cannot resolve this issue.</p>
+    <p class="muted" id="resolve-role">{roleNote("plan")} You cannot resolve this Issue.</p>
   {:else if issue.status === "open"}
     <section class="card" aria-labelledby="resolve-title">
       <h2 id="resolve-title">Resolve</h2>
@@ -397,7 +397,7 @@
               >{/if}
           </p>{/if}
         <p class="muted">
-          {#if issue.actions.includes("accept") && !hidden}Both make a plan.{:else}This makes a
+          {#if issue.actions.includes("accept") && !hidden}Both make a Plan.{:else}This makes a
             plan.{/if}
           Nothing changes until you approve it.
         </p>{/if}
@@ -406,7 +406,7 @@
         <h3>Ignore</h3>
         {#if restoreFailed && issue.actions.includes("ignore_once") && !adminPerson}
           <p class="muted" id="ignore-admin-only">
-            Only a person with the role admin can end this issue (an API token never can).
+            Only a person with the role admin can end this Issue (an API token never can).
           </p>
         {:else if issue.actions.includes("ignore_once") && canTakeRisk(issue.risk)}
           <div class="option">
@@ -414,12 +414,12 @@
               <div class="confirm" role="group" aria-labelledby="ignore-q">
                 {#if restoreFailed}
                   <p id="ignore-q">
-                    <strong>End the issue of the failed restore?</strong>
+                    <strong>End the Issue of the failed restore?</strong>
                     {issue.actions_note}
                   </p>
                 {:else}<p id="ignore-q">
-                    <strong>Ignore this drift?</strong> The issue is resolved at once and no screen can
-                    undo it. The same drift opens no new issue until the resource matches again or a run
+                    <strong>Ignore this drift?</strong> The Issue is resolved at once and no screen can
+                    undo it. The same drift opens no new Issue until the resource matches again or a Run
                     applies it.
                   </p>{/if}
                 <div class="row">
@@ -429,7 +429,7 @@
                     type="button"
                     disabled={busy}
                     onclick={ignoreOnce}
-                    >{restoreFailed ? "End the issue" : "Ignore this drift"}</button
+                    >{restoreFailed ? "End the Issue" : "Ignore this drift"}</button
                   >
                   <button class="btn" type="button" onclick={() => (confirmIgnore = false)}
                     >Cancel</button
@@ -442,13 +442,13 @@
               </button>
               <p class="muted">
                 {#if restoreFailed}
-                  Ends this issue now, without a plan. Plumb refuses it while the guest has no disk.
+                  Ends this Issue now, without a Plan. Plumb refuses it while the guest has no disk.
                 {:else if isAddress}
-                  Resolves this issue now, without a plan. When the reported list changes and the
-                  configured address is still missing, the issue opens again.
+                  Resolves this Issue now, without a Plan. When the reported list changes and the
+                  configured address is still missing, the Issue opens again.
                 {:else}
-                  Resolves this issue now, without a plan. The guest keeps its value until the next
-                  apply. A new, different drift opens a new issue.
+                  Resolves this Issue now, without a Plan. The guest keeps its value until the next
+                  apply. A new, different drift opens a new Issue.
                 {/if}
               </p>
             {/if}
@@ -464,7 +464,7 @@
               >
               <label
                 ><input type="radio" name="rule-scope" value={true} bind:group={allTargets} />
-                All targets, also future ones</label
+                All Targets, also future ones</label
               >
             </div>
             <div class="choices" role="radiogroup" aria-label="Attributes of the rule">
@@ -482,8 +482,8 @@
               Make ignore-rule plan
             </button>
             <p class="muted">
-              The rule is a document of the desired state. Only a person can approve the plan.
-              {#if isAddress}While the rule exists, Plumb opens no address issue here.{:else}The
+              The rule is a document of the desired state. Only a person can approve the Plan.
+              {#if isAddress}While the rule exists, Plumb opens no address Issue here.{:else}The
                 next apply still writes the desired state.{/if}
             </p>
           </fieldset>
@@ -518,7 +518,7 @@
           oninput={() => (commentMissing = false)}></textarea>
         {#if commentMissing}<p id="comment-error" class="error">Write a comment first.</p>{/if}
         <p id="comment-hint" class="muted hint">
-          Plain text. Everyone who can read this issue sees it, also API tokens.
+          Plain text. Everyone who can read this Issue sees it, also API tokens.
         </p>
       </div>
       <ProblemBox error={commentError} />

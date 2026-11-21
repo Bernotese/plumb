@@ -319,7 +319,7 @@ func (a *aptRepo) Apply(ctx context.Context, changes []wire.Change) error {
 		if rerr := removeManaged(a.env.Root, a.sourcesPath()); rerr != nil {
 			return errors.Join(err, rerr)
 		}
-		return fmt.Errorf("%w; the sources file was removed again, so the next run tries again", err)
+		return fmt.Errorf("%w; the sources file was removed again, so the next Run tries again", err)
 	}
 	return err
 }

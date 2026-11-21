@@ -21,7 +21,12 @@ describe("target list", () => {
     expect(db1).toContain(`192.0.2.107 ${REPORTED_MARK}`);
     // A DHCP Target shows its address for the first time.
     const web1 = r.find((x) => x.startsWith("web1"));
-    expect(web1).toContain(`Configured: DHCP192.0.2.41, 2001:db8::41 ${REPORTED_MARK}`);
+    // T-279: the cell shows the first address and "N more"; the title has the list.
+    expect(web1).toContain(`Configured: DHCP192.0.2.41 + 1 more ${REPORTED_MARK}`);
+    const titles = [...document.querySelectorAll(".reported")].map(
+      (e) => e.getAttribute("title") ?? "",
+    );
+    expect(titles.some((x) => x.endsWith(": 192.0.2.41, 2001:db8::41"))).toBe(true);
   });
 
   it("shows no reported list when Plumb has none", async () => {
@@ -92,7 +97,7 @@ describe("Issue on guest:address", () => {
     expect(text(el("#address-hint"))).toBe(ADDRESS_HINT);
     expect(button(/^Revert/)).toBeUndefined();
     expect(button(/^Accept/)).toBeUndefined();
-    expect(text()).not.toContain("This makes a plan.");
+    expect(text()).not.toContain("This makes a Plan.");
     expect(button("Ignore once")).toBeDefined();
     expect(button("Make ignore-rule plan")).toBeDefined();
     expect(text()).toContain("Reported by the guest");

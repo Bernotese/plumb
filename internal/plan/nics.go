@@ -73,7 +73,7 @@ func (e *Engine) docNICs(target string, r *state.Rendered) ([]driver.NIC, error)
 	}
 	if r.Adopted != nil {
 		return nil, &ProposalError{Target: target, Err: ErrNICsNotAdoptable,
-			Msg: "an adopted Target stays single-NIC; remove guest.nics (D-404)"}
+			Msg: "an adopted Target stays single-NIC; remove guest.nics"}
 	}
 	if len(list) > driver.MaxNICs {
 		return nil, &ProposalError{Target: target, Msg: fmt.Sprintf("guest.nics has %d NICs; at most %d", len(list), driver.MaxNICs)}
@@ -106,7 +106,7 @@ func (e *Engine) docNICs(target string, r *state.Rendered) ([]driver.NIC, error)
 		}
 		if g, _ := m["gateway"].(string); g != "" {
 			if gateways++; gateways > 1 {
-				return nil, &ProposalError{Target: target, Msg: fmt.Sprintf("NIC %d: a second gateway; at most one gateway over guest.gateway and guest.nics (D-399)", i+1)}
+				return nil, &ProposalError{Target: target, Msg: fmt.Sprintf("NIC %d: a second gateway; at most one gateway over guest.gateway and guest.nics", i+1)}
 			}
 		}
 		if !e.netAllowed(nic.Bridge, nic.Tag) {
@@ -132,7 +132,7 @@ func (e *Engine) checkPlanNICs(targets []TargetPlan) error {
 					continue
 				}
 				if tp.Adopted != nil {
-					return &ProposalError{Target: tp.Target, Err: ErrNICsNotAdoptable, Msg: "an adopted Target stays single-NIC (D-404)"}
+					return &ProposalError{Target: tp.Target, Err: ErrNICsNotAdoptable, Msg: "an adopted Target stays single-NIC"}
 				}
 				nic, err := driver.ParseNICValue(c.To)
 				if err != nil {

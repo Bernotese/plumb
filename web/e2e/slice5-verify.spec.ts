@@ -19,16 +19,16 @@ test("image form: Debian SHA-512 pin with verify, checked in browser and server"
   await page.locator("#i-sha").fill("c".repeat(64));
   await page.locator("#i-verify").selectOption("ubuntu-cloud");
   await page.locator("#i-reason").fill("e2e: Debian with SHA512SUMS");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.locator("#i-verify-error")).toContainText("cloud-images.ubuntu.com");
 
   await page.locator("#i-verify").selectOption("debian-https");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.locator("#i-verify-error")).toContainText("SHA-512");
   await page.locator("#i-algo").selectOption("sha512");
   await page.locator("#i-sha").fill("c".repeat(128));
   await expect(page.getByText("every new pin needs a person")).toBeVisible();
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("button", { name: "Show the Plan" }).click();
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();
   await approveAndRun(page);
 

@@ -13,7 +13,7 @@ import (
 // replaces an unused token of the target.
 func (s *Store) PutRepairToken(ctx context.Context, target, hash string, expires time.Time) error {
 	if target == "" || hash == "" {
-		return errors.New("store: repair token needs a target and a hash")
+		return errors.New("store: repair token needs a Target and a hash")
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO enroll_token (target, hash, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)

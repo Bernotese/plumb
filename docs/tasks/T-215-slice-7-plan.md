@@ -7,7 +7,7 @@
 Slice 6 is done (2026-11-15). By D-326 the next slice is planned at once. The user answered U3 and U4 (D-379, D-380), so slice 7 has its rights.
 
 ## Context (read only these)
-- Your draft `docs/plans/slice-7-draft.md` (branch `pl-architect/slice-7-draft`) · host facts `docs/plans/host-facts-slice-7.md` (branch `pl-backend/T-214-host-facts-slice-7`) and `docs/plans/host-facts.md` (branch `pl-backend/T-139-prep-host-facts`) · `docs/plans/risks.md` §6 (branch `pl-reviewer/T-140-risk-draft`)
+- Your draft `docs/archive/plans/slice-7-draft.md` (branch `pl-architect/slice-7-draft`) · host facts `docs/archive/plans/host-facts-slice-7.md` (branch `pl-backend/T-214-host-facts-slice-7`) and `docs/archive/plans/host-facts.md` (branch `pl-backend/T-139-prep-host-facts`) · `docs/archive/plans/risks.md` §6 (branch `pl-reviewer/T-140-risk-draft`)
 - `docs/DECISIONS.md` D-326, D-379, D-380, D-394 … D-397 · `docs/plans/ROADMAP.md` · `docs/tasks/T-192.log.md` (lessons)
 
 ## Acceptance criteria
@@ -29,7 +29,7 @@ Slice 6 is done (2026-11-15). By D-326 the next slice is planned at once. The us
 > - **Later (not slice 7):** a restore after the guest is gone would need `Datastore.Allocate` on the backup storage, a new right (B1 of #321). pl-lead tells the user; it is a later USER question (ROADMAP row 34).
 > - Nothing else of slice 7 needs a right beyond D-379 / D-380 or touches the user's install. The only host network change is `vmbr9` on `pve-dev` (C8, D-414).
 
-Inputs: draft `docs/plans/slice-7-draft.md` (`pl-architect/slice-7-draft`), host facts `docs/plans/host-facts-slice-7.md` (T-214, `pl-backend/T-214-host-facts-slice-7`) and `host-facts.md` §1, §3 (T-139), risks §6 (T-140), D-379, D-380, D-394 … D-397, `T-192.log.md`, review sweep of #272 … #320. Code: `main` after #318. Decisions: `docs/decisions/T-215.md` (D-398 … D-415).
+Inputs: draft `docs/archive/plans/slice-7-draft.md` (`pl-architect/slice-7-draft`), host facts `docs/archive/plans/host-facts-slice-7.md` (T-214, `pl-backend/T-214-host-facts-slice-7`) and `host-facts.md` §1, §3 (T-139), risks §6 (T-140), D-379, D-380, D-394 … D-397, `T-192.log.md`, review sweep of #272 … #320. Code: `main` after #318. Decisions: `docs/decisions/T-215.md` (D-398 … D-415).
 
 ### Scope (D-398)
 **Part A – more NICs and VLAN tags** (ROADMAP row 14, D-379)

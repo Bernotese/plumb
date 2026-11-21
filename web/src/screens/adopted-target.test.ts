@@ -35,7 +35,7 @@ describe("delete texts (review F2 of #303)", () => {
   it("adopted, delete_guest false: Plumb lets the guest go; it stays in Proxmox", async () => {
     show(TargetForm, { api: await adoptedApi(false), name: "web1" });
     await until(() => document.querySelector("#delete-adopted-keep"));
-    expect(text(el("#delete-adopted-keep"))).toContain("The plan lets the guest 9123 go");
+    expect(text(el("#delete-adopted-keep"))).toContain("The Plan lets the guest 9123 go");
     expect(text(el("#delete-adopted-keep"))).toContain("stay in Proxmox");
     expect(document.querySelector("#delete-made, #delete-adopted-guest")).toBeNull();
     // The separate, destructive choice is its own section.
@@ -44,23 +44,23 @@ describe("delete texts (review F2 of #303)", () => {
     );
   });
 
-  it("adopted, delete_guest true: the plan deletes the Proxmox guest", async () => {
+  it("adopted, delete_guest true: the Plan deletes the Proxmox guest", async () => {
     show(TargetForm, { api: await adoptedApi(true), name: "web1" });
     await until(() => document.querySelector("#delete-adopted-guest"));
     expect(text(el("#delete-adopted-guest"))).toContain(
-      "The plan deletes the Proxmox guest 9123 and its disks. You allowed this with delete_guest. This cannot be undone.",
+      "The Plan deletes the Proxmox guest 9123 and its disks. You allowed this with delete_guest. This cannot be undone.",
     );
     expect(document.querySelector("#delete-adopted-keep, #allow-guest-delete")).toBeNull();
   });
 
-  it("'Allow Plumb to delete the guest' is a confirmed plan that sets delete_guest", async () => {
+  it("'Allow Plumb to delete the guest' is a confirmed Plan that sets delete_guest", async () => {
     const api = await adoptedApi(false);
     const createPlan = vi.spyOn(api, "createPlan").mockResolvedValue(await api.getPlan(14));
     show(TargetForm, { api, name: "web1" });
     (await until(() => button("Allow Plumb to delete the guest…")))?.click();
     flushSync();
     expect(createPlan).not.toHaveBeenCalled();
-    button("Make the plan")?.click();
+    button("Make the Plan")?.click();
     await planOpened();
     const doc = createPlan.mock.calls[0]?.[0].put?.[0] as TargetDoc;
     expect(doc.spec.adopted).toEqual({ node: "pve", vmid: 9123, delete_guest: true });
@@ -88,7 +88,7 @@ describe("the form of an adopted Target", () => {
 });
 
 describe("not adopted (T-204, D-395)", () => {
-  it("shows the banner with both actions when the adopt run did not bind", async () => {
+  it("shows the banner with both actions when the adopt Run did not bind", async () => {
     const api = await adoptedApi(false);
     const get = api.getTarget;
     api.getTarget = async (n: string) => {

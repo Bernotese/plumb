@@ -28,7 +28,7 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
       return {
         label: "Out of Plumb",
         tone: "warn",
-        detail: `${s.open_issues} open issue${s.open_issues === 1 ? "" : "s"}.`,
+        detail: `${s.open_issues} open Issue${s.open_issues === 1 ? "" : "s"}.`,
       };
     case "restart_needed":
       return {
@@ -43,7 +43,7 @@ export function targetState(t: TargetView): { label: string; tone: Tone; detail:
     case "pending":
       return { label: "Pending", tone: "muted", detail: "No guest yet." };
     case "error":
-      return { label: "Error", tone: "danger", detail: "The last run failed." };
+      return { label: "Error", tone: "danger", detail: "The last Run failed." };
   }
 }
 
@@ -280,32 +280,30 @@ export function humanOnlyReasons(plan: Plan): string[] {
     }
     if (reason === "repair") {
       out.push(
-        "It repairs a dead agent over SSH with the Plumb repair key (D-372): it installs the agent and gives it a new enrollment.",
+        "It repairs a dead agent over SSH with the Plumb repair key: it installs the agent and gives it a new enrollment.",
       );
       continue;
     }
     if (reason === "adopted-guest-delete") {
       out.push(
-        "It lets Plumb delete an adopted guest that Plumb did not make (D-388): the guest and its disks go when the Target is deleted.",
+        "It lets Plumb delete an adopted guest that Plumb did not make: the guest and its disks go when the Target is deleted.",
       );
       continue;
     }
     if (reason === "guest-restore") {
       out.push(
-        "It overwrites the guest with a backup (D-410): everything written after that backup is lost, and access that was removed since (SSH keys, passwords) comes back. The agent gets a new enrollment.",
+        "It overwrites the guest with a backup: everything written after that backup is lost, and access that was removed since (SSH keys, passwords) comes back. The agent gets a new enrollment.",
       );
       continue;
     }
     if (reason === "restore-failed") {
       out.push(
-        "It deletes a Target whose last restore failed (T-234): its guest may still come back with a restore of the safety backup.",
+        "It deletes a Target whose last restore failed: its guest may still come back with a restore of the safety backup.",
       );
       continue;
     }
     if (reason === "firewall-off") {
-      out.push(
-        "It turns off the firewall of a target (D-368): every port of that guest is open then.",
-      );
+      out.push("It turns off the firewall of a Target: every port of that guest is open then.");
       continue;
     }
     if (reason !== "secret-binding") {
@@ -320,7 +318,7 @@ export function humanOnlyReasons(plan: Plan): string[] {
         t.resources.some((r) => r.changes.some((c) => isSensitive(c))),
     );
     if (given.length === 0) {
-      out.push("It gives a secret to a target that did not get it before.");
+      out.push("It gives a secret to a Target that did not get it before.");
     }
     // The contract does not say which binding is new, so the text names
     // what the target uses, not what it gets (review #48).
@@ -347,7 +345,7 @@ export const REPORTED_TITLE =
 
 /** The hint on a guest:address Issue (D-192, D-220, D-223). */
 export const ADDRESS_HINT =
-  "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an Image built by Plumb (D-223). Else check the network setup in the guest.";
+  "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart. Use DHCP or an Image built by Plumb. Else check the network setup in the guest.";
 
 type Status = TargetView["status"];
 
@@ -364,6 +362,18 @@ export function reportedAddrs(s: Status): { ips: string[]; more: boolean } | nul
 export function reportedText(r: { ips: string[]; more: boolean }): string {
   if (r.ips.length === 0) return r.more ? "+ more" : "no address";
   return r.ips.join(", ") + (r.more ? " + more" : "");
+}
+
+/**
+ * The short form for a table cell (T-279): the first address and "N more",
+ * so a long IPv6 address next to the IPv4 one does not push the columns
+ * after it off the page. The Target page shows the whole list.
+ */
+export function reportedShort(r: { ips: string[]; more: boolean }): string {
+  if (r.ips.length === 0) return r.more ? "+ more" : "no address";
+  const rest = r.ips.length - 1;
+  if (rest === 0) return r.ips[0] + (r.more ? " + more" : "");
+  return `${r.ips[0]} + ${rest}${r.more ? "+" : ""} more`;
 }
 
 /** The list of a guest:address change: "192.0.2.107" or "no address". */

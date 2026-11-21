@@ -33,7 +33,7 @@ describe("raw resources on the Target page", () => {
     expect(document.activeElement).toBe(el("#raw-0-content"));
     type("#raw-0-content", "Closed today.\n");
     [...document.querySelectorAll<HTMLButtonElement>(".raw button")]
-      .find((b) => b.textContent?.trim() === "Show the plan")
+      .find((b) => b.textContent?.trim() === "Show the Plan")
       ?.click();
     flushSync();
     expect(createPlan).not.toHaveBeenCalled();
@@ -41,7 +41,7 @@ describe("raw resources on the Target page", () => {
     expect(document.activeElement).toBe(el("#raw-reason"));
     type("#raw-reason", "New motd.");
     [...document.querySelectorAll<HTMLButtonElement>(".raw button")]
-      .find((b) => b.textContent?.trim() === "Show the plan")
+      .find((b) => b.textContent?.trim() === "Show the Plan")
       ?.click();
     await planOpened();
     const doc = createPlan.mock.calls[0]?.[0].put?.[0] as TargetDoc;
@@ -52,7 +52,7 @@ describe("raw resources on the Target page", () => {
     expect(doc.spec.blocks).toEqual([{ use: "motd" }]);
   });
 
-  it("goes back to the Block: the plan removes the override", async () => {
+  it("goes back to the Block: the Plan removes the override", async () => {
     const api = adminApi();
     const createPlan = vi.spyOn(api, "createPlan");
     show(TargetForm, { api, name: "worker1" });
