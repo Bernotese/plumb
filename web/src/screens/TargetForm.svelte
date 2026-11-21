@@ -392,7 +392,7 @@
   // from the YAML text: the form keeps the keys it does not show from it.
   let base = $state<Partial<TargetSpec>>({});
   const YAML_HINT =
-    "The whole Target document. Secrets appear as {secret: name}, never as a value. Saving makes the same plan as the form; the server checks the document.";
+    "The whole Target document. Secrets appear as {secret: name}, never as a value. Saving makes the same Plan as the form; the server checks the document.";
   let mode = $state<"form" | "yaml">("form");
   let yamlText = $state("");
   let yamlErrors = $state<LineError[]>([]);
@@ -438,7 +438,7 @@
   const LXC_FIELD_HELP: Record<string, string> = {
     disk: "GiB: the size of the root file system, at least 2. Grow only: a grow cannot be undone.",
     ip: "dhcp or an IPv4 address in CIDR form. Create-only. Proxmox writes it into the container at every start.",
-    ssh_keys: "Public keys for root; a container has no bootstrap user (D-226). Create-only.",
+    ssh_keys: "Public keys for root; a container has no bootstrap user. Create-only.",
   };
 
   // Slice 4 fields (D-291, D-299): short help for people; the schema texts
@@ -529,7 +529,7 @@
     const label = `${image} ${img?.document.spec.title ?? ""}`;
     if (editing || ip === "dhcp" || !/ubuntu/i.test(label) || !/26\.04/.test(label)) return {};
     return {
-      ip: "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart (D-192, D-220). Use DHCP or an image built by Plumb (D-223).",
+      ip: "A stock Ubuntu 26.04 image can sometimes stay on DHCP until its first restart. Use DHCP or an image built by Plumb.",
     } as Record<string, string>;
   });
 
@@ -855,7 +855,7 @@
   }
 </script>
 
-<h1 id="page-title" tabindex="-1">{editing ? `Edit target ${name}` : "New target"}</h1>
+<h1 id="page-title" tabindex="-1">{editing ? `Edit Target ${name}` : "New Target"}</h1>
 {#if existing}
   <p class="sub-links">
     <a href={href({ name: "target-agent", target: existing.document.name })}>Agent</a> ·
@@ -892,7 +892,7 @@
 {/if}
 {#if existing?.status.agent_update === "required"}
   <p class="banner danger" id="agent-required">
-    Plumb refuses every plan for this Target until its agent is updated.
+    Plumb refuses every Plan for this Target until its agent is updated.
     <a href={href({ name: "target-agent", target: existing.document.name })}
       >Update the agent of {existing.document.name}</a
     >
@@ -931,7 +931,7 @@
 {/if}
 {#if loaded}
   <form onsubmit={submit} novalidate>
-    <div class="modes" role="group" aria-label="Edit the target as">
+    <div class="modes" role="group" aria-label="Edit the Target as">
       <button
         type="button"
         class="btn"
@@ -1025,14 +1025,14 @@
           errors={guestErrors}
           prefix="guest"
           readonly={editing ? CREATE_ONLY : []}
-          readonlyHint="Create-only: it cannot change on an existing target."
+          readonlyHint="Create-only: it cannot change on an existing Target."
           notes={{ ...addressNote, ...diskNote }}
         />
         {#if builtLxc}
           <div class="banner info" id="t-lxc-keys">
             <p>
               A container from the built image <span class="mono">{image}</span> gets no SSH keys
-              from Proxmox. Add the keys with the Block <span class="mono">deploy-user</span> (D-251).
+              from Proxmox. Add the keys with the Block <span class="mono">deploy-user</span>.
             </p>
             {#if droppedKeys}
               <p class="warn" id="t-keys-dropped">
@@ -1228,8 +1228,8 @@
           <span class="mono">guest:volume-left</span> names it, and no disk is added until it is
           gone.
           {#if kind === "lxc"}
-            A container disk is added only while the container is stopped (D-437): the Run stops a
-            running container, adds the disk and starts it again; that needs '{forKind(
+            A container disk is added only while the container is stopped: the Run stops a running
+            container, adds the disk and starts it again; that needs '{forKind(
               ALLOW_RESTART_LABEL,
               kind,
             )}' (disruptive). A stopped container gets the disk and stays stopped (reversible); the
@@ -1467,7 +1467,7 @@
             {#if storedKeep !== undefined && Number(backupKeep) < storedKeep}
               <span class="hint note warn" id="backup-keep-lower"
                 >Lower than now ({storedKeep}): when the next backup job would delete backups with
-                this value, the plan is destructive and says how many go.</span
+                this value, the Plan is destructive and says how many go.</span
               >
             {/if}
             {#if backupErrors["keep"]}<span class="error" id="backup-keep-error"
@@ -1571,10 +1571,10 @@
     <ProblemBox error={submitError} />
     {#if can("createPlan")}
       <div class="row">
-        <button class="btn primary" type="submit" disabled={busy}>Show the plan</button>
+        <button class="btn primary" type="submit" disabled={busy}>Show the Plan</button>
         <a class="btn" href={href({ name: "targets" })}>Cancel</a>
       </div>
-      <p class="muted">Nothing changes until you approve the plan.</p>
+      <p class="muted">Nothing changes until you approve the Plan.</p>
     {:else}
       <p class="muted" id="t-role">{roleNote("plan")} You can look, not change.</p>
     {/if}
@@ -1585,11 +1585,11 @@
 {#if loaded && existing}
   {#if existing.status.not_adopted}
     <div class="banner warn" role="alert" id="not-adopted">
-      <strong>Not adopted: the guest changed.</strong> The adopt plan of this Target was approved,
-      but its run did not bind the guest (it was renamed or changed in Proxmox before the approval).
+      <strong>Not adopted: the guest changed.</strong> The adopt Plan of this Target was approved,
+      but its Run did not bind the guest (it was renamed or changed in Proxmox before the approval).
       Plans do nothing for this Target. Either
       <a href={href({ name: "target-adopt" })}>adopt the guest again</a> (under its Proxmox name; the
-      new plan removes this Target), or delete this Target below: that makes no Proxmox call and never
+      new Plan removes this Target), or delete this Target below: that makes no Proxmox call and never
       touches the guest.
     </div>
   {/if}
@@ -1610,7 +1610,7 @@
       <h2 id="reenroll-title">Re-enroll the agent</h2>
       <p>
         {forKind(
-          "A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it; nothing happens until you approve the plan.",
+          "A new enrollment token becomes active at the next stop and start of the VM. Plumb plans it; nothing happens until you approve the Plan.",
           kind,
         )}
       </p>
@@ -1649,14 +1649,14 @@
     {#if existing.document.spec.adopted?.delete_guest}
       <p class="danger-text" id="delete-adopted-guest">
         <strong
-          >The plan deletes the Proxmox guest
+          >The Plan deletes the Proxmox guest
           <span class="mono">{existing.document.spec.adopted.vmid}</span> and its disks.</strong
         >
         You allowed this with delete_guest. This cannot be undone.
       </p>
     {:else if existing.document.spec.adopted}
       <p id="delete-adopted-keep">
-        The plan lets the guest <span class="mono">{existing.document.spec.adopted.vmid}</span> go:
+        The Plan lets the guest <span class="mono">{existing.document.spec.adopted.vmid}</span> go:
         Plumb removes its agent and repair key lines, and the Target leaves the desired state. The {kind ===
         "lxc"
           ? "container"
@@ -1664,7 +1664,7 @@
       </p>
     {:else}
       <p id="delete-made">
-        The plan deletes the {kind === "lxc" ? "container" : "VM"}
+        The Plan deletes the {kind === "lxc" ? "container" : "VM"}
         {#if existing.status.guest_id}<span class="mono">{existing.status.guest_id}</span>{/if}
         and its disks in Proxmox, and the Target leaves the desired state. This cannot be undone.
       </p>
@@ -1678,7 +1678,7 @@
     >
       <h2 id="allow-guest-delete-title">Let Plumb delete the guest</h2>
       <p>
-        By default, deleting this Target keeps the guest in Proxmox. This separate plan sets
+        By default, deleting this Target keeps the guest in Proxmox. This separate Plan sets
         delete_guest: after it, deleting the Target <strong
           >deletes the Proxmox guest
           <span class="mono">{existing.document.spec.adopted.vmid}</span> and its disks</strong
@@ -1692,7 +1692,7 @@
             type="button"
             id="allow-guest-delete-confirm"
             disabled={allowBusy}
-            onclick={allowGuestDelete}>Make the plan</button
+            onclick={allowGuestDelete}>Make the Plan</button
           >
           <button class="btn" type="button" onclick={() => (confirmAllow = false)}>Cancel</button>
         </div>

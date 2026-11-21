@@ -1,7 +1,6 @@
 package wire
 
 import (
-	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -26,20 +25,11 @@ func TestMissing(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesOf(t *testing.T) {
-	var old Hello
-	if err := json.Unmarshal([]byte(`{"version":"v0.2.0","hostname":"h","os":"debian 13","addrs":[]}`), &old); err != nil {
-		t.Fatal(err)
+// The baseline lists are sorted, as an agent sends them.
+func TestBaselineCapabilitiesSorted(t *testing.T) {
+	if BaselineCapabilities().CanUpdate() {
+		t.Fatal("the baseline can update")
 	}
-	c := CapabilitiesOf(old)
-	if c.CanUpdate() || !slices.Equal(c.Resources["file"], BaselineCapabilities().Resources["file"]) {
-		t.Fatalf("old agent = %+v", c)
-	}
-	newer := Hello{Capabilities: &Capabilities{Commands: []CommandType{CommandUpdate}, Resources: map[string][]string{}}}
-	if !CapabilitiesOf(newer).CanUpdate() {
-		t.Fatal("update not seen")
-	}
-	// The baseline lists are sorted, as an agent sends them.
 	for typ, attrs := range BaselineCapabilities().Resources {
 		if !slices.IsSorted(attrs) {
 			t.Errorf("%s: not sorted", typ)
@@ -67,9 +57,6 @@ func TestCapabilitiesValid(t *testing.T) {
 	for i, c := range bad {
 		if c.Valid() {
 			t.Errorf("case %d: valid", i)
-		}
-		if got := CapabilitiesOf(Hello{Capabilities: &c}); !slices.Equal(got.Commands, BaselineCapabilities().Commands) {
-			t.Errorf("case %d: CapabilitiesOf did not fall back to the baseline", i)
 		}
 	}
 }

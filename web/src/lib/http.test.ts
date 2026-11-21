@@ -72,7 +72,7 @@ describe("http api", () => {
     expect(f.calls.map((c) => c.url)).toEqual(["/api/v1/issues?target=db1&status=open&limit=200"]);
   });
 
-  it("calls the plan, run and comment operations (T-153)", async () => {
+  it("calls the Plan, run and comment operations (T-153)", async () => {
     const f = fakeFetch((c) =>
       c.method === "DELETE"
         ? new Response(null, { status: 204 })

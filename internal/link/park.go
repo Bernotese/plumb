@@ -19,8 +19,8 @@ import (
 // poll, but its data is not used). No new enrollment token is made for a
 // parked target; an admin first forgets the guest's agent.
 
-// ErrParked: the target has a parked agent (D-396).
-var ErrParked = errors.New("link: the target has a parked agent that only takes unbind")
+// ErrParked: the Target has a parked agent (D-396).
+var ErrParked = errors.New("link: the Target has a parked agent that only takes unbind")
 
 func (l *Link) parkedTarget(ctx context.Context, target string) (bool, error) {
 	if l.cfg.Store == nil {

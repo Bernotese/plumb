@@ -217,13 +217,6 @@ func parseSSHDT(out []byte) (st wire.RepairSSHD, keysFile bool) {
 	return st, keysFile
 }
 
-// hostKeyFingerprints are the SHA256 fingerprints of the host keys, at
-// most wire.MaxRepairHostKeys, sorted.
-func hostKeyFingerprints(root string) []string {
-	fps, _ := hostKeys(root)
-	return fps
-}
-
 // hostKeys returns the SHA256 fingerprints of the host keys, at most
 // wire.MaxRepairHostKeys, sorted, and the key type of each one whose
 // type is in wire.HostKeyTypeList (T-207).
@@ -254,12 +247,6 @@ func hostKeys(root string) ([]string, map[string]string) {
 		types = nil
 	}
 	return out, types
-}
-
-// pubKeyFingerprint is OpenSSH's SHA256 fingerprint of "type base64 …".
-func pubKeyFingerprint(line string) (string, bool) {
-	fp, _, ok := pubKey(line)
-	return fp, ok
 }
 
 // pubKey returns the SHA256 fingerprint of "type base64 …" and the key

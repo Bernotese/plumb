@@ -186,5 +186,52 @@ class LeakScan(unittest.TestCase):
         self.assertNoValue(p.stdout, p.stderr, hits)
 
 
+    # pl-lead (T-277): IPv6 of the test host's network, and any global one.
+    # The global test address is built at run time, so this file holds no
+    # global IPv6 literal of its own (a scan of the repo stays clean).
+    def test_ipv6_prefix_and_any_global(self):
+        glob = "2c0f" + ":f00:1::7"  # a global-unicast address, assembled
+        self.value("testhost-ipv6.prefixes", "# the host's prefix\n3fff:12:34::/48\n")
+        self.put("log.txt", "\n".join([
+            "guest addr 3fff:12:34:5::10/64",        # inside the prefix
+            "other " + glob,                          # global, no prefix
+            "doc 2001:db8::1 and 3fff:999::1",        # documentation ranges
+            "mac aa:bb:cc:dd:ee:ff link fe80::1 lo ::1 ula fd00::1",
+            "time 12:34:56 port [::]:8443 range 2000::/3",
+        ]) + "\n")
+        p, hits, _ = self.scan()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("file log.txt line 1\ttest host IPv6 prefix (testhost-ipv6.prefixes line 2)", hits)
+        self.assertIn("file log.txt line 2\tglobal IPv6 address (any)", hits)
+        self.assertEqual(hits.count("\n"), 2, hits)  # nothing on lines 3 to 5
+        self.assertIn("test host IPv6 prefix: 1", p.stdout)
+        self.assertNoValue(p.stdout, p.stderr, hits, values=("3fff:12:34", glob))
+
+    # pl-backend's look at #426: a /64 is often written as its four bare
+    # groups (no "::"); also upper case, leading zeros, and the full form.
+    def test_ipv6_prefix_written_as_bare_groups(self):
+        self.value("testhost-ipv6.prefixes", "3fff:12:34:56::/64\n")
+        self.put("net.txt", "\n".join([
+            "prefix 3fff:12:34:56/64",                 # bare groups, with a length
+            "prefix 3fff:12:34:56 on vmbr0",           # bare groups alone
+            "guest 3FFF:0012:0034:0056:0000:0000:0000:0009",  # expanded, upper case
+            "net 3fff:12:34:56::/64",                  # the usual form
+            "other 3fff:12:34:57 and 3fff:12:34",      # another /64; too few groups
+        ]) + "\n")
+        p, hits, _ = self.scan()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        for line in (1, 2, 3, 4):
+            self.assertIn("file net.txt line %d\ttest host IPv6 prefix" % line, hits)
+        self.assertEqual(hits.count("\n"), 4, hits)
+        self.assertNoValue(p.stdout, p.stderr, hits, values=("3fff:12:34",))
+
+    def test_bad_ipv6_prefix_file_prints_no_value(self):
+        self.value("testhost-ipv6.prefixes", "3fff:12:34::/48\nnot-a-prefix-Zq7\n")
+        self.put("x.txt", "nothing")
+        p, hits, _ = self.scan()
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("RuntimeError", p.stderr)
+        self.assertNoValue(p.stdout, p.stderr, hits, values=("not-a-prefix-Zq7", "3fff:12:34"))
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

@@ -189,3 +189,16 @@ func TestHostKeyTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// hostKeyFingerprints are the SHA256 fingerprints of the host keys, at
+// most wire.MaxRepairHostKeys, sorted.
+func hostKeyFingerprints(root string) []string {
+	fps, _ := hostKeys(root)
+	return fps
+}
+
+// pubKeyFingerprint is OpenSSH's SHA256 fingerprint of "type base64 …".
+func pubKeyFingerprint(line string) (string, bool) {
+	fp, _, ok := pubKey(line)
+	return fp, ok
+}

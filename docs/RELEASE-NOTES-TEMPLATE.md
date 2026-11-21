@@ -29,7 +29,6 @@ Then unpack it as root into a folder that only root can write, and run its `inst
 
 - **Proxmox Backup Server:** Plumb reads from the storage config whether a backup storage encrypts. This was not tested on a real Proxmox Backup Server.
 - **A stock Ubuntu 26.04 image** used directly by a Target can stay on DHCP until its first restart. Use DHCP, or let Plumb build the Image: a built Image does not have this limit.
-- **Dependencies:** `npm audit` reports one low advisory (GHSA-gcqx-w48m-w2h4, `deepmerge` 4.3.1). It comes only with the build tool of the web UI, it is not in the shipped files, and no fixed version exists yet.
 - **A test that failed without a known cause:** the firewall test of the CI (`TestGuestFirewall`) failed twice in an early step, before Plumb's firewall code ran. The cause was not found. <Update from the QA sweep: still unexplained, or the cause and its fix.>
 - <Any other line of "Known issues" in `CHANGELOG.md`.>
 

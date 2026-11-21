@@ -436,7 +436,7 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 	}
 	head, err := e.st.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if err != nil {
 		return store.Plan{}, err
@@ -444,7 +444,7 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 	if r, err := e.headRender(ctx, target); err != nil {
 		return store.Plan{}, err
 	} else if r == nil {
-		return store.Plan{}, &ProposalError{Target: target, Msg: "no such target"}
+		return store.Plan{}, &ProposalError{Target: target, Msg: "no such Target"}
 	}
 	if err := e.restoreFailedOne(ctx, target); err != nil { // T-234
 		return store.Plan{}, err
@@ -459,7 +459,7 @@ func (e *Engine) ProposeAgentUpdate(ctx context.Context, target, reason, author 
 			Msg: "the agent of this Target never said hello; start the guest and wait for its agent"}
 	case AgentUpdateManual:
 		return store.Plan{}, &ProposalError{Target: target, Err: ErrAgentCannotUpdate,
-			Msg: "this agent is older than slice 3 and cannot update itself; run the one-time install in the guest (ARCHITECTURE §5)"}
+			Msg: "this agent comes from a Plumb version from before agents could update themselves; run the one-time install in the guest"}
 	case AgentUpdateNone:
 		return store.Plan{}, fmt.Errorf("plan: the agent of %s runs the binary of this controller: %w", target, ErrAgentNoUpdate)
 	}

@@ -34,10 +34,10 @@ The Proxmox user `plumb@pve` and its token `plumb@pve!plumb` get the roles of th
 
 - There is no release before this one. To move an install that was built from source to this release, run the release's `install.sh` with the same options as before (a repair run), `--dry-run` first. Name every extra bridge, VLAN tag and guest backup storage again: a repair run removes the rights of the ones it is not given.
 - Guests made before the agent could update itself need one root command each (README, "Guests made before the agent self-update").
+- Container templates: the first-boot install of the agent checks the agent's binary now. Before, a container could miss its agent at its first boot when the two units started in one order. Plumb packs each stock container template again the next time it is used; an old file that no container uses any more then shows as unused on the Image page, with the command that removes it. A built container Image keeps the old files in its versions: use "Build now" once before you make new containers from it (README, "Updates and repair").
 
 ### Known issues
 
-- `npm audit` reports one low advisory (GHSA-gcqx-w48m-w2h4, prototype poisoning in `deepmerge` 4.3.1). It comes only with the build tool `@sveltejs/vite-plugin-svelte` 7.3.1 (a dev dependency), it is not in the shipped web files, and no fixed version exists yet.
 - A stock Ubuntu 26.04 image used directly by a Target can stay on DHCP until its first restart. Use DHCP, or let Plumb build the Image.
 - Proxmox Backup Server: Plumb reads from the storage config whether a backup storage encrypts. This was not tested on a real Proxmox Backup Server.
 - Plumb restores a guest backup only over the same guest, not after the guest is gone. Restore it in Proxmox into the pool `plumb`, then adopt the guest.

@@ -88,6 +88,11 @@ type Server struct {
 	streamSeq uint64
 
 	raw rawCache // raw mode of the head revision (D-301)
+
+	// routes is the access rule of each operation, set by Handler (read by
+	// the access table test: only /session operations may run while the
+	// password must change, D-441).
+	routes map[string]access
 }
 
 // Limits of expensive or long-lived work.
@@ -182,16 +187,21 @@ type handlerFunc func(w http.ResponseWriter, r *http.Request, p *principal)
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	rates := newTokenRates(s.now) // per-token rate limit (D-365, tokenrate.go)
+	s.routes = map[string]access{}
 	route := func(pattern string, a access, h handlerFunc) {
+		s.routes[pattern] = a
 		mux.Handle(pattern, s.guard(a, rates.wrap(s, pattern, h)))
 	}
 	read, planTier, apply := access{tier: TierRead}, access{tier: TierPlan}, access{tier: TierApply}
 	// A session may call an operation when its role is at least the tier
 	// of the operation; session-only operations need role admin, except
 	// the own session (x-plumb-role: read, D-342).
+	// Only the /session operations run while the password must change
+	// (D-107, D-321, D-441): a password that was never changed cannot end
+	// restored mode or bring back a disabled token.
 	self := access{tier: TierRead, duringReset: true}
 	ownSession := access{tier: TierRead, sessionOnly: true, duringReset: true}
-	human := access{tier: TierAdmin, sessionOnly: true, duringReset: true}
+	human := access{tier: TierAdmin, sessionOnly: true}
 	admin := access{tier: TierAdmin, sessionOnly: true}
 
 	route("GET /api/v1/session", self, s.getSession)

@@ -139,7 +139,7 @@
       ? `${userCount === 1 ? "One Target or Image uses" : `${userCount} Targets and Images use`} this Block (see "Used by"). Remove it from them first.`
       : undefined}
   >
-    <p>The plan removes the Block from the desired state. No guest changes: nothing uses it.</p>
+    <p>The Plan removes the Block from the desired state. No guest changes: nothing uses it.</p>
   </DeleteDocument>
 {:else if !error}
   <p class="muted" aria-live="polite">Loading…</p>

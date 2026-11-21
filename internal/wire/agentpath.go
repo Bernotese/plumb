@@ -143,26 +143,6 @@ var AgentPathAttrs = map[string][]string{
 	"user":      {"home"},
 }
 
-// AgentPathOf returns the first path of r that IsAgentPath, with its
-// attribute, or "" when there is none. It sees only r: use AgentConflicts
-// for a resource list, which also follows the symlinks of the list.
-func AgentPathOf(r Resource) (attr, p string) {
-	for _, a := range AgentPathAttrs[r.Type] {
-		v, ok := r.Attrs[a].(string)
-		if !ok || v == "" {
-			continue
-		}
-		if r.Type == "symlink" && a == "target" && !strings.HasPrefix(v, "/") {
-			link, _ := r.Attrs["path"].(string)
-			v = path.Join(path.Dir(link), v)
-		}
-		if IsAgentPath(v) {
-			return a, v
-		}
-	}
-	return "", ""
-}
-
 // AgentConflict is a resource that would change the agent itself.
 type AgentConflict struct {
 	ID    string // resource id
@@ -229,12 +209,35 @@ func AgentConflicts(rs []Resource) []AgentConflict {
 			if !strings.HasPrefix(v, "/") {
 				continue
 			}
-			for _, p := range resolvedForms(path.Clean(v), links) {
+			via := links
+			if r.Type == "symlink" && a == "path" {
+				// Writing a symlink replaces the node at its path; it never
+				// writes through itself. Its own entry would only resolve
+				// the path to the target, which the attribute target checks
+				// (T-279: the refusal names target, not path).
+				via = withoutLink(links, path.Clean(v))
+			}
+			for _, p := range resolvedForms(path.Clean(v), via) {
 				if IsAgentPath(p) {
 					out = append(out, AgentConflict{ID: r.ID, Attr: a, Value: p})
 					break
 				}
 			}
+		}
+	}
+	return out
+}
+
+// withoutLink returns links without the entry of the link at p (a copy
+// only when there is one).
+func withoutLink(links map[string]string, p string) map[string]string {
+	if _, ok := links[p]; !ok {
+		return links
+	}
+	out := make(map[string]string, len(links)-1)
+	for k, v := range links {
+		if k != p {
+			out[k] = v
 		}
 	}
 	return out

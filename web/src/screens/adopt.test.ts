@@ -32,7 +32,7 @@ describe("adopt a guest of the pool", () => {
     expect(button("Adopt old-db (9124)")).toBeUndefined();
   });
 
-  it("the wizard shows the warnings and makes a human-only plan", async () => {
+  it("the wizard shows the warnings and makes a human-only Plan", async () => {
     const api = adminApi();
     const adopt = vi.spyOn(api, "adoptTarget");
     show(Adopt, { api });

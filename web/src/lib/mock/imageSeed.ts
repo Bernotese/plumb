@@ -191,7 +191,11 @@ export function seedTargets(targets: Map<string, TargetView>): void {
       phase: "ready",
       guest_id: "9006",
       ips: [],
-      reported_ips: ["192.0.2.46"],
+      reported_ips: [
+        "192.0.2.46",
+        "2001:db8:3f28:6d00:be24:11ff:feb5:4644",
+        "2001:db8:3f28:6d00::46",
+      ],
       reported_at: "2026-11-10T09:00:10Z",
       open_issues: 0,
       waiting: [],

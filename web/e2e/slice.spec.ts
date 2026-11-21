@@ -23,14 +23,14 @@ test("create target → plan → run → issue → revert", async ({ page }) => 
   await expect(page.getByRole("link", { name: "web1" })).toBeVisible();
 
   // Create a target with one Block.
-  await page.getByRole("link", { name: "New target" }).click();
-  await expect(page.getByRole("heading", { name: "New target" })).toBeVisible();
+  await page.getByRole("link", { name: "New Target" }).click();
+  await expect(page.getByRole("heading", { name: "New Target" })).toBeVisible();
   await page.getByRole("textbox", { name: "Name", exact: true }).fill("e2e1");
   await page.getByLabel("Block to add").selectOption({ label: "Message of the day" });
   await page.getByRole("button", { name: "Add Block" }).click();
   await page.getByRole("textbox", { name: "Text", exact: true }).fill("Hello from the e2e test");
-  await page.getByRole("textbox", { name: "Reason", exact: true }).fill("e2e: new target");
-  await page.getByRole("button", { name: "Show the plan" }).click();
+  await page.getByRole("textbox", { name: "Reason", exact: true }).fill("e2e: new Target");
+  await page.getByRole("button", { name: "Show the Plan" }).click();
 
   // The plan, then approve.
   await expect(page.getByRole("heading", { name: /^Plan \d+$/ })).toBeVisible();

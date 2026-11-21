@@ -118,7 +118,7 @@ test("plan list with drop, run list", async ({ page }) => {
   const row = page.getByRole("row", { name: new RegExp(`^Plan ${id}\\b`) });
   await expect(row).toContainText("pending");
   await expect(row).toContainText("e2e: gaps plan to drop");
-  await row.getByRole("button", { name: `Drop plan ${id}` }).click();
+  await row.getByRole("button", { name: `Drop Plan ${id}` }).click();
   await page.locator(`#drop-confirm-${id}`).click();
   await expect(row).toHaveCount(0);
   await page.locator("#plan-filter").selectOption("stale");
@@ -126,14 +126,14 @@ test("plan list with drop, run list", async ({ page }) => {
     "stale",
   );
   await page.goto(`/#/plans/${id}`);
-  await expect(page.getByText("This plan is stale.")).toBeVisible();
+  await expect(page.getByText("This Plan is stale.")).toBeVisible();
 
   // Drop from the plan page itself.
   const id2 = await propose(page, { reason: "e2e: gaps plan to drop 2", put: [block] });
   await page.goto(`/#/plans/${id2}`);
-  await page.getByRole("button", { name: "Drop plan" }).click();
+  await page.getByRole("button", { name: "Drop Plan" }).click();
   await page.locator("#drop-confirm").click();
-  await expect(page.getByText("This plan is stale.")).toBeVisible();
+  await expect(page.getByText("This Plan is stale.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve and apply" })).toHaveCount(0);
 
   await page.getByRole("link", { name: "Runs", exact: true }).click();
